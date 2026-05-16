@@ -3,13 +3,10 @@ import subprocess
 import threading
 from dataclasses import dataclass
 
-from config import TRACE_ON
 from .trace_writer import (
     new_event_id,
     record_trace_event,
     utc_now_iso,
-    write_json_payload,
-    write_payload,
 )
 
 
@@ -38,15 +35,13 @@ class TracedOpenCodeProcess:
     stage: str
     started: str
     command: list
-    prompt: str
-    workflow_file: str | None = None
-    batch_prompt_file: str | None = None
     function_ids: list | None = None
     input_files: list | None = None
     output_files: list | None = None
     summary: str | None = None
     metadata: dict | None = None
-    log_path: str | None = None
+    opencode_log_path: str | None = None
+    opencode_trace_path: str | None = None
     log_thread: threading.Thread | None = None
 
 
@@ -68,23 +63,20 @@ def _opencode_log_path(work_dir, event_id):
     return os.path.join(_payload_dir(_trace_dir(work_dir)), f"{event_id}_opencode.log")
 
 
-def _read_text_if_exists(path):
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except OSError:
-        return None
+def _opencode_trace_path(work_dir, event_id):
+    return os.path.join(_trace_dir(work_dir), "opencode", f"{event_id}.jsonl")
 
 
-def _artifact_item(trace_dir, event_id, item_type, label, path, payload_name):
-    item = {"type": item_type, "label": label, "path": path}
-    content = _read_text_if_exists(path) if path else None
-    if content is not None:
-        item["content_ref"] = write_payload(trace_dir, event_id, payload_name, content)
-    return item
+def _opencode_env(work_dir, event_id):
+    env = os.environ.copy()
+    trace_dir = os.path.abspath(os.path.join(_trace_dir(work_dir), "opencode"))
+    os.makedirs(trace_dir, exist_ok=True)
+    env["TRACE_DIR"] = trace_dir
+    env["TRACE_FILENAME"] = event_id
+    return env
 
 
-def _copy_opencode_output(stream, log_file, trace_log_path=None):
+def _copy_opencode_output(stream, trace_log_path=None):
     trace_log = None
     try:
         if trace_log_path:
@@ -92,8 +84,6 @@ def _copy_opencode_output(stream, log_file, trace_log_path=None):
         for chunk in iter(lambda: stream.read(4096), ""):
             if not chunk:
                 break
-            log_file.write(chunk)
-            log_file.flush()
             if trace_log:
                 trace_log.write(chunk)
                 trace_log.flush()
@@ -103,10 +93,11 @@ def _copy_opencode_output(stream, log_file, trace_log_path=None):
     stream.close()
 
 
-def _start_opencode_process(proj_dir, command, log_file, trace_log_path):
+def _start_opencode_process(proj_dir, work_dir, event_id, command, trace_log_path):
     proc = subprocess.Popen(
         command,
         cwd=proj_dir,
+        env=_opencode_env(work_dir, event_id),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -115,7 +106,7 @@ def _start_opencode_process(proj_dir, command, log_file, trace_log_path):
     )
     log_thread = threading.Thread(
         target=_copy_opencode_output,
-        args=(proc.stdout, log_file, trace_log_path),
+        args=(proc.stdout, trace_log_path),
         daemon=True,
     )
     log_thread.start()
@@ -130,9 +121,6 @@ def record_opencode_call(
     started,
     ended,
     command,
-    prompt,
-    workflow_file=None,
-    batch_prompt_file=None,
     function_ids=None,
     input_files=None,
     output_files=None,
@@ -140,50 +128,32 @@ def record_opencode_call(
     summary=None,
     error=None,
     metadata=None,
-    extra_artifacts=None,
     opencode_log_path=None,
+    opencode_trace_path=None,
 ):
-    if not TRACE_ON:
-        return
-
     trace_dir = _trace_dir(work_dir)
-    children = [
-        {
-            "type": "tool_call",
-            "tool": "opencode",
-            "content_ref": write_json_payload(trace_dir, event_id, "command.json", command),
-        },
-        {
-            "type": "user_prompt",
-            "content_ref": write_payload(trace_dir, event_id, "prompt.txt", prompt),
-        },
-    ]
+    children = []
 
-    if batch_prompt_file:
-        children.append(
-            _artifact_item(trace_dir, event_id, "artifact", "batch_prompt", batch_prompt_file, "batch_prompt.md")
-        )
     if opencode_log_path and os.path.exists(opencode_log_path):
+        opencode_log_ref = _payload_ref(trace_dir, opencode_log_path)
         children.append(
             {
                 "type": "tool_output",
                 "label": "opencode-stdout",
-                "path": opencode_log_path,
-                "content_ref": _payload_ref(trace_dir, opencode_log_path),
+                "path": opencode_log_ref,
+                "content_ref": opencode_log_ref,
             }
         )
-    for artifact in extra_artifacts or []:
+    if opencode_trace_path and os.path.exists(opencode_trace_path):
+        opencode_trace_ref = _payload_ref(trace_dir, opencode_trace_path)
         children.append(
-            _artifact_item(
-                trace_dir,
-                event_id,
-                "artifact",
-                artifact.get("label", "artifact"),
-                artifact.get("path"),
-                artifact.get("payload_name", "artifact.txt"),
-            )
+            {
+                "type": "tool_output",
+                "label": "opencode-llm-jsonl",
+                "path": opencode_trace_ref,
+                "content_ref": opencode_trace_ref,
+            }
         )
-
     record_trace_event(trace_dir, {
         "event_id": event_id,
         "type": "opencode_call",
@@ -209,26 +179,22 @@ def run_opencode_traced(
     proj_dir,
     work_dir,
     command,
-    prompt,
     stage,
-    log_file,
-    workflow_file=None,
-    batch_prompt_file=None,
     function_ids=None,
     input_files=None,
     output_files=None,
     summary=None,
     metadata=None,
-    extra_artifacts=None,
 ):
     event_id = new_event_id("opencode")
     started = utc_now_iso()
     exit_code = 0
     error = None
-    opencode_log_path = _opencode_log_path(work_dir, event_id) if TRACE_ON else None
+    opencode_log_path = _opencode_log_path(work_dir, event_id)
+    opencode_trace_path = _opencode_trace_path(work_dir, event_id)
     log_thread = None
     try:
-        proc, log_thread = _start_opencode_process(proj_dir, command, log_file, opencode_log_path)
+        proc, log_thread = _start_opencode_process(proj_dir, work_dir, event_id, command, opencode_log_path)
         exit_code = proc.wait()
         if log_thread:
             log_thread.join()
@@ -242,39 +208,31 @@ def run_opencode_traced(
     finally:
         if log_thread and log_thread.is_alive():
             log_thread.join()
-        if TRACE_ON:
-            record_opencode_call(
-                work_dir=work_dir,
-                event_id=event_id,
-                stage=stage,
-                status="success" if exit_code == 0 else "error",
-                started=started,
-                ended=utc_now_iso(),
-                command=command,
-                prompt=prompt,
-                workflow_file=workflow_file,
-                batch_prompt_file=batch_prompt_file,
-                function_ids=function_ids,
-                input_files=input_files,
-                output_files=output_files,
-                exit_code=exit_code,
-                summary=summary,
-                error=error,
-                metadata=metadata,
-                extra_artifacts=extra_artifacts,
-                opencode_log_path=opencode_log_path,
-            )
+        record_opencode_call(
+            work_dir=work_dir,
+            event_id=event_id,
+            stage=stage,
+            status="success" if exit_code == 0 else "error",
+            started=started,
+            ended=utc_now_iso(),
+            command=command,
+            function_ids=function_ids,
+            input_files=input_files,
+            output_files=output_files,
+            exit_code=exit_code,
+            summary=summary,
+            error=error,
+            metadata=metadata,
+            opencode_log_path=opencode_log_path,
+            opencode_trace_path=opencode_trace_path,
+        )
 
 
 def start_opencode_traced(
     proj_dir,
     work_dir,
     command,
-    prompt,
     stage,
-    log_file,
-    workflow_file=None,
-    batch_prompt_file=None,
     function_ids=None,
     input_files=None,
     output_files=None,
@@ -283,8 +241,9 @@ def start_opencode_traced(
 ):
     event_id = new_event_id("opencode")
     started = utc_now_iso()
-    opencode_log_path = _opencode_log_path(work_dir, event_id) if TRACE_ON else None
-    proc, log_thread = _start_opencode_process(proj_dir, command, log_file, opencode_log_path)
+    opencode_log_path = _opencode_log_path(work_dir, event_id)
+    opencode_trace_path = _opencode_trace_path(work_dir, event_id)
+    proc, log_thread = _start_opencode_process(proj_dir, work_dir, event_id, command, opencode_log_path)
     return TracedOpenCodeProcess(
         proc=proc,
         work_dir=work_dir,
@@ -292,15 +251,13 @@ def start_opencode_traced(
         stage=stage,
         started=started,
         command=command,
-        prompt=prompt,
-        workflow_file=workflow_file,
-        batch_prompt_file=batch_prompt_file,
         function_ids=function_ids,
         input_files=input_files,
         output_files=output_files,
         summary=summary,
         metadata=metadata,
-        log_path=opencode_log_path,
+        opencode_log_path=opencode_log_path,
+        opencode_trace_path=opencode_trace_path,
         log_thread=log_thread,
     )
 
@@ -308,23 +265,20 @@ def start_opencode_traced(
 def finish_opencode_trace(record):
     if record.log_thread:
         record.log_thread.join()
-    if TRACE_ON:
-        record_opencode_call(
-            work_dir=record.work_dir,
-            event_id=record.event_id,
-            stage=record.stage,
-            status="success" if record.proc.returncode == 0 else "error",
-            started=record.started,
-            ended=utc_now_iso(),
-            command=record.command,
-            prompt=record.prompt,
-            workflow_file=record.workflow_file,
-            batch_prompt_file=record.batch_prompt_file,
-            function_ids=record.function_ids,
-            input_files=record.input_files,
-            output_files=record.output_files,
-            exit_code=record.proc.returncode,
-            summary=record.summary,
-            metadata=record.metadata,
-            opencode_log_path=record.log_path,
-        )
+    record_opencode_call(
+        work_dir=record.work_dir,
+        event_id=record.event_id,
+        stage=record.stage,
+        status="success" if record.proc.returncode == 0 else "error",
+        started=record.started,
+        ended=utc_now_iso(),
+        command=record.command,
+        function_ids=record.function_ids,
+        input_files=record.input_files,
+        output_files=record.output_files,
+        exit_code=record.proc.returncode,
+        summary=record.summary,
+        metadata=record.metadata,
+        opencode_log_path=record.opencode_log_path,
+        opencode_trace_path=record.opencode_trace_path,
+    )

@@ -1,4 +1,4 @@
-from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL, TRACE_ON, OPENCODE_MODEL_PROVIDER
+from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL, OPENCODE_MODEL_PROVIDER
 from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
 from .file_utils import is_file_ready
@@ -247,7 +247,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
 
         _, spec_post = _parse_spec_conditions(spec)
         trace_context = None
-        if TRACE_ON and work_dir:
+        if work_dir:
             rel_function = os.path.relpath(file_path, input_dir)
             trace_context = {
                 "trace_dir": os.path.join(work_dir, "trace"),
@@ -338,7 +338,6 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None):
         f.write(prompt_content)
     os.replace(tmp_path, prompt_path)
 
-    log_path = os.path.join(work_dir, "fm_agent.log")
     command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_BUG_VALIDATION_MODEL}",
                "--file", prompt_path,
                "--", "Follow the instructions in the attached file"]
@@ -349,24 +348,20 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None):
         for attempt in range(1, max_attempts + 1):
             run_failed = False
             try:
-                with open(log_path, "a") as log_file:
-                    run_opencode_traced(
-                        proj_dir=proj_dir,
-                        work_dir=work_dir,
-                        command=command,
-                        prompt="Follow the instructions in the attached file",
-                        stage="bug_validation",
-                        log_file=log_file,
-                        workflow_file=prompt_path,
-                        function_ids=[function_id],
-                        input_files=[prompt_filename, result_json_rel],
-                        output_files=[
-                            os.path.join("fm_agent", "bug_validation", f"{bug_id}.md"),
-                            result_relpath,
-                        ],
-                        summary=f"OpenCode bug validation for {bug_id}",
-                        metadata={"bug_id": bug_id, "result_json": result_json_rel},
-                    )
+                run_opencode_traced(
+                    proj_dir=proj_dir,
+                    work_dir=work_dir,
+                    command=command,
+                    stage="bug_validation",
+                    function_ids=[function_id],
+                    input_files=[prompt_filename, result_json_rel],
+                    output_files=[
+                        os.path.join("fm_agent", "bug_validation", f"{bug_id}.md"),
+                        result_relpath,
+                    ],
+                    summary=f"OpenCode bug validation for {bug_id}",
+                    metadata={"bug_id": bug_id, "result_json": result_json_rel},
+                )
             except subprocess.CalledProcessError as exc:
                 run_failed = True
                 logging.warning(

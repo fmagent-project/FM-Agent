@@ -34,11 +34,6 @@ def write_payload(trace_dir, event_id, name, content, binary=False):
     return os.path.relpath(path, os.path.dirname(trace_dir))
 
 
-def write_json_payload(trace_dir, event_id, name, data):
-    content = json.dumps(data, indent=2, ensure_ascii=False)
-    return write_payload(trace_dir, event_id, name, content)
-
-
 def append_event(trace_dir, event):
     _ensure_trace_dirs(trace_dir)
     events_path = os.path.join(trace_dir, "events.jsonl")
@@ -46,12 +41,6 @@ def append_event(trace_dir, event):
     with _LOCK:
         with open(events_path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
-
-
-def record_llm_event(trace_dir, event):
-    if not trace_dir:
-        return
-    append_event(trace_dir, event)
 
 
 def record_llm_exchange(trace_dir, event_id, event, messages, response=None):
@@ -64,10 +53,9 @@ def record_llm_exchange(trace_dir, event_id, event, messages, response=None):
         role = message.get("role", "message")
         filename = f"message_{idx:02d}_{role}.txt"
         if role == "system":
-            metadata.setdefault("system_prompt_files", []).append(filename)
-            continue
+            item_type = "system_prompt"
         elif role == "user":
-            item_type = "user_prompt"
+            continue
         elif role == "assistant":
             item_type = "assistant_output"
         else:
@@ -93,7 +81,7 @@ def record_llm_exchange(trace_dir, event_id, event, messages, response=None):
         )
     metadata.pop("parsed", None)
     event["children"] = children
-    record_llm_event(trace_dir, event)
+    record_trace_event(trace_dir, event)
 
 
 def record_trace_event(trace_dir, event):
