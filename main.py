@@ -149,7 +149,7 @@ def _run_opencode_step(proj_dir, work_dir, script_dir, log_file,
             subprocess.run(
                 ["opencode", "run", "--model", f"openrouter/{model}",
                  "--file", os.path.join(proj_dir, "fm_agent", md_name), "--", prompt],
-                cwd=proj_dir, check=True, stdout=log_file, stderr=log_file,
+                cwd=proj_dir, env={**os.environ, "PWD": os.path.abspath(proj_dir)}, check=True, stdout=log_file, stderr=log_file,
             )
         except subprocess.CalledProcessError as e:
             logging.warning(f"{stage_label} attempt {attempt}: opencode exited with code {e.returncode}")
@@ -225,7 +225,7 @@ def run_pipeline(proj_dir):
         print("[Pipeline] Stage 1/5: AGENTS.md found, skipping opencode init.")
     else:
         print("[Pipeline] Stage 1/5: Initializing opencode...")
-        subprocess.run(["opencode", "run", "--command", "init"], cwd=proj_dir, check=True, stdout=log_file, stderr=log_file)
+        subprocess.run(["opencode", "run", "--command", "init"], cwd=proj_dir, env={**os.environ, "PWD": os.path.abspath(proj_dir)}, check=True, stdout=log_file, stderr=log_file)
 
     # Copy workflow_setup_extract.md to proj_dir and run opencode against it
     print("[Pipeline] Stage 2/5: Understanding codebase and extracting functions ...")
@@ -257,7 +257,7 @@ def run_pipeline(proj_dir):
             prompt = ("Continue where you left off. The previous run was interrupted by a network error. "
                       f"Check what has already been done and only complete the remaining steps. {fm_reminder}")
         try:
-            subprocess.run(["opencode", "run", "--model", f"openrouter/{OPENCODE_SETUP_MODEL}", "--file", os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md"), "--", prompt], cwd=proj_dir, check=True, stdout=log_file, stderr=log_file)
+            subprocess.run(["opencode", "run", "--model", f"openrouter/{OPENCODE_SETUP_MODEL}", "--file", os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md"), "--", prompt], cwd=proj_dir, env={**os.environ, "PWD": os.path.abspath(proj_dir)}, check=True, stdout=log_file, stderr=log_file)
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
 
@@ -423,7 +423,7 @@ def run_pipeline(proj_dir):
                         ["opencode", "run", "--model", f"openrouter/{OPENCODE_SPEC_MODEL}",
                          "--file", os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md"),
                          "--", prompt],
-                        cwd=proj_dir, stdout=log_file, stderr=log_file,
+                        cwd=proj_dir, env={**os.environ, "PWD": os.path.abspath(proj_dir)}, stdout=log_file, stderr=log_file,
                     )
                     spec_procs.append(proc)
 
@@ -508,6 +508,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     start_time = time.time()
-    run_pipeline(sys.argv[1])
+    run_pipeline(os.path.abspath(sys.argv[1]))
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")
