@@ -55,7 +55,7 @@ def record_llm_exchange(trace_dir, event_id, event, messages, response=None):
         if role == "system":
             item_type = "system_prompt"
         elif role == "user":
-            continue
+            item_type = "user_prompt"
         elif role == "assistant":
             item_type = "assistant_output"
         else:
