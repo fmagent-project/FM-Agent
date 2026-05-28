@@ -3,18 +3,18 @@ set -euo pipefail
 
 echo "=== fm-agent: installing required software ==="
 
-# ---------- Python 3.12+ ----------
+# ---------- Python 3.10+ ----------
 if command -v python3 &>/dev/null; then
     py_ver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     py_major=$(python3 -c 'import sys; print(sys.version_info.major)')
     py_minor=$(python3 -c 'import sys; print(sys.version_info.minor)')
-    if [[ "$py_major" -lt 3 ]] || { [[ "$py_major" -eq 3 ]] && [[ "$py_minor" -lt 12 ]]; }; then
-        echo "[!!] python3 version $py_ver found, but 3.12+ is required."
+    if [[ "$py_major" -lt 3 ]] || { [[ "$py_major" -eq 3 ]] && [[ "$py_minor" -lt 10 ]]; }; then
+        echo "[!!] python3 version $py_ver found, but 3.10+ is required."
         exit 1
     fi
     echo "[ok] python3 found: $(python3 --version)"
 else
-    echo "[!!] python3 not found. Please install Python 3.12+ for your platform."
+    echo "[!!] python3 not found. Please install Python 3.10+ for your platform."
     exit 1
 fi
 
@@ -71,7 +71,7 @@ else
     export PATH="$BUN_INSTALL/bin:$PATH"
 fi
 echo "[..] installing/updating oh-my-openagent"
-bunx oh-my-openagent install
+bunx oh-my-openagent install --no-tui --claude=no --gemini=no --copilot=no
 
 echo ""
 echo "=== all dependencies installed ==="

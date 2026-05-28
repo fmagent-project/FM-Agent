@@ -46,8 +46,8 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 
 ### 依赖要求
 
-- Ubuntu（已在 24.04 LTS 上测试）
-- Python 3.12
+- Ubuntu（已在 22.04 LTS, 24.04 LTS 上测试）
+- Python 3.10
 - pip >= 23
 - [openai](https://pypi.org/project/openai/) 2.15.0
 - [OpenCode](https://github.com/opencode-ai/opencode) 1.4.6
