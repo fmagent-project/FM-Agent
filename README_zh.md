@@ -113,6 +113,26 @@ python3 main.py <proj_dir>
 |---|---|
 | `proj_dir` | 待检测代码库的目录路径 |
 
+### 命令行选项
+
+```bash
+python3 main.py <proj_dir> [--stop-after <1-5>]
+```
+
+| 选项 | 描述 |
+|---|---|
+| `--stop-after <N>` | 在第 `N` 个阶段完成后停止，便于在完整运行前检查中间产物。 |
+
+阶段编号含义：
+
+| 阶段 | 停止位置 |
+|---|---|
+| `1` | OpenCode 项目初始化完成 |
+| `2` | 代码库 setup 完成，`fm_agent/phases.json` 已生成并完成去重 |
+| `3` | 函数抽取和文件列表收集完成 |
+| `4` | topdown layer 文件生成完成 |
+| `5` | 完整流水线，等同于不传 `--stop-after` |
+
 ### 输出说明
 
 FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容如下：

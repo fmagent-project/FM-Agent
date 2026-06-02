@@ -134,6 +134,26 @@ python3 main.py <proj_dir>
 | ---------- | -------------------------------------------------------- |
 | `proj_dir` | Directory of codebase that you want to check correctness |
 
+### Command Line Options
+
+```bash
+python3 main.py <proj_dir> [--stop-after <1-5>]
+```
+
+| Option | Description |
+|---|---|
+| `--stop-after <N>` | Stop after stage `N` completes. Useful for inspecting intermediate artifacts before running the full pipeline. |
+
+Stage numbers:
+
+| Stage | Stop point |
+|---|---|
+| `1` | OpenCode project initialization is complete |
+| `2` | Codebase setup is complete and `fm_agent/phases.json` has been generated and deduplicated |
+| `3` | Function extraction and file collection are complete |
+| `4` | Topdown layer files have been generated |
+| `5` | Full pipeline, same as omitting `--stop-after` |
+
 ### Output
 
 FM-Agent creates an `fm_agent/` directory under your codebase directory. The key outputs are:
@@ -176,4 +196,3 @@ Eprint = {arXiv:2604.11556},
 ## Contact
 
 If you have any questions, please submit an issue or send [email](mailto:nhaorand@gmail.com).
-

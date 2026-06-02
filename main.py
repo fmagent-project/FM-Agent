@@ -22,6 +22,15 @@ import time
 import shutil
 import subprocess
 import logging
+import argparse
+
+
+def _maybe_stop(stop_after, stage_num, message):
+    """Return True when the pipeline should stop after a completed stage."""
+    if stop_after == stage_num:
+        print(message)
+        return True
+    return False
 
 def _deduplicate_phases(phases_dir):
     """Ensure each source file appears in at most one phase; keep the earliest."""
@@ -120,7 +129,7 @@ def _has_source_code(proj_dir):
     return False
 
 
-def run_pipeline(proj_dir):
+def run_pipeline(proj_dir, stop_after=None):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
@@ -153,6 +162,9 @@ def run_pipeline(proj_dir):
             output_files=["AGENTS.md"],
             summary="Initialized OpenCode project context",
         )
+
+    if _maybe_stop(stop_after, 1, "[Pipeline] Stopped after Stage 1/5: opencode init complete."):
+        return
 
     # Copy workflow_setup_extract.md to proj_dir and run opencode against it
     print("[Pipeline] Stage 2/5: Understanding codebase and extracting functions ...")
@@ -226,6 +238,9 @@ def run_pipeline(proj_dir):
     # Deduplicate source files across phases
     _deduplicate_phases(work_dir)
 
+    if _maybe_stop(stop_after, 2, "[Pipeline] Stopped after Stage 2/5: codebase setup complete."):
+        return
+
     # Run function extraction using extract.py
     print("[Pipeline] Extracting functions from source files...")
     run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
@@ -253,10 +268,16 @@ def run_pipeline(proj_dir):
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
         return
 
+    if _maybe_stop(stop_after, 3, "[Pipeline] Stopped after Stage 3/5: function extraction and file collection complete."):
+        return
+
     # --- Stage 4: Generate topdown layers ---
     print("[Pipeline] Stage 4/5: Generating topdown layers...")
     phases_data = json.load(open(os.path.join(work_dir, "phases.json")))
     generate_topdown_layers(work_dir)
+
+    if _maybe_stop(stop_after, 4, "[Pipeline] Stopped after Stage 4/5: topdown layers generated."):
+        return
 
     # --- Stage 5: Execute spec generation workflow (per phase, per layer) ---
     print("[Pipeline] Stage 5/5: Generating specs & verification...")
@@ -453,11 +474,22 @@ def run_pipeline(proj_dir):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 main.py <proj_dir>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Run the FM-Agent verification pipeline.")
+    parser.add_argument("proj_dir", help="Directory of the codebase to verify")
+    parser.add_argument(
+        "--stop-after",
+        type=int,
+        choices=[1, 2, 3, 4, 5],
+        default=None,
+        help=(
+            "Stop after the specified stage: 1=opencode init, "
+            "2=codebase setup, 3=function extraction and file collection, "
+            "4=topdown layers, 5=full pipeline."
+        ),
+    )
+    args = parser.parse_args()
 
     start_time = time.time()
-    run_pipeline(os.path.abspath(sys.argv[1]))
+    run_pipeline(os.path.abspath(args.proj_dir), stop_after=args.stop_after)
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")
