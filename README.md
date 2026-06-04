@@ -55,6 +55,7 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 - [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) plugin (installed via `bunx`)
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) plugin — captures raw OpenCode LLM request/response traces (see [Structured Trace](#structured-trace))
 - An LLM API key for your provider (the examples use [OpenRouter](https://openrouter.ai/))
+- Optional: language servers for LSP-assisted extraction, currently [`gopls`](https://pkg.go.dev/golang.org/x/tools/gopls) for Go projects
 
 ### Install Dependencies
 
@@ -91,6 +92,8 @@ Key parameters can be adjusted in [config.py](config.py).
 | `OPENCODE_MODEL_PROVIDER`       | `openrouter`                   | OpenCode provider prefix used when invoking `opencode run --model <prefix>/<model>` |
 | `LLM_API_KEY`                   | (env)                          | LLM API key for FM-Agent's direct calls |
 | `LLM_API_BASE_URL`              | `https://openrouter.ai/api/v1` | LLM API base URL for FM-Agent's direct calls |
+| `LSP_TIMEOUT_SECONDS`           | `600`                          | Timeout for LSP requests when `--enable-lsp` is used         |
+| `LSP_STRICT`                    | `false`                        | If true, fail the pipeline when an enabled LSP provider fails |
 
 (Optional) FM-Agent uses oh-my-openagent plugin to enhance OpenCode. The comment-checker hook built into this plugin should be disabled, otherwise it may intercept every comment block that FM-Agent writes, which are specifications of functions. It may force the agent to waste tokens justifying or removing them.
 You can open your oh-my-openagent config file (typically ~/.config/opencode/oh-my-openagent.json) and add disabled_hooks:
@@ -137,12 +140,14 @@ python3 main.py <proj_dir>
 ### Command Line Options
 
 ```bash
-python3 main.py <proj_dir> [--stop-after <1-5>]
+python3 main.py <proj_dir> [--stop-after <1-5>] [--enable-lsp] [--lsp-only]
 ```
 
 | Option | Description |
 |---|---|
 | `--stop-after <N>` | Stop after stage `N` completes. Useful for inspecting intermediate artifacts before running the full pipeline. |
+| `--enable-lsp` | Enable optional LSP analysis before OpenCode setup. LSP is disabled by default and currently supports Go via `gopls`. |
+| `--lsp-only` | Run LSP analysis and exit before OpenCode setup. Requires `--enable-lsp`. |
 
 Stage numbers:
 
@@ -174,11 +179,22 @@ Each confirmed or investigated bug produces a Markdown report containing:
 
 A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results with counts of total reported, confirmed, not confirmed bugs.
 
+#### LSP Artifacts (`fm_agent/lsp/`)
+
+When `--enable-lsp` is used, FM-Agent writes normalized LSP artifacts before OpenCode codebase understanding:
+
+| Path | Content |
+|---|---|
+| `fm_agent/lsp/status.json` | Provider status, errors, and aggregate symbol/call counts |
+| `fm_agent/lsp/symbols.json` | Function and method ranges used by extraction when available |
+| `fm_agent/lsp/calls.json` | Best-effort resolved call edges used by topdown layer generation when available |
+
 ## Important Notes
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
 2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Customizing them for your specific project can improve accuracy and help uncover more bugs. For example, you can include project documentation to give the agent deeper understanding of your codebase, or if you are reasoning about a compiler, modify `md/bug_validator.md` to instruct the agent to compare outputs against a reference implementation (e.g., GCC).
-3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS.
+3. LSP support is an optional enhancement. If an enabled provider fails and `LSP_STRICT` is not set, FM-Agent falls back to the existing extraction and call-graph logic.
+4. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS.
 
 ## Citation
 
