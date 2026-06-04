@@ -5,6 +5,8 @@ import sys
 import shutil
 import logging
 
+from src.lsp.runner import load_lsp_symbols
+
 LANG_CONFIG = {
     "cpp": {
         "comment_prefix": "//",
@@ -544,6 +546,41 @@ def extract_functions_from_file(filepath, lang_key):
     return results
 
 
+def _sanitize_function_filename(name):
+    """Return a filesystem-safe function filename stem."""
+    cleaned = re.sub(r'[\\/:"*?<>|()\s]+', "_", name.strip())
+    cleaned = cleaned.strip("_")
+    return cleaned or "function"
+
+
+def extract_functions_from_lsp_symbols(filepath, symbols):
+    """Extract functions from a single source file using LSP line ranges.
+
+    LSP ranges are 0-based. The end line is treated as inclusive because most
+    documentSymbol providers put it on the final source line of the symbol.
+    """
+    with open(filepath, 'r', errors='replace') as f:
+        lines = f.readlines()
+    lines = [l.rstrip('\n').rstrip('\r') for l in lines]
+
+    name_counts = {}
+    results = []
+    for symbol in sorted(symbols, key=lambda s: (s.get("start_line", 0), s.get("end_line", 0))):
+        name = _sanitize_function_filename(symbol.get("name") or symbol.get("qualified_name") or "")
+        start = int(symbol.get("start_line", 0))
+        end = int(symbol.get("end_line", start))
+        if start < 0 or start >= len(lines):
+            continue
+        end = min(max(end, start), len(lines) - 1)
+
+        count = name_counts.get(name, 0)
+        name_counts[name] = count + 1
+        deduped = f"{name}_{count}" if count > 0 else name
+        source = '\n'.join(lines[start:end + 1]) + '\n'
+        results.append((deduped, source))
+    return results
+
+
 def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     """Run function extraction on a project directory.
 
@@ -573,6 +610,8 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     written = 0
     skipped = 0
     errors = []
+    lsp_symbols = load_lsp_symbols(work_dir)
+    used_lsp = False
 
     for src_rel in source_files:
         # Skip test files
@@ -605,7 +644,15 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             dir_name = src_base
         out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
 
-        funcs = extract_functions_from_file(src_path, lang_key)
+        funcs = []
+        if src_rel in lsp_symbols:
+            funcs = extract_functions_from_lsp_symbols(src_path, lsp_symbols[src_rel])
+            if funcs:
+                used_lsp = True
+                if verbose:
+                    print(f"  LSP: {src_rel} ({len(funcs)} functions)")
+        if not funcs:
+            funcs = extract_functions_from_file(src_path, lang_key)
         if not funcs:
             logging.warning(f"No functions extracted from {src_rel}")
             continue
@@ -641,21 +688,26 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         return written, skipped
 
     # --- Validation (Step 2) ---
-    validation_failures = _validate_extraction(output_base)
-    if validation_failures:
-        logging.warning(
-            f"Validation: {len(validation_failures)} file(s) do not contain exactly one function."
-        )
-        for path, count in validation_failures:
-            rel = os.path.relpath(path, proj_dir)
-            logging.warning(f"  {rel}: {count} function(s) detected")
+    if used_lsp:
+        logging.info("Skipping regex validation for LSP-extracted functions.")
         if verbose:
-            print(f"Validation WARNING: {len(validation_failures)} file(s) with != 1 function.")
-            for path, count in validation_failures:
-                print(f"  {os.path.relpath(path, proj_dir)}: {count} function(s)")
+            print("Validation skipped for LSP-extracted functions.")
     else:
-        if verbose:
-            print("Validation passed: every extracted file contains exactly one function.")
+        validation_failures = _validate_extraction(output_base)
+        if validation_failures:
+            logging.warning(
+                f"Validation: {len(validation_failures)} file(s) do not contain exactly one function."
+            )
+            for path, count in validation_failures:
+                rel = os.path.relpath(path, proj_dir)
+                logging.warning(f"  {rel}: {count} function(s) detected")
+            if verbose:
+                print(f"Validation WARNING: {len(validation_failures)} file(s) with != 1 function.")
+                for path, count in validation_failures:
+                    print(f"  {os.path.relpath(path, proj_dir)}: {count} function(s)")
+        else:
+            if verbose:
+                print("Validation passed: every extracted file contains exactly one function.")
 
     return written, skipped
 
