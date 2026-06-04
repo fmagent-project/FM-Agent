@@ -6,6 +6,7 @@ from pathlib import Path
 from collections import defaultdict
 
 from src.extract import EXT_TO_LANG, LANG_CONFIG
+from src.lsp.runner import load_lsp_calls
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +72,20 @@ def _file_to_fqn(filepath, proj_dir):
     # Join with :: separator
     parts = Path(stem).parts
     return "::".join(parts)
+
+
+def _source_file_from_extracted_rel(rel_path):
+    """Convert an extracted function relpath back to its source file path."""
+    parts = Path(rel_path).parts
+    if len(parts) < 2:
+        return None
+    source_parts = list(parts[:-1])
+    encoded_file = source_parts[-1]
+    if "-" not in encoded_file:
+        return None
+    base, ext = encoded_file.rsplit("-", 1)
+    source_parts[-1] = f"{base}.{ext}"
+    return "/".join(source_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +263,7 @@ def _find_call_sites(text, lang_key, known_stems, keywords):
     return found
 
 
-def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
+def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, lsp_edges=None):
     """Build callees_map and callers_map for a set of phase files.
 
     Args:
@@ -285,8 +300,37 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
     callers_map = defaultdict(set)  # fqn -> set of caller fqns (within phase)
     all_callees_map = defaultdict(set)  # fqn -> set of callee fqns (any phase)
 
+    lsp_covered_fqns = set()
+    if lsp_edges:
+        lsp_id_to_fqn = {}
+        extracted_base = os.path.join(proj_dir, "extracted_functions")
+        for fqn, filepath in file_map.items():
+            rel = os.path.relpath(filepath, extracted_base).replace(os.sep, "/")
+            source_file = _source_file_from_extracted_rel(rel)
+            if not source_file:
+                continue
+            stem = fqn.split("::")[-1]
+            lsp_id_to_fqn[f"{source_file}::{stem}"] = fqn
+
+        for edge in lsp_edges:
+            caller_id = edge.get("caller_id")
+            callee_id = edge.get("callee_id")
+            caller_fqn = lsp_id_to_fqn.get(caller_id)
+            callee_fqn = lsp_id_to_fqn.get(callee_id)
+            if not caller_fqn:
+                continue
+            lsp_covered_fqns.add(caller_fqn)
+            if not callee_fqn or callee_fqn == caller_fqn:
+                continue
+            all_callees_map[caller_fqn].add(callee_fqn)
+            if callee_fqn in phase_fqns:
+                callees_map[caller_fqn].add(callee_fqn)
+                callers_map[callee_fqn].add(caller_fqn)
+
     for filepath, module_name in phase_files:
         fqn = fqn_map[filepath]
+        if fqn in lsp_covered_fqns:
+            continue
         lang_key = _detect_lang_from_ext(filepath)
         if not lang_key:
             continue
@@ -500,6 +544,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
 
     output_dir = os.path.join(proj_dir, "spec_prompts")
     os.makedirs(output_dir, exist_ok=True)
+    lsp_edges = load_lsp_calls(proj_dir)
 
     # Build global stem->FQN mapping across ALL phases for all_callees
     global_stem_to_fqns = defaultdict(set)
@@ -526,7 +571,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
 
         # 1.4 Build call graph (also returns file_map and module_map)
         callees_map, callers_map, all_callees_map, file_map, module_map = _build_call_graph(
-            phase_files, proj_dir, global_stem_to_fqns
+            phase_files, proj_dir, global_stem_to_fqns, lsp_edges=lsp_edges
         )
         phase_fqns = set(file_map.keys())
 
