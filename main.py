@@ -120,43 +120,8 @@ def _has_source_code(proj_dir):
     return False
 
 
-def run_pipeline(proj_dir):
-    if not os.path.isdir(proj_dir):
-        print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
-        sys.exit(1)
-
-    if not _has_source_code(proj_dir):
-        print(f"[Pipeline] ERROR: No source code files found in {proj_dir}. "
-              f"Supported extensions: {', '.join(sorted(EXT_TO_LANG.keys()))}")
-        sys.exit(1)
-
-    work_dir = os.path.join(proj_dir, "fm_agent")
-    input_dir = os.path.join(work_dir, "extracted_functions")
-    output_dir = os.path.join(work_dir, "logic_verification_results")
-
-    # Clean files from the previous run
-    _clean_previous_run(work_dir)
-    os.makedirs(work_dir, exist_ok=True)
-
-    # Initialize opencode in the project directory (skip if AGENTS.md already exists)
-    agent_md = os.path.join(proj_dir, "AGENTS.md")
-    if os.path.exists(agent_md):
-        print("[Pipeline] Stage 1/5: AGENTS.md found, skipping opencode init.")
-    else:
-        print("[Pipeline] Stage 1/5: Initializing opencode...")
-        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{LLM_MODEL}", "--command", "init"]
-        run_opencode_traced(
-            proj_dir=proj_dir,
-            work_dir=work_dir,
-            command=command,
-            stage="init",
-            output_files=["AGENTS.md"],
-            summary="Initialized OpenCode project context",
-        )
-
-    # Copy workflow_setup_extract.md to proj_dir and run opencode against it
-    print("[Pipeline] Stage 2/5: Understanding codebase and extracting functions ...")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False):
+    """Stage 2: prepare the setup workflow file and run opencode (with retries) to produce phases.json."""
     workflow_src = os.path.join(script_dir, "md", "workflow_setup_extract.md")
     workflow_dst = os.path.join(work_dir, "workflow_setup_extract.md")
     shutil.copy2(workflow_src, workflow_dst)
@@ -177,12 +142,24 @@ def run_pipeline(proj_dir):
                     "It is a workspace for storing your output files only. "
                     "Do NOT include fm_agent/ paths in phases.json. "
                     "Do NOT modify any existing project files.")
+    incremental_reminder = ("IMPORTANT: An existing fm_agent/phases.json from a previous run is already "
+                            "present. Do NOT regenerate it from scratch. Instead, inspect the current "
+                            "state of the source code and UPDATE the existing fm_agent/phases.json so it "
+                            "reflects the current version of the code: add modules and source files that "
+                            "are new, remove entries whose files no longer exist, and adjust phases as "
+                            "needed. Preserve entries that are still accurate.")
+
+    phases_json = os.path.join(work_dir, "phases.json")
+    prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
+
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         if attempt == 1:
             prompt = f"Follow the instructions in the attached file. {fm_reminder}"
         else:
             prompt = ("Continue where you left off. The previous run was interrupted by a network error. "
                       f"Check what has already been done and only complete the remaining steps. {fm_reminder}")
+        if is_incremental:
+            prompt = f"{prompt} {incremental_reminder}"
         command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
                    "--file", os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md"), "--", prompt]
         try:
@@ -202,29 +179,75 @@ def run_pipeline(proj_dir):
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        # Validate that the agent produced phases.json
-        phases_json = os.path.join(work_dir, "phases.json")
+        # Validate that the agent produced phases.json. In incremental mode the file
+        # already exists, so require that it was actually modified by this run.
         if os.path.exists(phases_json):
-            break
+            if not is_incremental or os.path.getmtime(phases_json) != prev_mtime:
+                break
 
+        failure = "update phases.json" if is_incremental else "produce phases.json"
+        missing = "phases.json was not updated" if is_incremental else "phases.json missing"
         if attempt < OPENCODE_MAX_RETRIES:
             delay = 10
             print(
-                f"[Pipeline] Stage 2 failed to produce phases.json (attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
+                f"[Pipeline] Stage 2 failed to {failure} (attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
                 f"Retrying in {delay}s..."
             )
-            logging.warning(f"Stage 2 attempt {attempt} failed: phases.json missing. Retrying in {delay}s.")
+            logging.warning(f"Stage 2 attempt {attempt} failed: {missing}. Retrying in {delay}s.")
             time.sleep(delay)
         else:
             print(
                 f"[Pipeline] ERROR: Stage 2 failed after {OPENCODE_MAX_RETRIES} attempts. "
-                f"phases.json is missing. "
+                f"{missing}. "
                 f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
             )
             sys.exit(1)
-
+    
     # Deduplicate source files across phases
     _deduplicate_phases(work_dir)
+
+
+def _run_opencode_init(proj_dir, work_dir):
+    agent_md = os.path.join(proj_dir, "AGENTS.md")
+    if os.path.exists(agent_md):
+        print("[Pipeline] Stage 1/5: AGENTS.md found, skipping opencode init.")
+    else:
+        print("[Pipeline] Stage 1/5: Initializing opencode...")
+        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{LLM_MODEL}", "--command", "init"]
+        run_opencode_traced(
+            proj_dir=proj_dir,
+            work_dir=work_dir,
+            command=command,
+            stage="init",
+            output_files=["AGENTS.md"],
+            summary="Initialized OpenCode project context",
+        )
+
+def run_pipeline(proj_dir):
+    if not os.path.isdir(proj_dir):
+        print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
+        sys.exit(1)
+
+    if not _has_source_code(proj_dir):
+        print(f"[Pipeline] ERROR: No source code files found in {proj_dir}. "
+              f"Supported extensions: {', '.join(sorted(EXT_TO_LANG.keys()))}")
+        sys.exit(1)
+
+    work_dir = os.path.join(proj_dir, "fm_agent")
+    input_dir = os.path.join(work_dir, "extracted_functions")
+    output_dir = os.path.join(work_dir, "logic_verification_results")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Clean files from the previous run
+    _clean_previous_run(work_dir)
+    os.makedirs(work_dir, exist_ok=True)
+
+    # Initialize opencode in the project directory (skip if AGENTS.md already exists)
+    _run_opencode_init(proj_dir, work_dir)
+
+    # Copy workflow_setup_extract.md to proj_dir and run opencode against it
+    print("[Pipeline] Stage 2/5: Understanding codebase and extracting functions ...")
+    _run_setup_extract(proj_dir, work_dir, script_dir)
 
     # Run function extraction using extract.py
     print("[Pipeline] Extracting functions from source files...")
