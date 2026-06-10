@@ -138,6 +138,48 @@ def _get_incomplete_verification_files(layer_files, input_dir, output_dir, work_
     return incomplete
 
 
+def _setup_outputs_complete(work_dir):
+    """Return True only if the setup_context stage produced ALL its output files.
+
+    The setup stage (Stage 2) is responsible for writing, per
+    md/workflow_setup_extract.md:
+      1. phases.json
+      2. spec_prompts/domain_context/engine_overview.txt
+      3. spec_prompts/domain_context/phase_NN_types.txt — one per phase
+
+    An interrupted run can leave phases.json behind without the domain-context
+    files, which are later read by the spec-generation batch prompts. Resuming
+    must only skip setup when every one of these exists, otherwise the missing
+    files have to be regenerated.
+    """
+    phases_path = os.path.join(work_dir, "phases.json")
+    if not _json_file_is_valid(phases_path):
+        return False
+
+    domain_dir = os.path.join(work_dir, "spec_prompts", "domain_context")
+    if not os.path.exists(os.path.join(domain_dir, "engine_overview.txt")):
+        return False
+
+    try:
+        with open(phases_path, "r") as f:
+            phases_data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    for phase in phases_data.get("phases", []):
+        phase_num = phase.get("phase")
+        if phase_num is None:
+            # Malformed phases.json — can't verify this phase's types file, and
+            # downstream stages require p["phase"]. Re-run setup rather than
+            # claim completeness.
+            return False
+        types_path = os.path.join(domain_dir, f"phase_{phase_num:02d}_types.txt")
+        if not os.path.exists(types_path):
+            return False
+
+    return True
+
+
 def _has_source_code(proj_dir):
     """Check whether proj_dir contains at least one source code file."""
     source_exts = set(EXT_TO_LANG.keys())
@@ -200,9 +242,9 @@ def run_pipeline(proj_dir, resume=False):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     # On resume, reuse the existing phase plan instead of paying for the
     # setup_context LLM call again.
-    _resume_skip_setup = resume and os.path.exists(os.path.join(work_dir, "phases.json"))
+    _resume_skip_setup = resume and _setup_outputs_complete(work_dir)
     if _resume_skip_setup:
-        print("[Pipeline] Stage 2/5: RESUME — phases.json found, skipping setup_context (reusing phase plan).")
+        print("[Pipeline] Stage 2/5: RESUME — all setup outputs found, skipping setup_context (reusing phase plan).")
     workflow_src = os.path.join(script_dir, "md", "workflow_setup_extract.md")
     workflow_dst = os.path.join(work_dir, "workflow_setup_extract.md")
     shutil.copy2(workflow_src, workflow_dst)
@@ -226,11 +268,20 @@ def run_pipeline(proj_dir, resume=False):
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         if _resume_skip_setup:
             break
-        if attempt == 1:
+        if attempt == 1 and not resume:
             prompt = f"Follow the instructions in the attached file. {fm_reminder}"
         else:
-            prompt = ("Continue where you left off. The previous run was interrupted by a network error. "
-                      f"Check what has already been done and only complete the remaining steps. {fm_reminder}")
+            # Either resuming a previously interrupted run or retrying after a
+            # failed attempt — in both cases some setup outputs may already
+            # exist (e.g. phases.json or part of the domain-context files). Have
+            # the agent inspect what's there and only fill the gaps instead of
+            # regenerating everything and overwriting valid work.
+            prompt = ("A previous setup attempt was interrupted and may have already produced some of the "
+                      "required output files. Follow the instructions in the attached file, but FIRST "
+                      "check the current progress in fm_agent/ (e.g. phases.json and the "
+                      "spec_prompts/domain_context/ files). Keep any existing valid output as-is and only "
+                      "generate the files that are missing or incomplete — do NOT regenerate or overwrite "
+                      f"work that is already done. {fm_reminder}")
         command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
                    "--file", os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md"), "--", prompt]
         try:
