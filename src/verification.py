@@ -34,7 +34,7 @@ EXT_TO_LANG = {
 BUG_VALIDATION_MAX_RETRIES = 1
 
 
-def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, work_dir=None, poll_interval=2, spec_proc=None, spec_procs=None, already_processed=None):
+def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, work_dir=None, poll_interval=2, spec_procs=None, already_processed=None, resume=False):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
     if work_dir is None:
         work_dir = proj_dir
@@ -99,7 +99,7 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                         submitted.add(file_path)
                         language = EXT_TO_LANG.get(ext, "C")
                         future = executor.submit(
-                            _verify_single_file, file_path, input_dir, output_dir, language, work_dir
+                            _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume
                         )
                         reasoning_futures[future] = file_path
                         logging.info(f"Submitted: {file_path}")
@@ -122,7 +122,7 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                                 os.path.splitext(rel)[0] + ".json",
                             )
                             vf = executor.submit(
-                                _validate_single_bug, result_json_rel, proj_dir, work_dir
+                                _validate_single_bug, result_json_rel, proj_dir, work_dir, resume
                             )
                             validation_futures[vf] = (fpath, rel_path, result_json_rel, completed_count)
                             logging.info(f"Submitted validation: {fpath}")
@@ -175,9 +175,8 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                     logging.info("All files verified and validated. Done.")
                     break
 
-                # Detect if spec generation subprocess(es) exited before all files are ready
-                # Support both single spec_proc and multiple spec_procs
-                _all_procs = spec_procs if spec_procs else ([spec_proc] if spec_proc else None)
+                # Detect if spec generation subprocesses exited before all files are ready
+                _all_procs = spec_procs if spec_procs else None
                 if _all_procs is not None and all(p.poll() is not None for p in _all_procs):
                     unready = (expected_files or set()) - processed
                     if unready and not reasoning_futures and not validation_futures:
@@ -223,12 +222,12 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
     return processed
 
 
-def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None):
+def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False):
     """Verify a single file and write the result JSON."""
-    # Skip if already verified
+    # Skip if resuming and a valid result already exists
     rel = os.path.relpath(file_path, input_dir)
     output_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
-    if os.path.exists(output_path):
+    if resume and os.path.exists(output_path):
         try:
             with open(output_path) as f:
                 existing = json.load(f)
@@ -298,7 +297,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     return file_path, output["verdict"]
 
 
-def _validate_single_bug(result_json_rel, proj_dir, work_dir=None):
+def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False):
     """Validate a single MISMATCH result by running opencode with a per-file prompt."""
     if work_dir is None:
         work_dir = proj_dir
@@ -343,6 +342,15 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None):
                "--", "Follow the instructions in the attached file"]
     result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
     result_path = os.path.join(proj_dir, result_relpath)
+    # Resume idempotency: if resuming and this bug was already validated, don't pay for it again.
+    if resume and os.path.exists(result_path):
+        try:
+            with open(result_path) as _f:
+                json.load(_f)
+            logging.info(f"Bug validation already done, skipping: {bug_id}")
+            return
+        except (json.JSONDecodeError, OSError):
+            pass  # corrupted result — re-validate
     try:
         max_attempts = BUG_VALIDATION_MAX_RETRIES + 1
         for attempt in range(1, max_attempts + 1):

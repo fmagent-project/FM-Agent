@@ -106,12 +106,19 @@ OpenCode provider 的配置以及可选的 prompt 缓存设置见 [docs/config_l
 ## 快速开始
 
 ```bash
-python3 main.py <proj_dir>
+python3 main.py <proj_dir> [--resume]
 ```
 
 | 参数 | 描述 |
 |---|---|
 | `proj_dir` | 待检测代码库的目录路径 |
+| `--resume` | 续跑上一次中断的运行，而非从头开始 |
+
+默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
+
+```bash
+python3 main.py <proj_dir> --resume
+```
 
 ### 输出说明
 

@@ -5,6 +5,8 @@ import sys
 import shutil
 import logging
 
+from src.file_utils import is_file_ready
+
 LANG_CONFIG = {
     "cpp": {
         "comment_prefix": "//",
@@ -601,8 +603,6 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         if not lang_key:
             logging.warning(f"Unsupported file extension '.{ext}' for {src_rel}, skipping.")
             continue
-        lang_cfg = LANG_CONFIG[lang_key]
-        spec_marker = lang_cfg["spec_marker"]
 
         # Compute output directory: replace last dot in filename with hyphen
         src_dir = os.path.dirname(src_rel)
@@ -624,18 +624,12 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         for func_name, func_source in funcs:
             out_file = os.path.join(out_dir, f"{func_name}.{ext}")
 
-            # Check if file already has spec marker
-            if not force and os.path.exists(out_file):
-                try:
-                    with open(out_file, 'r') as f:
-                        first_line = f.readline()
-                    if first_line.strip().startswith(spec_marker.strip()):
-                        if verbose:
-                            print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
-                        skipped += 1
-                        continue
-                except OSError:
-                    pass
+            # Skip only when the file already has both [SPEC] and [INFO] blocks
+            if not force and os.path.exists(out_file) and is_file_ready(out_file):
+                if verbose:
+                    print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
+                skipped += 1
+                continue
 
             with open(out_file, 'w') as f:
                 f.write(func_source)

@@ -127,12 +127,21 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-python3 main.py <proj_dir>
+python3 main.py <proj_dir> [--resume]
 ```
 
 | Argument   | Description                                              |
 | ---------- | -------------------------------------------------------- |
 | `proj_dir` | Directory of codebase that you want to check correctness |
+| `--resume` | Continue a previous, interrupted run instead of starting over |
+
+By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
+
+```bash
+python3 main.py <proj_dir> --resume
+```
+
+
 
 ### Output
 

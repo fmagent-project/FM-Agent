@@ -588,17 +588,3 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
         print(f"[TopdownLayers] Phase {phase_num} ({phase_name}): {total_functions} functions, {total_layers} layers -> {os.path.relpath(out_path, proj_dir)}")
 
     return output_files
-
-
-if __name__ == "__main__":
-    import sys
-    # Usage: python3 generate_topdown_layers.py [phase_numbers...]
-    # When run standalone, proj_dir is the parent of the script's directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    proj_dir = os.path.dirname(script_dir)
-
-    phase_nums = None
-    if len(sys.argv) > 1:
-        phase_nums = [int(x) for x in sys.argv[1:]]
-
-    generate_topdown_layers(proj_dir, phase_nums)
