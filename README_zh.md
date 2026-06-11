@@ -35,11 +35,15 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 ## 文件结构
 
 ```
-|-- main.py                # 程序入口
-|-- config.py              # 配置
-|-- install.sh             # 依赖安装脚本
-|-- src/                   # 核心源码模块（提取、推理、LLM 交互等）
-|-- md/                    # 引导 LLM 推理的工作流说明文档
+|-- main.py                       # 程序入口 —— 编排整个流水线
+|-- dashboard.py                  # 独立的实时 TUI 监控面板
+|-- config.py                     # 配置（模型、粒度、并发、超时等）
+|-- install.sh                    # 依赖安装脚本
+|-- pyproject.toml / uv.lock      # Python 项目元数据与锁定的依赖（uv）
+|-- .env.example                  # .env 运行时配置模板
+|-- src/                          # 核心源码模块（提取、推理、LLM 交互等）
+|-- md/                           # 引导 Agent 推理的工作流说明文档
+|-- docs/                         # 补充文档（如 OpenCode/LLM provider 配置）
 ```
 
 ## 环境配置
@@ -60,8 +64,19 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 
 设置 FM-Agent 和 OpenCode 共用的 LLM API 密钥。推荐使用 [OpenRouter](https://openrouter.ai/)：FM-Agent 会并发调用 LLM，而 OpenRouter 的 RPM（每分钟请求数）和 TPM（每分钟 Token 数）限制更宽松——不过任何兼容的 provider 都可以。
 
+在项目根目录创建 `.env` 文件（FM-Agent 会通过 python-dotenv 自动加载）。可复制模板并填入你的密钥：
+
 ```bash
-export LLM_API_KEY="your-api-key-here"
+cp .env.example .env
+# 然后编辑 .env，填入 LLM_API_KEY
+```
+
+```bash
+# .env
+LLM_API_KEY=your-api-key-here
+LLM_API_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=anthropic/claude-sonnet-4.6
+OPENCODE_MODEL_PROVIDER=openrouter
 ```
 
 OpenCode provider 的配置以及可选的 prompt 缓存设置见 [docs/config_llm.md](docs/config_llm.md)。
@@ -88,8 +103,14 @@ OpenCode provider 的配置以及可选的 prompt 缓存设置见 [docs/config_l
 | `OPENCODE_BUG_VALIDATION_MODEL` | `LLM_MODEL` | 用于进行 Bug 分析和生成报告的模型 |
 | `REASONER_POST_CONDITION_MODEL` | `LLM_MODEL` | 用于生成代码后置条件的模型 |
 | `REASONER_SPEC_CHECK_MODEL` | `LLM_MODEL` | 用于检查代码后置条件是否违反规约的模型 |
+| `OPENCODE_MODEL_PROVIDER` | `openrouter` | 调用 `opencode run --model <prefix>/<model>` 时使用的 OpenCode provider 前缀 |
 | `LLM_API_KEY` | （环境变量） | FM-Agent 直接调用 LLM 使用的 API 密钥 |
 | `LLM_API_BASE_URL` | `https://openrouter.ai/api/v1` | FM-Agent 直接调用 LLM 使用的 API 基础 URL |
+| `GRANULARITY` | `40` | 将函数拆分为代码块逐块推理时，每个代码块的最小行数 |
+| `MAX_WORKERS` | `10` | 推理与 Bug 验证的最大并发工作线程数 |
+| `MAX_SPC_ITER` | `5` | FM-Agent 直接调用 LLM 进行验证（后置条件与规约检查）时的最大重试/迭代次数 |
+| `OPENCODE_MAX_RETRIES` | `5` | OpenCode 流水线某一阶段失败时的最大重试次数 |
+| `OPENCODE_TIMEOUT_SECONDS` | `1800` | 单个 `opencode run` 子进程的硬超时时间（秒）；超时后子进程会被终止并重试该调用 |
 
 **重要说明：** 强烈建议使用 Claude Sonnet 4.6 等能力较强的模型，其他模型可能推理能力，无法有效发现 Bug。此外，请使用有权限访问 Claude 模型的 API 密钥，因为 FM-Agent 调用的 OpenCode 可能会使用 Claude 模型。
 
@@ -106,7 +127,7 @@ OpenCode provider 的配置以及可选的 prompt 缓存设置见 [docs/config_l
 ## 快速开始
 
 ```bash
-python3 main.py <proj_dir> [--resume]
+uv run python main.py <proj_dir> [--resume]
 ```
 
 | 参数 | 描述 |
@@ -116,9 +137,19 @@ python3 main.py <proj_dir> [--resume]
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
 
+### 实时监控面板
+
+FM-Agent 自带一个独立的实时 TUI 监控面板（[dashboard.py](dashboard.py)），用于在运行过程中可视化展示：各阶段进度、Token 用量与花费、prompt 缓存命中率，以及 Bug 验证结果。它读取 FM-Agent 写入 `fm_agent/` 目录下的 trace 文件，因此可在 `main.py` 运行期间于另一个终端中启动：
+
 ```bash
-python3 main.py <proj_dir> --resume
+uv run python dashboard.py <proj_dir>
 ```
+
+| 参数 | 描述 |
+|---|---|
+| `proj_dir` | 与 `main.py` 相同的代码库目录（监控 `<proj_dir>/fm_agent/`）。也可直接指向任意包含 `trace/` 子目录的工作区目录，例如已归档的运行 |
+
+按 `Ctrl-C` 退出监控面板，不会影响正在运行的流水线。
 
 ### 输出说明
 

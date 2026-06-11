@@ -35,11 +35,15 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 ## File Structure
 
 ```
-|-- main.py                # Entry point
-|-- config.py              # Configuration (model, granularity, concurrency)
-|-- install.sh             # Dependency installation script
-|-- src/                   # Core source modules (extraction, reasoning, LLM interaction, etc.)
-|-- md/                    # Workflow of FM-Agent to guide LLMs
+|-- main.py                       # Entry point — orchestrates the full pipeline
+|-- dashboard.py                  # Standalone real-time TUI dashboard for a run
+|-- config.py                     # Configuration (models, granularity, concurrency, timeouts)
+|-- install.sh                    # Dependency installation script
+|-- pyproject.toml / uv.lock      # Python project metadata and pinned dependencies (uv)
+|-- .env.example                  # Template for the .env runtime config
+|-- src/                          # Core source modules (extraction, reasoning, LLM interaction, etc.)
+|-- md/                           # Workflow instructions that guide the agent
+|-- docs/                         # Additional documentation (e.g. OpenCode/LLM provider setup)
 ```
 
 ## Environment Setup
@@ -60,8 +64,19 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 
 Set the LLM API key used by both FM-Agent and OpenCode. We recommend [OpenRouter](https://openrouter.ai/): FM-Agent invokes LLMs concurrently, and OpenRouter is generous on RPM (requests per minute) and TPM (tokens per minute) — but any compatible provider works.
 
+Create a `.env` file in the project root (FM-Agent loads it automatically via python-dotenv). Copy the template and fill in your key:
+
 ```bash
-export LLM_API_KEY="your-api-key-here"
+cp .env.example .env
+# then edit .env and set LLM_API_KEY
+```
+
+```bash
+# .env
+LLM_API_KEY=your-api-key-here
+LLM_API_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=anthropic/claude-sonnet-4.6
+OPENCODE_MODEL_PROVIDER=openrouter
 ```
 
 See [docs/config_llm.md](docs/config_llm.md) for OpenCode provider configuration and optional prompt-cache setup.
@@ -91,6 +106,11 @@ Key parameters can be adjusted in [config.py](config.py).
 | `OPENCODE_MODEL_PROVIDER`       | `openrouter`                   | OpenCode provider prefix used when invoking `opencode run --model <prefix>/<model>` |
 | `LLM_API_KEY`                   | (env)                          | LLM API key for FM-Agent's direct calls |
 | `LLM_API_BASE_URL`              | `https://openrouter.ai/api/v1` | LLM API base URL for FM-Agent's direct calls |
+| `GRANULARITY`                   | `40`                           | Minimum number of lines per code block when splitting a function for block-by-block reasoning |
+| `MAX_WORKERS`                   | `10`                           | Maximum number of concurrent worker threads for reasoning and bug validation |
+| `MAX_SPC_ITER`                  | `5`                            | Maximum number of retries/iterations for FM-Agent's direct LLM verification calls (post-condition and spec checks) |
+| `OPENCODE_MAX_RETRIES`          | `5`                            | Maximum retry attempts for a failed OpenCode pipeline stage |
+| `OPENCODE_TIMEOUT_SECONDS`      | `1800`                         | Hard timeout (in seconds) for a single `opencode run` subprocess; on expiry the child is killed and the call is retried |
 
 (Optional) FM-Agent uses oh-my-openagent plugin to enhance OpenCode. The comment-checker hook built into this plugin should be disabled, otherwise it may intercept every comment block that FM-Agent writes, which are specifications of functions. It may force the agent to waste tokens justifying or removing them.
 You can open your oh-my-openagent config file (typically ~/.config/opencode/oh-my-openagent.json) and add disabled_hooks:
@@ -127,7 +147,7 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-python3 main.py <proj_dir> [--resume]
+uv run python main.py <proj_dir> [--resume]
 ```
 
 | Argument   | Description                                              |
@@ -137,11 +157,19 @@ python3 main.py <proj_dir> [--resume]
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
 
+### Live Dashboard
+
+FM-Agent ships a standalone real-time TUI dashboard ([dashboard.py](dashboard.py)) that visualizes a run as it progresses: per-stage progress, token usage and cost, prompt-cache hit rate, and bug-validation verdicts. It reads the trace files FM-Agent writes under `fm_agent/`, so run it in a second terminal while `main.py` is going:
+
 ```bash
-python3 main.py <proj_dir> --resume
+uv run python dashboard.py <proj_dir>
 ```
 
+| Argument    | Description                                                  |
+| ----------- | ----------------------------------------------------------- |
+| `proj_dir`  | Same codebase directory passed to `main.py` (monitors `<proj_dir>/fm_agent/`). You can also point it directly at any workspace directory containing a `trace/` subdir, e.g. an archived run |
 
+Press `Ctrl-C` to exit the dashboard; it does not affect the running pipeline.
 
 ### Output
 

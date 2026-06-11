@@ -14,7 +14,7 @@ from .trace_writer import (
     utc_now_iso,
 )
 
-_openrouter_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE_URL)
+_llm_provider_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE_URL)
 
 _MAX_RATE_LIMIT_RETRIES = 20
 _MAX_LLM_RETRIES = 5

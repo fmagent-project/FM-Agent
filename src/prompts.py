@@ -1,6 +1,6 @@
 from config import *
 import json
-from .llm_client import _openrouter_client, _retry_create, _llm_call
+from .llm_client import _llm_provider_client, _retry_create, _llm_call
 from .trace_writer import (
     new_event_id,
     record_llm_exchange,
@@ -122,7 +122,7 @@ def _generate_block_post_condition(block, pre_condition, knowledge, language,
         **(trace_meta or {}),
     }
     return _llm_call(
-        _openrouter_client,
+        _llm_provider_client,
         REASONER_POST_CONDITION_MODEL,
         messages,
         "POST_START",
@@ -283,7 +283,7 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
         response = None
         usage = {}
         try:
-            response, usage = _retry_create(_openrouter_client, REASONER_SPEC_CHECK_MODEL, messages)
+            response, usage = _retry_create(_llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages)
         except Exception as exc:
             event = {
                 "event_id": event_id,
