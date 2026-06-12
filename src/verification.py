@@ -1,3 +1,4 @@
+import config
 from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL, OPENCODE_MODEL_PROVIDER
 from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
@@ -29,9 +30,6 @@ EXT_TO_LANG = {
     ".ets": "ArkTS",
     ".cuh": "CUDA",
 }
-
-
-BUG_VALIDATION_MAX_RETRIES = 1
 
 
 def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, work_dir=None, poll_interval=2, spec_procs=None, already_processed=None, resume=False):
@@ -352,7 +350,7 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
         except (json.JSONDecodeError, OSError):
             pass  # corrupted result — re-validate
     try:
-        max_attempts = BUG_VALIDATION_MAX_RETRIES + 1
+        max_attempts = config.BUG_VALIDATION_MAX_RETRIES
         for attempt in range(1, max_attempts + 1):
             run_failed = False
             try:

@@ -20,6 +20,7 @@ MAX_SPC_ITER = 5
 GRANULARITY = 40
 MAX_WORKERS = 10
 OPENCODE_MAX_RETRIES = 5
+BUG_VALIDATION_MAX_RETRIES = 1
 # Hard cap on ONE `opencode run` subprocess. A model connection that dies
 # silently (e.g. through a forward proxy) otherwise hangs the pipeline forever —
 # opencode has no model-call timeout of its own. On expiry the child is killed

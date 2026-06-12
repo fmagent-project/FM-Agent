@@ -5,6 +5,7 @@ from config import (
     OPENCODE_MODEL_PROVIDER,
     LLM_MODEL,
 )
+from src.entry_reasoning_pipeline import run_entry_pipeline
 from src.file_utils import collect_file_names, is_file_ready
 from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
@@ -580,7 +581,7 @@ def run_pipeline(proj_dir, resume=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        usage="python3 main.py <proj_dir> [--resume]",
+        usage="python3 main.py <proj_dir> [--resume] [--entry-func PATH] [--end-func PATH ...]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -591,10 +592,34 @@ if __name__ == "__main__":
         "keeps phases.json, generated specs, and existing verification results; "
         "only does the remaining work.",
     )
+    parser.add_argument(
+        "--entry-func",
+        metavar="PATH",
+        default=None,
+        help="function path of the entry point to start reasoning from.",
+    )
+    parser.add_argument(
+        "--end-func",
+        metavar="PATH",
+        nargs="+",
+        default=None,
+        help="one or more function paths at which to stop (space-separated list); "
+        "if omitted, the whole call graph reachable from --entry-func is analyzed.",
+    )
     parsed = parser.parse_args()
     resume = parsed.resume or os.environ.get("FM_AGENT_RESUME") == "1"
-    
+    entry_func = parsed.entry_func
+    end_funcs = parsed.end_func
+
     start_time = time.time()
-    run_pipeline(os.path.abspath(parsed.proj_dir), resume=resume)
+    if entry_func is not None:
+        run_entry_pipeline(
+            os.path.abspath(parsed.proj_dir),
+            entry_func=entry_func,
+            end_funcs=end_funcs,
+            resume=resume,
+        )
+    else:
+        run_pipeline(os.path.abspath(parsed.proj_dir), resume=resume)
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")
