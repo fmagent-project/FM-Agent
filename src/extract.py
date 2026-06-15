@@ -5,6 +5,13 @@ import sys
 import shutil
 import logging
 
+from .chisel_support import (
+    CHISEL_LANG_CONFIG,
+    CHISEL_EXT_TO_LANG,
+    CHISEL_TEST_FILE_PATTERNS,
+    extract_chisel_functions,
+)
+
 LANG_CONFIG = {
     "cpp": {
         "comment_prefix": "//",
@@ -138,6 +145,12 @@ LANG_CONFIG = {
     },
 }
 
+# Register Chisel/Scala extraction support (implemented in
+# chisel_support.py). Merging here lets the rest of extract.py — and
+# any module importing LANG_CONFIG/EXT_TO_LANG — treat Chisel like any other
+# supported language.
+LANG_CONFIG.update(CHISEL_LANG_CONFIG)
+
 # Map file extensions to language keys
 EXT_TO_LANG = {
     "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "c": "c", "h": "cpp", "hpp": "cpp",
@@ -150,6 +163,7 @@ EXT_TO_LANG = {
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
 }
+EXT_TO_LANG.update(CHISEL_EXT_TO_LANG)
 
 # Directories that typically contain test code
 _TEST_DIR_NAMES = {
@@ -169,7 +183,7 @@ _TEST_FILE_PATTERNS = [
     re.compile(r'^.*\.(?:test|spec)\.(?:js|jsx|ts|tsx)$'),  # JS/TS: foo.test.js
     re.compile(r'^.*_test\.rs$'),          # Rust: foo_test.rs
     re.compile(r'^.*\.test\.(?:ets)$'),    # ArkTS: foo.test.ets
-]
+] + CHISEL_TEST_FILE_PATTERNS              # Chisel: FooSpec.scala / FooTest.scala
 
 
 def _is_test_file(rel_path):
@@ -523,7 +537,9 @@ def extract_functions_from_file(filepath, lang_key):
     # Normalize line endings
     lines = [l.rstrip('\n').rstrip('\r') for l in lines]
 
-    if lang_cfg["body"] == "brace":
+    if lang_cfg["body"] == "chisel":
+        raw_funcs = extract_chisel_functions(lines, lang_key, lang_cfg)
+    elif lang_cfg["body"] == "brace":
         raw_funcs = _extract_functions_brace(lines, lang_key, lang_cfg)
     else:
         raw_funcs = _extract_functions_indent(lines, lang_cfg)

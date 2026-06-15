@@ -22,6 +22,7 @@ import time
 import shutil
 import subprocess
 import logging
+import argparse
 
 def _deduplicate_phases(phases_dir):
     """Ensure each source file appears in at most one phase; keep the earliest."""
@@ -120,7 +121,7 @@ def _has_source_code(proj_dir):
     return False
 
 
-def run_pipeline(proj_dir):
+def run_pipeline(proj_dir, only_spec=False):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
@@ -389,14 +390,20 @@ def run_pipeline(proj_dir):
                     f"spawned {len(spec_procs)} opencode processes for {len(pending_batches)} batches"
                 )
 
-                newly_processed = streaming_reasoner(input_dir, output_dir, file_list=layer_files,
-                                   proj_dir=proj_dir, work_dir=work_dir,
-                                   spec_procs=spec_procs,
-                                   already_processed=all_processed | layer_processed)
-                layer_processed.update(newly_processed)
+                if only_spec:
+                    # Only generate specs: skip reasoning and bug validation,
+                    # just wait for the spec generation processes to finish.
+                    for proc in spec_procs:
+                        proc.wait()
+                else:
+                    newly_processed = streaming_reasoner(input_dir, output_dir, file_list=layer_files,
+                                       proj_dir=proj_dir, work_dir=work_dir,
+                                       spec_procs=spec_procs,
+                                       already_processed=all_processed | layer_processed)
+                    layer_processed.update(newly_processed)
 
-                for proc in spec_procs:
-                    proc.wait()
+                    for proc in spec_procs:
+                        proc.wait()
                 for trace_record in spec_trace_records:
                     finish_opencode_trace(trace_record)
 
@@ -441,23 +448,31 @@ def run_pipeline(proj_dir):
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
 
-    # Print confirmed bug count
-    summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-    if os.path.exists(summary_path):
-        with open(summary_path, "r") as f:
-            summary = json.load(f)
-        confirmed = summary.get("total_confirmed", 0)
-        print(f"[Pipeline] Confirmed bugs: {confirmed}")
+    if only_spec:
+        print("[Pipeline] --only-spec: generated specs only; skipped reasoning and bug validation.")
+    else:
+        # Print confirmed bug count
+        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
+        if os.path.exists(summary_path):
+            with open(summary_path, "r") as f:
+                summary = json.load(f)
+            confirmed = summary.get("total_confirmed", 0)
+            print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
     print("[Pipeline] Done.")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 main.py <proj_dir>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Run the FM-Agent spec generation and verification pipeline.")
+    parser.add_argument("proj_dir", help="Path to the project directory to analyze.")
+    parser.add_argument(
+        "--only-spec",
+        action="store_true",
+        help="Only generate specs; skip calling the reasoner and validating bugs.",
+    )
+    args = parser.parse_args()
 
     start_time = time.time()
-    run_pipeline(os.path.abspath(sys.argv[1]))
+    run_pipeline(os.path.abspath(args.proj_dir), only_spec=args.only_spec)
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")

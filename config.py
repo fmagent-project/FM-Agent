@@ -20,3 +20,21 @@ MAX_SPC_ITER = 5
 GRANULARITY = 40
 MAX_WORKERS = 10
 OPENCODE_MAX_RETRIES = 5
+
+
+def _positive_int_env(name, default):
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return max(1, parsed)
+
+
+# Maximum number of concurrent `opencode` spec-generation processes. Launching a
+# whole topdown layer at once (dozens of batches) overwhelms the opencode server
+# and the LLM endpoint ("Session not found", 5xx, rate limits), so spec
+# generation keeps at most this many agents in flight at a time.
+OPENCODE_MAX_CONCURRENCY = _positive_int_env("OPENCODE_MAX_CONCURRENCY", 6)

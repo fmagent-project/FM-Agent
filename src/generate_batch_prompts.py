@@ -2,11 +2,15 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
 COMMENT_PREFIX_BY_LANG = {
+    "chisel": "//",
+    "scala": "//",
+    "sc": "//",
     "c": "//",
     "cpp": "//",
     "cxx": "//",
@@ -76,6 +80,60 @@ def extract_spec_block(filepath: Path) -> Optional[str]:
     if end == -1:
         return None
     return content[: end + len(tag)].strip()
+
+
+def standalone_spec_path(module_file: Path) -> Path:
+    """Sibling ``<stem>_spec.md`` for an extracted Chisel module file."""
+    return module_file.with_name(module_file.stem + "_spec.md")
+
+
+def extract_standalone_spec(module_file: Path) -> Optional[str]:
+    """Return the standalone ``<stem>_spec.md`` content for a module, or None.
+
+    Chisel specs are emitted as standalone Markdown documents next to the
+    extracted module file rather than embedded in the source.
+    """
+    spec_file = standalone_spec_path(module_file)
+    if not spec_file.exists():
+        return None
+    text = spec_file.read_text(errors="replace").strip()
+    return text or None
+
+
+def standalone_info_path(module_file: Path) -> Path:
+    """Sibling ``<stem>_info.md`` for an extracted Chisel module file."""
+    return module_file.with_name(module_file.stem + "_info.md")
+
+
+def extract_submodule_spec_from_chisel_info(module_file: Path, submodule_fqn: str) -> Optional[str]:
+    """Return the expected-spec entry for ``submodule_fqn`` from a Chisel
+    ``<stem>_info.md`` document, or None.
+
+    Chisel info files are the standalone counterpart of the embedded ``[INFO]``
+    callee-expectation block: one ``# Submodule: <Name>`` entry per submodule,
+    each in the same section structure as a ``_spec.md`` document. The entry
+    runs from its ``# Submodule:`` heading to the next one (or end of file).
+    """
+    info_file = standalone_info_path(module_file)
+    if not info_file.exists():
+        return None
+    content = info_file.read_text(errors="replace")
+    stem = submodule_fqn.split("::")[-1]
+    entry_lines: Optional[List[str]] = None
+    for line in content.splitlines():
+        m = re.match(r"^#\s*Submodule:\s*(\S+)\s*$", line)
+        if m:
+            if entry_lines is not None:
+                break
+            if m.group(1) == stem:
+                entry_lines = [line]
+            continue
+        if entry_lines is not None:
+            entry_lines.append(line)
+    if not entry_lines:
+        return None
+    entry = "\n".join(entry_lines).strip()
+    return entry or None
 
 
 def extract_info_block(filepath: Path) -> Optional[str]:
@@ -155,8 +213,21 @@ def phase_callers_key(func: dict, phase: int) -> str:
 def detect_lang_and_comment(file_rel: str, ext_to_lang: Dict[str, str]) -> Tuple[str, str]:
     ext = Path(file_rel).suffix.lstrip(".").lower()
     lang = ext_to_lang.get(ext, ext if ext else "unknown")
-    comment = COMMENT_PREFIX_BY_LANG.get(lang, "//")
+    comment = COMMENT_PREFIX_BY_LANG.get(lang, COMMENT_PREFIX_BY_LANG.get(ext, "//"))
     return lang, comment
+
+
+def build_ext_to_lang(exts: List[str], languages: List[str]) -> Dict[str, str]:
+    """Build an extension->language map from phases.json defensively.
+
+    Chisel setup usually records languages=["chisel"] and file_extensions=["scala"].
+    If additional Scala extensions are listed, they should still map to Chisel.
+    """
+    normalized_exts = [ext.lower().lstrip(".") for ext in exts]
+    normalized_langs = [lang.lower() for lang in languages]
+    if "chisel" in normalized_langs:
+        return {ext: "chisel" for ext in normalized_exts or ["scala"]}
+    return {ext: lang for ext, lang in zip(normalized_exts, normalized_langs)}
 
 
 def build_prompt(
@@ -176,22 +247,42 @@ def build_prompt(
     if functions:
         sample_lang, sample_comment = detect_lang_and_comment(functions[0]["file"], ext_to_lang)
 
-    lines.append(f"You are generating behavioral specifications for Phase {phase}, Layer {layer_idx}.")
+    is_chisel = sample_lang == "chisel"
+    if is_chisel:
+        lines.append(f"You are generating verification-oriented Chisel module specifications for Phase {phase}, Layer {layer_idx}.")
+    else:
+        lines.append(f"You are generating behavioral specifications for Phase {phase}, Layer {layer_idx}.")
     lines.append("")
-    lines.append(
-        f"Language: {sample_lang}. Spec comment style: `{sample_comment} [SPEC]`."
-    )
+    if is_chisel:
+        lines.append(
+            f"Language: {sample_lang}. Output form: two standalone Markdown files "
+            f"`<ModuleName>_spec.md` and `<ModuleName>_info.md` per module, written next to the extracted module file. "
+            f"Do NOT modify the original source."
+        )
+    else:
+        lines.append(
+            f"Language: {sample_lang}. Spec comment style: `{sample_comment} [SPEC]`."
+        )
     lines.append("")
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/engine_overview.txt")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/phase_{phase:02d}_types.txt")
     lines.append("")
     lines.append("## KEY RULES")
-    lines.append("- Describe WHAT the function guarantees, NOT HOW it implements it")
-    lines.append("- Do NOT name internal helper calls, loop structure, or data layout decisions")
-    lines.append("- Do NOT enumerate members of sets - describe the GOVERNING RULE")
-    lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
-    lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each one")
+    if is_chisel:
+        lines.append("- Describe WHAT the DUT guarantees, NOT HOW it is implemented")
+        lines.append("- Focus on public parameters, IO ports, ready-valid/Valid protocols, reset behavior, ordering, arbitration, and observable state/data invariants")
+        lines.append("- Do NOT name private wires, local registers, helper methods, or implementation assignment order unless they are part of the public verification boundary")
+        lines.append("- Specs describe INTENDED CORRECT hardware behavior per the domain files")
+        lines.append("- In `<ModuleName>_info.md`, write the EXPECTED spec of each submodule this module instantiates or directly depends on, one `# Submodule: <Name>` entry per submodule, same section structure as the spec")
+        lines.append("- Write all output files entirely in English - translate any non-English domain context or source comments; never copy non-English text into outputs")
+        lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each module file")
+    else:
+        lines.append("- Describe WHAT the function guarantees, NOT HOW it implements it")
+        lines.append("- Do NOT name internal helper calls, loop structure, or data layout decisions")
+        lines.append("- Do NOT enumerate members of sets - describe the GOVERNING RULE")
+        lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
+        lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each one")
 
     caller_specs: List[Tuple[str, str]] = []
     caller_expectations: Dict[str, List[Tuple[str, str]]] = {}
@@ -207,6 +298,16 @@ def build_prompt(
             if not caller_meta:
                 continue
             caller_file = work_dir / caller_meta["file"]
+            if is_chisel:
+                # Chisel specs and submodule expectations are standalone
+                # <stem>_spec.md / <stem>_info.md documents next to the source.
+                spec_block = extract_standalone_spec(caller_file)
+                if spec_block and (caller_name, spec_block) not in caller_specs:
+                    caller_specs.append((caller_name, spec_block))
+                entry = extract_submodule_spec_from_chisel_info(caller_file, fn_name)
+                if entry:
+                    caller_expectations.setdefault(fn_name, []).append((caller_name, entry))
+                continue
             spec_block = extract_spec_block(caller_file)
             if spec_block and (caller_name, spec_block) not in caller_specs:
                 caller_specs.append((caller_name, spec_block))
@@ -241,65 +342,121 @@ def build_prompt(
 
     if is_cycle:
         lines.append("## CYCLE LAYER GUIDANCE")
-        lines.append("These functions call each other (mutual recursion / circular dependencies).")
-        lines.append(
-            'Ask: "What is true after this function returns, regardless of which caller invoked it and which code path executed?" '
-            "That invariant is your post-condition."
-        )
+        if is_chisel:
+            lines.append("These modules reference each other through instantiation, inheritance, companion objects, or member access.")
+            lines.append(
+                'Ask: "What observable DUT contract must hold regardless of the internal module decomposition?" '
+                "That contract belongs in the module spec."
+            )
+        else:
+            lines.append("These functions call each other (mutual recursion / circular dependencies).")
+            lines.append(
+                'Ask: "What is true after this function returns, regardless of which caller invoked it and which code path executed?" '
+                "That invariant is your post-condition."
+            )
         lines.append("")
-        lines.append("DISPATCH FUNCTION TEST: If your spec has N bullets where N equals the number")
-        lines.append("of switch arms / dispatch cases, you are transcribing the implementation.")
-        lines.append("A dispatch function's contract is the invariant that holds ACROSS ALL cases.")
+        if is_chisel:
+            lines.append("MODULE CONTRACT TEST: If your spec enumerates private wires/register assignments or mirrors source branches, you are transcribing the implementation.")
+            lines.append("A Chisel module spec should state observable IO, timing, reset, ordering, and protocol guarantees.")
+        else:
+            lines.append("DISPATCH FUNCTION TEST: If your spec has N bullets where N equals the number")
+            lines.append("of switch arms / dispatch cases, you are transcribing the implementation.")
+            lines.append("A dispatch function's contract is the invariant that holds ACROSS ALL cases.")
         lines.append("")
 
-    lines.append(f"## FUNCTIONS ({len(functions)} total - process ALL)")
+    unit_label = "MODULES" if is_chisel else "FUNCTIONS"
+    lines.append(f"## {unit_label} ({len(functions)} total - process ALL)")
     for idx, fn in enumerate(functions, start=1):
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
         callers = fn.get(caller_key, [])
         earlier = [c for c in callers if func_to_layer.get(c, 10**9) < layer_idx]
+        module_file = Path(fn["file"])
+        spec_file = module_file.with_name(module_file.stem + "_spec.md")
+        info_file = module_file.with_name(module_file.stem + "_info.md")
         lines.append(f"### {idx}. {fm_agent_prefix}{fn['file']}")
+        if is_chisel:
+            lines.append(f"  Required spec output: {fm_agent_prefix}{spec_file.as_posix()}")
+            lines.append(f"  Required info output: {fm_agent_prefix}{info_file.as_posix()}")
         if earlier:
             lines.append("  Earlier-layer callers: " + ", ".join(earlier))
         else:
             lines.append("  Earlier-layer callers: (none)")
 
     lines.append("")
-    lines.append("## SPEC FORMAT (prepend to file, preserving source code below)")
-    lines.append("")
-    lines.append("The exact format every specced file must start with:")
-    lines.append("")
-    lines.append(f"{sample_comment} [SPEC]")
-    lines.append(f"{sample_comment} Unit: <file path relative to repo root>")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} <FunctionName>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} Pre-condition:")
-    lines.append(f"{sample_comment}   - ...")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} Post-condition:")
-    lines.append(f"{sample_comment}   - ...")
-    lines.append(f"{sample_comment} [SPEC]")
-    lines.append("")
-    lines.append(f"{sample_comment} [INFO]")
-    lines.append(f"{sample_comment} <callee_name>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}   Pre-condition: ...")
-    lines.append(f"{sample_comment}   Post-condition: ...")
-    lines.append(f"{sample_comment} [SPLIT]")
-    lines.append(f"{sample_comment} <another_callee>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}   Pre-condition: ...")
-    lines.append(f"{sample_comment}   Post-condition: ...")
-    lines.append(f"{sample_comment} [INFO]")
-    lines.append("")
-    lines.append("If the function has no callees: '<comment> (no callees)' between the [INFO] markers.")
+    if is_chisel:
+        lines.append("## OUTPUT FORMAT (two standalone Markdown files per module)")
+        lines.append("")
+        lines.append("For each module, write BOTH files in the SAME directory as the extracted module file. Do NOT modify the source.")
+        lines.append("See spec_prompts/system_prompt.md for the full section structures. Cite code as <ref_file>path:line</ref_file>.")
+        lines.append("")
+        lines.append("### <ModuleName>_spec.md")
+        lines.append("# <ModuleName> Specification Document")
+        lines.append("## Introduction")
+        lines.append("## Terms and Abbreviations")
+        lines.append("## RTL Source Files")
+        lines.append("## Top-Level Interface Overview")
+        lines.append("## Functional Description")
+        lines.append("   ### <Functional Group Name> -> Overview / Execution Flow / Boundaries and Exceptions / Performance and Constraints")
+        lines.append("   ### Subcomponent Description -> #### Component <Name> (references <Name>_spec.md)")
+        lines.append("   ### State Machines and Timing")
+        lines.append("   ### Configuration Registers and Storage")
+        lines.append("   ### Reset and Error Handling")
+        lines.append("   ### Power, Clock, and Power Management (if applicable)")
+        lines.append("   ### Parameterization and Configurable Features")
+        lines.append("## Verification Requirements and Coverage Suggestions")
+        lines.append("")
+        lines.append("### <ModuleName>_info.md")
+        lines.append("# <ModuleName> Submodule Expected Specifications")
+        lines.append("One entry per submodule the module instantiates or directly depends on, caller-driven,")
+        lines.append("each entry starting with '# Submodule: <SubmoduleName>' (exact declared Scala name)")
+        lines.append("followed by the SAME section structure as <ModuleName>_spec.md above.")
+        lines.append("If the module has no submodules, write '(no submodules)'.")
+    else:
+        lines.append("## SPEC FORMAT (prepend to file, preserving source code below)")
+        lines.append("")
+        lines.append("The exact format every specced file must start with:")
+        lines.append("")
+        lines.append(f"{sample_comment} [SPEC]")
+        lines.append(f"{sample_comment} Unit: <file path relative to repo root>")
+        lines.append(f"{sample_comment}")
+        lines.append(f"{sample_comment} <FunctionName>(<params>) -> <ReturnType>")
+        lines.append(f"{sample_comment}")
+        lines.append(f"{sample_comment} Pre-condition:")
+        lines.append(f"{sample_comment}   - ...")
+        lines.append(f"{sample_comment}")
+        lines.append(f"{sample_comment} Post-condition:")
+        lines.append(f"{sample_comment}   - ...")
+        lines.append(f"{sample_comment} [SPEC]")
+        lines.append("")
+        lines.append(f"{sample_comment} [INFO]")
+        lines.append(f"{sample_comment} <callee_name>(<params>) -> <ReturnType>")
+        lines.append(f"{sample_comment}   Pre-condition: ...")
+        lines.append(f"{sample_comment}   Post-condition: ...")
+        lines.append(f"{sample_comment} [SPLIT]")
+        lines.append(f"{sample_comment} <another_callee>(<params>) -> <ReturnType>")
+        lines.append(f"{sample_comment}   Pre-condition: ...")
+        lines.append(f"{sample_comment}   Post-condition: ...")
+        lines.append(f"{sample_comment} [INFO]")
+        lines.append("")
+        lines.append("If the function has no callees: '<comment> (no callees)' between the [INFO] markers.")
     lines.append("")
     lines.append("## PROCESS")
-    lines.append("For each function:")
-    lines.append("1. Read the extracted file")
-    lines.append("2. Read caller expectations above - what do callers NEED from this function?")
-    lines.append("3. Write a behavioral spec describing WHAT it guarantees (not HOW)")
-    lines.append("4. Write the COMPLETE file with [SPEC] and [INFO] blocks prepended, then UNCHANGED source")
-    lines.append("5. Use the Write tool to save the complete file")
+    if is_chisel:
+        lines.append("For each module:")
+        lines.append("1. Read the extracted module file")
+        lines.append("2. Read the earlier-layer caller specs and caller expectations above - what does the surrounding hardware NEED from this DUT?")
+        lines.append("3. Write the required spec output path listed for that module, using the extracted file stem for the filename")
+        lines.append("4. Write the required info output path listed for that module, with one expected-spec entry per submodule of that module (same section structure as the spec)")
+        lines.append("5. Save both files in the SAME directory as the extracted module file")
+        lines.append("6. Do NOT modify the original .scala source. Use the Write tool to save the .md files")
+    else:
+        lines.append("For each function:")
+        lines.append("1. Read the extracted file")
+        lines.append("2. Read caller expectations above - what do callers NEED from this function?")
+        lines.append("3. Write a behavioral spec describing WHAT it guarantees (not HOW)")
+        lines.append("4. Write the COMPLETE file with [SPEC] and [INFO] blocks prepended, then UNCHANGED source")
+        lines.append("5. Use the Write tool to save the complete file")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -318,7 +475,7 @@ def main() -> int:
     project = phases_json["project"]
     languages = phases_json.get("languages", [])
     exts = phases_json.get("file_extensions", [])
-    ext_to_lang = {ext.lower().lstrip("."): lang for ext, lang in zip(exts, languages)}
+    ext_to_lang = build_ext_to_lang(exts, languages)
 
     topdown_path = work_dir / "spec_prompts" / f"phase_{args.phase:02d}_topdown_layers.json"
     topdown = read_json(topdown_path)

@@ -5,7 +5,15 @@ import logging
 from pathlib import Path
 from collections import defaultdict
 
-from src.extract import EXT_TO_LANG, LANG_CONFIG
+try:
+    from src.extract import EXT_TO_LANG, LANG_CONFIG
+    from src.chisel_support import find_chisel_call_sites, strip_chisel_comments
+except ModuleNotFoundError:
+    # Allow standalone execution as `python3 src/generate_topdown_layers.py`.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.extract import EXT_TO_LANG, LANG_CONFIG
+    from src.chisel_support import find_chisel_call_sites, strip_chisel_comments
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +244,10 @@ def _get_keywords_for_lang(lang_key):
 
 def _find_call_sites(text, lang_key, known_stems, keywords):
     """Find call sites in source text, returning set of matched stem names."""
+    # Chisel/Scala needs nested-comment-aware stripping and reference forms
+    # (new/extends/with/member access) the generic scanner does not handle.
+    if LANG_CONFIG.get(lang_key, {}).get("body") == "chisel":
+        return find_chisel_call_sites(text, known_stems, keywords)
     cleaned = _strip_comments_from_source(text, lang_key)
     regex = _get_call_regex(lang_key)
     found = set()
@@ -248,7 +260,93 @@ def _find_call_sites(text, lang_key, known_stems, keywords):
     return found
 
 
-def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
+_CHISEL_DECL_RE = re.compile(
+    r"^\s*(?:(?:(?:private|protected)(?:\[[\w.]+\])?|final|sealed|abstract|implicit|lazy|override|case)\s+)*"
+    r"(?P<kind>class|object|trait|def)\s+(?P<name>[A-Za-z_$][\w$]*)",
+    re.MULTILINE,
+)
+
+_CHISEL_REF_RE = re.compile(
+    r"\b(?P<ctor>new)\s+(?P<ctor_name>[A-Za-z_$][\w$]*)"
+    r"|\b(?P<inherit>extends|with)\s+(?P<inherit_name>[A-Za-z_$][\w$]*)"
+    r"|\b(?P<ref>[A-Za-z_$][\w$]*)\s*(?P<op>[(.])"
+)
+
+
+def _read_file_text(filepath):
+    try:
+        with open(filepath, "r", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _chisel_decl_info(text):
+    """Return (kind, source_name) for an extracted Chisel declaration."""
+    cleaned = strip_chisel_comments(text)
+    m = _CHISEL_DECL_RE.search(cleaned)
+    if not m:
+        return None, None
+    return m.group("kind"), m.group("name")
+
+
+def _build_chisel_aliases(file_map):
+    """Build source declaration aliases for deduped Chisel extraction files.
+
+    extract.py deduplicates same-name declarations on disk (for example
+    class Foo -> Foo.scala, object Foo -> Foo_1.scala). Source references still
+    use `Foo`, so layer generation needs the original declaration name and kind
+    to resolve `new Foo` to the class while resolving `Foo(...)`/`Foo.bar` to the
+    companion object when one exists.
+    """
+    aliases = defaultdict(lambda: defaultdict(set))
+
+    for fqn, filepath in file_map.items():
+        lang_key = _detect_lang_from_ext(filepath)
+        if LANG_CONFIG.get(lang_key, {}).get("body") != "chisel":
+            continue
+        text = _read_file_text(filepath)
+        if text is None:
+            continue
+        kind, source_name = _chisel_decl_info(text)
+        if not kind or not source_name:
+            continue
+        aliases[source_name][kind].add(fqn)
+
+    return aliases
+
+
+def _resolve_chisel_refs(text, chisel_aliases, known_stems, keywords):
+    cleaned = strip_chisel_comments(text)
+    resolved = set()
+
+    def add_by_kind(name, preferred_kinds):
+        if not name or name in keywords:
+            return
+        by_kind = chisel_aliases.get(name)
+        if by_kind:
+            for kind in preferred_kinds:
+                targets = by_kind.get(kind, set())
+                if targets:
+                    resolved.update(targets)
+                    return
+        if name in known_stems:
+            resolved.add(name)
+
+    for m in _CHISEL_REF_RE.finditer(cleaned):
+        if m.group("ctor"):
+            add_by_kind(m.group("ctor_name"), ("class",))
+        elif m.group("inherit"):
+            add_by_kind(m.group("inherit_name"), ("class", "trait"))
+        else:
+            # `Foo(...)` and `Foo.bar` most often target a companion object.
+            # Fall back to class/trait/def when there is no companion object.
+            add_by_kind(m.group("ref"), ("object", "def", "class", "trait"))
+
+    return resolved
+
+
+def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, global_file_map=None):
     """Build callees_map and callers_map for a set of phase files.
 
     Args:
@@ -256,6 +354,8 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
         proj_dir: project root directory
         global_stem_to_fqns: optional global stem->set(fqn) mapping across all phases,
                              used to compute all_callees (cross-phase)
+        global_file_map: optional global fqn->filepath mapping across all phases,
+                         used for Chisel source-name/kind aliases
 
     Returns:
         (callees_map, callers_map, all_callees_map, file_map, module_map) where keys are FQNs.
@@ -280,6 +380,8 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
     # For call-site detection, use global stems if available
     effective_stem_to_fqns = global_stem_to_fqns if global_stem_to_fqns else stem_to_fqns
     known_stems = set(effective_stem_to_fqns.keys())
+    effective_file_map = global_file_map if global_file_map else file_map
+    chisel_aliases = _build_chisel_aliases(effective_file_map)
 
     callees_map = defaultdict(set)  # fqn -> set of callee fqns (within phase)
     callers_map = defaultdict(set)  # fqn -> set of caller fqns (within phase)
@@ -298,11 +400,18 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
         except OSError:
             continue
 
-        called_stems = _find_call_sites(text, lang_key, known_stems, keywords)
+        if LANG_CONFIG.get(lang_key, {}).get("body") == "chisel":
+            called_refs = _resolve_chisel_refs(text, chisel_aliases, known_stems, keywords)
+        else:
+            called_refs = _find_call_sites(text, lang_key, known_stems, keywords)
 
-        # Resolve stems to FQNs, excluding self
-        for stem in called_stems:
-            for callee_fqn in effective_stem_to_fqns[stem]:
+        # Resolve stems or already-resolved FQNs to FQNs, excluding self.
+        for ref in called_refs:
+            if ref in effective_stem_to_fqns:
+                callee_fqns = effective_stem_to_fqns[ref]
+            else:
+                callee_fqns = {ref}
+            for callee_fqn in callee_fqns:
                 if callee_fqn != fqn:
                     all_callees_map[fqn].add(callee_fqn)
                     if callee_fqn in phase_fqns:
@@ -501,13 +610,15 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
     output_dir = os.path.join(proj_dir, "spec_prompts")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Build global stem->FQN mapping across ALL phases for all_callees
+    # Build global mappings across ALL phases for all_callees and Chisel aliases.
     global_stem_to_fqns = defaultdict(set)
+    global_file_map = {}
     for pi in phases_data["phases"]:
         for filepath, _ in _collect_phase_files(proj_dir, pi):
             fqn = _file_to_fqn(filepath, proj_dir)
             stem = fqn.split("::")[-1]
             global_stem_to_fqns[stem].add(fqn)
+            global_file_map[fqn] = filepath
 
     output_files = []
 
@@ -526,7 +637,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
 
         # 1.4 Build call graph (also returns file_map and module_map)
         callees_map, callers_map, all_callees_map, file_map, module_map = _build_call_graph(
-            phase_files, proj_dir, global_stem_to_fqns
+            phase_files, proj_dir, global_stem_to_fqns, global_file_map
         )
         phase_fqns = set(file_map.keys())
 
@@ -588,17 +699,3 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
         print(f"[TopdownLayers] Phase {phase_num} ({phase_name}): {total_functions} functions, {total_layers} layers -> {os.path.relpath(out_path, proj_dir)}")
 
     return output_files
-
-
-if __name__ == "__main__":
-    import sys
-    # Usage: python3 generate_topdown_layers.py [phase_numbers...]
-    # When run standalone, proj_dir is the parent of the script's directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    proj_dir = os.path.dirname(script_dir)
-
-    phase_nums = None
-    if len(sys.argv) > 1:
-        phase_nums = [int(x) for x in sys.argv[1:]]
-
-    generate_topdown_layers(proj_dir, phase_nums)
