@@ -60,19 +60,155 @@ from main import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Spec quality-checklist validation (see md/ref.md)
+# ---------------------------------------------------------------------------
+#
+# Generated ``<ModuleName>_spec.md`` documents tag their functional groups,
+# function points and check points with ``<FG-...>`` / ``<FC-...>`` / ``<CK-...>``
+# coverage tags. :func:`validate_chisel_spec` enforces the machine-checkable
+# rules of the quality checklist in ``md/ref.md`` so that a structurally broken
+# spec is detected and regenerated instead of being accepted.
+
+# A coverage tag: <FG-NAME>, <FC-NAME> or <CK-NAME>. The body group keeps the raw
+# text after the prefix (e.g. "-ARITHMETIC") so malformed names — lowercase,
+# braces, spaces, empty — can be reported rather than silently ignored.
+_CHISEL_TAG_RE = re.compile(r"<(FG|FC|CK)\b([^>]*)>")
+# A well-formed name is dash-joined uppercase/digit segments, e.g. -CACHE-READ.
+_CHISEL_TAG_NAME_RE = re.compile(r"^-[A-Z0-9]+(?:-[A-Z0-9]+)*$")
+
+
+def validate_chisel_spec(spec_path):
+    """Check a generated ``<ModuleName>_spec.md`` against the quality checklist.
+
+    Verifies the machine-checkable completeness and consistency items from
+    ``md/ref.md``:
+
+      * every ``<FG-*>`` functional group contains at least one ``<FC-*>``
+        function point;
+      * every ``<FC-*>`` function point contains at least one ``<CK-*>`` check
+        point;
+      * every tag matches the strict ``<PREFIX-NAME>`` format (dash-joined
+        uppercase letters and digits), with no malformed tags;
+      * names are unique among siblings — ``<FG-*>`` globally, ``<FC-*>`` within
+        its group, ``<CK-*>`` within its function point;
+      * ``<FG-*>`` and ``<FC-*>`` tags sit on their own line, not appended to a
+        heading;
+      * the mandatory ``<FG-API>`` group is present.
+
+    The subjective checklist items (prose clarity, scenario coverage, whether
+    test data can be designed) are not machine-checkable and are left to review.
+
+    Returns ``(is_valid, errors)`` where ``errors`` is a list of human-readable
+    strings (empty when valid).
+    """
+    try:
+        with open(spec_path, "r", errors="replace") as f:
+            text = f.read()
+    except OSError as exc:
+        return False, [f"cannot read spec file {spec_path}: {exc}"]
+
+    errors = []
+    groups = []           # [{name, line, fcs: [{name, line, cks: [name, ...]}]}]
+    fg_names = set()
+    current_fg = None
+    current_fc = None
+
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.strip()
+        for m in _CHISEL_TAG_RE.finditer(raw):
+            kind, body, full = m.group(1), m.group(2), m.group(0)
+            if not _CHISEL_TAG_NAME_RE.match(body):
+                errors.append(
+                    f"line {lineno}: malformed {kind} tag {full!r}; expected "
+                    f"<{kind}-NAME> with dash-joined uppercase letters and digits"
+                )
+                continue
+            name = body[1:]  # drop the leading '-'
+            alone = stripped == full
+            if kind == "FG":
+                if not alone:
+                    errors.append(f"line {lineno}: <FG-{name}> must be on its own line, "
+                                  f"not embedded in {stripped!r}")
+                if name in fg_names:
+                    errors.append(f"line {lineno}: duplicate functional-group tag <FG-{name}>")
+                fg_names.add(name)
+                current_fg = {"name": name, "line": lineno, "fcs": []}
+                groups.append(current_fg)
+                current_fc = None
+            elif kind == "FC":
+                if not alone:
+                    errors.append(f"line {lineno}: <FC-{name}> must be on its own line, "
+                                  f"not embedded in {stripped!r}")
+                if current_fg is None:
+                    errors.append(f"line {lineno}: function-point tag <FC-{name}> "
+                                  f"appears before any <FG-*> group")
+                    continue
+                if any(fc["name"] == name for fc in current_fg["fcs"]):
+                    errors.append(f"line {lineno}: duplicate function-point tag <FC-{name}> "
+                                  f"in group <FG-{current_fg['name']}>")
+                current_fc = {"name": name, "line": lineno, "cks": []}
+                current_fg["fcs"].append(current_fc)
+            else:  # CK
+                if current_fc is None:
+                    errors.append(f"line {lineno}: check-point tag <CK-{name}> "
+                                  f"appears before any <FC-*> function point")
+                    continue
+                if name in current_fc["cks"]:
+                    errors.append(f"line {lineno}: duplicate check-point tag <CK-{name}> "
+                                  f"in function point <FC-{current_fc['name']}>")
+                current_fc["cks"].append(name)
+
+    if not groups:
+        errors.append("no <FG-*> functional groups found")
+    if "API" not in fg_names:
+        errors.append("missing mandatory <FG-API> functional group")
+    for g in groups:
+        if not g["fcs"]:
+            errors.append(f"functional group <FG-{g['name']}> (line {g['line']}) "
+                          f"has no <FC-*> function point")
+        for fc in g["fcs"]:
+            if not fc["cks"]:
+                errors.append(f"function point <FC-{fc['name']}> (line {fc['line']}) "
+                              f"has no <CK-*> check point")
+
+    return (not errors), errors
+
+
 def _get_pending_batches_chisel(batches, proj_dir):
-    """Return batches that still have at least one module without spec/info outputs.
+    """Return batches that still have at least one module without a complete,
+    valid spec/info output.
 
     Chisel specs are emitted as standalone ``<ModuleName>_spec.md`` documents and
     submodule-expectation ``<ModuleName>_info.md`` documents next to the extracted
-    module file, so readiness is checked via
-    :func:`chisel_spec_ready` rather than the embedded ``[SPEC]`` marker used by
-    the generic pipeline's ``_get_pending_batches``.
+    module file, so readiness is checked via :func:`chisel_spec_ready` rather than
+    the embedded ``[SPEC]`` marker used by the generic pipeline's
+    ``_get_pending_batches``.
+
+    Beyond presence, each ready ``_spec.md`` is validated against the quality
+    checklist with :func:`validate_chisel_spec`. A spec that fails validation is
+    deleted and its batch is marked pending, so the spec-generation retry loop
+    regenerates it (the module's directory no longer has both required outputs).
     """
     pending = []
     for batch in batches:
         for func_rel in batch.get("functions", []):
-            if not chisel_spec_ready(os.path.join(proj_dir, func_rel)):
+            module_path = os.path.join(proj_dir, func_rel)
+            if not chisel_spec_ready(module_path):
+                pending.append(batch)
+                break
+            spec_path = chisel_spec_path(module_path)
+            is_valid, spec_errors = validate_chisel_spec(spec_path)
+            if not is_valid:
+                logging.warning(
+                    "Chisel spec %s failed quality-checklist validation; removing it "
+                    "so it is regenerated. First issues: %s",
+                    spec_path, "; ".join(spec_errors[:5]),
+                )
+                try:
+                    os.remove(spec_path)
+                except OSError as exc:
+                    logging.warning("Could not remove invalid spec %s: %s", spec_path, exc)
                 pending.append(batch)
                 break
     return pending

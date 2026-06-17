@@ -80,22 +80,49 @@ File list:
 
 ## Functional Description
 
-Decompose the overall functionality into several functional groups. Use a `###` heading for each group, including an overview, execution flow, boundaries and exceptions, and performance and constraints. Use `####` subsections to describe fine-grained behavior.
+Decompose the overall functionality into several functional groups. Use a `###` heading for each functional group, including an overview, execution flow, boundaries and exceptions, and performance and constraints. Every functional group MUST contain at least one function point, written as a `####` subsection. A function point names a single, verifiable behavior of the group; it is the unit that downstream coverage testing targets. Never leave a functional group without at least one function point.
+
+### Coverage Tags
+
+Every functional group, function point, and check point MUST carry an explicit coverage tag so the downstream checker tool can parse them. The tag format is strict:
+
+- Functional group: `<FG-{group-name}>` placed on its own line immediately after the `###` group heading.
+- Function point: `<FC-{function-name}>` placed on its own line immediately after the `####` function-point heading.
+- Check point: `<CK-{check-point-name}>` placed at the start of each check-point bullet.
+
+Tag placement rules:
+- A `<FG-...>`/`<FC-...>` tag is on its own line, separated from the heading and the following prose by blank lines. Do NOT append a tag to the heading line itself.
+- `{group-name}`, `{function-name}`, and `{check-point-name}` are short uppercase identifiers (words joined by `-`), e.g. `FG-ARITHMETIC`, `FC-ADD`, `CK-OVERFLOW`.
+- The tags form a tree: sibling nodes under the same parent MUST NOT share the same name (two function points in one group cannot both be `<FC-ADD>`; check-point names need only be unique within their function point).
+- A check point is referenced by joining the tags with `/`, e.g. `FG-ARITHMETIC/FC-ADD/CK-OVERFLOW`.
+
+The spec MUST include a `<FG-API>` functional group: the test-API group covering the standard APIs needed to verify the DUT (drivers, reference-model hooks, monitors). Include it in addition to the behavioral functional groups.
 
 ### <Functional Group Name>
+
+<FG-{GROUP-NAME}>
+
 - **Overview**: The channels, transactions, capacity, and bit width this functional group covers.
 - **Execution Flow**: Trigger condition -> state/data effect -> output obligation; describe rules rather than restating the source line by line.
 - **Boundaries and Exceptions**: Handling rules for conflicts, backpressure, flush, replay, timeout, and erroneous inputs.
 - **Performance and Constraints**: Concurrency and timing constraints.
 
-#### <Fine-Grained Behavior>
+#### <Function Point Name>
 
-More details about the  behavioral contract of the functional group.
+<FC-{FUNCTION-NAME}>
+
+A function point describes one fine-grained, verifiable behavior of the functional group (also called a test point). State its behavioral contract precisely: trigger condition, the data/state effect, and the observable output obligation. Add one `####` function point per distinct behavior, and ensure each functional group has at least one.
+
+Every function point MUST list at least one check point (also called a test bin) under a `**Check points:**` line, with one bullet per check point. A check point is a concrete, falsifiable scenario that verifies part of the function point — e.g. a normal case, a boundary, an overflow, an error condition, or a reset case. Keep check points independent from one another, with no cross-coverage of the same condition. Never leave a function point without at least one check point.
+
+**Check points:**
+- <CK-{CHECK-POINT-NAME-1}> Check point 1: the specific condition exercised and the expected observable result.
+- <CK-{CHECK-POINT-NAME-2}> Check point 2: another distinct, falsifiable scenario.
 
 ### Subcomponent Description
 
 #### Component <SubmoduleName>
-<Observable behavior this DUT relies on the subcomponent to provide.> Only when `<SubmoduleName>` is itself being specced in this run (its own extracted `.scala` file is present and a `<SubmoduleName>_spec.md` will be written) add: For details, refer to the document `<SubmoduleName>_spec.md`. Otherwise describe the relied-upon behavior inline here and do NOT link to a `_spec.md` that will not exist.
+<Observable behavior this DUT relies on the subcomponent to provide.> Only when `<SubmoduleName>` is itself being specced in this run (its own extracted `.scala` file is present and a `<SubmoduleName>_spec.md` will be written) add: For details, refer to the document `<SubmoduleName>_spec.md`. Otherwise describe the relied-upon behavior inline here and do NOT link to a `_spec.md` that will not exist. Never write meta-commentary about the spec-generation process itself (e.g. "this submodule is not specced in this run", "no `_spec.md` is generated"); the document describes the hardware contract only.
 
 ### State Machines and Timing
 - **State Machine List**: List architecturally visible states and their observable meaning.
@@ -178,6 +205,9 @@ Start each entry with a `# Submodule: <SubmoduleName>` heading, where `<Submodul
 | :--- | :--- |
 | Write both `<ModuleName>_spec.md` and `<ModuleName>_info.md` | Modify the `.scala` source |
 | Keep the spec in the required section form | Document an implementation bug as intended behavior |
+| Give every functional group at least one `####` function point | Leave a functional group with no function point |
+| Give every function point at least one check point under `**Check points:**` | Leave a function point with no check point |
+| Tag every group/point/check point with `<FG-...>`/`<FC-...>`/`<CK-...>` and include the `<FG-API>` group | Omit a coverage tag, append a tag to a heading line, or reuse a sibling name |
 | Describe public IO, protocol, timing, reset, and data relationships | Restate source assignments line by line |
 | Cite relevant source locations with `path/to/File.scala:line-line` tags | Invent ports or rename signals |
 | In the info file, write one expected spec per submodule in the same section form | Describe `<ModuleName>` itself in the info file |
