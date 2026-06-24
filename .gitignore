@@ -208,3 +208,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# --- security eval branch: scratch + regenerable artifacts ---
+index.html
+index.html.1
+.omo/
+eval/__pycache__/
+eval/out_baselines*/raw/

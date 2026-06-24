@@ -1,0 +1,62 @@
+async def download_bytes_from_url(
+    url: str,
+    allowed_media_domains: list[str] | None = None,
+) -> bytes:
+    """
+    Download data from a URL or decode from a data URL.
+
+    Args:
+        url: Either an HTTP/HTTPS URL or a data URL (data:...;base64,...)
+        allowed_media_domains: If set, only HTTP/HTTPS URLs whose hostname
+            is in this list are permitted. data: URLs are not subject to
+            this restriction.
+
+    Returns:
+        Data as bytes
+    """
+    parsed = urlparse(url)
+
+    # Handle data URLs (base64 encoded) - not subject to domain restrictions
+    if parsed.scheme == "data":
+        # Format: data:...;base64,<base64_data>
+        if "," in url:
+            header, data = url.split(",", 1)
+            if "base64" in header:
+                return base64.b64decode(data)
+            else:
+                raise ValueError(f"Unsupported data URL encoding: {header}")
+        else:
+            raise ValueError(f"Invalid data URL format: {url}")
+
+    # Handle HTTP/HTTPS URLs
+    elif parsed.scheme in ("http", "https"):
+        if allowed_media_domains is not None:
+            url_spec = parse_url(url)
+            if url_spec.hostname not in allowed_media_domains:
+                raise ValueError(
+                    f"The URL must be from one of the allowed domains: "
+                    f"{allowed_media_domains}. Input URL domain: "
+                    f"{url_spec.hostname}"
+                )
+            # Use the normalized URL to prevent parsing discrepancies
+            # between urllib3 and aiohttp (e.g. backslash-@ attacks).
+            url = url_spec.url
+
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
+                url,
+                allow_redirects=envs.VLLM_MEDIA_URL_ALLOW_REDIRECTS,
+            ) as resp,
+        ):
+            if resp.status != 200:
+                raise Exception(
+                    f"Failed to download data from URL: {url}. Status: {resp.status}"
+                )
+            return await resp.read()
+
+    else:
+        raise ValueError(
+            f"Unsupported URL scheme: {parsed.scheme}. "
+            "Supported schemes: http, https, data"
+        )

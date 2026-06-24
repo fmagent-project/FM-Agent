@@ -1,0 +1,485 @@
+{
+  "benchmark": "cve-curated",
+  "plugin": "crypto",
+  "source": "OSV.dev CVE fix-commit curation (eval/cve_curation/BENCHMARK_CVE.md)",
+  "label_noise_caveat": "~60% label precision; precision requires per-case human audit",
+  "total_selected": 34,
+  "cases": [
+    {
+      "id": "cve:CVE-2025-55449__server__auth_middleware__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-55449__server__auth_middleware__before.py",
+      "cwe": "CWE-321",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-4m32-cjv7-f425|CVE-2025-55449|AstrBotDevs/AstrBot@d03e9fb90a",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "astrbot/dashboard/server.py",
+        "func": "auth_middleware",
+        "fix_commit": "d03e9fb90a0921a1bd10cf480bdacc9aaa246472"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-55449__auth__generate_jwt__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-55449__auth__generate_jwt__before.py",
+      "cwe": "CWE-321",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-4m32-cjv7-f425|CVE-2025-55449|AstrBotDevs/AstrBot@d03e9fb90a",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "astrbot/dashboard/routes/auth.py",
+        "func": "generate_jwt",
+        "fix_commit": "d03e9fb90a0921a1bd10cf480bdacc9aaa246472"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-66454__worker__create_arcade_mcp__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-66454__worker__create_arcade_mcp__after.py",
+      "cwe": "CWE-321",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-g2jx-37x6-6438|CVE-2025-66454|ArcadeAI/arcade-mcp@44660d18ce|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "libs/arcade-mcp-server/arcade_mcp_server/worker.py",
+        "func": "create_arcade_mcp",
+        "fix_commit": "44660d18ceb220600401303df860a31ca766c817"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-55449__auth__generate_jwt__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-55449__auth__generate_jwt__after.py",
+      "cwe": "CWE-321",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-4m32-cjv7-f425|CVE-2025-55449|AstrBotDevs/AstrBot@d03e9fb90a|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "astrbot/dashboard/routes/auth.py",
+        "func": "generate_jwt",
+        "fix_commit": "d03e9fb90a0921a1bd10cf480bdacc9aaa246472"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-66454__deploy__start_server_process__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-66454__deploy__start_server_process__after.py",
+      "cwe": "CWE-321",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-g2jx-37x6-6438|CVE-2025-66454|ArcadeAI/arcade-mcp@44660d18ce|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "libs/arcade-cli/arcade_cli/deploy.py",
+        "func": "start_server_process",
+        "fix_commit": "44660d18ceb220600401303df860a31ca766c817"
+      }
+    },
+    {
+      "id": "cve:CVE-2013-2166__auth_token___cache_get__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-2166__auth_token___cache_get__before.py",
+      "cwe": "CWE-326",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-c3xq-cj8f-7829|CVE-2013-2166|openstack/python-keystoneclient@eeefb784f2",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "keystoneclient/middleware/auth_token.py",
+        "func": "_cache_get",
+        "fix_commit": "eeefb784f24c37d5f56a421e1ccc911cace9385e"
+      }
+    },
+    {
+      "id": "cve:CVE-2013-2166__auth_token___cache_put__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-2166__auth_token___cache_put__before.py",
+      "cwe": "CWE-326",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-c3xq-cj8f-7829|CVE-2013-2166|openstack/python-keystoneclient@eeefb784f2",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "keystoneclient/middleware/auth_token.py",
+        "func": "_cache_put",
+        "fix_commit": "eeefb784f24c37d5f56a421e1ccc911cace9385e"
+      }
+    },
+    {
+      "id": "cve:CVE-2012-4571__backend__set_password_6__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2012-4571__backend__set_password_6__after.py",
+      "cwe": "CWE-326",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-p3h7-3c45-qj4v|CVE-2012-4571|jaraco/keyring@cbf509b038|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "keyring/backend.py",
+        "func": "set_password_6",
+        "fix_commit": "cbf509b0386c3063d8b2879ce72d78ac18023f72"
+      }
+    },
+    {
+      "id": "cve:CVE-2013-2166__memcache_crypt__encrypt_data__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-2166__memcache_crypt__encrypt_data__after.py",
+      "cwe": "CWE-326",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-c3xq-cj8f-7829|CVE-2013-2166|openstack/python-keystoneclient@eeefb784f2|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "keystoneclient/middleware/memcache_crypt.py",
+        "func": "encrypt_data",
+        "fix_commit": "eeefb784f24c37d5f56a421e1ccc911cace9385e"
+      }
+    },
+    {
+      "id": "cve:CVE-2013-2166__auth_token___cache_store__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-2166__auth_token___cache_store__after.py",
+      "cwe": "CWE-326",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-c3xq-cj8f-7829|CVE-2013-2166|openstack/python-keystoneclient@eeefb784f2|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "keystoneclient/middleware/auth_token.py",
+        "func": "_cache_store",
+        "fix_commit": "eeefb784f24c37d5f56a421e1ccc911cace9385e"
+      }
+    },
+    {
+      "id": "cve:CVE-2022-29217__algorithms__prepare_key_5__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2022-29217__algorithms__prepare_key_5__before.py",
+      "cwe": "CWE-327",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-ffqj-6fqr-9h24|CVE-2022-29217|jpadilla/pyjwt@9c528670c4",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "jwt/algorithms.py",
+        "func": "prepare_key_5",
+        "fix_commit": "9c528670c455b8d948aff95ed50e22940d1ad3fc"
+      }
+    },
+    {
+      "id": "cve:CVE-2020-25658__pkcs1__decrypt__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2020-25658__pkcs1__decrypt__before.py",
+      "cwe": "CWE-327",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-xrx6-fmxq-rjj2|CVE-2020-25658|sybrenstuvel/python-rsa@dae8ce0d85",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "rsa/pkcs1.py",
+        "func": "decrypt",
+        "fix_commit": "dae8ce0d85478e16f2368b2341632775313d41ed"
+      }
+    },
+    {
+      "id": "cve:CVE-2022-29217__algorithms__prepare_key_5__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2022-29217__algorithms__prepare_key_5__after.py",
+      "cwe": "CWE-327",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-ffqj-6fqr-9h24|CVE-2022-29217|jpadilla/pyjwt@9c528670c4|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "jwt/algorithms.py",
+        "func": "prepare_key_5",
+        "fix_commit": "9c528670c455b8d948aff95ed50e22940d1ad3fc"
+      }
+    },
+    {
+      "id": "cve:CVE-2020-25658__pkcs1__decrypt__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2020-25658__pkcs1__decrypt__after.py",
+      "cwe": "CWE-327",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-xrx6-fmxq-rjj2|CVE-2020-25658|sybrenstuvel/python-rsa@dae8ce0d85|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "rsa/pkcs1.py",
+        "func": "decrypt",
+        "fix_commit": "dae8ce0d85478e16f2368b2341632775313d41ed"
+      }
+    },
+    {
+      "id": "cve:CVE-2022-29217__algorithms__prepare_key_2__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2022-29217__algorithms__prepare_key_2__after.py",
+      "cwe": "CWE-327",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-ffqj-6fqr-9h24|CVE-2022-29217|jpadilla/pyjwt@9c528670c4|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "jwt/algorithms.py",
+        "func": "prepare_key_2",
+        "fix_commit": "9c528670c455b8d948aff95ed50e22940d1ad3fc"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-0508__utilities__hash_file__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-0508__utilities__hash_file__before.py",
+      "cwe": "CWE-328",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-32g6-mg92-ghm2|CVE-2025-0508|aws/sagemaker-python-sdk@dcdd99f911",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/sagemaker/workflow/utilities.py",
+        "func": "hash_file",
+        "fix_commit": "dcdd99f911e8b1a05d19cf1ad939b0fefae47864"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-0508__utilities___hash_file_or_dir__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-0508__utilities___hash_file_or_dir__before.py",
+      "cwe": "CWE-328",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-32g6-mg92-ghm2|CVE-2025-0508|aws/sagemaker-python-sdk@dcdd99f911",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/sagemaker/workflow/utilities.py",
+        "func": "_hash_file_or_dir",
+        "fix_commit": "dcdd99f911e8b1a05d19cf1ad939b0fefae47864"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-0508__utilities___hash_file_or_dir__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-0508__utilities___hash_file_or_dir__after.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-32g6-mg92-ghm2|CVE-2025-0508|aws/sagemaker-python-sdk@dcdd99f911|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/sagemaker/workflow/utilities.py",
+        "func": "_hash_file_or_dir",
+        "fix_commit": "dcdd99f911e8b1a05d19cf1ad939b0fefae47864"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-0508__utilities__hash_files_or_dirs__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-0508__utilities__hash_files_or_dirs__after.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-32g6-mg92-ghm2|CVE-2025-0508|aws/sagemaker-python-sdk@dcdd99f911|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/sagemaker/workflow/utilities.py",
+        "func": "hash_files_or_dirs",
+        "fix_commit": "dcdd99f911e8b1a05d19cf1ad939b0fefae47864"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-0508__utilities__hash_object__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-0508__utilities__hash_object__after.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-32g6-mg92-ghm2|CVE-2025-0508|aws/sagemaker-python-sdk@dcdd99f911|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/sagemaker/workflow/utilities.py",
+        "func": "hash_object",
+        "fix_commit": "dcdd99f911e8b1a05d19cf1ad939b0fefae47864"
+      }
+    },
+    {
+      "id": "cve:CVE-2023-30797__lemur.conf__get_random_secret__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2023-30797__lemur.conf__get_random_secret__before.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-5fqv-mpj8-h7gm|CVE-2023-30797|Netflix/lemur@666d853212",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "docker/src/lemur.conf.py",
+        "func": "get_random_secret",
+        "fix_commit": "666d853212174ee7f4e6f8b3b4b389ede1872238"
+      }
+    },
+    {
+      "id": "cve:GHSA-r4xg-4wrv-w72h__utils__get_psuedo_random_string__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/GHSA-r4xg-4wrv-w72h__utils__get_psuedo_random_string__before.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-r4xg-4wrv-w72h|GHSA-r4xg-4wrv-w72h|Netflix/lemur@666d853212",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "lemur/common/utils.py",
+        "func": "get_psuedo_random_string",
+        "fix_commit": "666d853212174ee7f4e6f8b3b4b389ede1872238"
+      }
+    },
+    {
+      "id": "cve:CVE-2013-0294__packet__CreateAuthenticator__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-0294__packet__CreateAuthenticator__after.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-q4v3-wmm6-hcrx|CVE-2013-0294|wichert/pyrad@38f74b3681|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "pyrad/packet.py",
+        "func": "CreateAuthenticator",
+        "fix_commit": "38f74b36814ca5b1a27d9898141126af4953bee5"
+      }
+    },
+    {
+      "id": "cve:CVE-2023-30797__utils__get_psuedo_random_string__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2023-30797__utils__get_psuedo_random_string__after.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-5fqv-mpj8-h7gm|CVE-2023-30797|Netflix/lemur@666d853212|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "lemur/common/utils.py",
+        "func": "get_psuedo_random_string",
+        "fix_commit": "666d853212174ee7f4e6f8b3b4b389ede1872238"
+      }
+    },
+    {
+      "id": "cve:CVE-2013-4347____init____generate_verifier__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-4347____init____generate_verifier__after.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-rv8h-p43r-4x5r|CVE-2013-4347|joestump/python-oauth2@82dd2cdd49|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "oauth2/__init__.py",
+        "func": "generate_verifier",
+        "fix_commit": "82dd2cdd4954cd7b8983d5d64c0dfd9072bf4650"
+      }
+    },
+    {
+      "id": "cve:CVE-2023-48224__request_runner_service__generate_id_verification_code__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2023-48224__request_runner_service__generate_id_verification_code__before.py",
+      "cwe": "CWE-338",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-82vr-5769-6358|CVE-2023-48224|ethyca/fides@685bae61c2",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/fides/api/service/privacy_request/request_runner_service.py",
+        "func": "generate_id_verification_code",
+        "fix_commit": "685bae61c203d29ed189f4b066a5223a9bb774c6"
+      }
+    },
+    {
+      "id": "cve:CVE-2022-23472____init______init____before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2022-23472____init______init____before.py",
+      "cwe": "CWE-338",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-mhhf-vgwh-fw9h|CVE-2022-23472|ArjunSharda/Passeo@8caa798b6b",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/passeo/__init__.py",
+        "func": "__init__",
+        "fix_commit": "8caa798b6bc4647dca59b2376204b6dc6176361a"
+      }
+    },
+    {
+      "id": "cve:CVE-2022-23472____init______init____after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2022-23472____init______init____after.py",
+      "cwe": "CWE-338",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-mhhf-vgwh-fw9h|CVE-2022-23472|ArjunSharda/Passeo@8caa798b6b|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/passeo/__init__.py",
+        "func": "__init__",
+        "fix_commit": "8caa798b6bc4647dca59b2376204b6dc6176361a"
+      }
+    },
+    {
+      "id": "cve:CVE-2023-48224__request_runner_service__generate_id_verification_code__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2023-48224__request_runner_service__generate_id_verification_code__after.py",
+      "cwe": "CWE-338",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-82vr-5769-6358|CVE-2023-48224|ethyca/fides@685bae61c2|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "src/fides/api/service/privacy_request/request_runner_service.py",
+        "func": "generate_id_verification_code",
+        "fix_commit": "685bae61c203d29ed189f4b066a5223a9bb774c6"
+      }
+    },
+    {
+      "id": "cve:CVE-2026-27167__oauth___get_mocked_oauth_info__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2026-27167__oauth___get_mocked_oauth_info__before.py",
+      "cwe": "CWE-798",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-h3h8-3v2v-rg7m|CVE-2026-27167|gradio-app/gradio@dfee0da06d",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "gradio/oauth.py",
+        "func": "_get_mocked_oauth_info",
+        "fix_commit": "dfee0da06d0aa94b3c2684131e7898d5d5c1911e"
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation___create_test_user__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2016-9013__creation___create_test_user__before.py",
+      "cwe": "CWE-798",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@34e10720d8",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "func": "_create_test_user",
+        "fix_commit": "34e10720d81b8d407aa14d763b6a7fe8f13b4f2e"
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation___create_test_user__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2016-9013__creation___create_test_user__after.py",
+      "cwe": "CWE-798",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@70f9995296|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "func": "_create_test_user",
+        "fix_commit": "70f99952965a430daf69eeb9947079aae535d2d0"
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation___create_test_user__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2016-9013__creation___create_test_user__after.py",
+      "cwe": "CWE-798",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@70f9995296|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "func": "_create_test_user",
+        "fix_commit": "70f99952965a430daf69eeb9947079aae535d2d0"
+      }
+    },
+    {
+      "id": "cve:CVE-2026-27167__oauth___redirect_to_target__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2026-27167__oauth___redirect_to_target__after.py",
+      "cwe": "CWE-798",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-h3h8-3v2v-rg7m|CVE-2026-27167|gradio-app/gradio@dfee0da06d|fixed",
+      "benchmark": "cve-curated",
+      "meta": {
+        "file": "gradio/oauth.py",
+        "func": "_redirect_to_target",
+        "fix_commit": "dfee0da06d0aa94b3c2684131e7898d5d5c1911e"
+      }
+    }
+  ]
+}

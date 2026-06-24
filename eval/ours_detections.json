@@ -1,0 +1,1405 @@
+{
+  "detections": {
+    "owasp:BenchmarkTest00431": {
+      "detected": true,
+      "cwes": [
+        "CWE-78"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00431-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00165": {
+      "detected": true,
+      "cwes": [
+        "CWE-78",
+        "CWE-79",
+        "CWE-88"
+      ],
+      "raw_count": 4,
+      "evidence": [
+        "BenchmarkTest00165-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00166": {
+      "detected": true,
+      "cwes": [
+        "CWE-78",
+        "CWE-79"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00166-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00267": {
+      "detected": true,
+      "cwes": [
+        "CWE-78"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00267-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00900": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest01097": {
+      "detected": true,
+      "cwes": [
+        "CWE-78"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest01097-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00512": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00350": {
+      "detected": true,
+      "cwes": [
+        "CWE-78"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00350-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00599": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00599-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00819": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00422": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-94"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00422-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01188": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00426": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-94"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest00426-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00346": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00821": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-94"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest00821-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00264": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-94"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest00264-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00657": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00657-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00164": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00164-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00993": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00993-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00269": {
+      "detected": true,
+      "cwes": [
+        "CWE-502",
+        "CWE-94"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00269-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01230": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest01230-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01100": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00997": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00997-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01099": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00823": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-90"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest00823-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00265": {
+      "detected": true,
+      "cwes": [
+        "CWE-90"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00265-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00824": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-90"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest00824-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00429": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-90"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest00429-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01095": {
+      "detected": true,
+      "cwes": [
+        "CWE-90"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest01095-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00428": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest01170": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-90"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest01170-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00077": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-90"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00077-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00517": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00910": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00910-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00273": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00273-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00444": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00444-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01180": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest01180-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00838": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00838-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00174": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00174-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00746": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest01208": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest01208-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00496": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00496-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00814": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00814-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00654": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00654-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00151": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00151-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00597": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00597-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01156": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest01156-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01158": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest01158-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00283": {
+      "detected": true,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00283-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00454": {
+      "detected": true,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00454-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00284": {
+      "detected": true,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00284-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00455": {
+      "detected": true,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00455-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00286": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00012": {
+      "detected": true,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00012-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00100": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00285": {
+      "detected": false,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 1,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00103": {
+      "detected": true,
+      "cwes": [
+        "CWE-643",
+        "CWE-79",
+        "CWE-94"
+      ],
+      "raw_count": 4,
+      "evidence": [
+        "BenchmarkTest00103-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00289": {
+      "detected": true,
+      "cwes": [
+        "CWE-643",
+        "CWE-79"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00289-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00761": {
+      "detected": true,
+      "cwes": [
+        "CWE-643",
+        "CWE-79",
+        "CWE-94"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00761-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00932": {
+      "detected": true,
+      "cwes": [
+        "CWE-643",
+        "CWE-79"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest00932-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00542": {
+      "detected": true,
+      "cwes": [
+        "CWE-643"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00542-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00105": {
+      "detected": true,
+      "cwes": [
+        "CWE-643"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00105-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01032": {
+      "detected": true,
+      "cwes": [
+        "CWE-643"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest01032-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00675": {
+      "detected": true,
+      "cwes": [
+        "CWE-643",
+        "CWE-79"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest00675-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00098": {
+      "detected": true,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00098-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00278": {
+      "detected": true,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00278-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00531": {
+      "detected": true,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00531-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00169": {
+      "detected": true,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00169-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01104": {
+      "detected": true,
+      "cwes": [
+        "CWE-79",
+        "CWE-94"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "BenchmarkTest01104-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00752": {
+      "detected": true,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00752-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00186": {
+      "detected": false,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 1,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00830": {
+      "detected": true,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00830-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00294": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00294-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00205": {
+      "detected": true,
+      "cwes": [
+        "CWE-502",
+        "CWE-79"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00205-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00931": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00931-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00541": {
+      "detected": true,
+      "cwes": [
+        "CWE-502",
+        "CWE-79",
+        "CWE-94"
+      ],
+      "raw_count": 5,
+      "evidence": [
+        "BenchmarkTest00541-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01024": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "owasp:BenchmarkTest00540": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "BenchmarkTest00540-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00204": {
+      "detected": true,
+      "cwes": [
+        "CWE-502",
+        "CWE-79"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "BenchmarkTest00204-py/init.py:VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00291": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "meta": {
+    "owasp:BenchmarkTest00431": {
+      "seconds": 160.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00165": {
+      "seconds": 167.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00166": {
+      "seconds": 154.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00267": {
+      "seconds": 155.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00900": {
+      "seconds": 162.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest01097": {
+      "seconds": 154.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00512": {
+      "seconds": 154.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest00350": {
+      "seconds": 159.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00599": {
+      "seconds": 156.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00819": {
+      "seconds": 147.3,
+      "n_functions": 0,
+      "error": "TypeError: unhashable type: 'dict'",
+      "verdicts": []
+    },
+    "owasp:BenchmarkTest00422": {
+      "seconds": 169.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01188": {
+      "seconds": 154.5,
+      "n_functions": 0,
+      "error": "TypeError: unhashable type: 'dict'",
+      "verdicts": []
+    },
+    "owasp:BenchmarkTest00426": {
+      "seconds": 174.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00346": {
+      "seconds": 169.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest00821": {
+      "seconds": 163.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00264": {
+      "seconds": 157.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00657": {
+      "seconds": 161.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00164": {
+      "seconds": 159.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00993": {
+      "seconds": 165.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00269": {
+      "seconds": 161.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01230": {
+      "seconds": 155.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01100": {
+      "seconds": 159.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest00997": {
+      "seconds": 166.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01099": {
+      "seconds": 160.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest00823": {
+      "seconds": 161.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00265": {
+      "seconds": 164.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00824": {
+      "seconds": 162.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00429": {
+      "seconds": 155.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01095": {
+      "seconds": 160.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00428": {
+      "seconds": 161.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest01170": {
+      "seconds": 172.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00077": {
+      "seconds": 170.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00517": {
+      "seconds": 166.1,
+      "n_functions": 0,
+      "error": "TypeError: unhashable type: 'dict'",
+      "verdicts": []
+    },
+    "owasp:BenchmarkTest00910": {
+      "seconds": 159.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00273": {
+      "seconds": 166.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00444": {
+      "seconds": 157.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01180": {
+      "seconds": 157.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00838": {
+      "seconds": 161.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00174": {
+      "seconds": 157.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00746": {
+      "seconds": 168.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest01208": {
+      "seconds": 148.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00496": {
+      "seconds": 154.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00814": {
+      "seconds": 162.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00654": {
+      "seconds": 154.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00151": {
+      "seconds": 160.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00597": {
+      "seconds": 149.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01156": {
+      "seconds": 147.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01158": {
+      "seconds": 149.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00283": {
+      "seconds": 159.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00454": {
+      "seconds": 152.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00284": {
+      "seconds": 154.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00455": {
+      "seconds": 162.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00286": {
+      "seconds": 165.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest00012": {
+      "seconds": 164.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00100": {
+      "seconds": 159.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest00285": {
+      "seconds": 160.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SANITIZED"
+      ]
+    },
+    "owasp:BenchmarkTest00103": {
+      "seconds": 161.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00289": {
+      "seconds": 167.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00761": {
+      "seconds": 168.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00932": {
+      "seconds": 171.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00542": {
+      "seconds": 158.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00105": {
+      "seconds": 160.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01032": {
+      "seconds": 164.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00675": {
+      "seconds": 168.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00098": {
+      "seconds": 164.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00278": {
+      "seconds": 157.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00531": {
+      "seconds": 159.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00169": {
+      "seconds": 146.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01104": {
+      "seconds": 151.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00752": {
+      "seconds": 151.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00186": {
+      "seconds": 150.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SANITIZED"
+      ]
+    },
+    "owasp:BenchmarkTest00830": {
+      "seconds": 152.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00294": {
+      "seconds": 158.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00205": {
+      "seconds": 152.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00931": {
+      "seconds": 154.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00541": {
+      "seconds": 162.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest01024": {
+      "seconds": 157.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "owasp:BenchmarkTest00540": {
+      "seconds": 149.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00204": {
+      "seconds": 162.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "owasp:BenchmarkTest00291": {
+      "seconds": 166.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    }
+  }
+}

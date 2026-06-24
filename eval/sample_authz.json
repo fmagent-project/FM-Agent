@@ -1,0 +1,48 @@
+{
+  "benchmark": "redbench-real",
+  "plugin": "authz",
+  "source": "redbench-real CVE/GHSA + securityeval (analyzable subset)",
+  "note": "recall-only: all vulnerable, no safe negatives; no SAST baseline attempts IDOR | DEDUPED: RedBench shipped exact-duplicate copies (ghsa-639-002/004/006 identical; ghsa-306-002/004/006 identical) \u2014 kept one each.",
+  "total_selected": 3,
+  "cases": [
+    {
+      "id": "redbench:seceval-306-001",
+      "path": "/tmp/eval_authz_mat/seceval-306-001.py",
+      "cwe": "CWE-306",
+      "label": true,
+      "category": "auth_bypass",
+      "source": "redbench-real:securityeval",
+      "benchmark": "redbench-real",
+      "meta": {
+        "severity": "high",
+        "orig_id": "seceval-306-001"
+      }
+    },
+    {
+      "id": "redbench:ghsa-306-002",
+      "path": "/tmp/eval_authz_mat/ghsa-306-002.py",
+      "cwe": "CWE-306",
+      "label": true,
+      "category": "auth_bypass",
+      "source": "redbench-real:github_advisory:GHSA-vwmf-pq79-vjvx",
+      "benchmark": "redbench-real",
+      "meta": {
+        "severity": "critical",
+        "orig_id": "ghsa-306-002"
+      }
+    },
+    {
+      "id": "redbench:ghsa-639-002",
+      "path": "/tmp/eval_authz_mat/ghsa-639-002.py",
+      "cwe": "CWE-639",
+      "label": true,
+      "category": "idor",
+      "source": "redbench-real:github_advisory:GHSA-rf6x-r45m-xv3w",
+      "benchmark": "redbench-real",
+      "meta": {
+        "severity": "high",
+        "orig_id": "ghsa-639-002"
+      }
+    }
+  ]
+}

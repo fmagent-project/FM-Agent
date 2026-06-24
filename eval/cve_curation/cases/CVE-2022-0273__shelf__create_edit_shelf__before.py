@@ -1,0 +1,47 @@
+def create_edit_shelf(shelf, page_title, page, shelf_id=False):
+    sync_only_selected_shelves = current_user.kobo_only_shelves_sync
+    # calibre_db.session.query(ub.Shelf).filter(ub.Shelf.user_id == current_user.id).filter(ub.Shelf.kobo_sync).count()
+    if request.method == "POST":
+        to_save = request.form.to_dict()
+        if not current_user.role_edit_shelfs() and to_save.get("is_public") == "on":
+            flash(_(u"Sorry you are not allowed to create a public shelf"), category="error")
+            return redirect(url_for('web.index'))
+        is_public = 1 if to_save.get("is_public") else 0
+        if config.config_kobo_sync:
+            shelf.kobo_sync = True if to_save.get("kobo_sync") else False
+            if shelf.kobo_sync:
+                ub.session.query(ub.ShelfArchive).filter(ub.ShelfArchive.user_id == current_user.id).filter(
+                    ub.ShelfArchive.uuid == shelf.uuid).delete()
+                ub.session_commit()
+        shelf_title = to_save.get("title", "")
+        if check_shelf_is_unique(shelf, shelf_title, is_public, shelf_id):
+            shelf.name = shelf_title
+            shelf.is_public = is_public
+            if not shelf_id:
+                shelf.user_id = int(current_user.id)
+                ub.session.add(shelf)
+                shelf_action = "created"
+                flash_text = _(u"Shelf %(title)s created", title=shelf_title)
+            else:
+                shelf_action = "changed"
+                flash_text = _(u"Shelf %(title)s changed", title=shelf_title)
+            try:
+                ub.session.commit()
+                log.info(u"Shelf {} {}".format(shelf_title, shelf_action))
+                flash(flash_text, category="success")
+                return redirect(url_for('shelf.show_shelf', shelf_id=shelf.id))
+            except (OperationalError, InvalidRequestError) as ex:
+                ub.session.rollback()
+                log.debug_or_exception(ex)
+                log.error("Settings DB is not Writeable")
+                flash(_("Settings DB is not Writeable"), category="error")
+            except Exception as ex:
+                ub.session.rollback()
+                log.debug_or_exception(ex)
+                flash(_(u"There was an error"), category="error")
+    return render_title_template('shelf_edit.html',
+                                 shelf=shelf,
+                                 title=page_title,
+                                 page=page,
+                                 kobo_sync_enabled=config.config_kobo_sync,
+                                 sync_only_selected_shelves=sync_only_selected_shelves)

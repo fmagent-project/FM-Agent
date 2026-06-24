@@ -1,0 +1,386 @@
+{
+  "benchmark": "cve-curated",
+  "plugin": "typestate",
+  "source": "OSV.dev CVE fix-commit curation (eval/cve_curation/BENCHMARK_CVE.md)",
+  "label_noise_caveat": "~60% label precision; precision requires per-case human audit",
+  "total_selected": 29,
+  "cases": [
+    {
+      "id": "cve:CVE-2013-2255__ec2_token____call____before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-2255__ec2_token____call____before.py",
+      "cwe": "CWE-295",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-qh2x-hpf9-cf2g|CVE-2013-2255",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2013-2255",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2013-2255__auth_token___get_http_connection__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-2255__auth_token___get_http_connection__before.py",
+      "cwe": "CWE-295",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-qh2x-hpf9-cf2g|CVE-2013-2255",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2013-2255",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2024-21543__serializers__validate_2__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2024-21543__serializers__validate_2__before.py",
+      "cwe": "CWE-295",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-v49p-m6gh-747c|CVE-2024-21543",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2024-21543",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2023-39441__imap___build_client__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2023-39441__imap___build_client__before.py",
+      "cwe": "CWE-295",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-5f35-pq34-c87q|CVE-2023-39441",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2023-39441",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2013-2255__servermanager__rest_action__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2013-2255__servermanager__rest_action__after.py",
+      "cwe": "CWE-295",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-qh2x-hpf9-cf2g|CVE-2013-2255",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2013-2255",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2021-28363__connection___connect_tls_proxy__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2021-28363__connection___connect_tls_proxy__after.py",
+      "cwe": "CWE-295",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-5phf-pp7p-vc2r|CVE-2021-28363",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2021-28363",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9015__pyopenssl__ssl_wrap_socket__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2016-9015__pyopenssl__ssl_wrap_socket__after.py",
+      "cwe": "CWE-295",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-v4w5-p2hg-8fh6|CVE-2016-9015",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2016-9015",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2024-21543__serializers__validate_2__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2024-21543__serializers__validate_2__after.py",
+      "cwe": "CWE-295",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-v49p-m6gh-747c|CVE-2024-21543",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2024-21543",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2014-7143__client__creatorForNetloc__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2014-7143__client__creatorForNetloc__after.py",
+      "cwe": "CWE-295",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-3c45-wgjp-7v9r|CVE-2014-7143",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2014-7143",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2021-32677__routing__get_request_handler__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2021-32677__routing__get_request_handler__before.py",
+      "cwe": "CWE-352",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-8h2j-cgx8-6xv7|CVE-2021-32677",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2021-32677",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2019-13594__middleware__site__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2019-13594__middleware__site__before.py",
+      "cwe": "CWE-352",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-fgjh-x3f8-8gmh|CVE-2019-13594",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2019-13594",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2015-5081__pageadmin__publish_page__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2015-5081__pageadmin__publish_page__before.py",
+      "cwe": "CWE-352",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-2pqc-gv8q-pvqv|CVE-2015-5081",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2015-5081",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2008-3909__decorators__staff_member_required__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2008-3909__decorators__staff_member_required__before.py",
+      "cwe": "CWE-352",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-r5cj-wv24-92p5|CVE-2008-3909",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2008-3909",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2021-4162__cmd_exec____init____after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2021-4162__cmd_exec____init____after.py",
+      "cwe": "CWE-352",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-9236-8w7q-rmrv|CVE-2021-4162",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2021-4162",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2022-3232__page_admin__users__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2022-3232__page_admin__users__after.py",
+      "cwe": "CWE-352",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-cw2v-wv4g-w4p6|CVE-2022-3232",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2022-3232",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2011-4952__views__snippet_edit__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2011-4952__views__snippet_edit__after.py",
+      "cwe": "CWE-352",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-9fqr-pqc9-f7pj|CVE-2011-4952",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2011-4952",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2011-4952__views__hardlink__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2011-4952__views__hardlink__after.py",
+      "cwe": "CWE-352",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-9fqr-pqc9-f7pj|CVE-2011-4952",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2011-4952",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-68481__oauth__get_oauth_router__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-68481__oauth__get_oauth_router__after.py",
+      "cwe": "CWE-352",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-5j53-63w8-8625|CVE-2025-68481",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2025-68481",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2026-25738__network__validate_request_url__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2026-25738__network__validate_request_url__before.py",
+      "cwe": "CWE-367",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-f47c-3c5w-v7p4|CVE-2026-25738",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2026-25738",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2024-49768__channel__received__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2024-49768__channel__received__before.py",
+      "cwe": "CWE-367",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-9298-4cf8-g4wj|CVE-2024-49768",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2024-49768",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2026-25738__network__is_private_url__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2026-25738__network__is_private_url__before.py",
+      "cwe": "CWE-367",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-f47c-3c5w-v7p4|CVE-2026-25738",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2026-25738",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-68146___windows___acquire__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-68146___windows___acquire__before.py",
+      "cwe": "CWE-367",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-w853-jp5j-5j7f|CVE-2025-68146",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2025-68146",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2024-28718__cert_manager__create_client_files__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2024-28718__cert_manager__create_client_files__after.py",
+      "cwe": "CWE-367",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-jx7x-9r98-h5xr|CVE-2024-28718",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2024-28718",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2026-22701___soft___acquire__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2026-22701___soft___acquire__after.py",
+      "cwe": "CWE-367",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-qmgc-5h2g-mvrw|CVE-2026-22701",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2026-22701",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2024-49768__channel__received__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2024-49768__channel__received__after.py",
+      "cwe": "CWE-367",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-9298-4cf8-g4wj|CVE-2024-49768",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2024-49768",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2026-25738__network__is_private_url__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2026-25738__network__is_private_url__after.py",
+      "cwe": "CWE-367",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-f47c-3c5w-v7p4|CVE-2026-25738",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2026-25738",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2025-68146___unix___acquire_1__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2025-68146___unix___acquire_1__after.py",
+      "cwe": "CWE-367",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-w853-jp5j-5j7f|CVE-2025-68146",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2025-68146",
+        "ba": "after"
+      }
+    },
+    {
+      "id": "cve:CVE-2021-40797__extensions____init___3__before",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2021-40797__extensions____init___3__before.py",
+      "cwe": "CWE-772",
+      "label": true,
+      "category": "typestate",
+      "source": "osv:GHSA-cpx3-696p-3cw9|CVE-2021-40797",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2021-40797",
+        "ba": "before"
+      }
+    },
+    {
+      "id": "cve:CVE-2021-40797__extensions____init___3__after",
+      "path": "/mnt/nvme/jiangzhe/FM-Agent-Internal/eval/cve_curation/cases/CVE-2021-40797__extensions____init___3__after.py",
+      "cwe": "CWE-772",
+      "label": false,
+      "category": "typestate",
+      "source": "osv:GHSA-cpx3-696p-3cw9|CVE-2021-40797",
+      "benchmark": "cve-curated",
+      "meta": {
+        "cve": "CVE-2021-40797",
+        "ba": "after"
+      }
+    }
+  ]
+}

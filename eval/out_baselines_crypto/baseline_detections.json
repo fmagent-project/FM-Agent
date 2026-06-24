@@ -1,0 +1,7572 @@
+{
+  "owasp:BenchmarkTest00025": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00026": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00027": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00028": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00029": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00030": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00031": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00032": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00033": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00034": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00035": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00036": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00037": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00038": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00039": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00040": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00041": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00042": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00043": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00044": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00045": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00046": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00047": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00048": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00049": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00050": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00051": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00052": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00053": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00054": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L64"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-614"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "secure-set-cookie",
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00055": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00056": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00057": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L65"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00058": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L65"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-614"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "secure-set-cookie",
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00059": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L63"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-614"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "secure-set-cookie",
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00060": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L60"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-614"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "secure-set-cookie",
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00061": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00062": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00063": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00114": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00115": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L45"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00116": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L46"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00117": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L50"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00118": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00119": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00120": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00121": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00122": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00123": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00124": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00125": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00126": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00127": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00128": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00129": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00130": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00131": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00132": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00133": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00134": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00135": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00136": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00137": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00138": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00139": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00140": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00141": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00142": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L58"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00143": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00144": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00145": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00146": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00147": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00148": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00218": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00219": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00220": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00221": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L49"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00222": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L44"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00223": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00224": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L44"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00225": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00226": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L46"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00227": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L48"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00228": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00229": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00230": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00231": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00232": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00233": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00234": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00235": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00236": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00237": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00238": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00239": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00240": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00241": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00242": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00243": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00244": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L55"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00245": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00246": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00247": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00248": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L60"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00249": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00250": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L60"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00251": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L59"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00252": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00253": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00254": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00255": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00305": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L53"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00306": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00307": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00308": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00309": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L53"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00310": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00311": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00312": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00313": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00314": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00315": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00316": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00317": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00318": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00319": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00320": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L61"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00321": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00322": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L59"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00323": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00324": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00325": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00326": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L62"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00327": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L62"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00328": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L55"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00329": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L60"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00330": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00331": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00332": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00333": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00381": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00382": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L48"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00383": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L45"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00384": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00385": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00386": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00387": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00388": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00389": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00390": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00391": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00392": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00393": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00394": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00395": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00396": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00397": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00398": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00399": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00400": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00401": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00402": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00403": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00404": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00405": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00406": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00407": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00408": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00409": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L60"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00410": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L61"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00411": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00412": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L61"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00413": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00473": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L44"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00474": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00475": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00476": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L44"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00477": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00478": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00479": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00480": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00481": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00482": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L58"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00483": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00484": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00485": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L63"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00486": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00487": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00488": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00489": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00490": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00491": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00492": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00556": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L45"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00557": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00558": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00559": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00560": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00561": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L45"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00562": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00563": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00564": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L45"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00565": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00566": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00567": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00568": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00569": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00570": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00571": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00572": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00573": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00574": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00575": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00576": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00577": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00578": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00579": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00580": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00581": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L55"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00582": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L65"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00583": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00584": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00585": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00586": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L59"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00587": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00588": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00589": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00590": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00621": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00622": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00623": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00624": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00625": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00626": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00627": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00628": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00629": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00630": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00631": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00632": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00633": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00634": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00635": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00636": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00637": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00638": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00639": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00640": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00641": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L59"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00642": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L62"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00643": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L65"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00644": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00645": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00646": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L65"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00647": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L61"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00648": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00649": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00688": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00689": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L55"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00690": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L50"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00691": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00692": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00693": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00694": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00695": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00696": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00697": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00698": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00699": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00700": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00701": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00702": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00703": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00704": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00705": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00706": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00707": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L58"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00708": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L63"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00709": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L58"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00710": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00711": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00712": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00713": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L58"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00714": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00715": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L59"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00716": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L58"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00717": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00765": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L45"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00766": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00767": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L45"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00768": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00769": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00770": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00771": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L49"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00772": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00773": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L46"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00774": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00775": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L44"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00776": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00777": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00778": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00779": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00780": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00781": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00782": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00783": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00784": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00785": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00786": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00787": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00788": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00789": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00790": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00791": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00792": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00793": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00794": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00795": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00796": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L55"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00797": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00798": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00799": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00800": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00801": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00802": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00803": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00804": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00805": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00806": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L59"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00807": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00859": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L48"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00860": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00861": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00862": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00863": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L49"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00864": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00865": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00866": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00867": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00868": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00869": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00870": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00871": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00872": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00873": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L59"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00874": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L57"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00875": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00876": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00877": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L58"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00878": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00879": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00880": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00881": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00882": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00945": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L58"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00946": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00947": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00948": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00949": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L64"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00950": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00951": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00952": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00953": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00954": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00955": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00956": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00957": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00958": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00959": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00960": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00961": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00962": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00963": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00964": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00965": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00966": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00967": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00968": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00969": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00970": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00971": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00972": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00973": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L61"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00974": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L62"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest00975": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L67"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00976": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00977": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L66"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00978": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L64"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest00979": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01040": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L45"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01041": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01042": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L44"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01043": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01044": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01045": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01046": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01047": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01048": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01049": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L50"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01050": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01051": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01052": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01053": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01054": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01055": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01056": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01057": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01058": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01059": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01060": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01061": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01062": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01063": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01064": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01065": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01066": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01067": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01068": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01069": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01070": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L60"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest01071": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01072": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01073": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01074": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01075": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01076": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01077": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L55"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01078": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01079": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01080": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01081": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01126": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01127": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01128": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01129": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L50"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01130": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L47"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01131": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L46"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01132": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01133": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01134": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01135": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01136": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01137": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01138": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01139": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01140": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01141": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01142": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01143": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01144": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01145": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L53"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest01146": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L56"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01147": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest01148": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest01149": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L63"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest01150": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01151": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01152": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01153": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01154": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01176": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-614"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "secure-set-cookie"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest01182": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01185": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L44"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01186": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01189": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01190": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L54"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest01194": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L40"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01195": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01197": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L51"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-algorithm-sha1"
+      ]
+    }
+  },
+  "owasp:BenchmarkTest01199": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-330"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B311@L44"
+      ]
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01201": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01205": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01206": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01215": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01219": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "owasp:BenchmarkTest01227": {
+    "bandit": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "B324@L52"
+      ]
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "insecure-hash-function"
+      ]
+    }
+  }
+}

@@ -1,0 +1,380 @@
+{
+  "cve:CVE-2021-45452__storage___save__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2021-45452__storage__get_available_name__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2024-12029__model_util__read_checkpoint_meta__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-0",
+        "CWE-2",
+        "CWE-5"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "pickles-in-pytorch"
+      ]
+    }
+  },
+  "cve:CVE-2023-7018__retrieval_rag___deserialize_index__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-502"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "avoid-pickle"
+      ]
+    }
+  },
+  "cve:CVE-2020-26275__login__post__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2023-39968__login___redirect_safe__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2023-26043__views__get_capabilities__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2023-26043__views__dataset_style_upload__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2025-11844__vision_web_browser__search_item_ctrl_f__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2025-11844__vision_web_browser__search_item_ctrl_f__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2026-27194__column_filters__build_filter_1__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2023-7333__spectrum__prep_bucket__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2023-34540__jira__other__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": true,
+      "cwes": [
+        "CWE-95"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "exec-detected"
+      ]
+    }
+  },
+  "cve:CVE-2026-26331__common___get_netrc_login_info__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2022-4730__views__save__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2022-4495__column__renderCell_3__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2022-23915__mercurial__push__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2023-34395__odbc__driver__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2020-11010__filters__insensitive_starts_with__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2012-0805__expression__offset__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2026-24130__ldap___perform_ldap_auth__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2025-12764__ldap____configure_tls__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2025-2828__load_tools__load_tools__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2022-0339__admin___delete_user__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2022-46742__window___cosine__before": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  },
+  "cve:CVE-2022-45908__window___hamming__after": {
+    "bandit": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    },
+    "semgrep": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": []
+    }
+  }
+}

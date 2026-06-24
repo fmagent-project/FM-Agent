@@ -1,0 +1,488 @@
+{
+  "detections": {
+    "cve:CVE-2021-45452__storage___save__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 5,
+      "evidence": [
+        "CVE-2021-45452__storage___save__before-py/_save.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2021-45452__storage__get_available_name__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "CVE-2021-45452__storage__get_available_name__after-py/get_available_name.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-12029__model_util__read_checkpoint_meta__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-22",
+        "CWE-502"
+      ],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2024-12029__model_util__read_checkpoint_meta__before-py/read_checkpoint_meta.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-7018__retrieval_rag___deserialize_index__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-22",
+        "CWE-502"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "CVE-2023-7018__retrieval_rag___deserialize_index__after-py/_deserialize_index.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-26275__login__post__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-22",
+        "CWE-601"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2020-26275__login__post__before-py/post.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-39968__login___redirect_safe__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2023-39968__login___redirect_safe__after-py/_redirect_safe.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-26043__views__get_capabilities__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-1336",
+        "CWE-79"
+      ],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2023-26043__views__get_capabilities__before-py/get_capabilities.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-26043__views__dataset_style_upload__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-22",
+        "CWE-502",
+        "CWE-79"
+      ],
+      "raw_count": 5,
+      "evidence": [
+        "CVE-2023-26043__views__dataset_style_upload__after-py/dataset_style_upload.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-11844__vision_web_browser__search_item_ctrl_f__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-643"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2025-11844__vision_web_browser__search_item_ctrl_f__before-py/search_item_ctrl_f.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-11844__vision_web_browser__search_item_ctrl_f__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-643"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2025-11844__vision_web_browser__search_item_ctrl_f__after-py/search_item_ctrl_f.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27194__column_filters__build_filter_1__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 9,
+      "evidence": [
+        "CVE-2026-27194__column_filters__build_filter_1__before-py/build_filter.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-7333__spectrum__prep_bucket__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-22",
+        "CWE-89"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2023-7333__spectrum__prep_bucket__after-py/prep_bucket.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-34540__jira__other__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2023-34540__jira__other__before-py/other.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-26331__common___get_netrc_login_info__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-22",
+        "CWE-78"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "CVE-2026-26331__common___get_netrc_login_info__after-py/_get_netrc_login_info.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-4730__views__save__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2022-4730__views__save__before-py/save.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-4495__column__renderCell_3__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 5,
+      "evidence": [
+        "CVE-2022-4495__column__renderCell_3__after-py/renderCell.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-23915__mercurial__push__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2023-34395__odbc__driver__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2020-11010__filters__insensitive_starts_with__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2020-11010__filters__insensitive_starts_with__before-py/insensitive_starts_with.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2012-0805__expression__offset__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2026-24130__ldap___perform_ldap_auth__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-90"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2026-24130__ldap___perform_ldap_auth__before-py/_perform_ldap_auth.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-12764__ldap____configure_tls__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "CVE-2025-12764__ldap____configure_tls__after-py/__configure_tls.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-2828__load_tools__load_tools__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2025-2828__load_tools__load_tools__before-py/load_tools.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-0339__admin___delete_user__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-89"
+      ],
+      "raw_count": 13,
+      "evidence": [
+        "CVE-2022-0339__admin___delete_user__after-py/_delete_user.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-46742__window___cosine__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2022-45908__window___hamming__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2021-45452__storage___save__before": {
+      "seconds": 26.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2021-45452__storage__get_available_name__after": {
+      "seconds": 26.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2024-12029__model_util__read_checkpoint_meta__before": {
+      "seconds": 21.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2023-7018__retrieval_rag___deserialize_index__after": {
+      "seconds": 28.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2020-26275__login__post__before": {
+      "seconds": 21.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2023-39968__login___redirect_safe__after": {
+      "seconds": 26.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2023-26043__views__get_capabilities__before": {
+      "seconds": 42.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2023-26043__views__dataset_style_upload__after": {
+      "seconds": 34.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2025-11844__vision_web_browser__search_item_ctrl_f__before": {
+      "seconds": 16.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2025-11844__vision_web_browser__search_item_ctrl_f__after": {
+      "seconds": 17.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2026-27194__column_filters__build_filter_1__before": {
+      "seconds": 43.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2023-7333__spectrum__prep_bucket__after": {
+      "seconds": 30.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2023-34540__jira__other__before": {
+      "seconds": 10.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2026-26331__common___get_netrc_login_info__after": {
+      "seconds": 28.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-4730__views__save__before": {
+      "seconds": 22.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-4495__column__renderCell_3__after": {
+      "seconds": 26.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2022-23915__mercurial__push__before": {
+      "seconds": 8.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2023-34395__odbc__driver__after": {
+      "seconds": 20.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2020-11010__filters__insensitive_starts_with__before": {
+      "seconds": 16.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2012-0805__expression__offset__after": {
+      "seconds": 12.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2026-24130__ldap___perform_ldap_auth__before": {
+      "seconds": 38.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2025-12764__ldap____configure_tls__after": {
+      "seconds": 24.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2025-2828__load_tools__load_tools__before": {
+      "seconds": 36.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-0339__admin___delete_user__after": {
+      "seconds": 43.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-46742__window___cosine__before": {
+      "seconds": 15.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2022-45908__window___hamming__after": {
+      "seconds": 9.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    }
+  }
+}

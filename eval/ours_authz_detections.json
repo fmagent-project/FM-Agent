@@ -1,0 +1,54 @@
+{
+  "detections": {
+    "redbench:seceval-306-001": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 3,
+      "evidence": [
+        "seceval-306-001-py/do_login.py:VULNERABLE",
+        "seceval-306-001-py/settings.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "redbench:ghsa-306-002": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "redbench:ghsa-639-002": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    }
+  },
+  "meta": {
+    "redbench:seceval-306-001": {
+      "seconds": 33.8,
+      "n_functions": 5,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE"
+      ]
+    },
+    "redbench:ghsa-306-002": {
+      "seconds": 0.0,
+      "n_functions": 0,
+      "error": null,
+      "verdicts": []
+    },
+    "redbench:ghsa-639-002": {
+      "seconds": 0.0,
+      "n_functions": 0,
+      "error": null,
+      "verdicts": []
+    }
+  }
+}

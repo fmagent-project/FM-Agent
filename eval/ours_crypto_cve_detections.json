@@ -1,0 +1,573 @@
+{
+  "detections": {
+    "cve:CVE-2025-55449__server__auth_middleware__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "CVE-2025-55449__server__auth_middleware__before-py/auth_middleware.py:ERROR(fail-closed)"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-55449__auth__generate_jwt__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2025-55449__auth__generate_jwt__before-py/generate_jwt.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-66454__worker__create_arcade_mcp__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2025-55449__auth__generate_jwt__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2025-66454__deploy__start_server_process__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-321",
+        "CWE-338"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2025-66454__deploy__start_server_process__after-py/start_server_process.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2013-2166__auth_token___cache_get__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2013-2166__auth_token___cache_get__before-py/_cache_get.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2013-2166__auth_token___cache_put__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2012-4571__backend__set_password_6__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2012-4571__backend__set_password_6__after-py/set_password.py:WEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2013-2166__memcache_crypt__encrypt_data__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-345"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2013-2166__memcache_crypt__encrypt_data__after-py/encrypt_data.py:WEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2013-2166__auth_token___cache_store__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2013-2166__auth_token___cache_store__after-py/_cache_store.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-29217__algorithms__prepare_key_5__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2022-29217__algorithms__prepare_key_5__before-py/prepare_key.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-25658__pkcs1__decrypt__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-345"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2020-25658__pkcs1__decrypt__before-py/decrypt.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-29217__algorithms__prepare_key_5__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2022-29217__algorithms__prepare_key_5__after-py/prepare_key.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-25658__pkcs1__decrypt__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-345"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "CVE-2020-25658__pkcs1__decrypt__after-py/decrypt.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-29217__algorithms__prepare_key_2__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2022-29217__algorithms__prepare_key_2__after-py/prepare_key.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-0508__utilities__hash_file__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "CVE-2025-0508__utilities__hash_file__before-py/hash_file.py:ERROR(fail-closed)"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-0508__utilities___hash_file_or_dir__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "CVE-2025-0508__utilities___hash_file_or_dir__before-py/_hash_file_or_dir.py:ERROR(fail-closed)"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-0508__utilities___hash_file_or_dir__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2025-0508__utilities__hash_files_or_dirs__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2025-0508__utilities__hash_object__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2023-30797__lemur.conf__get_random_secret__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-338"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2023-30797__lemur.conf__get_random_secret__before-py/get_random_secret.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:GHSA-r4xg-4wrv-w72h__utils__get_psuedo_random_string__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-338"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "GHSA-r4xg-4wrv-w72h__utils__get_psuedo_random_string__before-py/get_psuedo_random_string.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2013-0294__packet__CreateAuthenticator__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "CVE-2013-0294__packet__CreateAuthenticator__after-py/CreateAuthenticator.py:ERROR(fail-closed)"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-30797__utils__get_psuedo_random_string__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2013-4347____init____generate_verifier__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "CVE-2013-4347____init____generate_verifier__after-py/generate_verifier.py:ERROR(fail-closed)"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-48224__request_runner_service__generate_id_verification_code__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-338"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2023-48224__request_runner_service__generate_id_verification_code__before-py/generate_id_verification_code.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-23472____init______init____before": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-338"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2022-23472____init______init____before-py/__init__.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-23472____init______init____after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "CVE-2022-23472____init______init____after-py/__init__.py:ERROR(fail-closed)"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-48224__request_runner_service__generate_id_verification_code__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2023-48224__request_runner_service__generate_id_verification_code__after-py/generate_id_verification_code.py:WEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27167__oauth___get_mocked_oauth_info__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-321",
+        "CWE-329"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2026-27167__oauth___get_mocked_oauth_info__before-py/_get_mocked_oauth_info.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2016-9013__creation___create_test_user__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2016-9013__creation___create_test_user__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2026-27167__oauth___redirect_to_target__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2025-55449__server__auth_middleware__before": {
+      "seconds": 15.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "ERROR"
+      ]
+    },
+    "cve:CVE-2025-55449__auth__generate_jwt__before": {
+      "seconds": 14.7,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2025-66454__worker__create_arcade_mcp__after": {
+      "seconds": 13.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2025-55449__auth__generate_jwt__after": {
+      "seconds": 12.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2025-66454__deploy__start_server_process__after": {
+      "seconds": 16.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2013-2166__auth_token___cache_get__before": {
+      "seconds": 17.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2013-2166__auth_token___cache_put__before": {
+      "seconds": 6.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2012-4571__backend__set_password_6__after": {
+      "seconds": 12.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "WEAK"
+      ]
+    },
+    "cve:CVE-2013-2166__memcache_crypt__encrypt_data__after": {
+      "seconds": 15.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "WEAK"
+      ]
+    },
+    "cve:CVE-2013-2166__auth_token___cache_store__after": {
+      "seconds": 22.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2022-29217__algorithms__prepare_key_5__before": {
+      "seconds": 13.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2020-25658__pkcs1__decrypt__before": {
+      "seconds": 21.0,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-29217__algorithms__prepare_key_5__after": {
+      "seconds": 11.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2020-25658__pkcs1__decrypt__after": {
+      "seconds": 24.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-29217__algorithms__prepare_key_2__after": {
+      "seconds": 10.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC"
+      ]
+    },
+    "cve:CVE-2025-0508__utilities__hash_file__before": {
+      "seconds": 12.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "ERROR"
+      ]
+    },
+    "cve:CVE-2025-0508__utilities___hash_file_or_dir__before": {
+      "seconds": 16.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "ERROR"
+      ]
+    },
+    "cve:CVE-2025-0508__utilities___hash_file_or_dir__after": {
+      "seconds": 14.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2025-0508__utilities__hash_files_or_dirs__after": {
+      "seconds": 15.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2025-0508__utilities__hash_object__after": {
+      "seconds": 13.9,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2023-30797__lemur.conf__get_random_secret__before": {
+      "seconds": 20.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:GHSA-r4xg-4wrv-w72h__utils__get_psuedo_random_string__before": {
+      "seconds": 16.1,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2013-0294__packet__CreateAuthenticator__after": {
+      "seconds": 19.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "ERROR"
+      ]
+    },
+    "cve:CVE-2023-30797__utils__get_psuedo_random_string__after": {
+      "seconds": 12.6,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2013-4347____init____generate_verifier__after": {
+      "seconds": 14.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "ERROR"
+      ]
+    },
+    "cve:CVE-2023-48224__request_runner_service__generate_id_verification_code__before": {
+      "seconds": 11.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-23472____init______init____before": {
+      "seconds": 25.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-23472____init______init____after": {
+      "seconds": 33.8,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "ERROR"
+      ]
+    },
+    "cve:CVE-2023-48224__request_runner_service__generate_id_verification_code__after": {
+      "seconds": 11.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "WEAK"
+      ]
+    },
+    "cve:CVE-2026-27167__oauth___get_mocked_oauth_info__before": {
+      "seconds": 15.2,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2016-9013__creation___create_test_user__before": {
+      "seconds": 10.5,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2016-9013__creation___create_test_user__after": {
+      "seconds": 12.4,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2026-27167__oauth___redirect_to_target__after": {
+      "seconds": 7.3,
+      "n_functions": 1,
+      "error": null,
+      "verdicts": [
+        "SAFE"
+      ]
+    }
+  }
+}

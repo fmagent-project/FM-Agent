@@ -1,0 +1,322 @@
+{
+  "benchmark": "owasp:BenchmarkPython",
+  "plugin": "crypto",
+  "source": "owasp:BenchmarkPython@f1291485808b",
+  "seed": 1337,
+  "per_category": 12,
+  "total_selected": 24,
+  "cases": [
+    {
+      "id": "owasp:BenchmarkTest00319",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00319.py",
+      "cwe": "CWE-328",
+      "label": true,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00319",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00143",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00143.py",
+      "cwe": "CWE-328",
+      "label": true,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00143",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00482",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00482.py",
+      "cwe": "CWE-328",
+      "label": true,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00482",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest01146",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest01146.py",
+      "cwe": "CWE-328",
+      "label": true,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest01146",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00975",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00975.py",
+      "cwe": "CWE-328",
+      "label": true,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00975",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00647",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00647.py",
+      "cwe": "CWE-328",
+      "label": true,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00647",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00253",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00253.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00253",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00711",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00711.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00711",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00056",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00056.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00056",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00797",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00797.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00797",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00717",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00717.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00717",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00332",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00332.py",
+      "cwe": "CWE-328",
+      "label": false,
+      "category": "hash",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00332",
+        "csv_cwe": "328"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00114",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00114.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00114",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00859",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00859.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00859",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00115",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00115.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00115",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00775",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00775.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00775",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00226",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00226.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00226",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00308",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00308.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00308",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00630",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00630.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00630",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00048",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00048.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00048",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00229",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00229.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00229",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00237",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00237.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00237",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00133",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00133.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00133",
+        "csv_cwe": "330"
+      }
+    },
+    {
+      "id": "owasp:BenchmarkTest00408",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython/testcode/BenchmarkTest00408.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "weakrand",
+      "source": "owasp:BenchmarkPython@f1291485808b",
+      "benchmark": "owasp",
+      "meta": {
+        "test_name": "BenchmarkTest00408",
+        "csv_cwe": "330"
+      }
+    }
+  ]
+}
