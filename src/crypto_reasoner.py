@@ -46,7 +46,7 @@ KEY_PROVENANCE = {
 }
 IV_NONCE_PROVENANCE = {
     "fresh_random_per_call", "constant_or_literal", "reused_across_calls",
-    "counter", "from_param", "unknown",
+    "counter", "from_param", "unknown", "not_applicable",
 }
 RANDOMNESS_SOURCE = {"csprng", "insecure_prng", "unknown", "not_applicable"}
 VERIFY_STATUS = {
