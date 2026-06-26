@@ -48,7 +48,10 @@ fi
 
 # ---------- Python packages ----------
 echo "[..] installing Python dependencies"
-python3 -m pip install openai
+if ! python3 -m pip install openai; then
+    echo "[..] pip install failed; syncing Python dependencies with uv"
+    uv sync --locked
+fi
 
 # ---------- unzip ----------
 if command -v unzip &>/dev/null; then

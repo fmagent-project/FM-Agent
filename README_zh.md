@@ -60,6 +60,20 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) 插件 —— 采集 OpenCode 原始 LLM 请求/响应 trace
 - 你所用 provider 的 LLM API 密钥（示例使用 [OpenRouter](https://openrouter.ai/)）
 
+#### 已测试 macOS 环境
+
+以下 macOS 环境已使用安装脚本测试：
+
+- macOS 14.5（Build 23F79），arm64
+- Darwin 23.5.0
+- Python 3.11.7
+- pip 23.3.1
+- uv 0.7.9
+- OpenCode 1.17.9
+- Bun/bunx 1.3.14
+- Homebrew 6.0.3
+- UnZip 6.00
+
 ### 安装依赖
 
 设置 FM-Agent 和 OpenCode 共用的 LLM API 密钥。推荐使用 [OpenRouter](https://openrouter.ai/)：FM-Agent 会并发调用 LLM，而 OpenRouter 的 RPM（每分钟请求数）和 TPM（每分钟 Token 数）限制更宽松——不过任何兼容的 provider 都可以。
