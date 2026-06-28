@@ -4,8 +4,8 @@ CodeGraph backend for FM-Agent function extraction and call graph building.
 Requires the user to have run `codegraph init` in the project directory first,
 which produces `.codegraph/codegraph.db` (SQLite).
 
-To add support for a new language: add its lang_key to REGISTRY in src/languages/__init__.py.
-No other changes are needed in extract.py or generate_topdown_layers.py.
+To add support for a new language: create src/languages/<lang>.py and add an entry to
+REGISTRY in src/languages/registry.py. No other files need to change.
 """
 
 import logging
@@ -144,7 +144,6 @@ class CodeGraphExtractor:
             key = (caller, dashed)
             result[key].add(callee)
         return dict(result)
-
 
 
 def try_codegraph_init(proj_dir: str) -> None:
