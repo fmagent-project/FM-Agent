@@ -33,6 +33,22 @@ _CG_LANG = {
     "typescript": ["typescript", "tsx"],  # codegraph stores .tsx files as language='tsx'
 }
 
+# SQL fragment used to match the constructor method node when resolving
+# `instantiates` edges.  The fragment references two aliases from the query:
+#   cls  — the class node being instantiated
+#   ctor — a method/function node contained by cls
+# Languages without traditional constructors (go, rust, c) are omitted;
+# their instantiates edges (if any) are ignored.
+# C++ note: codegraph does not record `instantiates` edges for stack-allocation
+# syntax (`MyClass obj(args)`), so this entry has no practical effect today.
+_CONSTRUCTOR_FILTER = {
+    "python":     "ctor.name = '__init__'",
+    "typescript": "ctor.name = 'constructor'",
+    "javascript": "ctor.name = 'constructor'",
+    "java":       "ctor.name = cls.name",
+    "cpp":        "ctor.name = cls.name",
+}
+
 
 class CodeGraphExtractor:
     """Query a codegraph SQLite database to extract functions and call edges."""
@@ -115,6 +131,10 @@ class CodeGraphExtractor:
         caller_stem / callee_stem are plain function names (fqn.split('::')[-1]).
         caller_basename is os.path.basename(caller_file_path), used to disambiguate
         same-name functions defined in different files.
+
+        Constructor calls are synthesised from `instantiates` edges: when a
+        function instantiates a class, the corresponding constructor method is
+        added as a callee.  See _CONSTRUCTOR_FILTER for per-language details.
         """
         cg_langs = _CG_LANG.get(lang_key)
         if not cg_langs:
@@ -123,6 +143,8 @@ class CodeGraphExtractor:
         conn = sqlite3.connect(self._db)
         cur = conn.cursor()
         placeholders = ",".join("?" * len(cg_langs))
+
+        # Query 1: regular function/method calls
         cur.execute(
             f"""
             SELECT s.name, s.file_path, t.name
@@ -134,15 +156,40 @@ class CodeGraphExtractor:
             cg_langs,
         )
         rows = cur.fetchall()
-        conn.close()
 
         result = defaultdict(set)
         for caller, caller_file, callee in rows:
             base = os.path.basename(caller_file)
             last_dot = base.rfind(".")
             dashed = base[:last_dot] + "-" + base[last_dot + 1:] if last_dot > 0 else base
-            key = (caller, dashed)
-            result[key].add(callee)
+            result[(caller, dashed)].add(callee)
+
+        # Query 2: constructor calls synthesised from instantiates edges.
+        # For each `caller instantiates ClassName` edge, find the constructor
+        # method inside that class and add it as a synthetic callee.
+        ctor_filter = _CONSTRUCTOR_FILTER.get(lang_key)
+        if ctor_filter:
+            cur.execute(
+                f"""
+                SELECT s.name, s.file_path, ctor.name
+                FROM edges e
+                JOIN nodes s   ON e.source = s.id
+                JOIN nodes cls ON e.target = cls.id AND cls.kind = 'class'
+                JOIN edges ce  ON ce.source = cls.id AND ce.kind = 'contains'
+                JOIN nodes ctor ON ce.target = ctor.id
+                               AND ctor.kind IN ('method', 'function')
+                WHERE e.kind = 'instantiates' AND s.language IN ({placeholders})
+                AND {ctor_filter}
+                """,
+                cg_langs,
+            )
+            for caller, caller_file, ctor_name in cur.fetchall():
+                base = os.path.basename(caller_file)
+                last_dot = base.rfind(".")
+                dashed = base[:last_dot] + "-" + base[last_dot + 1:] if last_dot > 0 else base
+                result[(caller, dashed)].add(ctor_name)
+
+        conn.close()
         return dict(result)
 
 
