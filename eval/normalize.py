@@ -19,8 +19,12 @@ Two scoring views fall out of this (see score.py):
 """
 
 import json
+import os
 import re
+import sys
 from dataclasses import dataclass, field
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # --- CWE family grouping ------------------------------------------------------
@@ -128,23 +132,19 @@ class Detection:
 # it as a detection. NEEDS_REVIEW is fail-closed → also a detection (the tool
 # refused to clear the case). The "negative" verdicts mean affirmatively cleared.
 #
-# Verdicts confirmed from src/<plugin>_reasoner.py:
-#   taint:     VULNERABLE | POLYMORPHIC | SANITIZED | SAFE | ERROR
-#   crypto:    VULNERABLE | WEAK | POLYMORPHIC | NEEDS_REVIEW | SAFE | ERROR
-#   authz:     VULNERABLE | NEEDS_REVIEW | SAFE | ERROR
-#   ifc:       LEAK | DECLASSIFIED | POLYMORPHIC | SECURE | ERROR
-#   typestate: VULNERABLE | POLYMORPHIC | NEEDS_REVIEW | SAFE | ERROR
+# Derived from the central plugin registry (src/plugins/registry.py) so adding a
+# plugin needs no edit here. The registry stores verdict buckets as ordered
+# lists; collapse_ours wants sets, so we convert. Importing the registry is cheap
+# and side-effect free (pure data, no openai), keeping this module light.
+#
+# Verdict buckets per plugin (positive=flag, poly=parametric, review=fail-closed
+# soft flag, negative=cleared); ERROR is implicit and fail-closed everywhere.
+from src.plugins import registry as _registry  # noqa: E402  (pure-data, light)
+
 PLUGIN_VERDICTS = {
-    "taint":     {"positive": {"VULNERABLE"}, "poly": {"POLYMORPHIC"},
-                  "negative": {"SAFE", "SANITIZED"}},
-    "crypto":    {"positive": {"VULNERABLE", "WEAK"}, "poly": {"POLYMORPHIC"},
-                  "review": {"NEEDS_REVIEW"}, "negative": {"SAFE"}},
-    "authz":     {"positive": {"VULNERABLE"}, "poly": set(),
-                  "review": {"NEEDS_REVIEW"}, "negative": {"SAFE"}},
-    "ifc":       {"positive": {"LEAK"}, "poly": {"POLYMORPHIC"},
-                  "negative": {"SECURE", "DECLASSIFIED"}},
-    "typestate": {"positive": {"VULNERABLE"}, "poly": {"POLYMORPHIC"},
-                  "review": {"NEEDS_REVIEW"}, "negative": {"SAFE"}},
+    name: {bucket: set(m["verdicts"].get(bucket, []))
+           for bucket in ("positive", "poly", "review", "negative")}
+    for name, m in _registry.PLUGIN_MANIFESTS.items()
 }
 
 # Back-compat alias used by older taint call sites / tests.

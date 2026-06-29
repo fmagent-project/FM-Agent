@@ -23,46 +23,31 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 
 # --------------------------------------------------------------------------- #
 # Plugin registry: each analysis plugin writes its run under a known workspace
 # subdir + results subdir, and uses its own verdict vocabulary. The viewer reads
 # this to (a) discover which plugins were run for a project, and (b) switch the
-# middle-panel renderer on the frontend. Adding a plugin = one entry here + one
-# JS renderer.
+# middle-panel renderer on the frontend. Adding a plugin = one manifest entry in
+# src/plugins/registry.py + one JS renderer (see renderDetail dispatch below).
+#
+# This dict is DERIVED from the central pure-data registry so there is a single
+# source of truth. Importing the registry is cheap and side-effect free (no
+# openai), keeping this viewer zero-heavy-dependency (stdlib-only at runtime).
 # --------------------------------------------------------------------------- #
 
+from src.plugins import registry as _registry  # noqa: E402  (pure-data, light)
+
 PLUGINS = {
-    "ifc": {
-        "label": "IFC (information flow)",
-        "workspace": "fm_agent_ifc",
-        "results": "ifc_results",
-        "verdicts": ["LEAK", "DECLASSIFIED", "POLYMORPHIC", "SECURE", "ERROR"],
-    },
-    "authz": {
-        "label": "Access control (guarded-Hoare)",
-        "workspace": "fm_agent_authz",
-        "results": "results",
-        "verdicts": ["VULNERABLE", "NEEDS_REVIEW", "SAFE", "ERROR"],
-    },
-    "taint": {
-        "label": "Integrity taint (injection)",
-        "workspace": "fm_agent_taint",
-        "results": "results",
-        "verdicts": ["VULNERABLE", "POLYMORPHIC", "SANITIZED", "SAFE", "ERROR"],
-    },
-    "crypto": {
-        "label": "Crypto misuse",
-        "workspace": "fm_agent_crypto",
-        "results": "results",
-        "verdicts": ["VULNERABLE", "WEAK", "POLYMORPHIC", "NEEDS_REVIEW", "SAFE", "ERROR"],
-    },
-    "typestate": {
-        "label": "Typestate / temporal",
-        "workspace": "fm_agent_typestate",
-        "results": "results",
-        "verdicts": ["VULNERABLE", "POLYMORPHIC", "NEEDS_REVIEW", "SAFE", "ERROR"],
-    },
+    name: {
+        "label": m["label"],
+        "workspace": m["work_subdir"],
+        "results": m["results_subdir"],
+        "verdicts": _registry.all_verdicts(name),
+    }
+    for name, m in _registry.PLUGIN_MANIFESTS.items()
 }
 
 
@@ -87,8 +72,10 @@ def _discover_plugins(proj_dir):
     for name, cfg in PLUGINS.items():
         if os.path.isdir(os.path.join(proj_dir, cfg["workspace"])):
             found.append(name)
-        elif os.path.basename(proj_dir) == cfg["workspace"] and \
-                os.path.isdir(os.path.join(proj_dir, cfg["results"])):
+        elif os.path.basename(proj_dir) == cfg["workspace"] and (
+                os.path.isdir(os.path.join(proj_dir, cfg["results"]))
+                or os.path.isdir(os.path.join(proj_dir, "results"))
+                or os.path.isdir(os.path.join(proj_dir, "ifc_results"))):
             found.append(name)
     return found
 
@@ -107,11 +94,31 @@ def _find_workspace(proj_dir, plugin="ifc"):
     if os.path.isdir(candidate):
         return candidate
     # Maybe the user pointed straight at the workspace.
-    if os.path.isdir(os.path.join(proj_dir, cfg["results"])):
+    if os.path.isdir(os.path.join(proj_dir, cfg["results"])) or \
+            os.path.isdir(os.path.join(proj_dir, "results")) or \
+            os.path.isdir(os.path.join(proj_dir, "ifc_results")):
         return proj_dir
     raise FileNotFoundError(
         f"no {cfg['workspace']}/ found under {proj_dir} (run the {plugin} plugin first)"
     )
+
+
+def _results_dir(workspace, cfg):
+    """Resolve a plugin's results subdir, tolerating known alternates.
+
+    ifc has two entrypoints that disagree on the subdir: legacy ifc_main.py
+    writes 'ifc_results/', while the unified run_plugin.py path writes the driver
+    default 'results/'. Prefer the configured name, then try the common
+    alternates so either entrypoint's output renders.
+    """
+    primary = os.path.join(workspace, cfg["results"])
+    if os.path.isdir(primary):
+        return primary
+    for alt in ("results", "ifc_results"):
+        cand = os.path.join(workspace, alt)
+        if os.path.isdir(cand):
+            return cand
+    return primary
 
 
 def _read_json(path):
@@ -149,7 +156,7 @@ def load_run(proj_dir, plugin="ifc"):
     """Load the full run into a structure the frontend consumes in one call."""
     cfg = PLUGINS.get(plugin) or PLUGINS["ifc"]
     workspace = _find_workspace(proj_dir, plugin)
-    results_dir = os.path.join(workspace, cfg["results"])
+    results_dir = _results_dir(workspace, cfg)
     extracted_dir = os.path.join(workspace, "extracted_functions")
 
     summary = _read_json(os.path.join(results_dir, "summary.json")) or {}

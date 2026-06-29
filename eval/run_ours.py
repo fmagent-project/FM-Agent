@@ -105,23 +105,12 @@ def run_one_case(plugin_cls, case, stage_root, helpers_src=None,
 
 
 def _plugin_class(name):
-    """Resolve a plugin name to its class (mirrors run_plugin.py registry)."""
-    if name == "taint":
-        from src.plugins.taint import TaintPlugin
-        return TaintPlugin, None
-    if name == "crypto":
-        from src.plugins.crypto import CryptoPlugin
-        return CryptoPlugin, None
-    if name == "authz":
-        from src.plugins.authz import AuthzPlugin
-        return AuthzPlugin, None
-    if name == "ifc":
-        from src.plugins.ifc import IfcPlugin
-        return IfcPlugin, "fm_agent_ifc"  # ifc uses a custom work_subdir
-    if name == "typestate":
-        from src.plugins.typestate import TypestatePlugin
-        return TypestatePlugin, None
-    raise SystemExit(f"unknown plugin '{name}'")
+    """Resolve a plugin name to (class, work_subdir) via the central registry."""
+    from src.plugins import registry
+    if not registry.has_plugin(name):
+        raise SystemExit(f"unknown plugin '{name}'")
+    cls = registry.load_plugin_class(name)
+    return cls, registry.get_manifest(name).get("work_subdir")
 
 
 def main():

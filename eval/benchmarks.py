@@ -18,7 +18,10 @@ whether it flags the case with a CWE in the expected CWE's family.
 import csv
 import json
 import os
+import sys
 from dataclasses import dataclass, field, asdict
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # --- OWASP category -> CWE number (from expectedresults-0.1.csv) ---------------
@@ -42,22 +45,23 @@ OWASP_CATEGORY_CWE = {
     "trustbound": "CWE-501",
 }
 
-# Categories the taint plugin actually models (src/taint_reasoner.py CWE set).
-TAINT_CATEGORIES = {
-    "pathtraver", "sqli", "cmdi", "xss", "deserialization",
-    "codeinj", "redirect", "ldapi", "xpathi", "xxe",
-}
-
-# Categories the crypto plugin models (src/crypto_reasoner.py): OWASP only ships
-# `hash` (CWE-328 weak hash) and `weakrand` (CWE-330 insecure PRNG) as real
-# crypto-misuse cases. securecookie/trustbound are NOT crypto-misuse (they are
-# cookie-flag / trust-boundary), so they are excluded.
-CRYPTO_CATEGORIES = {"hash", "weakrand"}
+# Categories each plugin models on the OWASP benchmark, derived from the central
+# registry (src/plugins/registry.py). Only plugins with NON-EMPTY OWASP
+# categories appear here (taint, crypto) — authz/ifc/typestate have no OWASP
+# coverage and are CVE-only, so they are intentionally absent (this also keeps
+# stratify.py's --plugin choices to the OWASP-samplable plugins). Importing the
+# registry is cheap and side-effect free (pure data, no openai).
+from src.plugins import registry as _registry  # noqa: E402  (pure-data, light)
 
 PLUGIN_CATEGORIES = {
-    "taint": TAINT_CATEGORIES,
-    "crypto": CRYPTO_CATEGORIES,
+    name: set(m["benchmark_categories"])
+    for name, m in _registry.PLUGIN_MANIFESTS.items()
+    if m.get("benchmark_categories")
 }
+
+# Back-compat aliases (some call sites referenced these directly).
+TAINT_CATEGORIES = PLUGIN_CATEGORIES.get("taint", set())
+CRYPTO_CATEGORIES = PLUGIN_CATEGORIES.get("crypto", set())
 
 
 @dataclass
