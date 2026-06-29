@@ -505,6 +505,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
    .vc-SAFE{background:var(--safe);color:#002b16}
    .vc-NEEDS_REVIEW{background:var(--review);color:#241400}
     .vc-SANITIZED{background:var(--poly);color:#002a30}
+    .vc-BOUNDED{background:var(--secure);color:#002b16}
     .vc-WEAK{background:var(--declass);color:#241400}
     .vc-ERROR{background:var(--error);color:#1f0030}
   main{flex:1;display:flex;min-height:0}
@@ -530,6 +531,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .b-SAFE{background:var(--safe);color:#002b16}
   .b-NEEDS_REVIEW{background:var(--review);color:#241400}
   .b-SANITIZED{background:var(--poly);color:#002a30}
+  .b-BOUNDED{background:var(--secure);color:#002b16}
   .b-WEAK{background:var(--declass);color:#241400}
   .b-ERROR{background:var(--error);color:#1f0030}
   /* center: detail */
@@ -1002,7 +1004,7 @@ async function loadRun(){
   }catch(e){ $("#list").innerHTML='<div class="empty">'+esc(e.message)+'</div>'; $("#stat").textContent="error"; }
 }
 
-function reasonTitle(){ return PLUGIN==="authz" ? "Authorization Reasoning" : PLUGIN==="taint" ? "Taint Reasoning" : PLUGIN==="crypto" ? "Crypto Reasoning" : PLUGIN==="typestate" ? "Typestate Reasoning" : "IFC Reasoning"; }
+function reasonTitle(){ return PLUGIN==="authz" ? "Authorization Reasoning" : PLUGIN==="taint" ? "Taint Reasoning" : PLUGIN==="crypto" ? "Crypto Reasoning" : PLUGIN==="typestate" ? "Typestate Reasoning" : PLUGIN==="resource" ? "Resource Reasoning" : "IFC Reasoning"; }
 
 function syncPluginSelector(){
   const sel=$("#plugin");
@@ -1058,7 +1060,7 @@ function renderList(){
 }
 
 const VCOL={LEAK:"#ff5c5c",SECURE:"#3fcf8e",DECLASSIFIED:"#ffb454",POLYMORPHIC:"#36c5d8",ERROR:"#c678dd",
-            VULNERABLE:"#ff5c5c",SAFE:"#3fcf8e",NEEDS_REVIEW:"#ffb454",SANITIZED:"#36c5d8",WEAK:"#ffb454","?":"#9aa3b2"};
+            VULNERABLE:"#ff5c5c",SAFE:"#3fcf8e",NEEDS_REVIEW:"#ffb454",SANITIZED:"#36c5d8",WEAK:"#ffb454",BOUNDED:"#3fcf8e","?":"#9aa3b2"};
 
 function renderGraph(container){
   const fns=RUN.functions.filter(f=>FILTER.has(f.verdict));
@@ -1187,6 +1189,7 @@ async function renderDetail(f){
   else if(PLUGIN==="taint") renderTaintDetail(d,f,r);
   else if(PLUGIN==="crypto") renderCryptoDetail(d,f,r);
   else if(PLUGIN==="typestate") renderTypestateDetail(d,f,r);
+  else if(PLUGIN==="resource") renderResourceDetail(d,f,r);
   else renderIfcDetail(d,f,r);
 }
 
@@ -1439,6 +1442,99 @@ function renderTaintDetail(d,f,r){
       ch+=`<div class="obl">⇡ via <b>${esc(c.callee)}</b>: instantiated callee sink <span class="tag rid">${esc(c.sink_id)}</span> <span class="tag">${esc(c.sink_kind)}</span></div>`;
     });
     d.appendChild(section("Interprocedural (composed callee sinks)",ch));
+  }
+
+  if((sig.notes||[]).length) d.appendChild(section("Analysis notes",`<div class="notes">${esc((sig.notes||[]).join(" "))}</div>`));
+  if(r.error) d.appendChild(section("Error",`<pre>${esc(r.error)}</pre>`));
+}
+
+function renderResourceDetail(d,f,r){
+  // The resource plugin uses the generic render_result: r.facts is the resource
+  // signature; r.findings carries the deterministic checker's per-costly-op verdicts.
+  const sig=r.facts||(r.data&&r.data.signature)||{};
+  const findings=r.findings||[];
+
+  // findings first (the verdict's "why"): each costly op's status + CWE
+  if(findings.length){
+    let fh="";
+    findings.forEach(fd=>{
+      const dat=fd.data||{};
+      const st=dat.status||"";
+      const cls=st==="VULNERABLE"?"finding":"op"+(st==="POLYMORPHIC"?"":" ok");
+      fh+=`<div class="${cls}">`+
+          `<div class="ohead"><span class="okind">${esc(fd.title||fd.rule_id)}</span>`+
+          `<span class="tag">${esc(dat.cwe||"")}</span>`+
+          `<span class="tag">${esc(dat.op_kind||"")}</span>`+
+          `<span class="vchip vc-${esc(st)}">${esc(st)}</span>`+
+          (dat.bounded_by?`<span class="tag dom-yes">⊘ ${esc(dat.bounded_by)}</span>`:"")+
+          `</div><div class="fm">${esc(fd.message||"")}</div>`;
+      if(dat.evidence) fh+=`<div class="oev">${esc(dat.evidence)}</div>`;
+      fh+=`</div>`;
+    });
+    d.appendChild(section("Findings ("+findings.length+")",fh));
+  } else if(f.verdict==="SAFE"){
+    d.appendChild(section("Findings",'<span class="mod">No attacker-controlled magnitude reaches a costly op.</span>'));
+  }
+
+  // magnitude sources (attacker-controllable sizes/counts/depths/ratios)
+  const mags=sig.magnitude_sources||[];
+  let mh="";
+  mags.forEach(m=>{
+    mh+=`<div class="op"><div class="ohead"><span class="okind">${esc(m.magnitude_kind||"magnitude")}</span>`+
+        `<span class="tag rid">${esc(m.id||"")}</span>`+
+        `<span class="tag">conf:${esc(m.confidence||"?")}</span></div>`;
+    if(m.expr) mh+=`<div class="oev">${esc(m.expr)}</div>`;
+    mh+=`</div>`;
+  });
+  d.appendChild(section("Magnitude sources ("+mags.length+")",mh||'<span class="mod">none — no attacker-controlled magnitude detected</span>'));
+
+  // costly ops (operation sites + the magnitude they consume + bounds)
+  const ops=sig.costly_ops||[];
+  const opStatus={};
+  findings.forEach(fd=>{const id=(fd.data||{}).op_id; if(id)opStatus[id]=(fd.data||{}).status;});
+  let oh="";
+  ops.forEach(op=>{
+    const st=opStatus[op.id]||"";
+    const bad=st==="VULNERABLE";
+    oh+=`<div class="op ${bad?'bad':(st==='BOUNDED'?'ok':'')}"><div class="ohead">`+
+        `<span class="okind">${esc(op.op_kind||"op")}</span>`+
+        (op.callee?`<span class="tag">${esc(op.callee)}</span>`:"")+
+        (st?`<span class="vchip vc-${esc(st)}">${esc(st)}</span>`:"")+
+        `</div>`;
+    if(op.call_expr) oh+=`<div class="oev">${esc(op.call_expr)}</div>`;
+    const flows=(op.magnitudes||[]).map(mg=>{
+      const bnd=(mg.bounds||[]).length?` <span class="tag dom-yes">⊘ ${esc(mg.bounds.join(","))}</span>`:"";
+      return `<span class="dep">${esc(mg.source)}</span>${bnd}`;
+    }).join(' <span class="arrow">·</span> ');
+    oh+=`<div class="flowrow"><span class="arrow">driven by</span>${flows||'<span class="mod">∅</span>'}<span class="arrow">→</span><b>${esc(op.op_kind)}</b></div>`;
+    oh+=`</div>`;
+  });
+  d.appendChild(section("Costly ops ("+ops.length+")",oh||'<span class="mod">none — no cost-bearing operation site</span>'));
+
+  // bounds
+  const bounds=sig.bounds||[];
+  if(bounds.length){
+    let bh="";
+    bounds.forEach(b=>{
+      bh+=`<div class="op"><div class="ohead"><span class="okind">${esc(b.bound_kind||"bound")}</span>`+
+          `<span class="tag rid">${esc(b.id||"")}</span>`+
+          `<span class="tag">caps: ${esc((b.caps||[]).join(",")||"—")}</span>`+
+          `<span class="tag ${b.dominates?'dom-yes':'dom-no'}">${b.dominates?"dominates":"non-dominating"}</span>`+
+          `<span class="tag">conf:${esc(b.confidence||"?")}</span></div>`;
+      if(b.expr) bh+=`<div class="oev">${esc(b.expr)}</div>`;
+      bh+=`</div>`;
+    });
+    d.appendChild(section("Bounds ("+bounds.length+")",bh));
+  }
+
+  // interprocedural composition (callee costly ops instantiated at call sites)
+  const composed=sig._composed_ops||[];
+  if(composed.length){
+    let ch="";
+    composed.forEach(c=>{
+      ch+=`<div class="obl">⇡ via <b>${esc(c.callee)}</b>: instantiated callee op <span class="tag rid">${esc(c.op_id)}</span> <span class="tag">${esc(c.op_kind)}</span></div>`;
+    });
+    d.appendChild(section("Interprocedural (composed callee ops)",ch));
   }
 
   if((sig.notes||[]).length) d.appendChild(section("Analysis notes",`<div class="notes">${esc((sig.notes||[]).join(" "))}</div>`));

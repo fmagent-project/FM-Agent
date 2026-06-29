@@ -75,3 +75,16 @@ MAX_TYPESTATE_ITER = 5                   # retry budget for [TYPESTATE_JSON] ext
 # Fail-closed: unknown event order / unknown path coverage => NEEDS_REVIEW,
 # never silently SAFE.
 TYPESTATE_FAIL_CLOSED = True
+
+# --- Resource Exhaustion / DoS track ---
+# Detects denial-of-service via uncontrolled resource use (unbounded allocation/
+# read, decompression bombs, ReDoS, uncontrolled recursion/loops): an attacker-
+# controllable MAGNITUDE (size/count/depth/ratio) must not drive a COSTLY OP
+# without a dominating BOUND that caps that magnitude. LLM derives a per-function
+# resource signature; a deterministic checker matches dominating bounds to the
+# costly op's magnitude (sibling of the taint reasoner).
+RESOURCE_MODEL = LLM_MODEL               # infer magnitude sources, costly ops, typed bounds
+MAX_RESOURCE_ITER = 5                    # retry budget for [RESOURCE_JSON] extraction
+# Fail-closed: unknown magnitude/op/bound kind or non-dominating bound => unsafe,
+# never silently SAFE.
+RESOURCE_FAIL_CLOSED = True

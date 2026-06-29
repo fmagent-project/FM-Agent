@@ -190,6 +190,38 @@ PLUGIN_MANIFESTS: Dict[str, dict] = {
         ),
         "benchmark_categories": [],
     },
+    "resource": {
+        "name": "resource",
+        "module": "src.plugins.resource",
+        "class_name": "ResourcePlugin",
+        "work_subdir": "fm_agent_resource",
+        "results_subdir": "results",
+        "label": "Resource exhaustion (DoS)",
+        "verdicts": {
+            "positive": ["VULNERABLE"],
+            "poly": ["POLYMORPHIC"],
+            "review": [],
+            "negative": ["BOUNDED", "SAFE"],
+        },
+        "cwes": ["CWE-400", "CWE-770", "CWE-674", "CWE-1333", "CWE-409",
+                 "CWE-789", "CWE-834"],
+        "cwe_notes": {
+            "CWE-400": "uncontrolled resource consumption",
+            "CWE-770": "allocation of resources without limits or throttling",
+            "CWE-674": "uncontrolled recursion",
+            "CWE-1333": "inefficient regular expression complexity (ReDoS)",
+            "CWE-409": "improper handling of highly compressed data (decompression bomb)",
+            "CWE-789": "memory allocation with excessive size value",
+            "CWE-834": "excessive iteration",
+        },
+        "property_nl": (
+            "resource-exhaustion / denial of service (an attacker-controllable "
+            "magnitude — size, count, depth, or ratio — driving a costly "
+            "operation without a dominating bound: unbounded allocation/read, "
+            "decompression bomb, ReDoS, uncontrolled recursion or loops)"
+        ),
+        "benchmark_categories": [],
+    },
 }
 
 
