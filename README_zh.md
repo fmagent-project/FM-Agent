@@ -106,12 +106,31 @@ OpenCode provider 的配置以及可选的 prompt 缓存设置见 [docs/config_l
 ## 快速开始
 
 ```bash
-python3 main.py <proj_dir>
+uv run python main.py <proj_dir>
 ```
 
 | 参数 | 描述 |
 |---|---|
 | `proj_dir` | 待检测代码库的目录路径 |
+| `--hardware` | 将 `proj_dir` 视为 Chisel（Scala）硬件设计，仅生成模块规约（详见下文） |
+
+### 为 Chisel 生成规约（`--hardware`）
+
+对于 Chisel（Scala）硬件设计，请传入 `--hardware` 标志：
+
+```bash
+uv run python main.py <proj_dir> --hardware
+```
+
+在该模式下，FM-Agent 会运行一条专为硬件spec自动生成定制的流程：理解整体设计、将其划分为多个子系统，并为各模块生成面向验证的规约。该模式不会运行代码推理器或 Bug 验证，仅进行规约生成。
+
+`proj_dir` 中必须包含 Scala（`.scala`）源文件。对于每个提取出的模块，FM-Agent 会在 `fm_agent/` 下写入独立的 Markdown 文件描述硬件规约：
+
+| 输出 | 内容 |
+|---|---|
+| `<ModuleName>_spec.md` | 模块行为的面向验证的规约 |
+
+生成的规约会在运行过程中按质量检查清单进行校验；未通过校验的规约会被自动删除并重新生成。
 
 ### 输出说明
 

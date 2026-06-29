@@ -127,12 +127,31 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-python3 main.py <proj_dir>
+uv run python main.py <proj_dir>
 ```
 
-| Argument   | Description                                              |
-| ---------- | -------------------------------------------------------- |
-| `proj_dir` | Directory of codebase that you want to check correctness |
+| Argument     | Description                                              |
+| ------------ | -------------------------------------------------------- |
+| `proj_dir`   | Directory of codebase that you want to check correctness |
+| `--hardware` | Treat `proj_dir` as a Chisel (Scala) hardware design and generate module specs only (see below) |
+
+### Generating Specs for Chisel (`--hardware`)
+
+For Chisel (Scala) hardware designs, pass the `--hardware` flag:
+
+```bash
+uv run python main.py <proj_dir> --hardware
+```
+
+In this mode FM-Agent runs a **spec-only** pipeline tailored to hardware: it understands the design, splits it into subsystems, and generates verification-oriented module specifications. It does **not** run the code reasoner or bug validation — only spec generation.
+
+The `proj_dir` must contain Scala (`.scala`) source files. For each extracted module, FM-Agent writes spec Markdown files under `fm_agent/`:
+
+| Output                  | Content                                                              |
+| ----------------------- | ------------------------------------------------------------------- |
+| `<ModuleName>_spec.md`  | Verification-oriented specification of the module's behavior         |
+
+Generated specs are validated against a quality checklist; specs that fail are automatically deleted and regenerated within the run.
 
 ### Output
 

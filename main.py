@@ -121,7 +121,7 @@ def _has_source_code(proj_dir):
     return False
 
 
-def run_pipeline(proj_dir, only_spec=False):
+def run_pipeline(proj_dir):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
@@ -241,10 +241,6 @@ def run_pipeline(proj_dir, only_spec=False):
     shutil.copy2(
         os.path.join(script_dir, "src", "generate_batch_prompts.py"),
         os.path.join(spec_prompts_dir, "generate_batch_prompts.py"),
-    )
-    shutil.copy2(
-        os.path.join(script_dir, "src", "run_batch_gen.py"),
-        os.path.join(spec_prompts_dir, "run_batch_gen.py"),
     )
 
     print("[Pipeline] Stage 3/5: Collecting file list...")
@@ -390,20 +386,14 @@ def run_pipeline(proj_dir, only_spec=False):
                     f"spawned {len(spec_procs)} opencode processes for {len(pending_batches)} batches"
                 )
 
-                if only_spec:
-                    # Only generate specs: skip reasoning and bug validation,
-                    # just wait for the spec generation processes to finish.
-                    for proc in spec_procs:
-                        proc.wait()
-                else:
-                    newly_processed = streaming_reasoner(input_dir, output_dir, file_list=layer_files,
-                                       proj_dir=proj_dir, work_dir=work_dir,
-                                       spec_procs=spec_procs,
-                                       already_processed=all_processed | layer_processed)
-                    layer_processed.update(newly_processed)
+                newly_processed = streaming_reasoner(input_dir, output_dir, file_list=layer_files,
+                                   proj_dir=proj_dir, work_dir=work_dir,
+                                   spec_procs=spec_procs,
+                                   already_processed=all_processed | layer_processed)
+                layer_processed.update(newly_processed)
 
-                    for proc in spec_procs:
-                        proc.wait()
+                for proc in spec_procs:
+                    proc.wait()
                 for trace_record in spec_trace_records:
                     finish_opencode_trace(trace_record)
 
@@ -448,16 +438,13 @@ def run_pipeline(proj_dir, only_spec=False):
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
 
-    if only_spec:
-        print("[Pipeline] --only-spec: generated specs only; skipped reasoning and bug validation.")
-    else:
-        # Print confirmed bug count
-        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-        if os.path.exists(summary_path):
-            with open(summary_path, "r") as f:
-                summary = json.load(f)
-            confirmed = summary.get("total_confirmed", 0)
-            print(f"[Pipeline] Confirmed bugs: {confirmed}")
+    # Print confirmed bug count
+    summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
+    if os.path.exists(summary_path):
+        with open(summary_path, "r") as f:
+            summary = json.load(f)
+        confirmed = summary.get("total_confirmed", 0)
+        print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
     print("[Pipeline] Done.")
 
@@ -466,13 +453,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the FM-Agent spec generation and verification pipeline.")
     parser.add_argument("proj_dir", help="Path to the project directory to analyze.")
     parser.add_argument(
-        "--only-spec",
+        "--hardware",
         action="store_true",
-        help="Only generate specs; skip calling the reasoner and validating bugs.",
+        help="Treat the project as a Chisel (Scala) hardware design and generate specs "
+        "via chisel_spec_generator instead of the default pipeline.",
     )
     args = parser.parse_args()
 
     start_time = time.time()
-    run_pipeline(os.path.abspath(args.proj_dir), only_spec=args.only_spec)
+    if args.hardware:
+        from src.chisel_spec_generator import run_chisel_spec_generation
+
+        run_chisel_spec_generation(os.path.abspath(args.proj_dir))
+    else:
+        run_pipeline(os.path.abspath(args.proj_dir))
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")

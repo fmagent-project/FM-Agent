@@ -2,8 +2,7 @@
 
 This is the Chisel counterpart to :func:`main.run_pipeline`. It generates
 verification-oriented module specs for a Chisel codebase and stops there — it
-does NOT run the reasoner or bug validation (equivalent to ``run_pipeline``'s
-``only_spec=True`` path).
+does NOT run the reasoner or bug validation.
 
 It reuses the existing extraction / topdown-layer / batch-prompt machinery,
 which is keyed off ``fm_agent/phases.json`` and the ``engine_overview.txt`` /
@@ -56,7 +55,6 @@ from main import (
     _clean_previous_run,
     _deduplicate_phases,
     _get_phase_files,
-    _has_source_code,
 )
 
 
@@ -440,9 +438,17 @@ def _normalize_chisel_domain_context(work_dir):
             shutil.copy2(os.path.join(ctx_dir, src_fname), dst)
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
+def _has_scala_source(proj_dir):
+    """Check whether proj_dir contains at least one Chisel (.scala) source file."""
+    for root, dirs, files in os.walk(proj_dir):
+        # Skip hidden dirs and common non-source dirs (mirrors _has_source_code).
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
+                   {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
+        for fname in files:
+            if fname.endswith('.scala'):
+                return True
+    return False
+
 
 def run_chisel_spec_generation(proj_dir, resume=False):
     """Generate verification-oriented specs for a Chisel (Scala) design.
@@ -460,8 +466,8 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         print(f"[Chisel] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
 
-    if not _has_source_code(proj_dir):
-        print(f"[Chisel] ERROR: No source code files found in {proj_dir}.")
+    if not _has_scala_source(proj_dir):
+        print(f"[Chisel] ERROR: No Scala (.scala) source files found in {proj_dir}.")
         sys.exit(1)
 
     work_dir = os.path.join(proj_dir, "fm_agent")
@@ -839,23 +845,3 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                 sys.exit(1)
 
     print("[Chisel] Done. Generated Chisel module spec/info files only; skipped reasoning and bug validation.")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Generate verification-oriented specs for a Chisel (Scala) design."
-    )
-    parser.add_argument("proj_dir", help="Path to the Chisel project directory to analyze.")
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Preserve the existing fm_agent/ workspace and continue an interrupted "
-             "run: reuse groups.json and only generate specs for modules that do not "
-             "yet have valid spec/info files.",
-    )
-    args = parser.parse_args()
-
-    start_time = time.time()
-    run_chisel_spec_generation(os.path.abspath(args.proj_dir), resume=args.resume)
-    end_time = time.time()
-    logging.info(f"Total time: {end_time - start_time:.2f} seconds")
