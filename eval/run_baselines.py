@@ -122,15 +122,39 @@ def reconstruct_from_raw(out_dir):
 
 
 if __name__ == "__main__":
-    # smoke: run both baselines over a tiny hand-picked set (1 true sqli, 1 safe)
-    from eval.benchmarks import load_owasp
-    owasp = sys.argv[1] if len(sys.argv) > 1 else \
-        "/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython"
-    cases = [c for c in load_owasp(owasp)
-             if c.meta["test_name"] in ("BenchmarkTest00099", "BenchmarkTest00011")]
-    out = "/tmp/eval_baseline_smoke"
-    table = run_baselines_over_cases(cases, out)
-    for c in cases:
-        print(f"{c.id} (label={'VULN' if c.label else 'safe'}, {c.cwe}):")
-        for tool, d in table[c.id].items():
-            print(f"   {tool:8s} detected={d['detected']} cwes={d['cwes']} ({d['raw_count']} findings)")
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Run Bandit + Semgrep baselines over a sample's cases")
+    ap.add_argument("--sample", default=None,
+                    help="a sample_<plugin>[_cve].json manifest; run baselines over its cases")
+    ap.add_argument("--out", default=None,
+                    help="output dir (default eval/out_baselines_<plugin>[_cve]/)")
+    ap.add_argument("--owasp", default="/mnt/nvme/jiangzhe/tmp/opencode/eval_benchmarks/BenchmarkPython",
+                    help="OWASP dir for the legacy smoke run when --sample is omitted")
+    args = ap.parse_args()
+
+    if args.sample:
+        # Sample-driven: run baselines over EXACTLY the cases our tool ran on, so
+        # the comparison set (intersection) is shared. This is what the plugin
+        # self-test loop uses. Reconstruct each Case from the manifest.
+        from eval.benchmarks import Case
+        manifest = json.load(open(args.sample))
+        cases = [Case(**c) for c in manifest["cases"]]
+        plugin = manifest.get("plugin", "plugin")
+        is_cve = "cve" in (manifest.get("benchmark", "") + os.path.basename(args.sample))
+        out = args.out or f"eval/out_baselines_{plugin}{'_cve' if is_cve else ''}"
+        print(f"running baselines over {len(cases)} cases from {args.sample} -> {out}")
+        run_baselines_over_cases(cases, out)
+        print(f"wrote {os.path.join(out, 'baseline_detections.json')}")
+    else:
+        # smoke: run both baselines over a tiny hand-picked OWASP set (1 sqli, 1 safe)
+        from eval.benchmarks import load_owasp
+        cases = [c for c in load_owasp(args.owasp)
+                 if c.meta["test_name"] in ("BenchmarkTest00099", "BenchmarkTest00011")]
+        out = "/tmp/eval_baseline_smoke"
+        table = run_baselines_over_cases(cases, out)
+        for c in cases:
+            print(f"{c.id} (label={'VULN' if c.label else 'safe'}, {c.cwe}):")
+            for tool, d in table[c.id].items():
+                print(f"   {tool:8s} detected={d['detected']} cwes={d['cwes']} ({d['raw_count']} findings)")
