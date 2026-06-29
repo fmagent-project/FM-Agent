@@ -4,6 +4,7 @@
   "tools": [
     "bandit",
     "fm-agent",
+    "llm-direct",
     "semgrep"
   ],
   "views": {
@@ -97,6 +98,52 @@
             "TN": 0,
             "ERR": 0,
             "recall": 1.0
+          }
+        }
+      },
+      "llm-direct": {
+        "overall": {
+          "TP": 6,
+          "FP": 5,
+          "FN": 7,
+          "TN": 11,
+          "ERR": 0
+        },
+        "precision": 0.5455,
+        "recall": 0.4615,
+        "f1": 0.5,
+        "per_cwe": {
+          "CWE-295": {
+            "TP": 3,
+            "FP": 1,
+            "FN": 1,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.75
+          },
+          "CWE-352": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 2,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.5
+          },
+          "CWE-367": {
+            "TP": 1,
+            "FP": 3,
+            "FN": 3,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.25
+          },
+          "CWE-772": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 1,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 0.0
           }
         }
       },
@@ -221,6 +268,52 @@
             "TN": 3,
             "ERR": 0,
             "recall": 0.75
+          },
+          "CWE-367": {
+            "TP": 1,
+            "FP": 2,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.25
+          },
+          "CWE-772": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 1,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 0.0
+          }
+        }
+      },
+      "llm-direct": {
+        "overall": {
+          "TP": 6,
+          "FP": 4,
+          "FN": 7,
+          "TN": 12,
+          "ERR": 0
+        },
+        "precision": 0.6,
+        "recall": 0.4615,
+        "f1": 0.5217,
+        "per_cwe": {
+          "CWE-295": {
+            "TP": 3,
+            "FP": 1,
+            "FN": 1,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.75
+          },
+          "CWE-352": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 2,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.5
           },
           "CWE-367": {
             "TP": 1,

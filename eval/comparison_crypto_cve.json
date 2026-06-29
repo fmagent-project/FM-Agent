@@ -4,6 +4,7 @@
   "tools": [
     "bandit",
     "fm-agent",
+    "llm-direct",
     "semgrep"
   ],
   "views": {
@@ -145,6 +146,76 @@
             "TN": 3,
             "ERR": 0,
             "recall": 0.5
+          }
+        }
+      },
+      "llm-direct": {
+        "overall": {
+          "TP": 7,
+          "FP": 4,
+          "FN": 7,
+          "TN": 16,
+          "ERR": 0
+        },
+        "precision": 0.6364,
+        "recall": 0.5,
+        "f1": 0.56,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 1,
+            "FP": 1,
+            "FN": 1,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.5
+          },
+          "CWE-326": {
+            "TP": 0,
+            "FP": 1,
+            "FN": 2,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-327": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-328": {
+            "TP": 2,
+            "FP": 0,
+            "FN": 0,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-330": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 0,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-338": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 0,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-798": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
           }
         }
       },
@@ -357,6 +428,76 @@
             "TN": 3,
             "ERR": 0,
             "recall": 0.5
+          }
+        }
+      },
+      "llm-direct": {
+        "overall": {
+          "TP": 6,
+          "FP": 2,
+          "FN": 8,
+          "TN": 18,
+          "ERR": 0
+        },
+        "precision": 0.75,
+        "recall": 0.4286,
+        "f1": 0.5455,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-326": {
+            "TP": 0,
+            "FP": 1,
+            "FN": 2,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-327": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-328": {
+            "TP": 2,
+            "FP": 0,
+            "FN": 0,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-330": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 0,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-338": {
+            "TP": 2,
+            "FP": 0,
+            "FN": 0,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-798": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
           }
         }
       },

@@ -110,6 +110,8 @@ def main():
     ap.add_argument("--sample", default="eval/sample_taint.json")
     ap.add_argument("--ours", default="eval/ours_detections.json")
     ap.add_argument("--baselines", default="eval/out_baselines/baseline_detections.json")
+    ap.add_argument("--llm", default=None,
+                    help="optional direct-LLM baseline detections json (eval/llm_<plugin>_cve_detections.json)")
     ap.add_argument("--out", default="eval/comparison_taint.json")
     args = ap.parse_args()
 
@@ -130,6 +132,10 @@ def main():
         for tool in ("bandit", "semgrep"):
             tools[tool] = {cid: per.get(tool, {"detected": False, "cwes": []})
                            for cid, per in bl.items()}
+
+    # optional third baseline: direct-LLM single-shot judgment
+    if args.llm and os.path.isfile(args.llm):
+        tools["llm-direct"] = load_tool_detections(args.llm, "detections")
 
     # comparison set = cases present for ALL tools (intersection)
     common = [c for c in cases if all(c.id in tools[t] for t in tools)]
