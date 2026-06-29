@@ -1004,7 +1004,7 @@ async function loadRun(){
   }catch(e){ $("#list").innerHTML='<div class="empty">'+esc(e.message)+'</div>'; $("#stat").textContent="error"; }
 }
 
-function reasonTitle(){ return PLUGIN==="authz" ? "Authorization Reasoning" : PLUGIN==="taint" ? "Taint Reasoning" : PLUGIN==="crypto" ? "Crypto Reasoning" : PLUGIN==="typestate" ? "Typestate Reasoning" : PLUGIN==="resource" ? "Resource Reasoning" : "IFC Reasoning"; }
+function reasonTitle(){ return PLUGIN==="authz" ? "Authorization Reasoning" : PLUGIN==="authn" ? "Authentication Reasoning" : PLUGIN==="taint" ? "Taint Reasoning" : PLUGIN==="crypto" ? "Crypto Reasoning" : PLUGIN==="typestate" ? "Typestate Reasoning" : PLUGIN==="resource" ? "Resource Reasoning" : "IFC Reasoning"; }
 
 function syncPluginSelector(){
   const sel=$("#plugin");
@@ -1186,6 +1186,7 @@ async function renderDetail(f){
 
   // plugin-specific middle panel
   if(PLUGIN==="authz") renderAuthzDetail(d,f,r);
+  else if(PLUGIN==="authn") renderAuthnDetail(d,f,r);
   else if(PLUGIN==="taint") renderTaintDetail(d,f,r);
   else if(PLUGIN==="crypto") renderCryptoDetail(d,f,r);
   else if(PLUGIN==="typestate") renderTypestateDetail(d,f,r);
@@ -1347,6 +1348,102 @@ function renderAuthzDetail(d,f,r){
       eh+=`</div>`;
     });
     d.appendChild(section("Establishes (for callees)",eh));
+  }
+
+  if(a.notes) d.appendChild(section("Analysis notes",`<div class="notes">${esc(a.notes)}</div>`));
+  if(r.error) d.appendChild(section("Error",`<pre>${esc(r.error)}</pre>`));
+}
+
+function renderAuthnDetail(d,f,r){
+  // The authn plugin uses the generic render_result: r.facts is the guarded-Hoare
+  // authentication abstraction, r.findings is the deterministic checker's findings.
+  const a=r.facts||(r.data&&r.data.abstraction)||{};
+  const findings=r.findings||[];
+
+  // findings first (the verdict's "why")
+  if(findings.length){
+    let fh="";
+    findings.forEach(fd=>{
+      fh+=`<div class="finding"><div class="fk">${esc(fd.title||fd.rule_id||"FINDING")}</div>`+
+          `<div class="fm">${esc(fd.message||"")}</div>`;
+      const op=fd.data&&fd.data.op;
+      if(op&&op.evidence) fh+=`<div class="oev">${esc(op.evidence)}</div>`;
+      fh+=`</div>`;
+    });
+    d.appendChild(section("Findings ("+findings.length+")",fh));
+  } else if(f.verdict==="SAFE"){
+    d.appendChild(section("Findings",'<span class="mod">No authentication gap — every protected operation is genuinely authenticated.</span>'));
+  }
+
+  // protected operations
+  const ops=a.protected_operations||[];
+  // mark which ops are named in a finding (vulnerable)
+  const badOps=new Set();
+  findings.forEach(fd=>{const op=fd.data&&fd.data.op; if(op&&op.op_id) badOps.add(op.op_id);});
+  let oh="";
+  ops.forEach(o=>{
+    const bad=badOps.has(o.op_id);
+    oh+=`<div class="op ${bad?'bad':'ok'}"><div class="ohead">`+
+        `<span class="okind">${esc(o.kind||"op")}</span>`+
+        (o.subject_expr&&o.subject_expr!=="null"?`<span class="tag rid">${esc(o.subject_expr)}</span>`:"")+
+        (bad?'<span class="tag dom-no">unauthenticated</span>':'<span class="tag dom-yes">authenticated</span>')+
+        `</div>`;
+    if(o.evidence) oh+=`<div class="oev">${esc(o.evidence)}</div>`;
+    oh+=`</div>`;
+  });
+  d.appendChild(section("Protected operations ("+ops.length+")",oh||'<span class="mod">none — no operation requiring a verified identity</span>'));
+
+  // authentication events
+  const events=a.authentication_events||[];
+  let eh="";
+  events.forEach(e=>{
+    const sCls=e.strength==="genuine"?"dom-yes":"dom-no";
+    eh+=`<div class="op"><div class="ohead">`+
+        `<span class="okind">${esc(e.method||"auth")}</span>`+
+        `<span class="tag ${sCls}">${esc(e.strength||"?")}</span>`+
+        (e.dominates_all_paths?'<span class="tag dom-yes">dominates</span>':'<span class="tag dom-no">not dominating</span>')+
+        `</div>`;
+    if(e.verifies_nl) eh+=`<div style="margin-top:4px">${esc(e.verifies_nl)}</div>`;
+    if(e.evidence) eh+=`<div class="oev">${esc(e.evidence)}</div>`;
+    eh+=`</div>`;
+  });
+  d.appendChild(section("Authentication events ("+events.length+")",eh||'<span class="mod">none — identity is never verified</span>'));
+
+  // session events
+  const sessions=a.session_events||[];
+  if(sessions.length){
+    const badSess=new Set();
+    findings.forEach(fd=>{const k=fd.title||""; if(k==="SESSION_FIXATION"||k==="INSUFFICIENT_SESSION_EXPIRATION") badSess.add(k);});
+    let zh="";
+    sessions.forEach(s=>{
+      zh+=`<div class="op"><div class="ohead"><span class="okind">${esc(s.kind||"session")}</span></div>`;
+      if(s.evidence) zh+=`<div class="oev">${esc(s.evidence)}</div>`;
+      zh+=`</div>`;
+    });
+    const note=badSess.size?` <span class="tag dom-no">${[...badSess].join(", ")}</span>`:"";
+    d.appendChild(section("Session events ("+sessions.length+")"+ (note?"":""),zh+(note?`<div class="notes">hygiene defect:${note}</div>`:"")));
+  }
+
+  // obligations (relied upon from callers/framework)
+  const obls=a.obligations||[];
+  if(obls.length){
+    let bh="";
+    obls.forEach(o=>{
+      bh+=`<div class="obl">⇡ requires: ${esc(o.requires_nl||"")}`;
+      if(o.reason) bh+=`<div class="notes">${esc(o.reason)}</div>`;
+      bh+=`</div>`;
+    });
+    d.appendChild(section("Obligations (deferred to caller)",bh));
+  }
+
+  // establishes (auth offered to callees)
+  const est=a.establishes||[];
+  if(est.length){
+    let xh="";
+    est.forEach(e=>{
+      xh+=`<div class="obl">⇣ before <b>${esc(e.callee_name||"?")}</b>: ${esc(e.event_nl||"")}</div>`;
+    });
+    d.appendChild(section("Establishes (for callees)",xh));
   }
 
   if(a.notes) d.appendChild(section("Analysis notes",`<div class="notes">${esc(a.notes)}</div>`));

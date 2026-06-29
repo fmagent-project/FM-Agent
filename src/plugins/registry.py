@@ -222,6 +222,39 @@ PLUGIN_MANIFESTS: Dict[str, dict] = {
         ),
         "benchmark_categories": [],
     },
+    "authn": {
+        "name": "authn",
+        "module": "src.plugins.authn",
+        "class_name": "AuthnPlugin",
+        "work_subdir": "fm_agent_authn",
+        "results_subdir": "results",
+        "label": "Authentication integrity",
+        "verdicts": {
+            "positive": ["VULNERABLE"],
+            "poly": [],
+            "review": ["NEEDS_REVIEW"],
+            "negative": ["SAFE"],
+        },
+        "cwes": ["CWE-287", "CWE-384", "CWE-613", "CWE-522", "CWE-294",
+                 "CWE-620", "CWE-640"],
+        "cwe_notes": {
+            "CWE-287": "improper authentication",
+            "CWE-384": "session fixation",
+            "CWE-613": "insufficient session expiration",
+            "CWE-522": "insufficiently protected credentials",
+            "CWE-294": "authentication bypass by capture-replay",
+            "CWE-620": "unverified password change",
+            "CWE-640": "weak password recovery mechanism",
+        },
+        "property_nl": (
+            "improper authentication (a protected operation running without the "
+            "subject's identity being genuinely verified, or a session/credential "
+            "handled so it can be fixed, replayed, or never expires: missing/weak/"
+            "asserted-only authentication, session fixation, insufficient session "
+            "expiration)"
+        ),
+        "benchmark_categories": [],
+    },
 }
 
 

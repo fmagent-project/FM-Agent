@@ -88,3 +88,17 @@ MAX_RESOURCE_ITER = 5                    # retry budget for [RESOURCE_JSON] extr
 # Fail-closed: unknown magnitude/op/bound kind or non-dominating bound => unsafe,
 # never silently SAFE.
 RESOURCE_FAIL_CLOSED = True
+
+# --- Authentication Integrity track ---
+# Detects improper authentication (missing/weak/asserted-only authentication,
+# session fixation, insufficient session expiration): the PRIOR question to
+# access control — was the subject's identity genuinely VERIFIED before a
+# protected operation. LLM derives a per-function authn abstraction (protected
+# ops + auth events with strength/dominance + session events + obligations); a
+# deterministic checker does event-domination + auth-strength + session-hygiene,
+# with top-down obligation discharge (sibling of the authz reasoner).
+AUTHN_MODEL = LLM_MODEL                  # infer protected ops, auth events, session events
+MAX_AUTHN_ITER = 5                       # retry budget for [AUTHN_JSON] extraction
+# Fail-closed: no dominating genuine auth event / unknown enforcement => unsafe,
+# never silently SAFE.
+AUTHN_FAIL_CLOSED = True
