@@ -215,3 +215,15 @@ index.html.1
 .omo/
 eval/__pycache__/
 eval/out_baselines*/raw/
+
+# --- paper build artifacts (regenerable via paper/build.sh) ---
+paper/.tectonic/
+paper/main.pdf
+paper/*.aux
+paper/*.out
+paper/*.xdv
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.bbl
+paper/*.blg
+paper/*.toc
