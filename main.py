@@ -15,6 +15,7 @@ from src.opencode_trace import (
     run_opencode_traced,
     start_opencode_traced,
 )
+from src.cli_backend import build_agent_command, is_cli_backend_enabled
 from src.incremental_reasoner import run_incremental_pipeline
 from src.languages.codegraph import try_codegraph_init
 import os
@@ -424,8 +425,17 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False, res
                       f"work that is already done. {fm_reminder}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
-        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
-                   "--file", os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md"), "--", prompt]
+        prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md")
+        if is_cli_backend_enabled():
+            command = build_agent_command(
+                model=OPENCODE_SETUP_MODEL,
+                prompt=prompt,
+                cwd=proj_dir,
+                files=[prompt_file],
+            )
+        else:
+            command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
+                       "--file", prompt_file, "--", prompt]
         try:
             run_opencode_traced(
                 proj_dir=proj_dir,
@@ -765,9 +775,18 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
                             f"that don't have [SPEC] blocks yet. "
                             f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
                         )
-                    command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
-                               "--file", os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md"),
-                               "--", prompt]
+                    prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
+                    if is_cli_backend_enabled():
+                        command = build_agent_command(
+                            model=OPENCODE_SPEC_MODEL,
+                            prompt=prompt,
+                            cwd=proj_dir,
+                            files=[prompt_file],
+                        )
+                    else:
+                        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
+                                   "--file", prompt_file,
+                                   "--", prompt]
                     trace_record = start_opencode_traced(
                         proj_dir=proj_dir,
                         work_dir=work_dir,

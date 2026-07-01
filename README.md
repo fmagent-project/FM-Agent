@@ -92,6 +92,8 @@ cp .env.example .env
 LLM_API_KEY=your-api-key-here
 LLM_API_BASE_URL=https://openrouter.ai/api/v1
 LLM_MODEL=anthropic/claude-sonnet-4.6
+LLM_EFFORT=
+FM_AGENT_MODEL_BACKEND=opencode
 OPENCODE_MODEL_PROVIDER=openrouter
 ```
 
@@ -122,6 +124,8 @@ Key parameters can be adjusted in [config.py](config.py).
 | `OPENCODE_MODEL_PROVIDER`       | `openrouter`                   | OpenCode provider prefix used when invoking `opencode run --model <prefix>/<model>` |
 | `LLM_API_KEY`                   | (env)                          | LLM API key for FM-Agent's direct calls |
 | `LLM_API_BASE_URL`              | `https://openrouter.ai/api/v1` | LLM API base URL for FM-Agent's direct calls |
+| `LLM_EFFORT`                    | unset                          | Optional reasoning effort passed to `codex exec` or `claude -p`; leave empty to omit the effort flag |
+| `FM_AGENT_MODEL_BACKEND`        | `opencode`                     | Model backend. Use `auto`, `codex-cli`, or `claude-cli` to bypass OpenCode and use local CLI authentication |
 | `GRANULARITY`                   | `40`                           | Minimum number of lines per code block when splitting a function for block-by-block reasoning |
 | `MAX_WORKERS`                   | `10`                           | Maximum number of concurrent worker threads for reasoning and bug validation |
 | `MAX_SPC_ITER`                  | `5`                            | Maximum number of retries/iterations for FM-Agent's direct LLM verification calls (post-condition and spec checks) |
@@ -243,4 +247,3 @@ Eprint = {arXiv:2604.11556},
 ## Contact
 
 If you have any questions, please submit an issue or send [email](mailto:nhaorand@gmail.com).
-

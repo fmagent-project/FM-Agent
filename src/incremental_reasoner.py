@@ -41,6 +41,7 @@ from .generate_batch_prompts import (
 )
 from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_call
+from .cli_backend import build_agent_command, is_cli_backend_enabled
 from .prompts import _load_spec_check_json
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
@@ -759,11 +760,20 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
         f.write(prompt_content)
     os.replace(tmp_path, prompt_path)
 
-    command = [
-        "opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
-        "--file", prompt_path,
-        "--", "Follow the instructions in the attached file.",
-    ]
+    prompt = "Follow the instructions in the attached file."
+    if is_cli_backend_enabled():
+        command = build_agent_command(
+            model=OPENCODE_SETUP_MODEL,
+            prompt=prompt,
+            cwd=proj_dir,
+            files=[prompt_path],
+        )
+    else:
+        command = [
+            "opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
+            "--file", prompt_path,
+            "--", prompt,
+        ]
 
     produced = False
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):

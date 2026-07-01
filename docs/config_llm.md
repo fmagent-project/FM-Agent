@@ -5,7 +5,9 @@ FM-Agent reads these settings from `.env` (mapped to constants in `config.py`):
 ```dotenv
 LLM_API_KEY=your-api-key                  # auth token for FM-Agent's direct calls
 LLM_API_BASE_URL=https://openrouter.ai/api/v1    # endpoint for FM-Agent's direct reasoner calls
-LLM_MODEL=anthropic/claude-sonnet-4.6            # a model key registered under the provider below
+LLM_MODEL=anthropic/claude-sonnet-4.6              # default model, same as upstream FM-Agent
+LLM_EFFORT=                                        # optional local CLI reasoning effort
+FM_AGENT_MODEL_BACKEND=opencode                 # opencode, auto, codex-cli, or claude-cli
 OPENCODE_MODEL_PROVIDER=openrouter               # an OpenCode provider id
 ```
 
@@ -13,6 +15,19 @@ It calls the model two ways:
 
 - **OpenCode** (setup / spec / bug validation): `opencode run --model "$OPENCODE_MODEL_PROVIDER/$LLM_MODEL"`, so that string must resolve to a provider + model registered in OpenCode (below).
 - **Direct** (reasoner): hits `$LLM_API_BASE_URL` itself, authenticating with `$LLM_API_KEY`.
+
+When `FM_AGENT_MODEL_BACKEND` is set to `auto`, `codex-cli`, or `claude-cli`,
+FM-Agent bypasses both of those paths and uses local CLI authentication for all
+model calls:
+
+- Codex sessions use `codex exec` with full filesystem access, plus `--model "$LLM_MODEL"` when set and `model_reasoning_effort="$LLM_EFFORT"` when non-empty.
+- Claude Code sessions use `claude -p --dangerously-skip-permissions`, plus `--model "$LLM_MODEL"` when set and `--effort "$LLM_EFFORT"` when non-empty.
+
+Leave `LLM_EFFORT` empty to use the selected CLI's default effort behavior.
+Set it only to a value accepted by the selected CLI and model.
+
+In this mode `LLM_API_KEY`, `LLM_API_BASE_URL`, and
+`OPENCODE_MODEL_PROVIDER` are not required for model access.
 
 ## Register the OpenCode provider
 

@@ -5,6 +5,7 @@ import threading
 from dataclasses import dataclass
 
 from config import OPENCODE_TIMEOUT_SECONDS
+from .cli_backend import command_argv, command_display, command_stdin
 from .trace_writer import (
     new_event_id,
     record_trace_event,
@@ -45,6 +46,7 @@ class TracedOpenCodeProcess:
     opencode_log_path: str | None = None
     opencode_trace_path: str | None = None
     log_thread: threading.Thread | None = None
+    stdin_thread: threading.Thread | None = None
     error: str | None = None
 
 
@@ -103,24 +105,42 @@ def _copy_opencode_output(stream, trace_log_path=None):
     stream.close()
 
 
+def _write_command_stdin(stream, text):
+    try:
+        stream.write(text)
+        stream.flush()
+    finally:
+        stream.close()
+
+
 def _start_opencode_process(proj_dir, work_dir, event_id, command, trace_log_path):
+    stdin_text = command_stdin(command)
     proc = subprocess.Popen(
-        command,
+        command_argv(command),
         cwd=proj_dir,
         env=_opencode_env(work_dir, event_id),
+        stdin=subprocess.PIPE if stdin_text is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
         errors="replace",
     )
+    stdin_thread = None
+    if stdin_text is not None:
+        stdin_thread = threading.Thread(
+            target=_write_command_stdin,
+            args=(proc.stdin, stdin_text),
+            daemon=True,
+        )
+        stdin_thread.start()
     log_thread = threading.Thread(
         target=_copy_opencode_output,
         args=(proc.stdout, trace_log_path),
         daemon=True,
     )
     log_thread.start()
-    return proc, log_thread
+    return proc, log_thread, stdin_thread
 
 
 def _wait_opencode_process(proc, command, stage, timeout_seconds=OPENCODE_TIMEOUT_SECONDS):
@@ -132,7 +152,7 @@ def _wait_opencode_process(proc, command, stage, timeout_seconds=OPENCODE_TIMEOU
         # take over instead of the whole pipeline hanging.
         logging.warning(
             "opencode %s timed out after %ss, killing: %s",
-            stage, timeout_seconds, " ".join(command),
+            stage, timeout_seconds, command_display(command),
         )
         proc.terminate()
         try:
@@ -197,12 +217,13 @@ def record_opencode_call(
         "function_ids": function_ids or [],
         "children": children,
         "metadata": {
-            "command": command,
+            "command": command_argv(command),
             "exit_code": exit_code,
             "input_files": input_files or [],
             "output_files": output_files or [],
             "error": error,
             **(metadata or {}),
+            "command_display": command_display(command),
         },
     })
 
@@ -225,16 +246,19 @@ def run_opencode_traced(
     opencode_log_path = _opencode_log_path(work_dir, event_id)
     opencode_trace_path = _opencode_trace_path(work_dir, event_id)
     log_thread = None
+    stdin_thread = None
     try:
-        proc, log_thread = _start_opencode_process(proj_dir, work_dir, event_id, command, opencode_log_path)
+        proc, log_thread, stdin_thread = _start_opencode_process(proj_dir, work_dir, event_id, command, opencode_log_path)
         exit_code, error = _wait_opencode_process(proc, command, stage)
         if error:
-            raise subprocess.CalledProcessError(exit_code, command)
+            raise subprocess.CalledProcessError(exit_code, command_argv(command))
         if log_thread:
             log_thread.join()
+        if stdin_thread:
+            stdin_thread.join()
         if exit_code != 0:
-            raise subprocess.CalledProcessError(exit_code, command)
-        return subprocess.CompletedProcess(command, exit_code)
+            raise subprocess.CalledProcessError(exit_code, command_argv(command))
+        return subprocess.CompletedProcess(command_argv(command), exit_code)
     except subprocess.CalledProcessError as exc:
         exit_code = exc.returncode
         error = error or str(exc)
@@ -242,6 +266,8 @@ def run_opencode_traced(
     finally:
         if log_thread and log_thread.is_alive():
             log_thread.join()
+        if stdin_thread and stdin_thread.is_alive():
+            stdin_thread.join()
         record_opencode_call(
             work_dir=work_dir,
             event_id=event_id,
@@ -277,7 +303,7 @@ def start_opencode_traced(
     started = utc_now_iso()
     opencode_log_path = _opencode_log_path(work_dir, event_id)
     opencode_trace_path = _opencode_trace_path(work_dir, event_id)
-    proc, log_thread = _start_opencode_process(proj_dir, work_dir, event_id, command, opencode_log_path)
+    proc, log_thread, stdin_thread = _start_opencode_process(proj_dir, work_dir, event_id, command, opencode_log_path)
     return TracedOpenCodeProcess(
         proc=proc,
         work_dir=work_dir,
@@ -293,6 +319,7 @@ def start_opencode_traced(
         opencode_log_path=opencode_log_path,
         opencode_trace_path=opencode_trace_path,
         log_thread=log_thread,
+        stdin_thread=stdin_thread,
     )
 
 
@@ -309,6 +336,8 @@ def wait_opencode_traced(record, timeout_seconds=OPENCODE_TIMEOUT_SECONDS):
 
 
 def finish_opencode_trace(record):
+    if record.stdin_thread:
+        record.stdin_thread.join()
     if record.log_thread:
         record.log_thread.join()
     status = "error" if record.error or record.proc.returncode != 0 else "success"
