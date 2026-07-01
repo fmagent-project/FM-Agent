@@ -1,0 +1,293 @@
+{
+  "benchmark": "cve-curated:cve_cases_hard.filtered.jsonl",
+  "plugin": "ifc",
+  "source": "osv:GHSA-635v-pc42-fr74|GHSA-635v-pc42-fr74|aws/sagemaker-training-toolkit@d8e56c90fa",
+  "seed": 1337,
+  "per_category": 8,
+  "total_selected": 14,
+  "label_noise_caveat": "~60% label precision; precision requires per-case human audit",
+  "cases": [
+    {
+      "id": "cve:CVE-2020-1746__ldap_entry__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2020-1746__ldap_entry__before.py",
+      "cwe": "CWE-200",
+      "label": true,
+      "category": "ifc",
+      "source": "osv:GHSA-j2h6-73x8-22c4|CVE-2020-1746|ansible/ansible@e6199d768c",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "lib/ansible/modules/net_tools/ldap/ldap_entry.py",
+        "fix_commit": "e6199d768c1c18a4e750ec78d4ded088629baa3f",
+        "changed_funcs": [
+          "main"
+        ],
+        "n_funcs": 6,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2026-28415__oauth__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-28415__oauth__before.py",
+      "cwe": "CWE-200",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-pfjf-5gxr-995x|CVE-2026-28415|gradio-app/gradio@dfee0da06d",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "gradio/oauth.py",
+        "fix_commit": "dfee0da06d0aa94b3c2684131e7898d5d5c1911e",
+        "changed_funcs": [
+          "_redirect_to_target",
+          "_get_mocked_oauth_info"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2024-1968__redirect__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-1968__redirect__before.py",
+      "cwe": "CWE-200",
+      "label": true,
+      "category": "ifc",
+      "source": "osv:GHSA-4qqq-9vqf-3h3f|CVE-2024-1968|scrapy/scrapy@1d0502f25b",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "scrapy/downloadermiddlewares/redirect.py",
+        "fix_commit": "1d0502f25bbe55a22899af915623fda1aaeb9dd8",
+        "changed_funcs": [
+          "_build_redirect_request"
+        ],
+        "n_funcs": 8,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2023-50715__login_flow__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-50715__login_flow__before.py",
+      "cwe": "CWE-200",
+      "label": true,
+      "category": "ifc",
+      "source": "osv:GHSA-jqpc-rc7g-vf83|CVE-2023-50715|home-assistant/core@dbfc5ea8f9",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "homeassistant/components/auth/login_flow.py",
+        "fix_commit": "dbfc5ea8f96bde6cd165892f5a6a6f9a65731c76",
+        "changed_funcs": [
+          "get_1"
+        ],
+        "n_funcs": 11,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2015-8213__formats__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-8213__formats__after.py",
+      "cwe": "CWE-200",
+      "label": false,
+      "category": "ifc",
+      "source": "osv:GHSA-6wcr-wcqm-3mfh|CVE-2015-8213|django/django@9f83fc2f66|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/utils/formats.py",
+        "fix_commit": "9f83fc2f66f5a0bac7c291aec55df66050bb6991",
+        "changed_funcs": [
+          "get_format"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2024-56509____init____after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-56509____init____after.py",
+      "cwe": "CWE-200",
+      "label": false,
+      "category": "ifc",
+      "source": "osv:GHSA-j5vv-6wjg-cfr8|CVE-2024-56509|dgtlmoon/changedetection.io@f7e9846c9b|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "changedetectionio/processors/__init__.py",
+        "fix_commit": "f7e9846c9b40a229813d19cdb66bf60fbe5e6a2a",
+        "changed_funcs": [
+          "call_browser"
+        ],
+        "n_funcs": 8,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2022-27949__secrets_masker__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-27949__secrets_masker__after.py",
+      "cwe": "CWE-200",
+      "label": false,
+      "category": "ifc",
+      "source": "osv:GHSA-fvw2-2pf7-77vw|CVE-2022-27949|apache/airflow@09be0c5c7e|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "airflow/utils/log/secrets_masker.py",
+        "fix_commit": "09be0c5c7e847dda1d0be5776f8d5e327ff2281a",
+        "changed_funcs": [
+          "mask_secret",
+          "filter"
+        ],
+        "n_funcs": 13,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2020-1746__ldap_entry__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2020-1746__ldap_entry__after.py",
+      "cwe": "CWE-200",
+      "label": false,
+      "category": "ifc",
+      "source": "osv:GHSA-j2h6-73x8-22c4|CVE-2020-1746|ansible/ansible@edd1e1723c|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "lib/ansible/modules/net_tools/ldap/ldap_entry.py",
+        "fix_commit": "edd1e1723cc937ec9251adf38c1199a00b0bf6d4",
+        "changed_funcs": [
+          "main"
+        ],
+        "n_funcs": 6,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2023-34110__base__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-34110__base__before.py",
+      "cwe": "CWE-209",
+      "label": true,
+      "category": "ifc",
+      "source": "osv:GHSA-jhpr-j7cq-3jp3|CVE-2023-34110|dpgaspar/Flask-AppBuilder@ae25ad4c87",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "flask_appbuilder/models/base.py",
+        "fix_commit": "ae25ad4c87a9051ebe4a4e8f02aee73232642626",
+        "changed_funcs": [
+          "_get_values",
+          "get_values",
+          "get_values_json",
+          "add",
+          "edit",
+          "delete",
+          "get_keys",
+          "get_pk_name",
+          "get",
+          "get_related_interface",
+          "get_columns_list",
+          "get_user_columns_list",
+          "get_search_columns_list",
+          "get_order_columns_list"
+        ],
+        "n_funcs": 55,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2023-34110__base__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-34110__base__after.py",
+      "cwe": "CWE-209",
+      "label": false,
+      "category": "ifc",
+      "source": "osv:GHSA-jhpr-j7cq-3jp3|CVE-2023-34110|dpgaspar/Flask-AppBuilder@ae25ad4c87|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "flask_appbuilder/models/base.py",
+        "fix_commit": "ae25ad4c87a9051ebe4a4e8f02aee73232642626",
+        "changed_funcs": [
+          "_get_values",
+          "get_values",
+          "get_values_json",
+          "add",
+          "edit",
+          "delete",
+          "get_keys",
+          "get_pk_name",
+          "get",
+          "get_related_interface",
+          "get_columns_list",
+          "get_user_columns_list",
+          "get_search_columns_list",
+          "get_order_columns_list"
+        ],
+        "n_funcs": 55,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2018-1000089__base__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2018-1000089__base__before.py",
+      "cwe": "CWE-532",
+      "label": true,
+      "category": "ifc",
+      "source": "osv:GHSA-qh9x-mc42-vg4g|CVE-2018-1000089|anymail/django-anymail@1a6086f2b5",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "anymail/webhooks/base.py",
+        "fix_commit": "1a6086f2b58478d71f89bf27eb034ed81aefe5ef",
+        "changed_funcs": [
+          "__init__"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:GHSA-635v-pc42-fr74__modules__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-635v-pc42-fr74__modules__before.py",
+      "cwe": "CWE-532",
+      "label": true,
+      "category": "ifc",
+      "source": "osv:GHSA-635v-pc42-fr74|GHSA-635v-pc42-fr74|aws/sagemaker-training-toolkit@d8e56c90fa",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "src/sagemaker_training/modules.py",
+        "fix_commit": "d8e56c90fa7fcc7421c0f7193bf9650fc2967213",
+        "changed_funcs": [
+          "install",
+          "install_requirements"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2018-1000089__base__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2018-1000089__base__after.py",
+      "cwe": "CWE-532",
+      "label": false,
+      "category": "ifc",
+      "source": "osv:GHSA-qh9x-mc42-vg4g|CVE-2018-1000089|anymail/django-anymail@1a6086f2b5|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "anymail/webhooks/base.py",
+        "fix_commit": "1a6086f2b58478d71f89bf27eb034ed81aefe5ef",
+        "changed_funcs": [
+          "__init__"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:GHSA-635v-pc42-fr74__modules__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-635v-pc42-fr74__modules__after.py",
+      "cwe": "CWE-532",
+      "label": false,
+      "category": "ifc",
+      "source": "osv:GHSA-635v-pc42-fr74|GHSA-635v-pc42-fr74|aws/sagemaker-training-toolkit@d8e56c90fa|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "src/sagemaker_training/modules.py",
+        "fix_commit": "d8e56c90fa7fcc7421c0f7193bf9650fc2967213",
+        "changed_funcs": [
+          "install",
+          "install_requirements"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,452 @@
+{
+  "detections": {
+    "cve:CVE-2022-3327__rdw_app__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27482__http_server_agent__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-3327__auth_form__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-4018__auth_form__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27482__http_server_agent__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-39987__terminal__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-49652__service__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-862"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "Looking at `update_full_name`:\n\n```python\nasync def update_full_name(self, action: UpdateFullNameAction) -> UpdateFullNa"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-3327__rdw_app__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-45349__automations__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27838__signals__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-69207__notion__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-639"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-639[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-45606__rule_snooze__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-639"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The `get_rule` method fetches a rule by `rule_id` without verifying that the rule belongs to the `project` (or its organ"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27838__signals__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-45606__rule_snooze__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-69207__notion__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-45349__automations__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-45667__memories__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-22680__content__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-22680__task_tracker__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-862"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-862[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-22680__session_service__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-22680__tasks__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-45667__memories__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-22680__task_tracker__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-639"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]<VULNERABLE|CWE-639>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:GHSA-hvc7-763r-4f3h__keys__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-59420__jws__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-51649__jobs__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-862"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-862[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-45672__utils__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2021-38598__arp_protect__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-26250__oauth2__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-0860__pam__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-59420__jws__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2022-3327__rdw_app__before": {
+      "seconds": 3.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-27482__http_server_agent__before": {
+      "seconds": 2.6,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2022-3327__auth_form__before": {
+      "seconds": 1.9,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2022-4018__auth_form__before": {
+      "seconds": 3.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2026-27482__http_server_agent__after": {
+      "seconds": 2.0,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-39987__terminal__after": {
+      "seconds": 2.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2025-49652__service__after": {
+      "seconds": 7.6,
+      "verdict": "VULNERABLE",
+      "raw": "Looking at `update_full_name`:\n\n```python\nasync def update_full_name(self, action: UpdateFullNameAction) -> UpdateFullNameActionResult:\n    await self._auth_repository.update_user_full_name(\n        a"
+    },
+    "cve:CVE-2022-3327__rdw_app__after": {
+      "seconds": 6.2,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-45349__automations__before": {
+      "seconds": 3.8,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-27838__signals__before": {
+      "seconds": 2.0,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2025-69207__notion__before": {
+      "seconds": 2.9,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-639[/VERDICT]"
+    },
+    "cve:CVE-2024-45606__rule_snooze__before": {
+      "seconds": 6.2,
+      "verdict": "VULNERABLE",
+      "raw": "The `get_rule` method fetches a rule by `rule_id` without verifying that the rule belongs to the `project` (or its organization) passed to the endpoint. An attacker with access to any project can supp"
+    },
+    "cve:CVE-2026-27838__signals__after": {
+      "seconds": 2.5,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2024-45606__rule_snooze__after": {
+      "seconds": 2.3,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2025-69207__notion__after": {
+      "seconds": 3.3,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2026-45349__automations__after": {
+      "seconds": 2.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-45667__memories__before": {
+      "seconds": 2.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-22680__content__before": {
+      "seconds": 2.1,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2026-22680__task_tracker__before": {
+      "seconds": 2.6,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-862[/VERDICT]"
+    },
+    "cve:CVE-2026-22680__session_service__before": {
+      "seconds": 2.1,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-22680__tasks__after": {
+      "seconds": 1.8,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2026-45667__memories__after": {
+      "seconds": 3.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2026-22680__task_tracker__after": {
+      "seconds": 4.1,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]<VULNERABLE|CWE-639>[/VERDICT]"
+    },
+    "cve:GHSA-hvc7-763r-4f3h__keys__after": {
+      "seconds": 3.3,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2025-59420__jws__before": {
+      "seconds": 2.5,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2023-51649__jobs__before": {
+      "seconds": 2.8,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-862[/VERDICT]"
+    },
+    "cve:CVE-2026-45672__utils__before": {
+      "seconds": 2.6,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2021-38598__arp_protect__after": {
+      "seconds": 3.5,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2020-26250__oauth2__after": {
+      "seconds": 2.5,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2022-0860__pam__after": {
+      "seconds": 2.9,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2025-59420__jws__after": {
+      "seconds": 4.5,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    }
+  }
+}

@@ -138,7 +138,7 @@ def judge_one(plugin, case, model, max_retries=3):
 def main():
     ap = argparse.ArgumentParser(description="Direct-LLM judgment baseline over a CVE sample")
     ap.add_argument("--plugin", required=True,
-                    choices=["taint", "crypto", "authz", "ifc", "typestate"])
+                    choices=_registry.plugin_names())
     ap.add_argument("--sample", default=None, help="defaults to eval/sample_<plugin>_cve.json")
     ap.add_argument("--out", default=None, help="defaults to eval/llm_<plugin>_cve_detections.json")
     ap.add_argument("--model", default=config.LLM_MODEL)

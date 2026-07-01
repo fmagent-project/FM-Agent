@@ -1,0 +1,386 @@
+{
+ "cve:CVE-2026-1777__serialization__before": {
+  "changed_funcs": [
+   "serialize_func_to_s3",
+   "deserialize_func_from_s3",
+   "serialize_obj_to_s3",
+   "deserialize_obj_from_s3",
+   "serialize_exception_to_s3",
+   "_upload_payload_and_metadata_to_s3",
+   "deserialize_exception_from_s3",
+   "_compute_hash",
+   "_perform_integrity_check"
+  ],
+  "func_verdicts": {
+   "to_json": "SAFE",
+   "serialize": "SAFE",
+   "deserialize_func_from_s3": "NEEDS_REVIEW",
+   "_get_python_version": "SAFE",
+   "serialize_func_to_s3": "SAFE",
+   "deserialize_obj_from_s3": "NEEDS_REVIEW",
+   "_upload_payload_and_metadata_to_s3": "SAFE",
+   "serialize_exception_to_s3": "SAFE",
+   "serialize_obj_to_s3": "SAFE",
+   "deserialize_exception_from_s3": "SAFE",
+   "deserialize": "SAFE",
+   "_compute_hash": "SAFE",
+   "from_json": "SAFE",
+   "_perform_integrity_check": "SAFE",
+   "_upload_bytes_to_s3": "SAFE",
+   "json_serialize_obj_to_s3": "VULNERABLE",
+   "_read_bytes_from_s3": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2019-11324__poolmanager__before": {
+  "changed_funcs": [
+   "urlopen"
+  ],
+  "func_verdicts": {
+   "__exit__": "VULNERABLE",
+   "__init___1": "NEEDS_REVIEW",
+   "_new_pool": "POLYMORPHIC",
+   "urlopen": "VULNERABLE",
+   "connection_from_pool_key": "POLYMORPHIC",
+   "proxy_from_url": "SAFE",
+   "_merge_pool_kwargs": "SAFE",
+   "connection_from_url": "SAFE",
+   "connection_from_host": "SAFE",
+   "_default_key_normalizer": "SAFE",
+   "_set_proxy_headers": "SAFE",
+   "__init__": "SAFE",
+   "__enter__": "SAFE",
+   "clear": "VULNERABLE",
+   "connection_from_host_1": "SAFE",
+   "connection_from_context": "POLYMORPHIC",
+   "urlopen_1": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2019-11324__ssl___before": {
+  "changed_funcs": [
+   "ssl_wrap_socket"
+  ],
+  "func_verdicts": {
+   "load_cert_chain": "POLYMORPHIC",
+   "inet_pton_1": "SAFE",
+   "create_urllib3_context": "VULNERABLE",
+   "load_verify_locations": "POLYMORPHIC",
+   "ssl_wrap_socket": "VULNERABLE",
+   "wrap_socket": "SAFE",
+   "inet_pton": "POLYMORPHIC",
+   "assert_fingerprint": "POLYMORPHIC",
+   "resolve_cert_reqs": "SAFE",
+   "__init__": "SAFE",
+   "resolve_ssl_version": "POLYMORPHIC",
+   "_const_compare_digest_backport": "SAFE",
+   "is_ipaddress": "SAFE",
+   "set_ciphers": "POLYMORPHIC"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-39441__smtp__before": {
+  "changed_funcs": [
+   "get_conn",
+   "_build_client"
+  ],
+  "func_verdicts": {
+   "__exit__": "SAFE",
+   "port": "NEEDS_REVIEW",
+   "_get_email_address_list": "SAFE",
+   "use_ssl": "NEEDS_REVIEW",
+   "_get_email_list_from_str": "SAFE",
+   "get_ui_field_behaviour": "SAFE",
+   "_build_mime_message": "SAFE",
+   "send_email_smtp": "VULNERABLE",
+   "smtp_retry_limit": "NEEDS_REVIEW",
+   "test_connection": "VULNERABLE",
+   "__init__": "SAFE",
+   "from_email": "NEEDS_REVIEW",
+   "__enter__": "NEEDS_REVIEW",
+   "conn": "SAFE",
+   "get_conn": "NEEDS_REVIEW",
+   "smtp_starttls": "SAFE",
+   "get_connection_form_widgets": "SAFE",
+   "smtp_user": "NEEDS_REVIEW",
+   "host": "NEEDS_REVIEW",
+   "timeout": "VULNERABLE",
+   "_build_client": "SAFE",
+   "smtp_password": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-1777__serialization__after": {
+  "changed_funcs": [
+   "serialize_func_to_s3",
+   "deserialize_func_from_s3",
+   "serialize_obj_to_s3",
+   "deserialize_obj_from_s3",
+   "serialize_exception_to_s3",
+   "_upload_payload_and_metadata_to_s3",
+   "deserialize_exception_from_s3",
+   "_compute_hash",
+   "_perform_integrity_check"
+  ],
+  "func_verdicts": {
+   "to_json": "SAFE",
+   "serialize": "VULNERABLE",
+   "deserialize_func_from_s3": "SAFE",
+   "_get_python_version": "SAFE",
+   "serialize_func_to_s3": "POLYMORPHIC",
+   "deserialize_obj_from_s3": "NEEDS_REVIEW",
+   "_upload_payload_and_metadata_to_s3": "NEEDS_REVIEW",
+   "serialize_exception_to_s3": "POLYMORPHIC",
+   "serialize_obj_to_s3": "POLYMORPHIC",
+   "deserialize_exception_from_s3": "NEEDS_REVIEW",
+   "deserialize": "SAFE",
+   "_compute_hash": "NEEDS_REVIEW",
+   "from_json": "SAFE",
+   "_perform_integrity_check": "SAFE",
+   "_upload_bytes_to_s3": "POLYMORPHIC",
+   "json_serialize_obj_to_s3": "VULNERABLE",
+   "_read_bytes_from_s3": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-1777__stored_function__after": {
+  "changed_funcs": [
+   "__init__",
+   "save",
+   "save_pipeline_step_function",
+   "load_and_invoke"
+  ],
+  "func_verdicts": {
+   "save": "SAFE",
+   "save_pipeline_step_function": "SAFE",
+   "load_and_invoke": "NEEDS_REVIEW",
+   "__init__": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2023-39441__email__after": {
+  "changed_funcs": [
+   "_get_smtp_connection"
+  ],
+  "func_verdicts": {
+   "send_mime_email": "VULNERABLE",
+   "_get_email_list_from_str": "SAFE",
+   "send_email_smtp": "VULNERABLE",
+   "_get_smtp_connection": "SAFE",
+   "build_mime_message": "SAFE",
+   "send_email": "SAFE",
+   "get_email_address_list": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2019-11324__ssl___after": {
+  "changed_funcs": [
+   "ssl_wrap_socket"
+  ],
+  "func_verdicts": {
+   "load_cert_chain": "POLYMORPHIC",
+   "inet_pton_1": "SAFE",
+   "create_urllib3_context": "VULNERABLE",
+   "load_verify_locations": "POLYMORPHIC",
+   "ssl_wrap_socket": "VULNERABLE",
+   "wrap_socket": "VULNERABLE",
+   "inet_pton": "POLYMORPHIC",
+   "assert_fingerprint": "POLYMORPHIC",
+   "resolve_cert_reqs": "SAFE",
+   "__init__": "SAFE",
+   "resolve_ssl_version": "SAFE",
+   "_const_compare_digest_backport": "SAFE",
+   "is_ipaddress": "SAFE",
+   "set_ciphers": "POLYMORPHIC"
+  },
+  "label": false
+ },
+ "cve:CVE-2020-7965__webapp2parser__before": {
+  "changed_funcs": [
+   "_raw_load_json"
+  ],
+  "func_verdicts": {
+   "_raw_load_json": "SAFE",
+   "load_headers": "SAFE",
+   "load_querystring": "SAFE",
+   "get_kwargs": "VULNERABLE",
+   "get_default_request": "SAFE",
+   "get_args": "VULNERABLE",
+   "load_files": "POLYMORPHIC",
+   "load_form": "SAFE",
+   "load_cookies": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2008-3909__decorators__before": {
+  "changed_funcs": [
+   "_display_login_form",
+   "_encode_post_data",
+   "_decode_post_data",
+   "staff_member_required"
+  ],
+  "func_verdicts": {
+   "_decode_post_data": "SAFE",
+   "_encode_post_data": "SAFE",
+   "_display_login_form": "VULNERABLE",
+   "staff_member_required": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2022-4646__auth_form__before": {
+  "changed_funcs": [
+   "run"
+  ],
+  "func_verdicts": {
+   "_is_login": "VULNERABLE",
+   "run": "VULNERABLE",
+   "_set_redirect_url": "VULNERABLE",
+   "__init__": "SAFE",
+   "_update_session_timeout": "VULNERABLE",
+   "_get_redirect_url": "SAFE",
+   "logout": "VULNERABLE",
+   "login": "VULNERABLE",
+   "redirect_to_original_url": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2008-3909__decorators__after": {
+  "changed_funcs": [
+   "_display_login_form",
+   "_encode_post_data",
+   "_decode_post_data",
+   "staff_member_required"
+  ],
+  "func_verdicts": {
+   "_display_login_form": "VULNERABLE",
+   "staff_member_required": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2023-2228__domain__after": {
+  "changed_funcs": [
+   "editdomain"
+  ],
+  "func_verdicts": {
+   "deldomain": "VULNERABLE",
+   "domains": "SAFE",
+   "get_queryset": "SAFE",
+   "list_quotas": "SAFE",
+   "get_next_page": "VULNERABLE",
+   "index": "SAFE",
+   "get_context_data": "VULNERABLE",
+   "editdomain": "VULNERABLE",
+   "list_logs": "SAFE",
+   "get_queryset_1": "SAFE",
+   "newdomain": "VULNERABLE",
+   "_domains": "VULNERABLE",
+   "domains_list": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2022-4646__auth_form__after": {
+  "changed_funcs": [
+   "run"
+  ],
+  "func_verdicts": {
+   "_is_login": "VULNERABLE",
+   "run": "VULNERABLE",
+   "_set_redirect_url": "VULNERABLE",
+   "__init__": "SAFE",
+   "_update_session_timeout": "VULNERABLE",
+   "_get_redirect_url": "SAFE",
+   "logout": "VULNERABLE",
+   "login": "VULNERABLE",
+   "redirect_to_original_url": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2023-2228__identity__after": {
+  "changed_funcs": [
+   "editaccount"
+  ],
+  "func_verdicts": {
+   "identities": "SAFE",
+   "_identities": "VULNERABLE",
+   "accounts_list": "SAFE",
+   "list_quotas": "SAFE",
+   "get_next_page": "VULNERABLE",
+   "remove_permission": "VULNERABLE",
+   "get_context_data": "VULNERABLE",
+   "editaccount": "VULNERABLE",
+   "has_permission": "SAFE",
+   "newaccount": "NEEDS_REVIEW",
+   "delaccount": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-68146___windows__before": {
+  "changed_funcs": [
+   "_acquire"
+  ],
+  "func_verdicts": {
+   "_acquire_1": "VULNERABLE",
+   "_acquire": "VULNERABLE",
+   "_release_1": "VULNERABLE",
+   "_release": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2025-68146___unix__before": {
+  "changed_funcs": [
+   "_acquire_1"
+  ],
+  "func_verdicts": {
+   "_acquire_1": "VULNERABLE",
+   "_acquire": "VULNERABLE",
+   "_release_1": "SAFE",
+   "_release": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-22701___soft__before": {
+  "changed_funcs": [
+   "_acquire"
+  ],
+  "func_verdicts": {
+   "_acquire": "SAFE",
+   "_release": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2025-68146___windows__after": {
+  "changed_funcs": [
+   "_acquire"
+  ],
+  "func_verdicts": {
+   "_acquire_1": "VULNERABLE",
+   "_acquire": "VULNERABLE",
+   "_release_1": "VULNERABLE",
+   "_is_reparse_point": "SAFE",
+   "_release": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-22701___soft__after": {
+  "changed_funcs": [
+   "_acquire"
+  ],
+  "func_verdicts": {
+   "_acquire": "SAFE",
+   "_release": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-68146___unix__after": {
+  "changed_funcs": [
+   "_acquire_1"
+  ],
+  "func_verdicts": {
+   "_acquire_1": "VULNERABLE",
+   "_acquire": "SAFE",
+   "_release_1": "SAFE",
+   "_release": "VULNERABLE"
+  },
+  "label": false
+ }
+}

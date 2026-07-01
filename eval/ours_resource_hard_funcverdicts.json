@@ -1,0 +1,487 @@
+{
+ "cve:CVE-2021-29433__store_invite_servlet__before": {
+  "changed_funcs": [
+   "render_POST"
+  ],
+  "func_verdicts": {
+   "redact_email_address": "VULNERABLE",
+   "_randomString": "POLYMORPHIC",
+   "__init__": "SAFE",
+   "_redact": "POLYMORPHIC",
+   "render_POST": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2014-0481__storage__before": {
+  "changed_funcs": [
+   "get_available_name"
+  ],
+  "func_verdicts": {
+   "size_1": "SAFE",
+   "_setup": "SAFE",
+   "size": "SAFE",
+   "save": "VULNERABLE",
+   "get_storage_class": "SAFE",
+   "accessed_time_1": "SAFE",
+   "created_time": "SAFE",
+   "exists_1": "SAFE",
+   "exists": "SAFE",
+   "path": "SAFE",
+   "_save": "VULNERABLE",
+   "url": "SAFE",
+   "modified_time": "SAFE",
+   "url_1": "SAFE",
+   "open": "SAFE",
+   "__init__": "SAFE",
+   "delete_1": "SAFE",
+   "modified_time_1": "SAFE",
+   "delete": "SAFE",
+   "get_valid_name": "SAFE",
+   "created_time_1": "SAFE",
+   "listdir": "VULNERABLE",
+   "get_available_name": "VULNERABLE",
+   "_open": "SAFE",
+   "listdir_1": "VULNERABLE",
+   "accessed_time": "SAFE",
+   "path_1": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-43665__text__before": {
+  "changed_funcs": [
+   "_truncate_html"
+  ],
+  "func_verdicts": {
+   "compress_string": "VULNERABLE",
+   "_text_words": "VULNERABLE",
+   "_replace_entity": "VULNERABLE",
+   "wrap": "VULNERABLE",
+   "normalize_newlines": "VULNERABLE",
+   "_truncate_html": "VULNERABLE",
+   "camel_case_to_spaces": "VULNERABLE",
+   "capfirst": "POLYMORPHIC",
+   "_format_lazy": "VULNERABLE",
+   "slugify": "VULNERABLE",
+   "words": "VULNERABLE",
+   "_text_chars": "POLYMORPHIC",
+   "__init__": "SAFE",
+   "read": "VULNERABLE",
+   "unescape_entities": "VULNERABLE",
+   "compress_sequence": "VULNERABLE",
+   "get_text_list": "VULNERABLE",
+   "phone2numeric": "VULNERABLE",
+   "get_valid_filename": "POLYMORPHIC",
+   "smart_split": "VULNERABLE",
+   "chars": "VULNERABLE",
+   "unescape_string_literal": "POLYMORPHIC",
+   "add_truncation_text": "POLYMORPHIC"
+  },
+  "label": true
+ },
+ "cve:CVE-2025-6921__optimization_tf__before": {
+  "changed_funcs": [
+   "_do_use_weight_decay"
+  ],
+  "func_verdicts": {
+   "__call___1": "VULNERABLE",
+   "create_optimizer": "SAFE",
+   "__init___1": "SAFE",
+   "_do_use_weight_decay": "VULNERABLE",
+   "_resource_apply_sparse": "VULNERABLE",
+   "reset": "VULNERABLE",
+   "apply_gradients": "VULNERABLE",
+   "get_config": "SAFE",
+   "_decay_weights_op": "VULNERABLE",
+   "_resource_apply_dense": "VULNERABLE",
+   "_get_lr": "SAFE",
+   "__call__": "VULNERABLE",
+   "from_config": "SAFE",
+   "__init__": "SAFE",
+   "gradients": "VULNERABLE",
+   "__init___2": "SAFE",
+   "step": "SAFE",
+   "get_config_1": "SAFE",
+   "_prepare_local": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2014-0481__storage__after": {
+  "changed_funcs": [
+   "get_available_name"
+  ],
+  "func_verdicts": {
+   "size_1": "SAFE",
+   "_setup": "SAFE",
+   "size": "SAFE",
+   "save": "VULNERABLE",
+   "get_storage_class": "SAFE",
+   "accessed_time_1": "SAFE",
+   "created_time": "SAFE",
+   "exists_1": "SAFE",
+   "exists": "SAFE",
+   "path": "SAFE",
+   "_save": "VULNERABLE",
+   "url": "SAFE",
+   "modified_time": "SAFE",
+   "url_1": "SAFE",
+   "open": "SAFE",
+   "__init__": "SAFE",
+   "delete_1": "SAFE",
+   "modified_time_1": "SAFE",
+   "delete": "SAFE",
+   "get_valid_name": "SAFE",
+   "created_time_1": "SAFE",
+   "listdir": "VULNERABLE",
+   "get_available_name": "VULNERABLE",
+   "_open": "SAFE",
+   "listdir_1": "VULNERABLE",
+   "accessed_time": "SAFE",
+   "path_1": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-6921__tokenization_marian__after": {
+  "changed_funcs": [
+   "remove_language_code"
+  ],
+  "func_verdicts": {
+   "get_vocab": "VULNERABLE",
+   "normalize": "SAFE",
+   "save_json": "VULNERABLE",
+   "_convert_token_to_id": "SAFE",
+   "__setstate__": "VULNERABLE",
+   "load_json": "VULNERABLE",
+   "build_inputs_with_special_tokens": "POLYMORPHIC",
+   "vocab_size": "SAFE",
+   "convert_tokens_to_string": "POLYMORPHIC",
+   "load_spm": "POLYMORPHIC",
+   "decode": "VULNERABLE",
+   "batch_decode": "VULNERABLE",
+   "_special_token_mask": "POLYMORPHIC",
+   "num_special_tokens_to_add": "SAFE",
+   "_tokenize": "VULNERABLE",
+   "get_special_tokens_mask": "VULNERABLE",
+   "get_src_vocab": "VULNERABLE",
+   "save_vocabulary": "VULNERABLE",
+   "_switch_to_target_mode": "SAFE",
+   "__init__": "VULNERABLE",
+   "remove_language_code": "POLYMORPHIC",
+   "get_tgt_vocab": "VULNERABLE",
+   "_switch_to_input_mode": "SAFE",
+   "_convert_id_to_token": "SAFE",
+   "_setup_normalizer": "SAFE",
+   "__getstate__": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2023-43665__text__after": {
+  "changed_funcs": [
+   "_truncate_html"
+  ],
+  "func_verdicts": {
+   "compress_string": "VULNERABLE",
+   "_text_words": "VULNERABLE",
+   "_replace_entity": "VULNERABLE",
+   "wrap": "VULNERABLE",
+   "normalize_newlines": "VULNERABLE",
+   "_truncate_html": "VULNERABLE",
+   "camel_case_to_spaces": "VULNERABLE",
+   "capfirst": "POLYMORPHIC",
+   "_format_lazy": "VULNERABLE",
+   "slugify": "VULNERABLE",
+   "words": "VULNERABLE",
+   "_text_chars": "POLYMORPHIC",
+   "__init__": "SAFE",
+   "read": "VULNERABLE",
+   "unescape_entities": "VULNERABLE",
+   "compress_sequence": "VULNERABLE",
+   "get_text_list": "VULNERABLE",
+   "phone2numeric": "POLYMORPHIC",
+   "get_valid_filename": "POLYMORPHIC",
+   "smart_split": "VULNERABLE",
+   "chars": "VULNERABLE",
+   "unescape_string_literal": "POLYMORPHIC",
+   "add_truncation_text": "POLYMORPHIC"
+  },
+  "label": false
+ },
+ "cve:CVE-2021-29433__store_invite_servlet__after": {
+  "changed_funcs": [
+   "render_POST"
+  ],
+  "func_verdicts": {
+   "redact_email_address": "VULNERABLE",
+   "_randomString": "POLYMORPHIC",
+   "__init__": "SAFE",
+   "_redact": "POLYMORPHIC",
+   "render_POST": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2023-45129__validator__before": {
+  "changed_funcs": [
+   "validate_new"
+  ],
+  "func_verdicts": {
+   "_validate_retention": "SAFE",
+   "_ensure_strings": "POLYMORPHIC",
+   "_ensure_state_event": "SAFE",
+   "validate_builder": "SAFE",
+   "_create_validator": "SAFE",
+   "validate_new": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:GHSA-hf3c-wxg2-49q9__xgrammar_decoding__before": {
+  "changed_funcs": [
+   "get_compiler"
+  ],
+  "func_verdicts": {
+   "from_guided_params": "VULNERABLE",
+   "get_compiler": "VULNERABLE",
+   "__setstate__": "VULNERABLE",
+   "get_tokenizer_data": "VULNERABLE",
+   "_ensure_ctx": "VULNERABLE",
+   "tokenizer_info": "VULNERABLE",
+   "escape_ebnf_string": "POLYMORPHIC",
+   "__call__": "VULNERABLE",
+   "get_local_xgrammar_guided_decoding_logits_processor": "VULNERABLE",
+   "clone": "VULNERABLE",
+   "__post_init__": "VULNERABLE",
+   "choice_as_grammar": "VULNERABLE",
+   "__getstate__": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2024-24680__humanize__before": {
+  "changed_funcs": [
+   "intcomma"
+  ],
+  "func_verdicts": {
+   "apnumber": "SAFE",
+   "intword": "VULNERABLE",
+   "string_for": "SAFE",
+   "ordinal": "VULNERABLE",
+   "naturalday": "SAFE",
+   "intcomma": "VULNERABLE",
+   "naturaltime": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2015-1881__main__before": {
+  "changed_funcs": [
+   "import_image"
+  ],
+  "func_verdicts": {
+   "run": "VULNERABLE",
+   "_execute": "VULNERABLE",
+   "set_image_data": "VULNERABLE",
+   "import_image": "VULNERABLE",
+   "create_image": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-45129__validator__after": {
+  "changed_funcs": [
+   "validate_new"
+  ],
+  "func_verdicts": {
+   "_validate_retention": "SAFE",
+   "_ensure_strings": "POLYMORPHIC",
+   "_ensure_state_event": "SAFE",
+   "validate_builder": "SAFE",
+   "_create_validator": "SAFE",
+   "validate_new": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2015-1881__main__after": {
+  "changed_funcs": [
+   "import_image"
+  ],
+  "func_verdicts": {
+   "run": "VULNERABLE",
+   "_execute": "VULNERABLE",
+   "set_image_data": "VULNERABLE",
+   "import_image": "VULNERABLE",
+   "create_image": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:GHSA-hf3c-wxg2-49q9__backend_xgrammar__after": {
+  "changed_funcs": [
+   "__init__"
+  ],
+  "func_verdicts": {
+   "is_terminated": "SAFE",
+   "reset": "SAFE",
+   "accept_tokens": "POLYMORPHIC",
+   "__init__": "VULNERABLE",
+   "allocate_token_bitmask": "VULNERABLE",
+   "fill_bitmask": "SAFE",
+   "compile_grammar": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2024-24680__humanize__after": {
+  "changed_funcs": [
+   "intcomma"
+  ],
+  "func_verdicts": {
+   "apnumber": "SAFE",
+   "intword": "VULNERABLE",
+   "string_for": "SAFE",
+   "ordinal": "SAFE",
+   "naturalday": "SAFE",
+   "intcomma": "VULNERABLE",
+   "naturaltime": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2023-30837__subscriptable__before": {
+  "changed_funcs": [
+   "__init___1"
+  ],
+  "func_verdicts": {
+   "__init___4": "SAFE",
+   "validate_index_type_2": "SAFE",
+   "get_subscripted_type": "SAFE",
+   "_set_first_key": "VULNERABLE",
+   "abi_type_1": "VULNERABLE",
+   "subtype_1": "SAFE",
+   "__init___1": "SAFE",
+   "size_in_bytes_2": "VULNERABLE",
+   "count_1": "SAFE",
+   "compare_type_1": "VULNERABLE",
+   "__repr___3": "VULNERABLE",
+   "length": "SAFE",
+   "tuple_members": "VULNERABLE",
+   "validate_index_type": "SAFE",
+   "to_abi_arg_1": "VULNERABLE",
+   "from_annotation_2": "VULNERABLE",
+   "__repr___2": "VULNERABLE",
+   "getter_signature": "VULNERABLE",
+   "__init___3": "SAFE",
+   "__init__": "SAFE",
+   "get_subscripted_type_1": "SAFE",
+   "from_annotation_3": "VULNERABLE",
+   "tuple_items": "VULNERABLE",
+   "from_annotation_1": "VULNERABLE",
+   "subtype": "SAFE",
+   "from_annotation": "VULNERABLE",
+   "abi_type": "VULNERABLE",
+   "_as_array": "SAFE",
+   "size_in_bytes_1": "VULNERABLE",
+   "tuple_keys": "VULNERABLE",
+   "to_abi_arg_2": "VULNERABLE",
+   "to_abi_arg": "VULNERABLE",
+   "__repr___1": "VULNERABLE",
+   "get_subscripted_type_3": "SAFE",
+   "count": "SAFE",
+   "__repr__": "VULNERABLE",
+   "get_subscripted_type_2": "SAFE",
+   "abi_type_2": "VULNERABLE",
+   "__init___2": "SAFE",
+   "size_in_bytes": "VULNERABLE",
+   "validate_index_type_1": "SAFE",
+   "compare_type_3": "VULNERABLE",
+   "compare_type_2": "VULNERABLE",
+   "compare_type": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-30837__data_positions__before": {
+  "changed_funcs": [
+   "set_storage_slots_with_overrides",
+   "set_storage_slots",
+   "set_code_offsets"
+  ],
+  "func_verdicts": {
+   "set_storage_slots_with_overrides": "VULNERABLE",
+   "set_data_positions": "VULNERABLE",
+   "__init__": "SAFE",
+   "reserve_slot_range": "VULNERABLE",
+   "set_storage_slots": "VULNERABLE",
+   "set_code_offsets": "VULNERABLE",
+   "_reserve_slots": "VULNERABLE",
+   "_reserve_slot": "VULNERABLE",
+   "set_memory_offsets": "SAFE",
+   "set_calldata_offsets": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-30837__subscriptable__after": {
+  "changed_funcs": [
+   "__init___1"
+  ],
+  "func_verdicts": {
+   "__init___4": "SAFE",
+   "validate_index_type_2": "SAFE",
+   "get_subscripted_type": "SAFE",
+   "_set_first_key": "POLYMORPHIC",
+   "abi_type_1": "VULNERABLE",
+   "subtype_1": "SAFE",
+   "__init___1": "SAFE",
+   "size_in_bytes_2": "VULNERABLE",
+   "count_1": "SAFE",
+   "compare_type_1": "VULNERABLE",
+   "__repr___3": "VULNERABLE",
+   "length": "SAFE",
+   "tuple_members": "VULNERABLE",
+   "validate_index_type": "SAFE",
+   "to_abi_arg_1": "VULNERABLE",
+   "from_annotation_2": "VULNERABLE",
+   "__repr___2": "VULNERABLE",
+   "getter_signature": "SAFE",
+   "__init___3": "SAFE",
+   "__init__": "SAFE",
+   "get_subscripted_type_1": "SAFE",
+   "from_annotation_3": "VULNERABLE",
+   "tuple_items": "VULNERABLE",
+   "from_annotation_1": "VULNERABLE",
+   "subtype": "SAFE",
+   "from_annotation": "VULNERABLE",
+   "abi_type": "VULNERABLE",
+   "_as_array": "SAFE",
+   "size_in_bytes_1": "VULNERABLE",
+   "tuple_keys": "VULNERABLE",
+   "to_abi_arg_2": "VULNERABLE",
+   "to_abi_arg": "VULNERABLE",
+   "__repr___1": "VULNERABLE",
+   "get_subscripted_type_3": "SAFE",
+   "count": "SAFE",
+   "__repr__": "VULNERABLE",
+   "get_subscripted_type_2": "SAFE",
+   "abi_type_2": "VULNERABLE",
+   "__init___2": "SAFE",
+   "size_in_bytes": "VULNERABLE",
+   "validate_index_type_1": "SAFE",
+   "compare_type_3": "VULNERABLE",
+   "compare_type_2": "VULNERABLE",
+   "compare_type": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2023-30837__data_positions__after": {
+  "changed_funcs": [
+   "set_storage_slots_with_overrides",
+   "set_storage_slots",
+   "set_code_offsets"
+  ],
+  "func_verdicts": {
+   "__init___1": "SAFE",
+   "allocate_slot": "POLYMORPHIC",
+   "set_storage_slots_with_overrides": "VULNERABLE",
+   "set_data_positions": "VULNERABLE",
+   "__init__": "SAFE",
+   "reserve_slot_range": "VULNERABLE",
+   "set_storage_slots": "VULNERABLE",
+   "set_code_offsets": "VULNERABLE",
+   "_reserve_slots": "POLYMORPHIC",
+   "_reserve_slot": "BOUNDED",
+   "set_memory_offsets": "SAFE",
+   "set_calldata_offsets": "SAFE"
+  },
+  "label": false
+ }
+}

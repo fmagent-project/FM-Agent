@@ -1,0 +1,581 @@
+{
+ "cve:CVE-2022-3327__rdw_app__before": {
+  "changed_funcs": [
+   "__init___1"
+  ],
+  "func_verdicts": {
+   "version": "SAFE",
+   "__init___1": "VULNERABLE",
+   "parse_args": "SAFE",
+   "currentuser": "SAFE",
+   "__init__": "SAFE",
+   "error_page": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-27482__http_server_agent__before": {
+  "changed_funcs": [
+   "start"
+  ],
+  "func_verdicts": {
+   "cleanup": "SAFE",
+   "start": "VULNERABLE",
+   "__init__": "SAFE",
+   "_start_site_with_retry": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2022-3327__auth_form__before": {
+  "changed_funcs": [
+   "_is_login",
+   "run",
+   "login"
+  ],
+  "func_verdicts": {
+   "_is_login": "SAFE",
+   "run": "VULNERABLE",
+   "_set_redirect_url": "VULNERABLE",
+   "__init__": "SAFE",
+   "_get_redirect_url": "VULNERABLE",
+   "logout": "VULNERABLE",
+   "login": "VULNERABLE",
+   "redirect_to_original_url": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2022-4018__auth_form__before": {
+  "changed_funcs": [
+   "_is_login",
+   "run",
+   "login"
+  ],
+  "func_verdicts": {
+   "_is_login": "SAFE",
+   "run": "VULNERABLE",
+   "_set_redirect_url": "VULNERABLE",
+   "__init__": "SAFE",
+   "_get_redirect_url": "VULNERABLE",
+   "logout": "VULNERABLE",
+   "login": "VULNERABLE",
+   "redirect_to_original_url": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-27482__http_server_agent__after": {
+  "changed_funcs": [
+   "start"
+  ],
+  "func_verdicts": {
+   "cleanup": "SAFE",
+   "start": "SAFE",
+   "__init__": "SAFE",
+   "_start_site_with_retry": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-39987__terminal__after": {
+  "changed_funcs": [
+   "websocket_endpoint"
+  ],
+  "func_verdicts": {
+   "_setup_child_process": "SAFE",
+   "_cancel_tasks": "SAFE",
+   "_wait_for_read": "SAFE",
+   "_create_process_cleanup_handler": "SAFE",
+   "supports_terminal": "SAFE",
+   "_write_to_pty": "VULNERABLE",
+   "_should_close_on_command": "SAFE",
+   "_resize_pty": "SAFE",
+   "_read_from_pty": "VULNERABLE",
+   "_decode_pty_data": "SAFE",
+   "websocket_endpoint": "VULNERABLE",
+   "_create_shell_environment": "SAFE",
+   "_send_sigwinch": "SAFE",
+   "_manage_command_buffer": "SAFE",
+   "_maybe_handle_resize": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-49652__service__after": {
+  "changed_funcs": [
+   "signup"
+  ],
+  "func_verdicts": {
+   "update_full_name": "VULNERABLE",
+   "signup": "VULNERABLE",
+   "upload_ssh_keypair": "VULNERABLE",
+   "__init__": "SAFE",
+   "update_password": "VULNERABLE",
+   "update_password_no_auth": "VULNERABLE",
+   "generate_ssh_keypair": "VULNERABLE",
+   "authorize": "VULNERABLE",
+   "get_role": "VULNERABLE",
+   "_check_password_age": "SAFE",
+   "get_ssh_keypair": "VULNERABLE",
+   "signout": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2022-3327__rdw_app__after": {
+  "changed_funcs": [
+   "__init___1"
+  ],
+  "func_verdicts": {
+   "version": "SAFE",
+   "__init___1": "VULNERABLE",
+   "parse_args": "SAFE",
+   "currentuser": "SAFE",
+   "__init__": "SAFE",
+   "error_page": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-45349__automations__before": {
+  "changed_funcs": [
+   "execute_automation"
+  ],
+  "func_verdicts": {
+   "_build_request": "SAFE",
+   "execute_automation": "VULNERABLE",
+   "_resolve_model_terminal_id": "SAFE",
+   "validate_rrule": "SAFE",
+   "next_run_ns": "SAFE",
+   "next_n_runs_ns": "SAFE",
+   "_set_terminal_cwd": "VULNERABLE",
+   "rrule_interval_seconds": "SAFE",
+   "_record_run": "VULNERABLE",
+   "_parse_rule": "SAFE",
+   "_resolve_model_filter_ids": "SAFE",
+   "_resolve_model_features": "SAFE",
+   "automation_worker_loop": "VULNERABLE",
+   "_resolve_model_tool_ids": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-27838__signals__before": {
+  "changed_funcs": [
+   "handle_workout_log_change",
+   "handle_workout_session_change"
+  ],
+  "func_verdicts": {
+   "handle_workout_log_change": "VULNERABLE",
+   "handle_config_change": "VULNERABLE",
+   "update_activity_cache": "VULNERABLE",
+   "update_cache_slot_entry": "VULNERABLE",
+   "update_cache_slot": "VULNERABLE",
+   "update_cache_day": "VULNERABLE",
+   "handle_workout_session_change": "VULNERABLE",
+   "update_cache_routine": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2025-69207__notion__before": {
+  "changed_funcs": [
+   "notion_auth_callback"
+  ],
+  "func_verdicts": {
+   "notion_auth_callback": "VULNERABLE",
+   "run_in_executor": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2024-45606__rule_snooze__before": {
+  "changed_funcs": [
+   "get_rule",
+   "post",
+   "delete"
+  ],
+  "func_verdicts": {
+   "serialize": "VULNERABLE",
+   "get_rule": "VULNERABLE",
+   "delete": "VULNERABLE",
+   "can_edit_alert_rule": "SAFE",
+   "post": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-27838__signals__after": {
+  "changed_funcs": [
+   "handle_workout_log_change",
+   "handle_workout_session_change"
+  ],
+  "func_verdicts": {
+   "handle_workout_log_change": "VULNERABLE",
+   "handle_config_change": "VULNERABLE",
+   "update_activity_cache": "VULNERABLE",
+   "update_cache_slot_entry": "VULNERABLE",
+   "update_cache_slot": "VULNERABLE",
+   "update_cache_day": "VULNERABLE",
+   "handle_workout_session_change": "VULNERABLE",
+   "update_cache_routine": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2024-45606__rule_snooze__after": {
+  "changed_funcs": [
+   "get_rule",
+   "post",
+   "delete"
+  ],
+  "func_verdicts": {
+   "serialize": "VULNERABLE",
+   "convert_args": "VULNERABLE",
+   "delete": "VULNERABLE",
+   "can_edit_alert_rule": "SAFE",
+   "post": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-69207__notion__after": {
+  "changed_funcs": [
+   "notion_auth_callback"
+  ],
+  "func_verdicts": {
+   "notion_auth_callback": "SAFE",
+   "run_in_executor": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-45349__automations__after": {
+  "changed_funcs": [
+   "execute_automation"
+  ],
+  "func_verdicts": {
+   "_build_request": "SAFE",
+   "execute_automation": "VULNERABLE",
+   "_resolve_model_terminal_id": "SAFE",
+   "validate_rrule": "SAFE",
+   "next_run_ns": "SAFE",
+   "next_n_runs_ns": "SAFE",
+   "_set_terminal_cwd": "VULNERABLE",
+   "rrule_interval_seconds": "SAFE",
+   "_record_run": "VULNERABLE",
+   "_parse_rule": "SAFE",
+   "_resolve_model_filter_ids": "SAFE",
+   "_resolve_model_features": "SAFE",
+   "automation_worker_loop": "VULNERABLE",
+   "_resolve_model_tool_ids": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-45667__memories__before": {
+  "changed_funcs": [
+   "get_embeddings",
+   "reset_memory_from_vector_db"
+  ],
+  "func_verdicts": {
+   "get_memories": "SAFE",
+   "update_memory_by_id": "VULNERABLE",
+   "reset_memory_from_vector_db": "SAFE",
+   "delete_memory_by_user_id": "SAFE",
+   "get_embeddings": "VULNERABLE",
+   "query_memory": "SAFE",
+   "delete_memory_by_id": "SAFE",
+   "add_memory": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-22680__content__before": {
+  "changed_funcs": [
+   "reindex"
+  ],
+  "func_verdicts": {
+   "download": "VULNERABLE",
+   "reindex": "VULNERABLE",
+   "_do_reindex": "VULNERABLE",
+   "overview": "VULNERABLE",
+   "write": "VULNERABLE",
+   "abstract": "VULNERABLE",
+   "read": "VULNERABLE",
+   "_background_reindex_tracked": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-22680__task_tracker__before": {
+  "changed_funcs": [
+   "to_dict",
+   "create",
+   "create_if_no_running",
+   "get",
+   "list_tasks",
+   "has_running"
+  ],
+  "func_verdicts": {
+   "fail": "VULNERABLE",
+   "reset_task_tracker": "VULNERABLE",
+   "_cleanup_loop": "VULNERABLE",
+   "create_if_no_running": "VULNERABLE",
+   "_sanitize_error": "SAFE",
+   "get_task_tracker": "SAFE",
+   "stop_cleanup_loop": "VULNERABLE",
+   "start_cleanup_loop": "VULNERABLE",
+   "_copy": "SAFE",
+   "_evict_expired": "VULNERABLE",
+   "start": "VULNERABLE",
+   "complete": "VULNERABLE",
+   "__init__": "SAFE",
+   "has_running": "VULNERABLE",
+   "to_dict": "SAFE",
+   "get": "VULNERABLE",
+   "list_tasks": "VULNERABLE",
+   "create": "VULNERABLE",
+   "count": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-22680__session_service__before": {
+  "changed_funcs": [
+   "get_commit_task"
+  ],
+  "func_verdicts": {
+   "_ensure_initialized": "SAFE",
+   "set_dependencies": "SAFE",
+   "sessions": "SAFE",
+   "extract": "VULNERABLE",
+   "get_commit_task": "VULNERABLE",
+   "session": "VULNERABLE",
+   "__init__": "SAFE",
+   "commit": "VULNERABLE",
+   "delete": "VULNERABLE",
+   "get": "VULNERABLE",
+   "create": "VULNERABLE",
+   "commit_async": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-22680__tasks__after": {
+  "changed_funcs": [
+   "get_task",
+   "list_tasks"
+  ],
+  "func_verdicts": {
+   "get_task": "SAFE",
+   "list_tasks": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-45667__memories__after": {
+  "changed_funcs": [
+   "get_embeddings",
+   "reset_memory_from_vector_db"
+  ],
+  "func_verdicts": {
+   "get_memories": "SAFE",
+   "update_memory_by_id": "SAFE",
+   "reset_memory_from_vector_db": "SAFE",
+   "delete_memory_by_user_id": "SAFE",
+   "query_memory": "SAFE",
+   "delete_memory_by_id": "SAFE",
+   "add_memory": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-22680__task_tracker__after": {
+  "changed_funcs": [
+   "to_dict",
+   "create",
+   "create_if_no_running",
+   "get",
+   "list_tasks",
+   "has_running"
+  ],
+  "func_verdicts": {
+   "fail": "VULNERABLE",
+   "reset_task_tracker": "VULNERABLE",
+   "_cleanup_loop": "VULNERABLE",
+   "create_if_no_running": "VULNERABLE",
+   "_sanitize_error": "SAFE",
+   "get_task_tracker": "SAFE",
+   "_matches_owner": "SAFE",
+   "stop_cleanup_loop": "VULNERABLE",
+   "start_cleanup_loop": "VULNERABLE",
+   "_copy": "SAFE",
+   "_evict_expired": "VULNERABLE",
+   "start": "VULNERABLE",
+   "complete": "VULNERABLE",
+   "__init__": "SAFE",
+   "has_running": "VULNERABLE",
+   "to_dict": "VULNERABLE",
+   "get": "VULNERABLE",
+   "list_tasks": "VULNERABLE",
+   "create": "VULNERABLE",
+   "count": "SAFE",
+   "_validate_owner": "SAFE"
+  },
+  "label": false
+ },
+ "cve:GHSA-hvc7-763r-4f3h__keys__after": {
+  "changed_funcs": [
+   "revoke_key"
+  ],
+  "func_verdicts": {
+   "revoke_key": "VULNERABLE",
+   "verify_api_token": "SAFE",
+   "upload_key": "VULNERABLE",
+   "search_key": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-59420__jws__before": {
+  "changed_funcs": [
+   "serialize_compact",
+   "deserialize_compact",
+   "serialize_json",
+   "_validate_json_jws"
+  ],
+  "func_verdicts": {
+   "serialize_json": "VULNERABLE",
+   "_validate_private_headers": "SAFE",
+   "serialize": "VULNERABLE",
+   "_extract_header": "SAFE",
+   "serialize_compact": "VULNERABLE",
+   "deserialize_compact": "VULNERABLE",
+   "register_algorithm": "VULNERABLE",
+   "_prepare_algorithm_key": "VULNERABLE",
+   "deserialize": "VULNERABLE",
+   "deserialize_json": "VULNERABLE",
+   "_validate_json_jws": "VULNERABLE",
+   "__init__": "SAFE",
+   "_extract_signature": "SAFE",
+   "_extract_payload": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-51649__jobs__before": {
+  "changed_funcs": [
+   "receive_job_button_1"
+  ],
+  "func_verdicts": {
+   "_run_device_job": "SAFE",
+   "run": "SAFE",
+   "receive_job_button": "VULNERABLE",
+   "validate_serial": "SAFE",
+   "_run_site_job": "SAFE",
+   "receive_job_button_1": "SAFE",
+   "receive_job_hook": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-45672__utils__before": {
+  "changed_funcs": [
+   "execute_code"
+  ],
+  "func_verdicts": {
+   "format_code": "SAFE",
+   "get_html_from_markdown": "SAFE",
+   "execute_code": "VULNERABLE",
+   "download_chat_as_pdf": "VULNERABLE",
+   "get_gravatar": "VULNERABLE",
+   "download_db": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2021-38598__arp_protect__after": {
+  "changed_funcs": [
+   "delete_arp_spoofing_protection",
+   "_delete_unreferenced_arp_protection",
+   "delete_unreferenced_arp_protection",
+   "_install_arp_spoofing_protection",
+   "_install_mac_spoofing_protection"
+  ],
+  "func_verdicts": {
+   "_delete_mac_spoofing_protection": "VULNERABLE",
+   "ebtables": "VULNERABLE",
+   "delete_arp_spoofing_protection": "VULNERABLE",
+   "_setup_arp_spoofing_protection": "VULNERABLE",
+   "install_arp_spoofing_protection": "VULNERABLE",
+   "chain_delete": "VULNERABLE",
+   "_install_mac_spoofing_protection": "VULNERABLE",
+   "chain_name": "SAFE",
+   "_install_arp_spoofing_protection": "VULNERABLE",
+   "vif_jump_present": "SAFE",
+   "_delete_arp_spoofing_protection": "VULNERABLE",
+   "_mac_chain_name": "SAFE",
+   "_mac_vif_jump_present": "SAFE",
+   "delete_unreferenced_arp_protection": "VULNERABLE",
+   "setup_arp_spoofing_protection": "VULNERABLE",
+   "chain_exists": "SAFE",
+   "_delete_vif_mac_rules": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2020-26250__oauth2__after": {
+  "changed_funcs": [
+   "_deprecated_trait"
+  ],
+  "func_verdicts": {
+   "check_arguments": "VULNERABLE",
+   "guess_callback_uri": "SAFE",
+   "get_callback_url": "SAFE",
+   "_userdata_url_default": "SAFE",
+   "check_error": "SAFE",
+   "get_next_url": "VULNERABLE",
+   "_client_secret_default": "VULNERABLE",
+   "check_code": "SAFE",
+   "authenticate": "SAFE",
+   "_OAUTH_USERINFO_URL": "SAFE",
+   "get_handlers": "SAFE",
+   "set_state_cookie": "VULNERABLE",
+   "_OAUTH_ACCESS_TOKEN_URL": "SAFE",
+   "login_url": "SAFE",
+   "get_state_url": "SAFE",
+   "__init__": "SAFE",
+   "get_1": "SAFE",
+   "_deserialize_state": "SAFE",
+   "_OAUTH_AUTHORIZE_URL": "SAFE",
+   "_authorize_url_default": "SAFE",
+   "_client_id_default": "SAFE",
+   "get": "VULNERABLE",
+   "_token_url_default": "SAFE",
+   "check_state": "VULNERABLE",
+   "get_state_cookie": "VULNERABLE",
+   "_login_user_pre_08": "VULNERABLE",
+   "get_state": "SAFE",
+   "_validate_server_cert_default": "SAFE",
+   "_serialize_state": "SAFE",
+   "_deprecated_oauth_trait": "VULNERABLE",
+   "append_query_parameters": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2022-0860__pam__after": {
+  "changed_funcs": [
+   "authenticate"
+  ],
+  "func_verdicts": {
+   "register": "SAFE",
+   "authenticate": "VULNERABLE",
+   "__init__": "SAFE",
+   "__repr___1": "SAFE",
+   "__repr__": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-59420__jws__after": {
+  "changed_funcs": [
+   "serialize_compact",
+   "deserialize_compact",
+   "serialize_json",
+   "_validate_json_jws"
+  ],
+  "func_verdicts": {
+   "serialize_json": "VULNERABLE",
+   "_validate_private_headers": "SAFE",
+   "serialize": "VULNERABLE",
+   "_extract_header": "SAFE",
+   "serialize_compact": "VULNERABLE",
+   "deserialize_compact": "VULNERABLE",
+   "register_algorithm": "VULNERABLE",
+   "_prepare_algorithm_key": "VULNERABLE",
+   "deserialize": "VULNERABLE",
+   "deserialize_json": "VULNERABLE",
+   "_validate_json_jws": "VULNERABLE",
+   "__init__": "SAFE",
+   "_reject_unprotected_crit": "SAFE",
+   "_extract_signature": "SAFE",
+   "_extract_payload": "SAFE",
+   "_validate_crit_headers": "SAFE"
+  },
+  "label": false
+ }
+}

@@ -1,0 +1,448 @@
+{
+  "comparison_set_size": 34,
+  "total_sample": 34,
+  "tools": [
+    "bandit",
+    "fm-agent",
+    "llm-direct",
+    "semgrep"
+  ],
+  "views": {
+    "detection": {
+      "bandit": {
+        "overall": {
+          "TP": 10,
+          "FP": 9,
+          "FN": 7,
+          "TN": 8,
+          "ERR": 0
+        },
+        "precision": 0.5263,
+        "recall": 0.5882,
+        "f1": 0.5556,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 3,
+            "FP": 2,
+            "FN": 0,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-326": {
+            "TP": 1,
+            "FP": 2,
+            "FN": 3,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.25
+          },
+          "CWE-327": {
+            "TP": 2,
+            "FP": 2,
+            "FN": 1,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 0.667
+          },
+          "CWE-330": {
+            "TP": 1,
+            "FP": 0,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.333
+          },
+          "CWE-798": {
+            "TP": 3,
+            "FP": 3,
+            "FN": 1,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 0.75
+          }
+        }
+      },
+      "fm-agent": {
+        "overall": {
+          "TP": 13,
+          "FP": 13,
+          "FN": 4,
+          "TN": 4,
+          "ERR": 0
+        },
+        "precision": 0.5,
+        "recall": 0.7647,
+        "f1": 0.6047,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 2,
+            "FP": 3,
+            "FN": 1,
+            "TN": 0,
+            "ERR": 0,
+            "recall": 0.667
+          },
+          "CWE-326": {
+            "TP": 4,
+            "FP": 3,
+            "FN": 0,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-327": {
+            "TP": 3,
+            "FP": 3,
+            "FN": 0,
+            "TN": 0,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-330": {
+            "TP": 3,
+            "FP": 3,
+            "FN": 0,
+            "TN": 0,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-798": {
+            "TP": 1,
+            "FP": 1,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.25
+          }
+        }
+      },
+      "llm-direct": {
+        "overall": {
+          "TP": 12,
+          "FP": 5,
+          "FN": 5,
+          "TN": 12,
+          "ERR": 0
+        },
+        "precision": 0.7059,
+        "recall": 0.7059,
+        "f1": 0.7059,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 1,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.667
+          },
+          "CWE-326": {
+            "TP": 2,
+            "FP": 2,
+            "FN": 2,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.5
+          },
+          "CWE-327": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 1,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.667
+          },
+          "CWE-330": {
+            "TP": 3,
+            "FP": 1,
+            "FN": 0,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-798": {
+            "TP": 3,
+            "FP": 0,
+            "FN": 1,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.75
+          }
+        }
+      },
+      "semgrep": {
+        "overall": {
+          "TP": 5,
+          "FP": 5,
+          "FN": 12,
+          "TN": 12,
+          "ERR": 0
+        },
+        "precision": 0.5,
+        "recall": 0.2941,
+        "f1": 0.3704,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-326": {
+            "TP": 1,
+            "FP": 1,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.25
+          },
+          "CWE-327": {
+            "TP": 1,
+            "FP": 1,
+            "FN": 2,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.333
+          },
+          "CWE-330": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-798": {
+            "TP": 3,
+            "FP": 3,
+            "FN": 1,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 0.75
+          }
+        }
+      }
+    },
+    "cwe_aware": {
+      "bandit": {
+        "overall": {
+          "TP": 3,
+          "FP": 3,
+          "FN": 14,
+          "TN": 14,
+          "ERR": 0
+        },
+        "precision": 0.5,
+        "recall": 0.1765,
+        "f1": 0.2609,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-326": {
+            "TP": 1,
+            "FP": 2,
+            "FN": 3,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.25
+          },
+          "CWE-327": {
+            "TP": 1,
+            "FP": 1,
+            "FN": 2,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.333
+          },
+          "CWE-330": {
+            "TP": 1,
+            "FP": 0,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.333
+          },
+          "CWE-798": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 4,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.0
+          }
+        }
+      },
+      "fm-agent": {
+        "overall": {
+          "TP": 9,
+          "FP": 6,
+          "FN": 8,
+          "TN": 11,
+          "ERR": 0
+        },
+        "precision": 0.6,
+        "recall": 0.5294,
+        "f1": 0.5625,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 2,
+            "FP": 2,
+            "FN": 1,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 0.667
+          },
+          "CWE-326": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.5
+          },
+          "CWE-327": {
+            "TP": 3,
+            "FP": 2,
+            "FN": 0,
+            "TN": 1,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-330": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 1,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.667
+          },
+          "CWE-798": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 4,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.0
+          }
+        }
+      },
+      "llm-direct": {
+        "overall": {
+          "TP": 12,
+          "FP": 4,
+          "FN": 5,
+          "TN": 13,
+          "ERR": 0
+        },
+        "precision": 0.75,
+        "recall": 0.7059,
+        "f1": 0.7273,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 1,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.667
+          },
+          "CWE-326": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 2,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.5
+          },
+          "CWE-327": {
+            "TP": 2,
+            "FP": 1,
+            "FN": 1,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.667
+          },
+          "CWE-330": {
+            "TP": 3,
+            "FP": 1,
+            "FN": 0,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 1.0
+          },
+          "CWE-798": {
+            "TP": 3,
+            "FP": 0,
+            "FN": 1,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.75
+          }
+        }
+      },
+      "semgrep": {
+        "overall": {
+          "TP": 2,
+          "FP": 2,
+          "FN": 15,
+          "TN": 15,
+          "ERR": 0
+        },
+        "precision": 0.5,
+        "recall": 0.1176,
+        "f1": 0.1905,
+        "per_cwe": {
+          "CWE-321": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-326": {
+            "TP": 1,
+            "FP": 1,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.25
+          },
+          "CWE-327": {
+            "TP": 1,
+            "FP": 1,
+            "FN": 2,
+            "TN": 2,
+            "ERR": 0,
+            "recall": 0.333
+          },
+          "CWE-330": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 3,
+            "TN": 3,
+            "ERR": 0,
+            "recall": 0.0
+          },
+          "CWE-798": {
+            "TP": 0,
+            "FP": 0,
+            "FN": 4,
+            "TN": 4,
+            "ERR": 0,
+            "recall": 0.0
+          }
+        }
+      }
+    }
+  }
+}

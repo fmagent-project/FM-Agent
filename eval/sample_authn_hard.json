@@ -1,0 +1,791 @@
+{
+  "benchmark": "cve-curated:cve_cases_hard.filtered.jsonl",
+  "plugin": "authn",
+  "source": "osv:GHSA-23x9-8hxr-978c|CVE-2014-2237|openstack/keystone@813d1254eb",
+  "seed": 1337,
+  "per_category": 8,
+  "total_selected": 42,
+  "label_noise_caveat": "~60% label precision; precision requires per-case human audit",
+  "cases": [
+    {
+      "id": "cve:CVE-2014-2237__memcache__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2014-2237__memcache__before.py",
+      "cwe": "CWE-287",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-23x9-8hxr-978c|CVE-2014-2237|openstack/keystone@813d1254eb",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/backends/memcache.py",
+        "fix_commit": "813d1254eb4f7a7d40009b23bbadbc4c5cc5daac",
+        "changed_funcs": [
+          "__init__",
+          "client",
+          "_get_memcache_client",
+          "_prefix_token_id",
+          "_prefix_user_id",
+          "get_token",
+          "create_token",
+          "_convert_user_index_from_json",
+          "_update_user_list_with_cas",
+          "_add_to_revocation_list",
+          "delete_token",
+          "delete_tokens",
+          "_list_tokens",
+          "list_revoked_tokens",
+          "flush_expired_tokens"
+        ],
+        "n_funcs": 15,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2015-3206__kerberos__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-3206__kerberos__before.py",
+      "cwe": "CWE-287",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-mffc-9gx5-99g3|CVE-2015-3206|apple/ccs-pykerberos@9cb61c93f9",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "pysrc/kerberos.py",
+        "fix_commit": "9cb61c93f9b24dd18a0a315f3df5445529c5c333",
+        "changed_funcs": [
+          "checkPassword",
+          "changePassword"
+        ],
+        "n_funcs": 19,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2014-2237__memcache__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2014-2237__memcache__before.py",
+      "cwe": "CWE-287",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-23x9-8hxr-978c|CVE-2014-2237|openstack/keystone@a411c944af",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/backends/memcache.py",
+        "fix_commit": "a411c944af78c36f2fdb87d305ba452dc52d7ed3",
+        "changed_funcs": [
+          "create_token"
+        ],
+        "n_funcs": 11,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2026-7723__subscriptions__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-7723__subscriptions__before.py",
+      "cwe": "CWE-287",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-hvph-5985-r63v|CVE-2026-7723|PrefectHQ/prefect@f8afecadf8",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "src/prefect/server/utilities/subscriptions.py",
+        "fix_commit": "f8afecadf88ea5f73694dafa3a365b9d8fae1ad6",
+        "changed_funcs": [
+          "accept_prefect_socket"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 4
+      }
+    },
+    {
+      "id": "cve:CVE-2015-3206__kerberos__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-3206__kerberos__after.py",
+      "cwe": "CWE-287",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-mffc-9gx5-99g3|CVE-2015-3206|apple/ccs-pykerberos@9cb61c93f9|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "pysrc/kerberos.py",
+        "fix_commit": "9cb61c93f9b24dd18a0a315f3df5445529c5c333",
+        "changed_funcs": [
+          "checkPassword",
+          "changePassword"
+        ],
+        "n_funcs": 19,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2024-47533__authn_configfile__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-47533__authn_configfile__after.py",
+      "cwe": "CWE-287",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-m26c-fcgh-cp6h|CVE-2024-47533|cobbler/cobbler@32c5cada01|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "cobbler/modules/authn_configfile.py",
+        "fix_commit": "32c5cada013dc8daa7320a8eda9932c2814742b0",
+        "changed_funcs": [
+          "__parse_storage"
+        ],
+        "n_funcs": 3,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2014-2237__kvs__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2014-2237__kvs__after.py",
+      "cwe": "CWE-287",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-23x9-8hxr-978c|CVE-2014-2237|openstack/keystone@b6f0e26da0|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/backends/kvs.py",
+        "fix_commit": "b6f0e26da0e2ab0892a5658da281a065e668637b",
+        "changed_funcs": [
+          "flush_expired_tokens"
+        ],
+        "n_funcs": 14,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2014-2237__memcache__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2014-2237__memcache__after.py",
+      "cwe": "CWE-287",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-23x9-8hxr-978c|CVE-2014-2237|openstack/keystone@b6f0e26da0|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/backends/memcache.py",
+        "fix_commit": "b6f0e26da0e2ab0892a5658da281a065e668637b",
+        "changed_funcs": [
+          "create_token"
+        ],
+        "n_funcs": 13,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2022-42731__FIDO2__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-42731__FIDO2__before.py",
+      "cwe": "CWE-294",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-vw39-2wj9-4q86|CVE-2022-42731|mkalioby/django-mfa2@54db5a513b",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "mfa/FIDO2.py",
+        "fix_commit": "54db5a513bcafa97a36e9f6dfa31d3c61fa8217b",
+        "changed_funcs": [
+          "complete_reg"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2022-42731__FIDO2__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-42731__FIDO2__before.py",
+      "cwe": "CWE-294",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-vw39-2wj9-4q86|CVE-2022-42731|mkalioby/django-mfa2@5fbb505e98",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "mfa/FIDO2.py",
+        "fix_commit": "5fbb505e98ecdd409330a5c336ad5ec49631b0db",
+        "changed_funcs": [
+          "complete_reg"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2022-42731__FIDO2__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-42731__FIDO2__after.py",
+      "cwe": "CWE-294",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-vw39-2wj9-4q86|CVE-2022-42731|mkalioby/django-mfa2@5fbb505e98|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "mfa/FIDO2.py",
+        "fix_commit": "5fbb505e98ecdd409330a5c336ad5ec49631b0db",
+        "changed_funcs": [
+          "complete_reg"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2022-42731__FIDO2__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-42731__FIDO2__after.py",
+      "cwe": "CWE-294",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-vw39-2wj9-4q86|CVE-2022-42731|mkalioby/django-mfa2@5fbb505e98|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "mfa/FIDO2.py",
+        "fix_commit": "5fbb505e98ecdd409330a5c336ad5ec49631b0db",
+        "changed_funcs": [
+          "complete_reg"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2015-3982__cached_db__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-3982__cached_db__before.py",
+      "cwe": "CWE-384",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-6wgp-fwfm-mxp3|CVE-2015-3982|django/django@31cb25adec",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/contrib/sessions/backends/cached_db.py",
+        "fix_commit": "31cb25adecba930bdeee4556709f5a1c42d88fd6",
+        "changed_funcs": [
+          "flush"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2012-2144__middleware__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2012-2144__middleware__before.py",
+      "cwe": "CWE-384",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-w7h9-8wr4-hwqh|CVE-2012-2144|openstack/horizon@041b1c44c7",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "horizon/middleware.py",
+        "fix_commit": "041b1c44c7d6cf5429505067c32f8f35166a8bab",
+        "changed_funcs": [
+          "process_request"
+        ],
+        "n_funcs": 3,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2023-40273__override__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-40273__override__before.py",
+      "cwe": "CWE-384",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-pm87-24wq-r8w9|CVE-2023-40273|apache/airflow@f5d8201ea7",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "airflow/auth/managers/fab/security_manager/override.py",
+        "fix_commit": "f5d8201ea7935d17cecaf25fc90d4ef0ccdd627b",
+        "changed_funcs": [
+          "reset_password"
+        ],
+        "n_funcs": 13,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2012-2144__auth_forms__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2012-2144__auth_forms__before.py",
+      "cwe": "CWE-384",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-w7h9-8wr4-hwqh|CVE-2012-2144|openstack/horizon@041b1c44c7",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "horizon/views/auth_forms.py",
+        "fix_commit": "041b1c44c7d6cf5429505067c32f8f35166a8bab",
+        "changed_funcs": [
+          "handle"
+        ],
+        "n_funcs": 3,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2023-40273__override__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-40273__override__after.py",
+      "cwe": "CWE-384",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-pm87-24wq-r8w9|CVE-2023-40273|apache/airflow@f5d8201ea7|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "airflow/auth/managers/fab/security_manager/override.py",
+        "fix_commit": "f5d8201ea7935d17cecaf25fc90d4ef0ccdd627b",
+        "changed_funcs": [
+          "reset_password"
+        ],
+        "n_funcs": 13,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2023-40273__override__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-40273__override__after.py",
+      "cwe": "CWE-384",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-pm87-24wq-r8w9|CVE-2023-40273|apache/airflow@f5d8201ea7|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "airflow/auth/managers/fab/security_manager/override.py",
+        "fix_commit": "f5d8201ea7935d17cecaf25fc90d4ef0ccdd627b",
+        "changed_funcs": [
+          "reset_password"
+        ],
+        "n_funcs": 13,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2012-2144__auth__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2012-2144__auth__after.py",
+      "cwe": "CWE-384",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-w7h9-8wr4-hwqh|CVE-2012-2144|openstack/horizon@041b1c44c7|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "horizon/views/auth.py",
+        "fix_commit": "041b1c44c7d6cf5429505067c32f8f35166a8bab",
+        "changed_funcs": [
+          "logout"
+        ],
+        "n_funcs": 5,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2012-2144__middleware__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2012-2144__middleware__after.py",
+      "cwe": "CWE-384",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-w7h9-8wr4-hwqh|CVE-2012-2144|openstack/horizon@041b1c44c7|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "horizon/middleware.py",
+        "fix_commit": "041b1c44c7d6cf5429505067c32f8f35166a8bab",
+        "changed_funcs": [
+          "process_request"
+        ],
+        "n_funcs": 3,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2026-32634__servers_list__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-32634__servers_list__before.py",
+      "cwe": "CWE-522",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-vx5f-957p-qpvm|CVE-2026-32634|nicolargo/glances@61d38eec52",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "glances/servers_list.py",
+        "fix_commit": "61d38eec521703e41e4933d18d5a5ef6f854abd5",
+        "changed_funcs": [
+          "get_uri"
+        ],
+        "n_funcs": 12,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2015-7546__sql__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-7546__sql__before.py",
+      "cwe": "CWE-522",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-8c4w-v65p-jvcv|CVE-2015-7546|openstack/keystone@d5378f173d",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/persistence/backends/sql.py",
+        "fix_commit": "d5378f173da14a34ca010271477337879002d6d0",
+        "changed_funcs": [
+          "list_revoked_tokens"
+        ],
+        "n_funcs": 15,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2015-7546__kvs__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-7546__kvs__before.py",
+      "cwe": "CWE-522",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-8c4w-v65p-jvcv|CVE-2015-7546|openstack/keystone@d5378f173d",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/persistence/backends/kvs.py",
+        "fix_commit": "d5378f173da14a34ca010271477337879002d6d0",
+        "changed_funcs": [
+          "_add_to_revocation_list"
+        ],
+        "n_funcs": 23,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2015-7546__kvs__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-7546__kvs__before.py",
+      "cwe": "CWE-522",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-8c4w-v65p-jvcv|CVE-2015-7546|openstack/keystone@bff03b5726",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/persistence/backends/kvs.py",
+        "fix_commit": "bff03b5726fe5cac93d44a66715eea49b89c8cb0",
+        "changed_funcs": [
+          "_add_to_revocation_list"
+        ],
+        "n_funcs": 23,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2015-7546__sql__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-7546__sql__after.py",
+      "cwe": "CWE-522",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-8c4w-v65p-jvcv|CVE-2015-7546|openstack/keystone@d5378f173d|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/persistence/backends/sql.py",
+        "fix_commit": "d5378f173da14a34ca010271477337879002d6d0",
+        "changed_funcs": [
+          "list_revoked_tokens"
+        ],
+        "n_funcs": 15,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2026-32634__client_browser__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-32634__client_browser__after.py",
+      "cwe": "CWE-522",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-vx5f-957p-qpvm|CVE-2026-32634|nicolargo/glances@61d38eec52|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "glances/client_browser.py",
+        "fix_commit": "61d38eec521703e41e4933d18d5a5ef6f854abd5",
+        "changed_funcs": [
+          "__display_server"
+        ],
+        "n_funcs": 6,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2015-7546__kvs__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-7546__kvs__after.py",
+      "cwe": "CWE-522",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-8c4w-v65p-jvcv|CVE-2015-7546|openstack/keystone@d5378f173d|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "keystone/token/persistence/backends/kvs.py",
+        "fix_commit": "d5378f173da14a34ca010271477337879002d6d0",
+        "changed_funcs": [
+          "_add_to_revocation_list"
+        ],
+        "n_funcs": 23,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2026-32634__servers_list__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-32634__servers_list__after.py",
+      "cwe": "CWE-522",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-vx5f-957p-qpvm|CVE-2026-32634|nicolargo/glances@61d38eec52|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "glances/servers_list.py",
+        "fix_commit": "61d38eec521703e41e4933d18d5a5ef6f854abd5",
+        "changed_funcs": [
+          "get_uri"
+        ],
+        "n_funcs": 12,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2025-65430__request_validator__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-65430__request_validator__before.py",
+      "cwe": "CWE-613",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-qhmc-3mvr-f2j4|CVE-2025-65430|pennersr/django-allauth@c54edf947c",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "allauth/idp/oidc/internal/oauthlib/request_validator.py",
+        "fix_commit": "c54edf947c5a1c8c4ff3cddb75c86000ecb2507d",
+        "changed_funcs": [
+          "validate_bearer_token",
+          "validate_refresh_token"
+        ],
+        "n_funcs": 36,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2025-58352__middleware__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-58352__middleware__before.py",
+      "cwe": "CWE-613",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-377j-wj38-4728|CVE-2025-58352|WeblateOrg/weblate@0b46fe5962",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/accounts/middleware.py",
+        "fix_commit": "0b46fe596231dd456283ead66699ae5516f23908",
+        "changed_funcs": [
+          "__call__"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 7
+      }
+    },
+    {
+      "id": "cve:CVE-2022-41672__app__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-41672__app__before.py",
+      "cwe": "CWE-613",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-3q8r-f3pj-3gc4|CVE-2022-41672|apache/airflow@12bfb571a8",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "airflow/www/app.py",
+        "fix_commit": "12bfb571a895a28a58d3189b0fc10cfc1b89e24c",
+        "changed_funcs": [
+          "create_app"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2025-58352__utils__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-58352__utils__before.py",
+      "cwe": "CWE-613",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-377j-wj38-4728|CVE-2025-58352|WeblateOrg/weblate@0b46fe5962",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/accounts/utils.py",
+        "fix_commit": "0b46fe596231dd456283ead66699ae5516f23908",
+        "changed_funcs": [
+          "adjust_session_expiry"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 7
+      }
+    },
+    {
+      "id": "cve:CVE-2022-41672__app__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-41672__app__after.py",
+      "cwe": "CWE-613",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-3q8r-f3pj-3gc4|CVE-2022-41672|apache/airflow@12bfb571a8|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "airflow/www/app.py",
+        "fix_commit": "12bfb571a895a28a58d3189b0fc10cfc1b89e24c",
+        "changed_funcs": [
+          "create_app"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2025-58352__utils__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-58352__utils__after.py",
+      "cwe": "CWE-613",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-377j-wj38-4728|CVE-2025-58352|WeblateOrg/weblate@0b46fe5962|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/accounts/utils.py",
+        "fix_commit": "0b46fe596231dd456283ead66699ae5516f23908",
+        "changed_funcs": [
+          "adjust_session_expiry"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 7
+      }
+    },
+    {
+      "id": "cve:CVE-2025-65430__request_validator__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-65430__request_validator__after.py",
+      "cwe": "CWE-613",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-qhmc-3mvr-f2j4|CVE-2025-65430|pennersr/django-allauth@c54edf947c|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "allauth/idp/oidc/internal/oauthlib/request_validator.py",
+        "fix_commit": "c54edf947c5a1c8c4ff3cddb75c86000ecb2507d",
+        "changed_funcs": [
+          "validate_bearer_token",
+          "validate_refresh_token"
+        ],
+        "n_funcs": 36,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2025-58352__middleware__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-58352__middleware__after.py",
+      "cwe": "CWE-613",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-377j-wj38-4728|CVE-2025-58352|WeblateOrg/weblate@0b46fe5962|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/accounts/middleware.py",
+        "fix_commit": "0b46fe596231dd456283ead66699ae5516f23908",
+        "changed_funcs": [
+          "__call__"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 7
+      }
+    },
+    {
+      "id": "cve:CVE-2019-19844__forms__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2019-19844__forms__before.py",
+      "cwe": "CWE-640",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-vfq6-hq5r-27r6|CVE-2019-19844|django/django@f4cff43bf9",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/contrib/auth/forms.py",
+        "fix_commit": "f4cff43bf921fcea6a29b726eb66767f67753fa2",
+        "changed_funcs": [
+          "get_users",
+          "save_1"
+        ],
+        "n_funcs": 26,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2019-19844__forms__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2019-19844__forms__before.py",
+      "cwe": "CWE-640",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-vfq6-hq5r-27r6|CVE-2019-19844|django/django@4d334bea06",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/contrib/auth/forms.py",
+        "fix_commit": "4d334bea06cac63dc1272abcec545b85136cca0e",
+        "changed_funcs": [
+          "get_users",
+          "save_1"
+        ],
+        "n_funcs": 27,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2019-19844__forms__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2019-19844__forms__before.py",
+      "cwe": "CWE-640",
+      "label": true,
+      "category": "authn",
+      "source": "osv:GHSA-vfq6-hq5r-27r6|CVE-2019-19844|django/django@302a4ff1e8",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/contrib/auth/forms.py",
+        "fix_commit": "302a4ff1e8b1c798aab97673909c7a3dfda42c26",
+        "changed_funcs": [
+          "get_users",
+          "save_1"
+        ],
+        "n_funcs": 28,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2019-19844__forms__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2019-19844__forms__after.py",
+      "cwe": "CWE-640",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-vfq6-hq5r-27r6|CVE-2019-19844|django/django@f4cff43bf9|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/contrib/auth/forms.py",
+        "fix_commit": "f4cff43bf921fcea6a29b726eb66767f67753fa2",
+        "changed_funcs": [
+          "get_users",
+          "save_1"
+        ],
+        "n_funcs": 26,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2019-19844__forms__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2019-19844__forms__after.py",
+      "cwe": "CWE-640",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-vfq6-hq5r-27r6|CVE-2019-19844|django/django@f4cff43bf9|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/contrib/auth/forms.py",
+        "fix_commit": "f4cff43bf921fcea6a29b726eb66767f67753fa2",
+        "changed_funcs": [
+          "get_users",
+          "save_1"
+        ],
+        "n_funcs": 26,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2019-19844__forms__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2019-19844__forms__after.py",
+      "cwe": "CWE-640",
+      "label": false,
+      "category": "authn",
+      "source": "osv:GHSA-vfq6-hq5r-27r6|CVE-2019-19844|django/django@f4cff43bf9|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/contrib/auth/forms.py",
+        "fix_commit": "f4cff43bf921fcea6a29b726eb66767f67753fa2",
+        "changed_funcs": [
+          "get_users",
+          "save_1"
+        ],
+        "n_funcs": 26,
+        "n_files_in_commit": 1
+      }
+    }
+  ]
+}

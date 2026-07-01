@@ -1,0 +1,463 @@
+{
+  "detections": {
+    "cve:CVE-2020-1746__ldap_entry__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-28415__oauth__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK",
+        "?:LEAK",
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-1968__redirect__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK",
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-50715__login_flow__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK",
+        "?:LEAK",
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-8213__formats__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:POLYMORPHIC",
+        "?:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-56509____init____after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-27949__secrets_masker__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:POLYMORPHIC",
+        "?:LEAK",
+        "?:POLYMORPHIC",
+        "?:LEAK",
+        "?:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-1746__ldap_entry__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-34110__base__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK",
+        "?:POLYMORPHIC",
+        "?:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-34110__base__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:POLYMORPHIC",
+        "?:LEAK",
+        "?:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2018-1000089__base__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK",
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:GHSA-635v-pc42-fr74__modules__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK",
+        "?:LEAK",
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:CVE-2018-1000089__base__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK"
+      ],
+      "error": null
+    },
+    "cve:GHSA-635v-pc42-fr74__modules__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "?:LEAK",
+        "?:LEAK"
+      ],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2020-1746__ldap_entry__before": {
+      "seconds": 113.5,
+      "n_functions": 6,
+      "error": null,
+      "verdicts": [
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE"
+      ]
+    },
+    "cve:CVE-2026-28415__oauth__before": {
+      "seconds": 171.0,
+      "n_functions": 9,
+      "error": null,
+      "verdicts": [
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "DECLASSIFIED"
+      ]
+    },
+    "cve:CVE-2024-1968__redirect__before": {
+      "seconds": 162.3,
+      "n_functions": 8,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "LEAK"
+      ]
+    },
+    "cve:CVE-2023-50715__login_flow__before": {
+      "seconds": 201.6,
+      "n_functions": 11,
+      "error": null,
+      "verdicts": [
+        "LEAK",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE"
+      ]
+    },
+    "cve:CVE-2015-8213__formats__after": {
+      "seconds": 197.4,
+      "n_functions": 10,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "POLYMORPHIC",
+        "POLYMORPHIC",
+        "SECURE"
+      ]
+    },
+    "cve:CVE-2024-56509____init____after": {
+      "seconds": 133.4,
+      "n_functions": 8,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "LEAK"
+      ]
+    },
+    "cve:CVE-2022-27949__secrets_masker__after": {
+      "seconds": 252.6,
+      "n_functions": 13,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "POLYMORPHIC",
+        "LEAK",
+        "POLYMORPHIC",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "POLYMORPHIC",
+        "SECURE",
+        "SECURE",
+        "LEAK"
+      ]
+    },
+    "cve:CVE-2020-1746__ldap_entry__after": {
+      "seconds": 105.5,
+      "n_functions": 6,
+      "error": null,
+      "verdicts": [
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE"
+      ]
+    },
+    "cve:CVE-2023-34110__base__before": {
+      "seconds": 349.8,
+      "n_functions": 55,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "POLYMORPHIC",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "POLYMORPHIC",
+        "SECURE",
+        "SECURE"
+      ]
+    },
+    "cve:CVE-2023-34110__base__after": {
+      "seconds": 347.6,
+      "n_functions": 55,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "POLYMORPHIC",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "POLYMORPHIC",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE"
+      ]
+    },
+    "cve:CVE-2018-1000089__base__before": {
+      "seconds": 119.9,
+      "n_functions": 10,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "SECURE"
+      ]
+    },
+    "cve:GHSA-635v-pc42-fr74__modules__before": {
+      "seconds": 126.4,
+      "n_functions": 7,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "LEAK",
+        "LEAK",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE"
+      ]
+    },
+    "cve:CVE-2018-1000089__base__after": {
+      "seconds": 130.6,
+      "n_functions": 10,
+      "error": null,
+      "verdicts": [
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE",
+        "SECURE"
+      ]
+    },
+    "cve:GHSA-635v-pc42-fr74__modules__after": {
+      "seconds": 129.7,
+      "n_functions": 7,
+      "error": null,
+      "verdicts": [
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "LEAK",
+        "SECURE",
+        "SECURE",
+        "SECURE"
+      ]
+    }
+  }
+}

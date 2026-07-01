@@ -1,0 +1,956 @@
+{
+  "detections": {
+    "cve:CVE-2025-55449__auth__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-321",
+        "CWE-347",
+        "CWE-916"
+      ],
+      "raw_count": 5,
+      "evidence": [
+        "CVE-2025-55449__auth__before-py/edit_account.py:VULNERABLE",
+        "CVE-2025-55449__auth__before-py/generate_jwt.py:NEEDS_REVIEW",
+        "CVE-2025-55449__auth__before-py/login.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-55449__server__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2025-66454__worker__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-321"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2025-66454__worker__before-py/create_arcade_mcp.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-55449__server__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-321"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2025-55449__server__after-py/run.py:VULNERABLE",
+        "CVE-2025-55449__server__after-py/__init__.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-55449__auth__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-321",
+        "CWE-916"
+      ],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2025-55449__auth__after-py/edit_account.py:VULNERABLE",
+        "CVE-2025-55449__auth__after-py/login.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-66454__worker__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-347"
+      ],
+      "raw_count": 5,
+      "evidence": [
+        "CVE-2025-66454__worker__after-py/create_arcade_mcp_factory.py:NEEDS_REVIEW",
+        "CVE-2025-66454__worker__after-py/create_arcade_mcp.py:VULNERABLE",
+        "CVE-2025-66454__worker__after-py/run_arcade_mcp.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-3273__login__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-347"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2022-3273__login__before-py/authenticate.py:NEEDS_REVIEW",
+        "CVE-2022-3273__login__before-py/login.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-26263__python_rsakey__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-329",
+        "CWE-338",
+        "CWE-345"
+      ],
+      "raw_count": 15,
+      "evidence": [
+        "CVE-2020-26263__python_rsakey__before-py/_rawPublicKeyOp.py:VULNERABLE",
+        "CVE-2020-26263__python_rsakey__before-py/_rawPrivateKeyOp.py:VULNERABLE",
+        "CVE-2020-26263__python_rsakey__before-py/parsePEM.py:POLYMORPHIC",
+        "CVE-2020-26263__python_rsakey__before-py/_parseSSLeay.py:POLYMORPHIC",
+        "CVE-2020-26263__python_rsakey__before-py/_parseASN1PrivateKey.py:POLYMORPHIC"
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-26263__openssl_rsakey__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-345"
+      ],
+      "raw_count": 15,
+      "evidence": [
+        "CVE-2020-26263__openssl_rsakey__before-py/_rawPublicKeyOp.py:VULNERABLE",
+        "CVE-2020-26263__openssl_rsakey__before-py/_rawPrivateKeyOp.py:WEAK",
+        "CVE-2020-26263__openssl_rsakey__before-py/write.py:VULNERABLE",
+        "CVE-2020-26263__openssl_rsakey__before-py/__init__.py:POLYMORPHIC",
+        "CVE-2020-26263__openssl_rsakey__before-py/parse.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2021-39182__hashing__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-338",
+        "CWE-916"
+      ],
+      "raw_count": 9,
+      "evidence": [
+        "CVE-2021-39182__hashing__before-py/SHA256.py:VULNERABLE",
+        "CVE-2021-39182__hashing__before-py/SHA244.py:ERROR(fail-closed)",
+        "CVE-2021-39182__hashing__before-py/MD5.py:WEAK",
+        "CVE-2021-39182__hashing__before-py/__Salt.py:VULNERABLE",
+        "CVE-2021-39182__hashing__before-py/Standard_Multi_Hash.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2012-3458__pycrypto__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-329",
+        "CWE-345"
+      ],
+      "raw_count": 9,
+      "evidence": [
+        "CVE-2012-3458__pycrypto__after-py/aesDecrypt.py:VULNERABLE",
+        "CVE-2012-3458__pycrypto__after-py/aesEncrypt.py:VULNERABLE",
+        "CVE-2012-3458__pycrypto__after-py/aesEncrypt_1.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-3273__login__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-347"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2022-3273__login__after-py/login.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:GHSA-2xwp-m7mq-7q3r__master_key_parsing__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2021-39182__hashing__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-321",
+        "CWE-327",
+        "CWE-338",
+        "CWE-916"
+      ],
+      "raw_count": 9,
+      "evidence": [
+        "CVE-2021-39182__hashing__after-py/SHA384.py:VULNERABLE",
+        "CVE-2021-39182__hashing__after-py/SHA244.py:WEAK",
+        "CVE-2021-39182__hashing__after-py/__Salt.py:VULNERABLE",
+        "CVE-2021-39182__hashing__after-py/SHA512.py:VULNERABLE",
+        "CVE-2021-39182__hashing__after-py/Standard_Multi_Hash.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-44405__rsakey__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 17,
+      "evidence": [
+        "CVE-2026-44405__rsakey__before-py/_decode_key.py:WEAK",
+        "CVE-2026-44405__rsakey__before-py/write_private_key_file.py:NEEDS_REVIEW",
+        "CVE-2026-44405__rsakey__before-py/write_private_key.py:WEAK",
+        "CVE-2026-44405__rsakey__before-py/__init__.py:NEEDS_REVIEW",
+        "CVE-2026-44405__rsakey__before-py/_from_private_key.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-28490__jws__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-347"
+      ],
+      "raw_count": 15,
+      "evidence": [
+        "CVE-2026-28490__jws__before-py/serialize_json.py:WEAK",
+        "CVE-2026-28490__jws__before-py/serialize.py:POLYMORPHIC",
+        "CVE-2026-28490__jws__before-py/serialize_compact.py:NEEDS_REVIEW",
+        "CVE-2026-28490__jws__before-py/deserialize_compact.py:NEEDS_REVIEW",
+        "CVE-2026-28490__jws__before-py/deserialize.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-28490__jwe_algs__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-329",
+        "CWE-338",
+        "CWE-345",
+        "CWE-916"
+      ],
+      "raw_count": 43,
+      "evidence": [
+        "CVE-2026-28490__jwe_algs__before-py/prepare_key.py:POLYMORPHIC",
+        "CVE-2026-28490__jwe_algs__before-py/generate_preset_3.py:NEEDS_REVIEW",
+        "CVE-2026-28490__jwe_algs__before-py/unwrap_2.py:VULNERABLE",
+        "CVE-2026-28490__jwe_algs__before-py/prepare_key_4.py:POLYMORPHIC",
+        "CVE-2026-28490__jwe_algs__before-py/generate_preset_4.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-44405__rsakey__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-327"
+      ],
+      "raw_count": 17,
+      "evidence": [
+        "CVE-2026-44405__rsakey__after-py/public_numbers.py:POLYMORPHIC",
+        "CVE-2026-44405__rsakey__after-py/_decode_key.py:WEAK",
+        "CVE-2026-44405__rsakey__after-py/write_private_key_file.py:NEEDS_REVIEW",
+        "CVE-2026-44405__rsakey__after-py/write_private_key.py:WEAK",
+        "CVE-2026-44405__rsakey__after-py/__init__.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-28490__jwe_algs__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-329",
+        "CWE-345",
+        "CWE-347",
+        "CWE-916"
+      ],
+      "raw_count": 42,
+      "evidence": [
+        "CVE-2026-28490__jwe_algs__after-py/prepare_key.py:POLYMORPHIC",
+        "CVE-2026-28490__jwe_algs__after-py/generate_preset_3.py:NEEDS_REVIEW",
+        "CVE-2026-28490__jwe_algs__after-py/unwrap_2.py:VULNERABLE",
+        "CVE-2026-28490__jwe_algs__after-py/prepare_key_4.py:POLYMORPHIC",
+        "CVE-2026-28490__jwe_algs__after-py/wrap.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-28490__jws__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-327",
+        "CWE-347"
+      ],
+      "raw_count": 16,
+      "evidence": [
+        "CVE-2026-28490__jws__after-py/serialize_json.py:POLYMORPHIC",
+        "CVE-2026-28490__jws__after-py/serialize.py:POLYMORPHIC",
+        "CVE-2026-28490__jws__after-py/serialize_compact.py:POLYMORPHIC",
+        "CVE-2026-28490__jws__after-py/deserialize_compact.py:POLYMORPHIC",
+        "CVE-2026-28490__jws__after-py/_prepare_algorithm_key.py:WEAK"
+      ],
+      "error": null
+    },
+    "cve:GHSA-vfgx-5q85-58q3__base__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "GHSA-vfgx-5q85-58q3__base__before-py/__init__.py:ERROR(fail-closed)"
+      ],
+      "error": null
+    },
+    "cve:GHSA-vfgx-5q85-58q3__utils__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-338"
+      ],
+      "raw_count": 2,
+      "evidence": [
+        "GHSA-vfgx-5q85-58q3__utils__before-py/generate_pseudorandom_sequence.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:GHSA-vfgx-5q85-58q3__image__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-338",
+        "CWE-345"
+      ],
+      "raw_count": 3,
+      "evidence": [
+        "GHSA-vfgx-5q85-58q3__image__before-py/extract_data.py:VULNERABLE",
+        "GHSA-vfgx-5q85-58q3__image__before-py/hide_data.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:GHSA-vfgx-5q85-58q3__base__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-321",
+        "CWE-916"
+      ],
+      "raw_count": 4,
+      "evidence": [
+        "GHSA-vfgx-5q85-58q3__base__after-py/__init__.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:GHSA-vfgx-5q85-58q3__utils__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-338"
+      ],
+      "raw_count": 5,
+      "evidence": [
+        "GHSA-vfgx-5q85-58q3__utils__after-py/crypto_seeded_shuffle.py:VULNERABLE",
+        "GHSA-vfgx-5q85-58q3__utils__after-py/crypto_seeded_shuffle_np.py:VULNERABLE",
+        "GHSA-vfgx-5q85-58q3__utils__after-py/generate_pseudorandom_sequence.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:GHSA-vfgx-5q85-58q3__image__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-345",
+        "CWE-347"
+      ],
+      "raw_count": 8,
+      "evidence": [
+        "GHSA-vfgx-5q85-58q3__image__after-py/extract_data.py:VULNERABLE",
+        "GHSA-vfgx-5q85-58q3__image__after-py/hide_data.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2021-40494__authentication__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-345"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2021-40494__authentication__before-py/initAuth.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2016-9013__creation__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2016-9013__creation__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [],
+      "error": null
+    },
+    "cve:CVE-2021-40494__authentication__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-347"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2021-40494__authentication__after-py/initAuth.py:VULNERABLE"
+      ],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2025-55449__auth__before": {
+      "seconds": 49.5,
+      "n_functions": 4,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2025-55449__server__before": {
+      "seconds": 58.8,
+      "n_functions": 7,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2025-66454__worker__before": {
+      "seconds": 83.6,
+      "n_functions": 8,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2025-55449__server__after": {
+      "seconds": 88.2,
+      "n_functions": 8,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2025-55449__auth__after": {
+      "seconds": 51.3,
+      "n_functions": 4,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2025-66454__worker__after": {
+      "seconds": 93.7,
+      "n_functions": 8,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2022-3273__login__before": {
+      "seconds": 43.9,
+      "n_functions": 4,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2020-26263__python_rsakey__before": {
+      "seconds": 140.3,
+      "n_functions": 11,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "POLYMORPHIC",
+        "SAFE",
+        "POLYMORPHIC",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "POLYMORPHIC",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2020-26263__openssl_rsakey__before": {
+      "seconds": 149.9,
+      "n_functions": 11,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "WEAK",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "WEAK"
+      ]
+    },
+    "cve:CVE-2021-39182__hashing__before": {
+      "seconds": 173.3,
+      "n_functions": 11,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "SAFE",
+        "ERROR",
+        "WEAK",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2012-3458__pycrypto__after": {
+      "seconds": 58.5,
+      "n_functions": 4,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2022-3273__login__after": {
+      "seconds": 39.8,
+      "n_functions": 4,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:GHSA-2xwp-m7mq-7q3r__master_key_parsing__after": {
+      "seconds": 64.1,
+      "n_functions": 7,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2021-39182__hashing__after": {
+      "seconds": 160.4,
+      "n_functions": 10,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "VULNERABLE",
+        "WEAK",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2026-44405__rsakey__before": {
+      "seconds": 209.8,
+      "n_functions": 18,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "WEAK",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "WEAK",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "WEAK",
+        "SAFE",
+        "WEAK",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2026-28490__jws__before": {
+      "seconds": 210.2,
+      "n_functions": 16,
+      "error": null,
+      "verdicts": [
+        "WEAK",
+        "SAFE",
+        "POLYMORPHIC",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2026-28490__jwe_algs__before": {
+      "seconds": 401.5,
+      "n_functions": 33,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "WEAK",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE",
+        "POLYMORPHIC",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2026-44405__rsakey__after": {
+      "seconds": 200.4,
+      "n_functions": 18,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "POLYMORPHIC",
+        "SAFE",
+        "WEAK",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "WEAK",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "POLYMORPHIC",
+        "SAFE",
+        "POLYMORPHIC",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2026-28490__jwe_algs__after": {
+      "seconds": 405.1,
+      "n_functions": 33,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "ERROR",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "POLYMORPHIC",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE",
+        "POLYMORPHIC",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2026-28490__jws__after": {
+      "seconds": 200.2,
+      "n_functions": 16,
+      "error": null,
+      "verdicts": [
+        "POLYMORPHIC",
+        "SAFE",
+        "POLYMORPHIC",
+        "SAFE",
+        "POLYMORPHIC",
+        "POLYMORPHIC",
+        "SAFE",
+        "WEAK",
+        "POLYMORPHIC",
+        "POLYMORPHIC",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:GHSA-vfgx-5q85-58q3__base__before": {
+      "seconds": 63.6,
+      "n_functions": 8,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "ERROR",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:GHSA-vfgx-5q85-58q3__utils__before": {
+      "seconds": 54.9,
+      "n_functions": 7,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:GHSA-vfgx-5q85-58q3__image__before": {
+      "seconds": 141.8,
+      "n_functions": 16,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:GHSA-vfgx-5q85-58q3__base__after": {
+      "seconds": 72.4,
+      "n_functions": 8,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:GHSA-vfgx-5q85-58q3__utils__after": {
+      "seconds": 106.7,
+      "n_functions": 9,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:GHSA-vfgx-5q85-58q3__image__after": {
+      "seconds": 161.9,
+      "n_functions": 16,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2021-40494__authentication__before": {
+      "seconds": 25.4,
+      "n_functions": 2,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2016-9013__creation__before": {
+      "seconds": 165.5,
+      "n_functions": 24,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2016-9013__creation__after": {
+      "seconds": 176.3,
+      "n_functions": 24,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2021-40494__authentication__after": {
+      "seconds": 28.6,
+      "n_functions": 2,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "VULNERABLE"
+      ]
+    }
+  }
+}

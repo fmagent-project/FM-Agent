@@ -1,10 +1,19 @@
 # FM-Agent Security Portfolio — Cross-Plugin Evaluation Report
 
-Evaluation of FM-Agent's five security plugins against existing detection tools
-(Bandit, Semgrep CE) on **third-party / CVE-curated benchmarks**, with every
-verdict family manually audited (跑完≠跑对). This report consolidates all five
-plugins across BOTH a synthetic benchmark (OWASP) and a real CVE-curated one.
-Per-plugin detail lives in the sibling docs.
+> **Status update.** The portfolio has since grown to **seven plugins** — two
+> more (**resource**, DoS/CWE-400·770·674·1333·409; **authn**, improper
+> authentication/CWE-287·384·613·522) were generated via the
+> `fm-plugin-generator` skill on the shared SPI. And a **harder, whole-file
+> benchmark** now tests interprocedural localization with a **direct-LLM
+> baseline**. See **[REPORT_HARD.md](./REPORT_HARD.md)** for the 7-plugin
+> FM-Agent-vs-LLM comparison and the locus-scoring audit finding. The report
+> below is the original **five-plugin, single-function CVE + OWASP** evaluation.
+
+Evaluation of FM-Agent's (originally five) security plugins against existing
+detection tools (Bandit, Semgrep CE) on **third-party / CVE-curated benchmarks**,
+with every verdict family manually audited (跑完≠跑对). This report consolidates
+the first five plugins across BOTH a synthetic benchmark (OWASP) and a real
+CVE-curated one. Per-plugin detail lives in the sibling docs.
 
 ## Headline: complete five-plugin results (detection-view F1)
 

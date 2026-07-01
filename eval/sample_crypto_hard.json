@@ -1,0 +1,645 @@
+{
+  "benchmark": "cve-curated:cve_cases_hard.filtered.jsonl",
+  "plugin": "crypto",
+  "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@34e10720d8",
+  "seed": 1337,
+  "per_category": 8,
+  "total_selected": 34,
+  "label_noise_caveat": "~60% label precision; precision requires per-case human audit",
+  "cases": [
+    {
+      "id": "cve:CVE-2025-55449__auth__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-55449__auth__before.py",
+      "cwe": "CWE-321",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-4m32-cjv7-f425|CVE-2025-55449|AstrBotDevs/AstrBot@d03e9fb90a",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "astrbot/dashboard/routes/auth.py",
+        "fix_commit": "d03e9fb90a0921a1bd10cf480bdacc9aaa246472",
+        "changed_funcs": [
+          "generate_jwt"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 4
+      }
+    },
+    {
+      "id": "cve:CVE-2025-55449__server__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-55449__server__before.py",
+      "cwe": "CWE-321",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-4m32-cjv7-f425|CVE-2025-55449|AstrBotDevs/AstrBot@d03e9fb90a",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "astrbot/dashboard/server.py",
+        "fix_commit": "d03e9fb90a0921a1bd10cf480bdacc9aaa246472",
+        "changed_funcs": [
+          "__init__",
+          "auth_middleware"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 4
+      }
+    },
+    {
+      "id": "cve:CVE-2025-66454__worker__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-66454__worker__before.py",
+      "cwe": "CWE-321",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-g2jx-37x6-6438|CVE-2025-66454|ArcadeAI/arcade-mcp@44660d18ce",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "libs/arcade-mcp-server/arcade_mcp_server/worker.py",
+        "fix_commit": "44660d18ceb220600401303df860a31ca766c817",
+        "changed_funcs": [
+          "create_arcade_mcp"
+        ],
+        "n_funcs": 8,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2025-55449__server__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-55449__server__after.py",
+      "cwe": "CWE-321",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-4m32-cjv7-f425|CVE-2025-55449|AstrBotDevs/AstrBot@d03e9fb90a|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "astrbot/dashboard/server.py",
+        "fix_commit": "d03e9fb90a0921a1bd10cf480bdacc9aaa246472",
+        "changed_funcs": [
+          "__init__",
+          "auth_middleware"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 4
+      }
+    },
+    {
+      "id": "cve:CVE-2025-55449__auth__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-55449__auth__after.py",
+      "cwe": "CWE-321",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-4m32-cjv7-f425|CVE-2025-55449|AstrBotDevs/AstrBot@d03e9fb90a|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "astrbot/dashboard/routes/auth.py",
+        "fix_commit": "d03e9fb90a0921a1bd10cf480bdacc9aaa246472",
+        "changed_funcs": [
+          "generate_jwt"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 4
+      }
+    },
+    {
+      "id": "cve:CVE-2025-66454__worker__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-66454__worker__after.py",
+      "cwe": "CWE-321",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-g2jx-37x6-6438|CVE-2025-66454|ArcadeAI/arcade-mcp@44660d18ce|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "libs/arcade-mcp-server/arcade_mcp_server/worker.py",
+        "fix_commit": "44660d18ceb220600401303df860a31ca766c817",
+        "changed_funcs": [
+          "create_arcade_mcp"
+        ],
+        "n_funcs": 8,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2022-3273__login__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-3273__login__before.py",
+      "cwe": "CWE-326",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-9g3v-v24q-jj5p|CVE-2022-3273|ikus060/rdiffweb@b5e3bb0a98",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "rdiffweb/core/login.py",
+        "fix_commit": "b5e3bb0a98268d18ceead36ab9b2b7eaacd659a8",
+        "changed_funcs": [
+          "authenticate"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2020-26263__python_rsakey__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2020-26263__python_rsakey__before.py",
+      "cwe": "CWE-326",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-wvcv-832q-fjg7|CVE-2020-26263|tlsfuzzer/tlslite-ng@c28d6d387b",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "tlslite/utils/python_rsakey.py",
+        "fix_commit": "c28d6d387bba59d8bd5cb3ba15edc42edf54b368",
+        "changed_funcs": [
+          "parsePEM",
+          "_parsePKCS8",
+          "_parseSSLeay",
+          "_parseASN1PrivateKey"
+        ],
+        "n_funcs": 11,
+        "n_files_in_commit": 9
+      }
+    },
+    {
+      "id": "cve:CVE-2020-26263__openssl_rsakey__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2020-26263__openssl_rsakey__before.py",
+      "cwe": "CWE-326",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-wvcv-832q-fjg7|CVE-2020-26263|tlsfuzzer/tlslite-ng@c28d6d387b",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "tlslite/utils/openssl_rsakey.py",
+        "fix_commit": "c28d6d387bba59d8bd5cb3ba15edc42edf54b368",
+        "changed_funcs": [
+          "parse"
+        ],
+        "n_funcs": 11,
+        "n_files_in_commit": 9
+      }
+    },
+    {
+      "id": "cve:CVE-2021-39182__hashing__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-39182__hashing__before.py",
+      "cwe": "CWE-326",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-35m5-8cvj-8783|CVE-2021-39182|Morgan-Phoenix/EnroCrypt@e652d56ac6",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "enrocrypt/hashing.py",
+        "fix_commit": "e652d56ac60eadfc26489ab83927af13a9b9d8ce",
+        "changed_funcs": [
+          "MD5"
+        ],
+        "n_funcs": 11,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2012-3458__pycrypto__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2012-3458__pycrypto__after.py",
+      "cwe": "CWE-326",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-39vm-p9mr-4r27|CVE-2012-3458|bbangert/beaker@91becae761|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "beaker/crypto/pycrypto.py",
+        "fix_commit": "91becae76101cf87ce8cbfabe3af2622fc328fe5",
+        "changed_funcs": [
+          "aesEncrypt_1",
+          "aesDecrypt"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2022-3273__login__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-3273__login__after.py",
+      "cwe": "CWE-326",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-9g3v-v24q-jj5p|CVE-2022-3273|ikus060/rdiffweb@b5e3bb0a98|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "rdiffweb/core/login.py",
+        "fix_commit": "b5e3bb0a98268d18ceead36ab9b2b7eaacd659a8",
+        "changed_funcs": [
+          "authenticate"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:GHSA-2xwp-m7mq-7q3r__master_key_parsing__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-2xwp-m7mq-7q3r__master_key_parsing__after.py",
+      "cwe": "CWE-326",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-2xwp-m7mq-7q3r|GHSA-2xwp-m7mq-7q3r|aws/aws-encryption-sdk-cli@7d21b8051c|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "src/aws_encryption_sdk_cli/internal/master_key_parsing.py",
+        "fix_commit": "7d21b8051cab9e52e056fe427d2bff19cf146460",
+        "changed_funcs": [
+          "_parse_master_key_providers_from_args"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2021-39182__hashing__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-39182__hashing__after.py",
+      "cwe": "CWE-326",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-35m5-8cvj-8783|CVE-2021-39182|Morgan-Phoenix/EnroCrypt@e652d56ac6|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "enrocrypt/hashing.py",
+        "fix_commit": "e652d56ac60eadfc26489ab83927af13a9b9d8ce",
+        "changed_funcs": [
+          "MD5"
+        ],
+        "n_funcs": 11,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2026-44405__rsakey__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-44405__rsakey__before.py",
+      "cwe": "CWE-327",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-r374-rxx8-8654|CVE-2026-44405|paramiko/paramiko@a4489456b6",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "paramiko/rsakey.py",
+        "fix_commit": "a4489456b6f65281e172380cc4826cee5e851dbb",
+        "changed_funcs": [
+          "identifiers",
+          "sign_ssh_data"
+        ],
+        "n_funcs": 18,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2026-28490__jws__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-28490__jws__before.py",
+      "cwe": "CWE-327",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-7432-952r-cw78|CVE-2026-28490|authlib/authlib@48b345f29f",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "authlib/jose/rfc7515/jws.py",
+        "fix_commit": "48b345f29f6c459f11c6a40162b6c0b742ef2e22",
+        "changed_funcs": [
+          "_prepare_algorithm_key"
+        ],
+        "n_funcs": 16,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2026-28490__jwe_algs__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-28490__jwe_algs__before.py",
+      "cwe": "CWE-327",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-7432-952r-cw78|CVE-2026-28490|authlib/authlib@48b345f29f",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "authlib/jose/rfc7518/jwe_algs.py",
+        "fix_commit": "48b345f29f6c459f11c6a40162b6c0b742ef2e22",
+        "changed_funcs": [
+          "__init__"
+        ],
+        "n_funcs": 33,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2026-44405__rsakey__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-44405__rsakey__after.py",
+      "cwe": "CWE-327",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-r374-rxx8-8654|CVE-2026-44405|paramiko/paramiko@a4489456b6|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "paramiko/rsakey.py",
+        "fix_commit": "a4489456b6f65281e172380cc4826cee5e851dbb",
+        "changed_funcs": [
+          "identifiers",
+          "sign_ssh_data"
+        ],
+        "n_funcs": 18,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2026-28490__jwe_algs__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-28490__jwe_algs__after.py",
+      "cwe": "CWE-327",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-7432-952r-cw78|CVE-2026-28490|authlib/authlib@48b345f29f|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "authlib/jose/rfc7518/jwe_algs.py",
+        "fix_commit": "48b345f29f6c459f11c6a40162b6c0b742ef2e22",
+        "changed_funcs": [
+          "__init__"
+        ],
+        "n_funcs": 33,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2026-28490__jws__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-28490__jws__after.py",
+      "cwe": "CWE-327",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-7432-952r-cw78|CVE-2026-28490|authlib/authlib@48b345f29f|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "authlib/jose/rfc7515/jws.py",
+        "fix_commit": "48b345f29f6c459f11c6a40162b6c0b742ef2e22",
+        "changed_funcs": [
+          "_prepare_algorithm_key"
+        ],
+        "n_funcs": 16,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:GHSA-vfgx-5q85-58q3__base__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-vfgx-5q85-58q3__base__before.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-vfgx-5q85-58q3|GHSA-vfgx-5q85-58q3|jahlives/openssl_encrypt@09e96e0904",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "openssl_encrypt/plugins/steganography/core/base.py",
+        "fix_commit": "09e96e090417d34d2f533f6810d3cd4f77810101",
+        "changed_funcs": [
+          "__init__"
+        ],
+        "n_funcs": 8,
+        "n_files_in_commit": 8
+      }
+    },
+    {
+      "id": "cve:GHSA-vfgx-5q85-58q3__utils__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-vfgx-5q85-58q3__utils__before.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-vfgx-5q85-58q3|GHSA-vfgx-5q85-58q3|jahlives/openssl_encrypt@09e96e0904",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "openssl_encrypt/plugins/steganography/core/utils.py",
+        "fix_commit": "09e96e090417d34d2f533f6810d3cd4f77810101",
+        "changed_funcs": [
+          "generate_pseudorandom_sequence"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 8
+      }
+    },
+    {
+      "id": "cve:GHSA-vfgx-5q85-58q3__image__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-vfgx-5q85-58q3__image__before.py",
+      "cwe": "CWE-330",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-vfgx-5q85-58q3|GHSA-vfgx-5q85-58q3|jahlives/openssl_encrypt@09e96e0904",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "openssl_encrypt/plugins/steganography/formats/image.py",
+        "fix_commit": "09e96e090417d34d2f533f6810d3cd4f77810101",
+        "changed_funcs": [
+          "hide_data",
+          "extract_data"
+        ],
+        "n_funcs": 16,
+        "n_files_in_commit": 8
+      }
+    },
+    {
+      "id": "cve:GHSA-vfgx-5q85-58q3__base__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-vfgx-5q85-58q3__base__after.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-vfgx-5q85-58q3|GHSA-vfgx-5q85-58q3|jahlives/openssl_encrypt@09e96e0904|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "openssl_encrypt/plugins/steganography/core/base.py",
+        "fix_commit": "09e96e090417d34d2f533f6810d3cd4f77810101",
+        "changed_funcs": [
+          "__init__"
+        ],
+        "n_funcs": 8,
+        "n_files_in_commit": 8
+      }
+    },
+    {
+      "id": "cve:GHSA-vfgx-5q85-58q3__utils__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-vfgx-5q85-58q3__utils__after.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-vfgx-5q85-58q3|GHSA-vfgx-5q85-58q3|jahlives/openssl_encrypt@09e96e0904|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "openssl_encrypt/plugins/steganography/core/utils.py",
+        "fix_commit": "09e96e090417d34d2f533f6810d3cd4f77810101",
+        "changed_funcs": [
+          "generate_pseudorandom_sequence"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 8
+      }
+    },
+    {
+      "id": "cve:GHSA-vfgx-5q85-58q3__image__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-vfgx-5q85-58q3__image__after.py",
+      "cwe": "CWE-330",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-vfgx-5q85-58q3|GHSA-vfgx-5q85-58q3|jahlives/openssl_encrypt@09e96e0904|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "openssl_encrypt/plugins/steganography/formats/image.py",
+        "fix_commit": "09e96e090417d34d2f533f6810d3cd4f77810101",
+        "changed_funcs": [
+          "hide_data",
+          "extract_data"
+        ],
+        "n_funcs": 16,
+        "n_files_in_commit": 8
+      }
+    },
+    {
+      "id": "cve:CVE-2021-40494__authentication__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-40494__authentication__before.py",
+      "cwe": "CWE-798",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-p4xh-4869-8vrg|CVE-2021-40494|AdaptiveScale/lxdui@e4bffeb9d6",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "app/api/utils/authentication.py",
+        "fix_commit": "e4bffeb9d69a5700a642cb6424453d1894e50d84",
+        "changed_funcs": [
+          "initAuth"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2016-9013__creation__before.py",
+      "cwe": "CWE-798",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@34e10720d8",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "fix_commit": "34e10720d81b8d407aa14d763b6a7fe8f13b4f2e",
+        "changed_funcs": [
+          "_create_test_user",
+          "_test_settings_get",
+          "_test_database_passwd"
+        ],
+        "n_funcs": 27,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2016-9013__creation__before.py",
+      "cwe": "CWE-798",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@70f9995296",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "fix_commit": "70f99952965a430daf69eeb9947079aae535d2d0",
+        "changed_funcs": [
+          "_create_test_user",
+          "_test_settings_get",
+          "_test_database_passwd"
+        ],
+        "n_funcs": 24,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2016-9013__creation__before.py",
+      "cwe": "CWE-798",
+      "label": true,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@4844d86c77",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "fix_commit": "4844d86c7728c1a5a3bbce4ad336a8d32304072b",
+        "changed_funcs": [
+          "_create_test_user",
+          "_test_settings_get",
+          "_test_database_passwd"
+        ],
+        "n_funcs": 27,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2016-9013__creation__after.py",
+      "cwe": "CWE-798",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@70f9995296|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "fix_commit": "70f99952965a430daf69eeb9947079aae535d2d0",
+        "changed_funcs": [
+          "_create_test_user",
+          "_test_settings_get",
+          "_test_database_passwd"
+        ],
+        "n_funcs": 24,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2016-9013__creation__after.py",
+      "cwe": "CWE-798",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@70f9995296|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "fix_commit": "70f99952965a430daf69eeb9947079aae535d2d0",
+        "changed_funcs": [
+          "_create_test_user",
+          "_test_settings_get",
+          "_test_database_passwd"
+        ],
+        "n_funcs": 24,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2021-40494__authentication__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-40494__authentication__after.py",
+      "cwe": "CWE-798",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-p4xh-4869-8vrg|CVE-2021-40494|AdaptiveScale/lxdui@e4bffeb9d6|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "app/api/utils/authentication.py",
+        "fix_commit": "e4bffeb9d69a5700a642cb6424453d1894e50d84",
+        "changed_funcs": [
+          "initAuth"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2016-9013__creation__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2016-9013__creation__after.py",
+      "cwe": "CWE-798",
+      "label": false,
+      "category": "crypto",
+      "source": "osv:GHSA-mv8g-fhh6-6267|CVE-2016-9013|django/django@70f9995296|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/db/backends/oracle/creation.py",
+        "fix_commit": "70f99952965a430daf69eeb9947079aae535d2d0",
+        "changed_funcs": [
+          "_create_test_user",
+          "_test_settings_get",
+          "_test_database_passwd"
+        ],
+        "n_funcs": 24,
+        "n_files_in_commit": 1
+      }
+    }
+  ]
+}

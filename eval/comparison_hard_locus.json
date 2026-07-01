@@ -1,0 +1,79 @@
+{
+  "authn": {
+    "TP": 15,
+    "FP": 17,
+    "FN": 1,
+    "TN": 0,
+    "no_locus": 0,
+    "precision": 0.469,
+    "recall": 0.938,
+    "f1": 0.625,
+    "specificity": 0.0
+  },
+  "authz": {
+    "TP": 15,
+    "FP": 12,
+    "FN": 0,
+    "TN": 4,
+    "no_locus": 0,
+    "precision": 0.556,
+    "recall": 1.0,
+    "f1": 0.714,
+    "specificity": 0.25
+  },
+  "crypto": {
+    "TP": 11,
+    "FP": 9,
+    "FN": 4,
+    "TN": 6,
+    "no_locus": 0,
+    "precision": 0.55,
+    "recall": 0.733,
+    "f1": 0.629,
+    "specificity": 0.4
+  },
+  "ifc": {
+    "TP": 4,
+    "FP": 6,
+    "FN": 3,
+    "TN": 1,
+    "no_locus": 0,
+    "precision": 0.4,
+    "recall": 0.571,
+    "f1": 0.471,
+    "specificity": 0.143
+  },
+  "resource": {
+    "TP": 9,
+    "FP": 9,
+    "FN": 1,
+    "TN": 1,
+    "no_locus": 0,
+    "precision": 0.5,
+    "recall": 0.9,
+    "f1": 0.643,
+    "specificity": 0.1
+  },
+  "taint": {
+    "TP": 17,
+    "FP": 17,
+    "FN": 5,
+    "TN": 3,
+    "no_locus": 0,
+    "precision": 0.5,
+    "recall": 0.773,
+    "f1": 0.607,
+    "specificity": 0.15
+  },
+  "typestate": {
+    "TP": 8,
+    "FP": 9,
+    "FN": 2,
+    "TN": 2,
+    "no_locus": 0,
+    "precision": 0.471,
+    "recall": 0.8,
+    "f1": 0.593,
+    "specificity": 0.182
+  }
+}

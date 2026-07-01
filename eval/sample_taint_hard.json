@@ -1,0 +1,863 @@
+{
+  "benchmark": "cve-curated:cve_cases_hard.filtered.jsonl",
+  "plugin": "taint",
+  "source": "osv:GHSA-99pm-ch96-ccp2|CVE-2025-32962|dpgaspar/Flask-AppBuilder@32eedbbb5c",
+  "seed": 1337,
+  "per_category": 8,
+  "total_selected": 46,
+  "label_noise_caveat": "~60% label precision; precision requires per-case human audit",
+  "cases": [
+    {
+      "id": "cve:CVE-2026-29065____init____before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-29065____init____before.py",
+      "cwe": "CWE-22",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-25g8-2mcf-fcx9|CVE-2026-29065|dgtlmoon/changedetection.io@1d7d812eb0",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "changedetectionio/blueprint/backups/__init__.py",
+        "fix_commit": "1d7d812eb0faab37042246e2fbce04f29bb1b3aa",
+        "changed_funcs": [
+          "create_backup",
+          "construct_blueprint"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:GHSA-qj8w-rv5x-2v9h__staticfiles__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-qj8w-rv5x-2v9h__staticfiles__before.py",
+      "cwe": "CWE-22",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-qj8w-rv5x-2v9h|GHSA-qj8w-rv5x-2v9h|encode/starlette@1797de4641",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "starlette/staticfiles.py",
+        "fix_commit": "1797de464124b090f10cf570441e8292936d63e3",
+        "changed_funcs": [
+          "lookup_path"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2024-0818__common__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-0818__common__before.py",
+      "cwe": "CWE-22",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-2rp8-hff9-c5wr|CVE-2024-0818|PaddlePaddle/Paddle@5c50d1a8b9",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "python/paddle/dataset/common.py",
+        "fix_commit": "5c50d1a8b97b310cbc36560ec36d8377d6f29d7c",
+        "changed_funcs": [
+          "download"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2026-29065__restore__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-29065__restore__before.py",
+      "cwe": "CWE-22",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-25g8-2mcf-fcx9|CVE-2026-29065|dgtlmoon/changedetection.io@1d7d812eb0",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "changedetectionio/blueprint/backups/restore.py",
+        "fix_commit": "1d7d812eb0faab37042246e2fbce04f29bb1b3aa",
+        "changed_funcs": [
+          "import_from_zip",
+          "construct_restore_blueprint"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:GHSA-qj8w-rv5x-2v9h__staticfiles__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/GHSA-qj8w-rv5x-2v9h__staticfiles__after.py",
+      "cwe": "CWE-22",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-qj8w-rv5x-2v9h|GHSA-qj8w-rv5x-2v9h|encode/starlette@1797de4641|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "starlette/staticfiles.py",
+        "fix_commit": "1797de464124b090f10cf570441e8292936d63e3",
+        "changed_funcs": [
+          "lookup_path"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2024-0818__common__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-0818__common__after.py",
+      "cwe": "CWE-22",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-2rp8-hff9-c5wr|CVE-2024-0818|PaddlePaddle/Paddle@5c50d1a8b9|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "python/paddle/dataset/common.py",
+        "fix_commit": "5c50d1a8b97b310cbc36560ec36d8377d6f29d7c",
+        "changed_funcs": [
+          "download"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2026-29065____init____after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-29065____init____after.py",
+      "cwe": "CWE-22",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-25g8-2mcf-fcx9|CVE-2026-29065|dgtlmoon/changedetection.io@1d7d812eb0|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "changedetectionio/blueprint/backups/__init__.py",
+        "fix_commit": "1d7d812eb0faab37042246e2fbce04f29bb1b3aa",
+        "changed_funcs": [
+          "create_backup",
+          "construct_blueprint"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2026-29065__restore__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-29065__restore__after.py",
+      "cwe": "CWE-22",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-25g8-2mcf-fcx9|CVE-2026-29065|dgtlmoon/changedetection.io@1d7d812eb0|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "changedetectionio/blueprint/backups/restore.py",
+        "fix_commit": "1d7d812eb0faab37042246e2fbce04f29bb1b3aa",
+        "changed_funcs": [
+          "import_from_zip",
+          "construct_restore_blueprint"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2025-32962__base__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-32962__base__before.py",
+      "cwe": "CWE-601",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-99pm-ch96-ccp2|CVE-2025-32962|dpgaspar/Flask-AppBuilder@32eedbbb5c",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "flask_appbuilder/utils/base.py",
+        "fix_commit": "32eedbbb5cb483a3e782c5f2732de4a6a650d9b6",
+        "changed_funcs": [
+          "is_safe_redirect_url"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2021-21330__web_middlewares__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-21330__web_middlewares__before.py",
+      "cwe": "CWE-601",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-v6wp-4m6f-gcjg|CVE-2021-21330|aio-libs/aiohttp@2545222a38",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "aiohttp/web_middlewares.py",
+        "fix_commit": "2545222a3853e31ace15d87ae0e2effb7da0c96b",
+        "changed_funcs": [
+          "normalize_path_middleware"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2022-3438__page_admin_users__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-3438__page_admin_users__before.py",
+      "cwe": "CWE-601",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-8g9m-vv69-7j99|CVE-2022-3438|ikus060/rdiffweb@4d464b467f",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "rdiffweb/controller/page_admin_users.py",
+        "fix_commit": "4d464b467f14b8eb9103d7f5f0774e49995527c7",
+        "changed_funcs": [
+          "__init___1",
+          "__init___2"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2021-28125__redirects__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-28125__redirects__before.py",
+      "cwe": "CWE-601",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-pfwg-rxf4-97c3|CVE-2021-28125|apache/superset@eb35b804ac",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "superset/views/redirects.py",
+        "fix_commit": "eb35b804acf4d84cb70d02743e04b8afebbee029",
+        "changed_funcs": [
+          "index",
+          "shortner"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2021-21330__web_middlewares__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-21330__web_middlewares__after.py",
+      "cwe": "CWE-601",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-v6wp-4m6f-gcjg|CVE-2021-21330|aio-libs/aiohttp@2545222a38|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "aiohttp/web_middlewares.py",
+        "fix_commit": "2545222a3853e31ace15d87ae0e2effb7da0c96b",
+        "changed_funcs": [
+          "normalize_path_middleware"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2021-28125__redirects__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-28125__redirects__after.py",
+      "cwe": "CWE-601",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-pfwg-rxf4-97c3|CVE-2021-28125|apache/superset@eb35b804ac|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "superset/views/redirects.py",
+        "fix_commit": "eb35b804acf4d84cb70d02743e04b8afebbee029",
+        "changed_funcs": [
+          "index",
+          "shortner"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2022-3438__page_admin_users__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-3438__page_admin_users__after.py",
+      "cwe": "CWE-601",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-8g9m-vv69-7j99|CVE-2022-3438|ikus060/rdiffweb@4d464b467f|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "rdiffweb/controller/page_admin_users.py",
+        "fix_commit": "4d464b467f14b8eb9103d7f5f0774e49995527c7",
+        "changed_funcs": [
+          "__init___1",
+          "__init___2"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2021-21330__web_middlewares__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2021-21330__web_middlewares__after.py",
+      "cwe": "CWE-601",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-v6wp-4m6f-gcjg|CVE-2021-21330|aio-libs/aiohttp@2545222a38|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "aiohttp/web_middlewares.py",
+        "fix_commit": "2545222a3853e31ace15d87ae0e2effb7da0c96b",
+        "changed_funcs": [
+          "normalize_path_middleware"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2023-34540__jira__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-34540__jira__before.py",
+      "cwe": "CWE-78",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-x32c-59v5-h7fg|CVE-2023-34540|langchain-ai/langchain@a2f191a322",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "langchain/utilities/jira.py",
+        "fix_commit": "a2f191a32229256dd41deadf97786fe41ce04cbb",
+        "changed_funcs": [
+          "other"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2023-34540__jira__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-34540__jira__after.py",
+      "cwe": "CWE-78",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-x32c-59v5-h7fg|CVE-2023-34540|langchain-ai/langchain@a2f191a322|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "langchain/utilities/jira.py",
+        "fix_commit": "a2f191a32229256dd41deadf97786fe41ce04cbb",
+        "changed_funcs": [
+          "other"
+        ],
+        "n_funcs": 10,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2023-47114__dsr_report_builder__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-47114__dsr_report_builder__before.py",
+      "cwe": "CWE-79",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-3vpf-mcj7-5h38|CVE-2023-47114|ethyca/fides@50360a0e24",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "src/fides/api/service/privacy_request/dsr_package/dsr_report_builder.py",
+        "fix_commit": "50360a0e24aac858459806bb140bb1c4b71e67a1",
+        "changed_funcs": [
+          "__init__",
+          "_populate_template"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2024-26151__mjml2html__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-26151__mjml2html__before.py",
+      "cwe": "CWE-79",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-578p-fxmm-6229|CVE-2024-26151|FelixSchwarz/mjml-python@84c495da20",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "mjml/mjml2html.py",
+        "fix_commit": "84c495da20a91640a1ca551ace17df7f3be644aa",
+        "changed_funcs": [
+          "mjml_to_html"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2022-46147__utils__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-46147__utils__before.py",
+      "cwe": "CWE-79",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-qv6c-367r-3w6q|CVE-2022-46147|openedx/xblock-drag-and-drop-v2@68887d1b4a",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "drag_and_drop_v2/utils.py",
+        "fix_commit": "68887d1b4a44325d2de7573d450e41129ba98b1a",
+        "changed_funcs": [
+          "_clean_data"
+        ],
+        "n_funcs": 19,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2015-0220__http__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2015-0220__http__before.py",
+      "cwe": "CWE-79",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-gv98-g628-m9x5|CVE-2015-0220|django/django@72e0b03366",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "django/utils/http.py",
+        "fix_commit": "72e0b033662faa11bb7f516f18a132728aa0ae28",
+        "changed_funcs": [
+          "is_safe_url"
+        ],
+        "n_funcs": 17,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2024-41675__blueprint__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-41675__blueprint__after.py",
+      "cwe": "CWE-79",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-r3jc-vhf4-6v32|CVE-2024-41675|ckan/ckan@d7dfe8c427|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "ckanext/datatablesview/blueprint.py",
+        "fix_commit": "d7dfe8c427b1c63c75d788a609f3b7d7620a25a1",
+        "changed_funcs": [
+          "ajax"
+        ],
+        "n_funcs": 3,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2024-26151__mjml2html__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-26151__mjml2html__after.py",
+      "cwe": "CWE-79",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-578p-fxmm-6229|CVE-2024-26151|FelixSchwarz/mjml-python@8d410b7a50|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "mjml/mjml2html.py",
+        "fix_commit": "8d410b7a500703080bb14ed7e3d2663fe16767e6",
+        "changed_funcs": [
+          "mjml_to_html"
+        ],
+        "n_funcs": 4,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2024-41675__blueprint__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2024-41675__blueprint__after.py",
+      "cwe": "CWE-79",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-r3jc-vhf4-6v32|CVE-2024-41675|ckan/ckan@d7dfe8c427|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "ckanext/datatablesview/blueprint.py",
+        "fix_commit": "d7dfe8c427b1c63c75d788a609f3b7d7620a25a1",
+        "changed_funcs": [
+          "ajax"
+        ],
+        "n_funcs": 3,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2022-46147__utils__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2022-46147__utils__after.py",
+      "cwe": "CWE-79",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-qv6c-367r-3w6q|CVE-2022-46147|openedx/xblock-drag-and-drop-v2@68887d1b4a|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "drag_and_drop_v2/utils.py",
+        "fix_commit": "68887d1b4a44325d2de7573d450e41129ba98b1a",
+        "changed_funcs": [
+          "_clean_data"
+        ],
+        "n_funcs": 19,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2026-24126__forms__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-24126__forms__before.py",
+      "cwe": "CWE-88",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-33fm-6gp7-4p47|CVE-2026-24126|WeblateOrg/weblate@78773cc141",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/wladmin/forms.py",
+        "fix_commit": "78773cc141ce0a97900c11341e6cf856451395fd",
+        "changed_funcs": [
+          "__init__"
+        ],
+        "n_funcs": 8,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2026-24126__ssh__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-24126__ssh__before.py",
+      "cwe": "CWE-88",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-33fm-6gp7-4p47|CVE-2026-24126|WeblateOrg/weblate@78773cc141",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/vcs/ssh.py",
+        "fix_commit": "78773cc141ce0a97900c11341e6cf856451395fd",
+        "changed_funcs": [
+          "add_host_key"
+        ],
+        "n_funcs": 17,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2026-24126__ssh__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-24126__ssh__after.py",
+      "cwe": "CWE-88",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-33fm-6gp7-4p47|CVE-2026-24126|WeblateOrg/weblate@78773cc141|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/vcs/ssh.py",
+        "fix_commit": "78773cc141ce0a97900c11341e6cf856451395fd",
+        "changed_funcs": [
+          "add_host_key"
+        ],
+        "n_funcs": 17,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2026-24126__forms__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-24126__forms__after.py",
+      "cwe": "CWE-88",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-33fm-6gp7-4p47|CVE-2026-24126|WeblateOrg/weblate@78773cc141|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/wladmin/forms.py",
+        "fix_commit": "78773cc141ce0a97900c11341e6cf856451395fd",
+        "changed_funcs": [
+          "__init__"
+        ],
+        "n_funcs": 8,
+        "n_files_in_commit": 6
+      }
+    },
+    {
+      "id": "cve:CVE-2025-12764__ldap__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-12764__ldap__before.py",
+      "cwe": "CWE-90",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-cvf4-f829-762v|CVE-2025-12764|pgadmin-org/pgadmin4@09d2b7eeb0",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "web/pgadmin/authenticate/ldap.py",
+        "fix_commit": "09d2b7eeb0e330df73b1aef0cba57788fde52b6b",
+        "changed_funcs": [
+          "__configure_tls",
+          "search_ldap_user"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2025-12764__ldap__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-12764__ldap__after.py",
+      "cwe": "CWE-90",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-cvf4-f829-762v|CVE-2025-12764|pgadmin-org/pgadmin4@09d2b7eeb0|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "web/pgadmin/authenticate/ldap.py",
+        "fix_commit": "09d2b7eeb0e330df73b1aef0cba57788fde52b6b",
+        "changed_funcs": [
+          "__configure_tls",
+          "search_ldap_user"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2026-27696__requests__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-27696__requests__before.py",
+      "cwe": "CWE-918",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-3c45-4pj5-ch7m|CVE-2026-27696|dgtlmoon/changedetection.io@fe7aa38c65",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "changedetectionio/content_fetchers/requests.py",
+        "fix_commit": "fe7aa38c651d73fe5f41ce09855fa8f97193747b",
+        "changed_funcs": [
+          "_run_sync"
+        ],
+        "n_funcs": 5,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2026-33440__tasks__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-33440__tasks__before.py",
+      "cwe": "CWE-918",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-5fhx-9jwj-867m|CVE-2026-33440|WeblateOrg/weblate@8be80625a8",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/addons/tasks.py",
+        "fix_commit": "8be80625a864c8db5854503872a65e8a0b7399a6",
+        "changed_funcs": [
+          "cdn_parse_html"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2026-27696__validate_url__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-27696__validate_url__before.py",
+      "cwe": "CWE-918",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-3c45-4pj5-ch7m|CVE-2026-27696|dgtlmoon/changedetection.io@fe7aa38c65",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "changedetectionio/validate_url.py",
+        "fix_commit": "fe7aa38c651d73fe5f41ce09855fa8f97193747b",
+        "changed_funcs": [
+          "is_safe_valid_url"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2026-25960__connector__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-25960__connector__before.py",
+      "cwe": "CWE-918",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-v359-jj2v-j536|CVE-2026-25960|vllm-project/vllm@6f3b2047ab",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "vllm/multimodal/media/connector.py",
+        "fix_commit": "6f3b2047abd4a748e3db4a68543f8221358002c0",
+        "changed_funcs": [
+          "load_from_url",
+          "load_from_url_async"
+        ],
+        "n_funcs": 14,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2026-27696__validate_url__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-27696__validate_url__after.py",
+      "cwe": "CWE-918",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-3c45-4pj5-ch7m|CVE-2026-27696|dgtlmoon/changedetection.io@fe7aa38c65|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "changedetectionio/validate_url.py",
+        "fix_commit": "fe7aa38c651d73fe5f41ce09855fa8f97193747b",
+        "changed_funcs": [
+          "is_safe_valid_url"
+        ],
+        "n_funcs": 2,
+        "n_files_in_commit": 3
+      }
+    },
+    {
+      "id": "cve:CVE-2026-33440__tasks__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-33440__tasks__after.py",
+      "cwe": "CWE-918",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-5fhx-9jwj-867m|CVE-2026-33440|WeblateOrg/weblate@8be80625a8|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/addons/tasks.py",
+        "fix_commit": "8be80625a864c8db5854503872a65e8a0b7399a6",
+        "changed_funcs": [
+          "cdn_parse_html"
+        ],
+        "n_funcs": 9,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2026-25960__connector__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-25960__connector__after.py",
+      "cwe": "CWE-918",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-v359-jj2v-j536|CVE-2026-25960|vllm-project/vllm@6f3b2047ab|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "vllm/multimodal/media/connector.py",
+        "fix_commit": "6f3b2047abd4a748e3db4a68543f8221358002c0",
+        "changed_funcs": [
+          "load_from_url",
+          "load_from_url_async"
+        ],
+        "n_funcs": 14,
+        "n_files_in_commit": 1
+      }
+    },
+    {
+      "id": "cve:CVE-2026-33440__forms__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2026-33440__forms__after.py",
+      "cwe": "CWE-918",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-5fhx-9jwj-867m|CVE-2026-33440|WeblateOrg/weblate@8be80625a8|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "weblate/screenshots/forms.py",
+        "fix_commit": "8be80625a864c8db5854503872a65e8a0b7399a6",
+        "changed_funcs": [
+          "download_image"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 5
+      }
+    },
+    {
+      "id": "cve:CVE-2023-36258__base__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-36258__base__before.py",
+      "cwe": "CWE-94",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-2qmj-7962-cjq8|CVE-2023-36258|langchain-ai/langchain@e294ba475a",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "langchain/chains/pal/base.py",
+        "fix_commit": "e294ba475a355feb95003ed8f1a2b99942509a9e",
+        "changed_funcs": [
+          "raise_deprecation",
+          "_call",
+          "from_math_prompt",
+          "from_colored_object_prompt"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2023-36258__base__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-36258__base__before.py",
+      "cwe": "CWE-94",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-2qmj-7962-cjq8|CVE-2023-36258|langchain-ai/langchain@8ba9835b92",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "langchain/chains/pal/base.py",
+        "fix_commit": "8ba9835b925473655914f63822775679e03ea137",
+        "changed_funcs": [
+          "_call",
+          "from_math_prompt",
+          "from_colored_object_prompt"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2025-2945__google__before",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-2945__google__before.py",
+      "cwe": "CWE-94",
+      "label": true,
+      "category": "taint",
+      "source": "osv:GHSA-g73c-fw68-pwx3|CVE-2025-2945|pgadmin-org/pgadmin4@75be0bc22d",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "web/pgacloud/providers/google.py",
+        "fix_commit": "75be0bc22d3d8d7620711835db817bd7c021007c",
+        "changed_funcs": [
+          "_create_google_postgresql_instance"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2025-2945__google__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2025-2945__google__after.py",
+      "cwe": "CWE-94",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-g73c-fw68-pwx3|CVE-2025-2945|pgadmin-org/pgadmin4@75be0bc22d|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "web/pgacloud/providers/google.py",
+        "fix_commit": "75be0bc22d3d8d7620711835db817bd7c021007c",
+        "changed_funcs": [
+          "_create_google_postgresql_instance"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2023-36258__base__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-36258__base__after.py",
+      "cwe": "CWE-94",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-2qmj-7962-cjq8|CVE-2023-36258|langchain-ai/langchain@e294ba475a|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "langchain/chains/pal/base.py",
+        "fix_commit": "e294ba475a355feb95003ed8f1a2b99942509a9e",
+        "changed_funcs": [
+          "raise_deprecation",
+          "_call",
+          "from_math_prompt",
+          "from_colored_object_prompt"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 2
+      }
+    },
+    {
+      "id": "cve:CVE-2023-36258__base__after",
+      "path": "/mnt/nvme/jiangzhe/tmp/opencode/cve_curation/cases_hard/CVE-2023-36258__base__after.py",
+      "cwe": "CWE-94",
+      "label": false,
+      "category": "taint",
+      "source": "osv:GHSA-2qmj-7962-cjq8|CVE-2023-36258|langchain-ai/langchain@e294ba475a|fixed",
+      "benchmark": "cve-curated-hard",
+      "meta": {
+        "file": "langchain/chains/pal/base.py",
+        "fix_commit": "e294ba475a355feb95003ed8f1a2b99942509a9e",
+        "changed_funcs": [
+          "raise_deprecation",
+          "_call",
+          "from_math_prompt",
+          "from_colored_object_prompt"
+        ],
+        "n_funcs": 7,
+        "n_files_in_commit": 2
+      }
+    }
+  ]
+}

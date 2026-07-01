@@ -1,0 +1,644 @@
+{
+  "detections": {
+    "cve:CVE-2026-29065____init____before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:GHSA-qj8w-rv5x-2v9h__staticfiles__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-0818__common__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-918"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The `download` function derives a filename from `url.split('/')[-1]` when `save_name` is None, then joins it with a dire"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-29065__restore__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The `import_from_zip` function calls `zf.extractall(tmpdir)` on an attacker-controlled zip file without validating membe"
+      ],
+      "error": null
+    },
+    "cve:GHSA-qj8w-rv5x-2v9h__staticfiles__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-0818__common__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The `download` function derives a filename from the URL when `save_name` is None:\n\n```python\nfilename = os.path.join(\n  "
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-29065____init____after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-29065__restore__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-32962__base__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2021-21330__web_middlewares__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]<VULNERABLE|CWE-601>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-3438__page_admin_users__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2021-28125__redirects__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The `index` method retrieves a URL from the database and passes it directly to `redirect()`. The stored URL comes from u"
+      ],
+      "error": null
+    },
+    "cve:CVE-2021-21330__web_middlewares__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]<VULNERABLE|CWE-601>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2021-28125__redirects__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-79"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-79[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-3438__page_admin_users__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-34540__jira__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-94[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-34540__jira__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-94[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-47114__dsr_report_builder__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The function uses `dataset_name` and `collection_name` (derived from `self.dsr_data` keys) to construct file paths withi"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-26151__mjml2html__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-22[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-46147__utils__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-0220__http__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-41675__blueprint__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-601"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-601[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-26151__mjml2html__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-22"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-22[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-46147__utils__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-24126__forms__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-24126__ssh__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-78"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]<VULNERABLE>|CWE-78[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-24126__ssh__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-78"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-78[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-24126__forms__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-12764__ldap__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-90"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-90[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-12764__ldap__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27696__requests__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-33440__tasks__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27696__validate_url__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The `is_safe_valid_url` function uses `os.getenv('SAFE_PROTOCOL_REGEX', safe_protocol_regex)` as a regex pattern compile"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-25960__connector__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-918"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-27696__validate_url__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-918"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-33440__tasks__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-918"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-25960__connector__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-918"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-33440__forms__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-918"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-36258__base__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-94[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-2945__google__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-94[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-2945__google__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-36258__base__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-94"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The `_call` method takes LLM-generated code, runs `validate_code` on it, then executes it via `PythonREPL.run`. The vali"
+      ],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2026-29065____init____before": {
+      "seconds": 3.2,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:GHSA-qj8w-rv5x-2v9h__staticfiles__before": {
+      "seconds": 4.3,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2024-0818__common__before": {
+      "seconds": 7.2,
+      "verdict": "VULNERABLE",
+      "raw": "The `download` function derives a filename from `url.split('/')[-1]` when `save_name` is None, then joins it with a directory path using `os.path.join`. A URL like `http://evil.com/../../../../etc/pas"
+    },
+    "cve:CVE-2026-29065__restore__before": {
+      "seconds": 7.9,
+      "verdict": "VULNERABLE",
+      "raw": "The `import_from_zip` function calls `zf.extractall(tmpdir)` on an attacker-controlled zip file without validating member paths first. A crafted zip can contain entries with paths like `../../etc/cron"
+    },
+    "cve:GHSA-qj8w-rv5x-2v9h__staticfiles__after": {
+      "seconds": 3.0,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2024-0818__common__after": {
+      "seconds": 8.8,
+      "verdict": "VULNERABLE",
+      "raw": "The `download` function derives a filename from the URL when `save_name` is None:\n\n```python\nfilename = os.path.join(\n    dirname, url.split('/')[-1] if save_name is None else save_name\n)\n```\n\nThe `ur"
+    },
+    "cve:CVE-2026-29065____init____after": {
+      "seconds": 2.6,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-29065__restore__after": {
+      "seconds": 9.0,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2025-32962__base__before": {
+      "seconds": 2.0,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2021-21330__web_middlewares__before": {
+      "seconds": 2.7,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]<VULNERABLE|CWE-601>[/VERDICT]"
+    },
+    "cve:CVE-2022-3438__page_admin_users__before": {
+      "seconds": 2.9,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2021-28125__redirects__before": {
+      "seconds": 6.8,
+      "verdict": "VULNERABLE",
+      "raw": "The `index` method retrieves a URL from the database and passes it directly to `redirect()`. The stored URL comes from user-controlled input (saved via the `shortner` method which takes `request.form."
+    },
+    "cve:CVE-2021-21330__web_middlewares__after": {
+      "seconds": 3.0,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]<VULNERABLE|CWE-601>[/VERDICT]"
+    },
+    "cve:CVE-2021-28125__redirects__after": {
+      "seconds": 2.6,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-79[/VERDICT]"
+    },
+    "cve:CVE-2022-3438__page_admin_users__after": {
+      "seconds": 2.6,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2023-34540__jira__before": {
+      "seconds": 2.7,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-94[/VERDICT]"
+    },
+    "cve:CVE-2023-34540__jira__after": {
+      "seconds": 2.4,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-94[/VERDICT]"
+    },
+    "cve:CVE-2023-47114__dsr_report_builder__before": {
+      "seconds": 5.8,
+      "verdict": "VULNERABLE",
+      "raw": "The function uses `dataset_name` and `collection_name` (derived from `self.dsr_data` keys) to construct file paths within a zip archive, e.g. `f\"/data/{dataset_name}/index.html\"`. These values come fr"
+    },
+    "cve:CVE-2024-26151__mjml2html__before": {
+      "seconds": 3.9,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-22[/VERDICT]"
+    },
+    "cve:CVE-2022-46147__utils__before": {
+      "seconds": 4.0,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2015-0220__http__before": {
+      "seconds": 4.1,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2024-41675__blueprint__after": {
+      "seconds": 3.0,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-601[/VERDICT]"
+    },
+    "cve:CVE-2024-26151__mjml2html__after": {
+      "seconds": 3.3,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-22[/VERDICT]"
+    },
+    "cve:CVE-2022-46147__utils__after": {
+      "seconds": 2.6,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2026-24126__forms__before": {
+      "seconds": 2.8,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2026-24126__ssh__before": {
+      "seconds": 3.3,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]<VULNERABLE>|CWE-78[/VERDICT]"
+    },
+    "cve:CVE-2026-24126__ssh__after": {
+      "seconds": 3.8,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-78[/VERDICT]"
+    },
+    "cve:CVE-2026-24126__forms__after": {
+      "seconds": 5.5,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2025-12764__ldap__before": {
+      "seconds": 3.0,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-90[/VERDICT]"
+    },
+    "cve:CVE-2025-12764__ldap__after": {
+      "seconds": 3.9,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-27696__requests__before": {
+      "seconds": 3.2,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-33440__tasks__before": {
+      "seconds": 3.2,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-27696__validate_url__before": {
+      "seconds": 10.8,
+      "verdict": "VULNERABLE",
+      "raw": "The `is_safe_valid_url` function uses `os.getenv('SAFE_PROTOCOL_REGEX', safe_protocol_regex)` as a regex pattern compiled directly from an environment variable without any sanitization. While environm"
+    },
+    "cve:CVE-2026-25960__connector__before": {
+      "seconds": 3.2,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+    },
+    "cve:CVE-2026-27696__validate_url__after": {
+      "seconds": 1.9,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+    },
+    "cve:CVE-2026-33440__tasks__after": {
+      "seconds": 4.2,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+    },
+    "cve:CVE-2026-25960__connector__after": {
+      "seconds": 3.8,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+    },
+    "cve:CVE-2026-33440__forms__after": {
+      "seconds": 3.2,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-918[/VERDICT]"
+    },
+    "cve:CVE-2023-36258__base__before": {
+      "seconds": 2.4,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-94[/VERDICT]"
+    },
+    "cve:CVE-2025-2945__google__before": {
+      "seconds": 3.4,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-94[/VERDICT]"
+    },
+    "cve:CVE-2025-2945__google__after": {
+      "seconds": 2.5,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2023-36258__base__after": {
+      "seconds": 7.1,
+      "verdict": "VULNERABLE",
+      "raw": "The `_call` method takes LLM-generated code, runs `validate_code` on it, then executes it via `PythonREPL.run`. The validation checks for known command execution function names (`system`, `exec`, `exe"
+    }
+  }
+}

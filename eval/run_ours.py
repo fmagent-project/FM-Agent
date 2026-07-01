@@ -114,9 +114,10 @@ def _plugin_class(name):
 
 
 def main():
+    from src.plugins import registry as _registry
     ap = argparse.ArgumentParser(description="Run an FM-Agent plugin over a sample manifest")
     ap.add_argument("--plugin", default="taint",
-                    choices=["taint", "crypto", "authz", "ifc", "typestate"])
+                    choices=_registry.plugin_names())
     ap.add_argument("--sample", default=None, help="defaults to eval/sample_<plugin>.json")
     ap.add_argument("--out", default=None, help="defaults to eval/ours_<plugin>_detections.json")
     ap.add_argument("--stage-root", default=None)

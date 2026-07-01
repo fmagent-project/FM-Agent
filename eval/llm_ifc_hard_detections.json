@@ -1,0 +1,216 @@
+{
+  "detections": {
+    "cve:CVE-2020-1746__ldap_entry__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-209"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-209[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-28415__oauth__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-532"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-532[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-1968__redirect__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-50715__login_flow__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-200"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-200[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-8213__formats__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-56509____init____after": {
+      "detected": true,
+      "cwes": [
+        "CWE-532"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-532[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-27949__secrets_masker__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-532"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "Looking at the `_redact` method's exception handler:\n\n```python\nexcept Exception as e:\n    log.warning(\n        \"Unable "
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-1746__ldap_entry__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-34110__base__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-34110__base__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2018-1000089__base__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:GHSA-635v-pc42-fr74__modules__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-532"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "The `install` and `install_requirements` functions log the full pip command including the index URL, and `_get_codeartif"
+      ],
+      "error": null
+    },
+    "cve:CVE-2018-1000089__base__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:GHSA-635v-pc42-fr74__modules__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-532"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-532[/VERDICT]"
+      ],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2020-1746__ldap_entry__before": {
+      "seconds": 2.5,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-209[/VERDICT]"
+    },
+    "cve:CVE-2026-28415__oauth__before": {
+      "seconds": 2.4,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-532[/VERDICT]"
+    },
+    "cve:CVE-2024-1968__redirect__before": {
+      "seconds": 2.0,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2023-50715__login_flow__before": {
+      "seconds": 2.5,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-200[/VERDICT]"
+    },
+    "cve:CVE-2015-8213__formats__after": {
+      "seconds": 2.6,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2024-56509____init____after": {
+      "seconds": 2.4,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-532[/VERDICT]"
+    },
+    "cve:CVE-2022-27949__secrets_masker__after": {
+      "seconds": 6.4,
+      "verdict": "VULNERABLE",
+      "raw": "Looking at the `_redact` method's exception handler:\n\n```python\nexcept Exception as e:\n    log.warning(\n        \"Unable to redact %s, please report this via ...\",\n        repr(item),\n        type(e)._"
+    },
+    "cve:CVE-2020-1746__ldap_entry__after": {
+      "seconds": 3.3,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2023-34110__base__before": {
+      "seconds": 4.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2023-34110__base__after": {
+      "seconds": 2.2,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2018-1000089__base__before": {
+      "seconds": 3.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:GHSA-635v-pc42-fr74__modules__before": {
+      "seconds": 5.3,
+      "verdict": "VULNERABLE",
+      "raw": "The `install` and `install_requirements` functions log the full pip command including the index URL, and `_get_codeartifact_index` builds that URL with an embedded auth token in the form `https://aws:"
+    },
+    "cve:CVE-2018-1000089__base__after": {
+      "seconds": 1.9,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:GHSA-635v-pc42-fr74__modules__after": {
+      "seconds": 3.0,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-532[/VERDICT]"
+    }
+  }
+}

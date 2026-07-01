@@ -99,6 +99,12 @@ Loader: `eval/benchmarks.py::load_cve_curated("eval/cve_curation/cve_cases.filte
 ## Status
 
 - ✅ Corpus built, filtered, persisted in-repo, loader wired.
-- ⏳ NOT yet run through the plugins. Running our tool on 458 vulnerable cases at
-  ~150s/case ≈ 19h on the unstable endpoint — a stratified sample (~30-40/plugin)
-  is the pragmatic next step, with full hand-audit of scored cases.
+- ✅ Run through all plugins on a stratified sample with full hand-audit — results
+  in [../REPORT.md](../REPORT.md) (original five plugins).
+- ✅ **A harder, whole-file variant now exists** for interprocedural evaluation:
+  `stage2_hard_extract.py` (whole changed file, not one function) +
+  `stage3_hard_filter.py` → `cve_cases_hard.filtered.jsonl` (median 235 LOC,
+  ~9 functions/case, 69% multi-file). Covers all **seven** plugins and adds a
+  direct-LLM baseline. See [../REPORT_HARD.md](../REPORT_HARD.md).
+- ⏳ **Open**: per-case fix-diff verification to convert directional P/R into a
+  clean precision claim (the ~60% label noise is the current ceiling).

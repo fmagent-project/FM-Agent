@@ -1,0 +1,359 @@
+{
+ "cve:CVE-2020-1746__ldap_entry__before": {
+  "changed_funcs": [
+   "main"
+  ],
+  "func_verdicts": {
+   "main": "LEAK",
+   "_is_entry_present": "SECURE",
+   "__init__": "SECURE",
+   "delete": "SECURE",
+   "_load_attrs": "SECURE",
+   "add": "SECURE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-28415__oauth__before": {
+  "changed_funcs": [
+   "_redirect_to_target",
+   "_get_mocked_oauth_info"
+  ],
+  "func_verdicts": {
+   "_add_oauth_routes": "LEAK",
+   "hello": "SECURE",
+   "_get_mocked_oauth_info": "SECURE",
+   "_generate_redirect_uri": "SECURE",
+   "list_organizations": "LEAK",
+   "__init__": "SECURE",
+   "_redirect_to_target": "SECURE",
+   "_add_mocked_oauth_routes": "LEAK",
+   "attach_oauth": "DECLASSIFIED"
+  },
+  "label": true
+ },
+ "cve:CVE-2024-1968__redirect__before": {
+  "changed_funcs": [
+   "_build_redirect_request"
+  ],
+  "func_verdicts": {
+   "__init___1": "SECURE",
+   "__init__": "SECURE",
+   "from_crawler": "SECURE",
+   "_redirect_request_using_get": "SECURE",
+   "process_response_1": "LEAK",
+   "_build_redirect_request": "SECURE",
+   "_redirect": "SECURE",
+   "process_response": "LEAK"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-50715__login_flow__before": {
+  "changed_funcs": [
+   "get_1"
+  ],
+  "func_verdicts": {
+   "_async_flow_result_to_response": "LEAK",
+   "post_1": "LEAK",
+   "get_2": "SECURE",
+   "get_3": "SECURE",
+   "async_setup": "LEAK",
+   "__init__": "SECURE",
+   "get_1": "SECURE",
+   "delete": "SECURE",
+   "get": "SECURE",
+   "post": "SECURE",
+   "_prepare_result_json": "SECURE"
+  },
+  "label": true
+ },
+ "cve:CVE-2015-8213__formats__after": {
+  "changed_funcs": [
+   "get_format"
+  ],
+  "func_verdicts": {
+   "date_format": "SECURE",
+   "time_format": "SECURE",
+   "iter_format_modules": "SECURE",
+   "get_format": "SECURE",
+   "number_format": "SECURE",
+   "get_format_modules": "SECURE",
+   "sanitize_separators": "SECURE",
+   "localize_input": "POLYMORPHIC",
+   "localize": "POLYMORPHIC",
+   "reset_format_cache": "SECURE"
+  },
+  "label": false
+ },
+ "cve:CVE-2024-56509____init____after": {
+  "changed_funcs": [
+   "call_browser"
+  ],
+  "func_verdicts": {
+   "find_sub_packages": "SECURE",
+   "get_parent_module": "SECURE",
+   "available_processors": "SECURE",
+   "run_changedetection": "SECURE",
+   "get_custom_watch_obj_for_processor": "SECURE",
+   "__init__": "SECURE",
+   "find_processors": "SECURE",
+   "call_browser": "LEAK"
+  },
+  "label": false
+ },
+ "cve:CVE-2022-27949__secrets_masker__after": {
+  "changed_funcs": [
+   "mask_secret",
+   "filter"
+  ],
+  "func_verdicts": {
+   "get_sensitive_variables_fields": "SECURE",
+   "redact": "POLYMORPHIC",
+   "mask_secret": "LEAK",
+   "filter": "POLYMORPHIC",
+   "_redact_all": "SECURE",
+   "add_mask": "SECURE",
+   "__init__": "SECURE",
+   "should_hide_value_for_key": "SECURE",
+   "_redact_exception_with_context": "LEAK",
+   "_redact": "POLYMORPHIC",
+   "_record_attrs_to_ignore": "SECURE",
+   "_secrets_masker": "SECURE",
+   "redact_1": "LEAK"
+  },
+  "label": false
+ },
+ "cve:CVE-2020-1746__ldap_entry__after": {
+  "changed_funcs": [
+   "main"
+  ],
+  "func_verdicts": {
+   "main": "LEAK",
+   "_is_entry_present": "SECURE",
+   "__init__": "SECURE",
+   "delete": "SECURE",
+   "_load_attrs": "SECURE",
+   "add": "SECURE"
+  },
+  "label": false
+ },
+ "cve:CVE-2023-34110__base__before": {
+  "changed_funcs": [
+   "_get_values",
+   "get_values",
+   "get_values_json",
+   "add",
+   "edit",
+   "delete",
+   "get_keys",
+   "get_pk_name",
+   "get",
+   "get_related_interface",
+   "get_columns_list",
+   "get_user_columns_list",
+   "get_search_columns_list",
+   "get_order_columns_list"
+  ],
+  "func_verdicts": {
+   "is_pk": "SECURE",
+   "is_fk": "SECURE",
+   "get_columns_list": "SECURE",
+   "is_relation_col": "SECURE",
+   "get_related_interface": "SECURE",
+   "is_gridfs_image": "SECURE",
+   "get_related_obj": "SECURE",
+   "is_float": "SECURE",
+   "is_relation_many_to_one": "SECURE",
+   "_get_values": "LEAK",
+   "get_filters": "SECURE",
+   "_get_attr": "SECURE",
+   "get_order_columns_list": "SECURE",
+   "is_image": "SECURE",
+   "is_boolean": "SECURE",
+   "get_pk_name": "SECURE",
+   "_get_attr_value": "SECURE",
+   "get_col_default": "SECURE",
+   "get_max_length": "SECURE",
+   "get_keys": "POLYMORPHIC",
+   "model_name": "SECURE",
+   "get_relation_fk": "SECURE",
+   "is_relation_one_to_many": "SECURE",
+   "is_pk_composite": "SECURE",
+   "__getattr__": "SECURE",
+   "get_values": "SECURE",
+   "is_date": "SECURE",
+   "is_file": "SECURE",
+   "get_related_fk": "SECURE",
+   "query": "SECURE",
+   "is_unique": "SECURE",
+   "is_numeric": "SECURE",
+   "__init__": "SECURE",
+   "is_binary": "SECURE",
+   "is_relation_many_to_many": "SECURE",
+   "get_pk_value": "SECURE",
+   "is_nullable": "SECURE",
+   "get_related_model": "SECURE",
+   "is_relation_one_to_one": "SECURE",
+   "delete": "SECURE",
+   "get_values_item": "SECURE",
+   "get": "SECURE",
+   "get_user_columns_list": "SECURE",
+   "is_datetime": "SECURE",
+   "is_string": "SECURE",
+   "is_integer": "SECURE",
+   "is_relation": "SECURE",
+   "get_search_columns_list": "SECURE",
+   "is_text": "SECURE",
+   "edit": "SECURE",
+   "add": "SECURE",
+   "is_enum": "SECURE",
+   "get_values_json": "POLYMORPHIC",
+   "get_min_length": "SECURE",
+   "is_gridfs_file": "SECURE"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-34110__base__after": {
+  "changed_funcs": [
+   "_get_values",
+   "get_values",
+   "get_values_json",
+   "add",
+   "edit",
+   "delete",
+   "get_keys",
+   "get_pk_name",
+   "get",
+   "get_related_interface",
+   "get_columns_list",
+   "get_user_columns_list",
+   "get_search_columns_list",
+   "get_order_columns_list"
+  ],
+  "func_verdicts": {
+   "is_pk": "SECURE",
+   "is_fk": "SECURE",
+   "get_columns_list": "SECURE",
+   "is_relation_col": "SECURE",
+   "get_related_interface": "SECURE",
+   "is_gridfs_image": "SECURE",
+   "get_related_obj": "SECURE",
+   "is_float": "SECURE",
+   "is_relation_many_to_one": "SECURE",
+   "_get_values": "POLYMORPHIC",
+   "get_filters": "SECURE",
+   "_get_attr": "LEAK",
+   "get_order_columns_list": "SECURE",
+   "is_image": "SECURE",
+   "is_boolean": "SECURE",
+   "get_pk_name": "SECURE",
+   "_get_attr_value": "SECURE",
+   "get_col_default": "SECURE",
+   "get_max_length": "SECURE",
+   "get_keys": "SECURE",
+   "model_name": "SECURE",
+   "get_relation_fk": "SECURE",
+   "is_relation_one_to_many": "SECURE",
+   "is_pk_composite": "SECURE",
+   "__getattr__": "SECURE",
+   "get_values": "SECURE",
+   "is_date": "SECURE",
+   "is_file": "SECURE",
+   "get_related_fk": "SECURE",
+   "query": "SECURE",
+   "is_unique": "SECURE",
+   "is_numeric": "SECURE",
+   "__init__": "SECURE",
+   "is_binary": "SECURE",
+   "is_relation_many_to_many": "SECURE",
+   "get_pk_value": "SECURE",
+   "is_nullable": "SECURE",
+   "get_related_model": "SECURE",
+   "is_relation_one_to_one": "SECURE",
+   "delete": "SECURE",
+   "get_values_item": "POLYMORPHIC",
+   "get": "SECURE",
+   "get_user_columns_list": "SECURE",
+   "is_datetime": "SECURE",
+   "is_string": "SECURE",
+   "is_integer": "SECURE",
+   "is_relation": "SECURE",
+   "get_search_columns_list": "SECURE",
+   "is_text": "SECURE",
+   "edit": "SECURE",
+   "add": "SECURE",
+   "is_enum": "SECURE",
+   "get_values_json": "SECURE",
+   "get_min_length": "SECURE",
+   "is_gridfs_file": "SECURE"
+  },
+  "label": false
+ },
+ "cve:CVE-2018-1000089__base__before": {
+  "changed_funcs": [
+   "__init__"
+  ],
+  "func_verdicts": {
+   "validate_request": "SECURE",
+   "__init___1": "SECURE",
+   "validate_request_1": "SECURE",
+   "head": "SECURE",
+   "run_validators": "SECURE",
+   "__init__": "LEAK",
+   "parse_events": "SECURE",
+   "post": "LEAK",
+   "dispatch": "SECURE",
+   "esp_name": "SECURE"
+  },
+  "label": true
+ },
+ "cve:GHSA-635v-pc42-fr74__modules__before": {
+  "changed_funcs": [
+   "install",
+   "install_requirements"
+  ],
+  "func_verdicts": {
+   "_get_codeartifact_index": "SECURE",
+   "install": "LEAK",
+   "exists": "LEAK",
+   "install_requirements": "LEAK",
+   "import_module": "SECURE",
+   "has_requirements": "SECURE",
+   "prepare": "SECURE"
+  },
+  "label": true
+ },
+ "cve:CVE-2018-1000089__base__after": {
+  "changed_funcs": [
+   "__init__"
+  ],
+  "func_verdicts": {
+   "validate_request": "SECURE",
+   "__init___1": "SECURE",
+   "validate_request_1": "SECURE",
+   "head": "SECURE",
+   "run_validators": "SECURE",
+   "__init__": "LEAK",
+   "parse_events": "SECURE",
+   "post": "SECURE",
+   "dispatch": "SECURE",
+   "esp_name": "SECURE"
+  },
+  "label": false
+ },
+ "cve:GHSA-635v-pc42-fr74__modules__after": {
+  "changed_funcs": [
+   "install",
+   "install_requirements"
+  ],
+  "func_verdicts": {
+   "_get_codeartifact_index": "LEAK",
+   "install": "SECURE",
+   "exists": "SECURE",
+   "install_requirements": "LEAK",
+   "import_module": "SECURE",
+   "has_requirements": "SECURE",
+   "prepare": "SECURE"
+  },
+  "label": false
+ }
+}

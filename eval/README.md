@@ -1,9 +1,18 @@
 # FM-Agent Security Plugin Evaluation
 
-Head-to-head evaluation of FM-Agent's **five** security plugins (taint, crypto,
-authz, ifc, typestate) against existing detection tools (Bandit, Semgrep CE) on
-**third-party and CVE-curated benchmarks**. The consolidated results +
-narrative are in [REPORT.md](./REPORT.md); start there.
+Head-to-head evaluation of FM-Agent's security plugins against existing detection
+tools (Bandit, Semgrep CE) — and a **direct-LLM baseline** — on **third-party and
+CVE-curated benchmarks**. The portfolio is now **seven plugins** (taint, crypto,
+authz, ifc, typestate, plus **resource** [DoS] and **authn** [improper
+authentication], both generated via the `fm-plugin-generator` skill on the shared
+SPI).
+
+Two consolidated reports:
+- [REPORT.md](./REPORT.md) — original **five-plugin** single-function CVE + OWASP
+  results vs Bandit/Semgrep. **Start here** for shared methodology.
+- [REPORT_HARD.md](./REPORT_HARD.md) — **seven-plugin** whole-file (hard)
+  benchmark vs a **direct-LLM baseline**, testing interprocedural localization,
+  with a locus-scoring audit finding (跑完≠跑对).
 
 ## Why this design
 
@@ -115,10 +124,17 @@ Outputs: `comparison_taint.json` / `comparison_crypto.json` (OWASP) and
 
 ## Status / scope
 
-All five plugins evaluated. See [REPORT.md](./REPORT.md) for consolidated results.
+**Seven plugins** now exist (taint, crypto, authz, ifc, typestate, resource,
+authn). Two evaluation tracks:
 
-- **taint / crypto**: head-to-head on BOTH OWASP (synthetic) and CVE (real).
-- **authz / ifc / typestate**: head-to-head on the CVE-curated corpus (no public
-  benchmark exists for these properties — we built one).
-- **Open**: per-case fix-diff verification of the CVE corpus (to lift directional
-  P/R to a clean precision claim); CodeQL as a heavyweight data-flow baseline.
+- **Original five-plugin eval** → [REPORT.md](./REPORT.md). taint/crypto on BOTH
+  OWASP (synthetic) and CVE (real); authz/ifc/typestate on the CVE-curated corpus
+  (no public benchmark exists — we built one). Baselines: Bandit, Semgrep CE.
+- **Seven-plugin HARD eval** → [REPORT_HARD.md](./REPORT_HARD.md). All seven on a
+  whole-file (interprocedural) CVE corpus vs a **direct-LLM baseline** (same
+  model, single-shot), scored at the **locus** level (`score_locus.py`) to avoid
+  the flag-everything artifact of file-level scoring on multi-function cases.
+
+- **Open**: per-case fix-diff verification of the CVE corpora (to lift directional
+  P/R to a clean precision claim); CodeQL as a heavyweight data-flow baseline;
+  OWASP-style clean benchmark for resource/authn.

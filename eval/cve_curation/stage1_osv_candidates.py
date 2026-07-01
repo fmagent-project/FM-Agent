@@ -38,6 +38,14 @@ TARGET_CWE_PLUGIN = {
     "CWE-798": "crypto", "CWE-759": "crypto",
     # NOTE: CWE-295 (cert) / CWE-347 (sig) are mapped to typestate above (temporal
     # verify-before-trust), NOT crypto, to avoid double-counting.
+    # --- resource exhaustion / DoS CWEs ---
+    "CWE-400": "resource", "CWE-770": "resource", "CWE-674": "resource",
+    "CWE-1333": "resource", "CWE-409": "resource", "CWE-789": "resource",
+    "CWE-834": "resource", "CWE-835": "resource",
+    # --- authentication integrity CWEs ---
+    "CWE-287": "authn", "CWE-384": "authn", "CWE-613": "authn", "CWE-522": "authn",
+    "CWE-294": "authn", "CWE-620": "authn", "CWE-640": "authn", "CWE-303": "authn",
+    "CWE-305": "authn",
 }
 TARGET_CWES = set(TARGET_CWE_PLUGIN)
 

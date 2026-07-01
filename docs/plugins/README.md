@@ -75,15 +75,20 @@ driver 负责一切**理论无关**的编排;插件只拥有**理论**。铁律:
 
 ---
 
-## 3. 五个插件总览
+## 3. 七个插件总览
 
-| 插件 | 形式理论 | 检测目标(CWE) | verdict 词汇 | 组合方式 | 合成靶验证 |
-|---|---|---|---|---|---|
-| [**ifc**](./ifc.md) | 非干涉(机密性 / Bell-LaPadula) | 隐私/密钥泄露(200/209/532) | LEAK · DECLASSIFIED · POLYMORPHIC · SECURE · ERROR | 自底向上(标签替换) | 68/68 与旧版一致 |
-| [**authz**](./authz.md) | 守卫式霍尔 / 授权逻辑 | 访问控制 / IDOR-BOLA(862/863/639) | VULNERABLE · NEEDS_REVIEW · SAFE · ERROR | **自顶向下**(义务传播) | 8/9 严格,0 漏报 |
-| [**taint**](./taint.md) | 非干涉(完整性 / Biba 对偶) | 注入(89/78/79/22/918/502…) | VULNERABLE · POLYMORPHIC · SANITIZED · SAFE · ERROR | 自底向上(sink 实例化) | 5/7 严格,0 漏报 |
-| [**crypto**](./crypto.md) | CrySL(算法约束+typestate+溯源) | 加密误用(327/321/329/338/916/347/295) | VULNERABLE · WEAK · POLYMORPHIC · NEEDS_REVIEW · SAFE · ERROR | 自底向上(溯源) | 9/9 严格,0 漏报 |
-| [**typestate**](./typestate.md) | 属性自动机 / typestate / 安全 LTL | 时序(367/352/295/772/775/672/415/306) | VULNERABLE · POLYMORPHIC · NEEDS_REVIEW · SAFE · ERROR | **双向**(splice + 上下文) | 8/11 严格,0 漏报 |
+> 组合已从五个扩展到 **七个**。后两个(**resource**、**authn**)由
+> `fm-plugin-generator` skill 在同一套 SPI 上自主生成 —— 见 §7。
+
+| 插件 | 形式理论 | 检测目标(CWE) | verdict 词汇 | 组合方式 |
+|---|---|---|---|---|
+| [**ifc**](./ifc.md) | 非干涉(机密性 / Bell-LaPadula) | 隐私/密钥泄露(200/209/532) | LEAK · DECLASSIFIED · POLYMORPHIC · SECURE · ERROR | 自底向上(标签替换) |
+| [**authz**](./authz.md) | 守卫式霍尔 / 授权逻辑 | 访问控制 / IDOR-BOLA(862/863/639/306) | VULNERABLE · NEEDS_REVIEW · SAFE · ERROR | **自顶向下**(义务传播) |
+| [**taint**](./taint.md) | 非干涉(完整性 / Biba 对偶) | 注入(89/78/79/22/918/502…) | VULNERABLE · POLYMORPHIC · SANITIZED · SAFE · ERROR | 自底向上(sink 实例化) |
+| [**crypto**](./crypto.md) | CrySL(算法约束+typestate+溯源) | 加密误用(327/321/329/338/916/347/295) | VULNERABLE · WEAK · POLYMORPHIC · NEEDS_REVIEW · SAFE · ERROR | 自底向上(溯源) |
+| [**typestate**](./typestate.md) | 属性自动机 / typestate / 安全 LTL | 时序(367/352/295/772/775/672/415/306) | VULNERABLE · POLYMORPHIC · NEEDS_REVIEW · SAFE · ERROR | **双向**(splice + 上下文) |
+| **resource** | 资源界限(量级→代价操作→支配性界限) | DoS(400/770/674/1333/409/789/834) | VULNERABLE · POLYMORPHIC · BOUNDED · SAFE · ERROR | 自底向上(taint 姊妹:量级实例化) |
+| **authn** | 守卫式霍尔(认证事件支配+强度+会话卫生) | 认证完整性(287/384/613/522/294/620/640) | VULNERABLE · NEEDS_REVIEW · SAFE · ERROR | **自顶向下**(authz 姊妹:义务传播) |
 
 ### 三种组合方式(同一 SPI 的不同用法)
 
@@ -93,7 +98,7 @@ driver 负责一切**理论无关**的编排;插件只拥有**理论**。铁律:
 
 这三种风格能跑在同一个 driver 上,证明了 SPI 的通用性。
 
-### 五个插件共享的纪律
+### 所有插件共享的纪律
 
 1. **fail-closed**:拿不准 → 保守(High / tainted / NEEDS_REVIEW),绝不静默 SAFE。
 2. **POLYMORPHIC**:调用者依赖的事实(参数标签/资源状态由 caller 决定)——孤立看无法判定,在调用点实例化。
@@ -107,10 +112,10 @@ driver 负责一切**理论无关**的编排;插件只拥有**理论**。铁律:
 ```bash
 # 统一 CLI:对一个目标项目跑某个插件
 python3 run_plugin.py <plugin> <proj_dir>
-#   plugin ∈ {ifc, authz, taint, crypto, typestate}
+#   plugin ∈ {ifc, authz, taint, crypto, typestate, resource, authn}
+#   (插件名单由 src/plugins/registry.py 自动派生,新增插件无需改 CLI)
 
 # 输出写到 <proj_dir>/fm_agent_<plugin>/results/**.json + summary.json
-# (ifc 为兼容旧工具,写到 fm_agent_ifc/ifc_results/)
 ```
 
 可视化:`ifc_viewer.py` 是一个零依赖的 web viewer,**自动识别**目标项目跑过哪个插件并加载。左栏函数列表 + 调用图,中栏按插件定制的分析面板,右栏 LLM 的 prompt/response。每个插件配一个原理介绍弹窗(左上角叹号)。
@@ -131,13 +136,34 @@ AUTHZ_MODEL / MAX_AUTHZ_ITER / AUTHZ_FAIL_CLOSED
 TAINT_MODEL / MAX_TAINT_ITER / TAINT_FAIL_CLOSED
 CRYPTO_MODEL / MAX_CRYPTO_ITER / CRYPTO_FAIL_CLOSED
 TYPESTATE_MODEL / MAX_TYPESTATE_ITER / TYPESTATE_FAIL_CLOSED
+RESOURCE_MODEL / MAX_RESOURCE_ITER / RESOURCE_FAIL_CLOSED
+AUTHN_MODEL / MAX_AUTHN_ITER / AUTHN_FAIL_CLOSED
 ```
 
 默认都 fall back 到全局 `LLM_MODEL`。
 
 ---
 
-## 6. 相关设计文档
+## 7. 插件注册表 + 自主生成新插件
+
+**注册表(`src/plugins/registry.py`)** 是"有哪些插件"的唯一真相源。它是**纯数据**
+(不 import 任何插件类、不拉 openai),所以零依赖的 `ifc_viewer.py` 也能安全读取;
+插件类经 `load_plugin_class()` 懒加载。加一个插件 = 加一条 manifest + 放 3 个文件;
+`run_plugin.py`、整个 `eval/` 管线、viewer 全部自动识别,**无需改任何消费点**
+(以前要手工改 6 处分散代码)。
+
+**每个插件也是一个 skill**(`skills/fm-plugin-<name>/SKILL.md`),可挂载到现代
+coding agent —— frontmatter 声明触发场景 + 调用方式 + verdict 语义。
+
+**`fm-plugin-generator` 元 skill** 能自主生成新插件:输入(新 CWE + 形式理论 +
+测试集)→ 读 SPI + 最近的模板插件 → 产出 3 文件 + manifest + viewer JS 渲染器 →
+经注册表自动发现 → 复用 `stratify → run_baselines → run_ours → score → audit`
+自测循环迭代。**resource 和 authn 两个插件就是它的产物**(分别验证了自底向上和
+自顶向下两种组合方向);过程中还借自测循环发现并修复了工具自身的多个 bug。
+
+---
+
+## 8. 相关设计文档
 
 - [`docs/security_portfolio_roadmap.md`](../security_portfolio_roadmap.md) — 整个安全领域按形式属性类的可行性映射(为什么有些类适合、有些不适合这套底座)。
 - [`docs/security_roadmap.md`](../security_roadmap.md) — 机密性↔完整性对偶的论证。

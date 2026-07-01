@@ -1,0 +1,1059 @@
+{
+  "detections": {
+    "cve:CVE-2014-2237__memcache__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2014-2237__memcache__before-py/list_revoked_tokens.py:NEEDS_REVIEW",
+        "CVE-2014-2237__memcache__before-py/_add_to_revocation_list.py:NEEDS_REVIEW",
+        "CVE-2014-2237__memcache__before-py/_update_user_list_with_cas.py:VULNERABLE",
+        "CVE-2014-2237__memcache__before-py/create_token.py:VULNERABLE",
+        "CVE-2014-2237__memcache__before-py/get_token.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-3206__kerberos__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 3,
+      "evidence": [
+        "CVE-2015-3206__kerberos__before-py/authGSSServerClean.py:NEEDS_REVIEW",
+        "CVE-2015-3206__kerberos__before-py/authGSSServerStoreDelegate.py:NEEDS_REVIEW",
+        "CVE-2015-3206__kerberos__before-py/authGSSClientInit.py:VULNERABLE",
+        "CVE-2015-3206__kerberos__before-py/authGSSServerCacheName.py:NEEDS_REVIEW",
+        "CVE-2015-3206__kerberos__before-py/authGSSServerTargetName.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-7723__subscriptions__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2026-7723__subscriptions__before-py/accept_prefect_socket.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-3206__kerberos__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2015-3206__kerberos__after-py/authGSSServerClean.py:NEEDS_REVIEW",
+        "CVE-2015-3206__kerberos__after-py/checkPassword.py:VULNERABLE",
+        "CVE-2015-3206__kerberos__after-py/authGSSServerStoreDelegate.py:NEEDS_REVIEW",
+        "CVE-2015-3206__kerberos__after-py/authGSSClientInit.py:VULNERABLE",
+        "CVE-2015-3206__kerberos__after-py/authGSSServerCacheName.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2024-47533__authn_configfile__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2024-47533__authn_configfile__after-py/authenticate.py:VULNERABLE",
+        "CVE-2024-47533__authn_configfile__after-py/__parse_storage.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2014-2237__kvs__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 3,
+      "evidence": [
+        "CVE-2014-2237__kvs__after-py/flush_expired_tokens.py:NEEDS_REVIEW",
+        "CVE-2014-2237__kvs__after-py/list_revoked_tokens.py:NEEDS_REVIEW",
+        "CVE-2014-2237__kvs__after-py/_list_tokens_for_consumer.py:NEEDS_REVIEW",
+        "CVE-2014-2237__kvs__after-py/create_token.py:VULNERABLE",
+        "CVE-2014-2237__kvs__after-py/_list_tokens_for_user.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2014-2237__memcache__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2014-2237__memcache__after-py/list_revoked_tokens.py:NEEDS_REVIEW",
+        "CVE-2014-2237__memcache__after-py/_add_to_revocation_list.py:NEEDS_REVIEW",
+        "CVE-2014-2237__memcache__after-py/_update_user_list_with_cas.py:NEEDS_REVIEW",
+        "CVE-2014-2237__memcache__after-py/create_token.py:VULNERABLE",
+        "CVE-2014-2237__memcache__after-py/get_token.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-42731__FIDO2__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 15,
+      "evidence": [
+        "CVE-2022-42731__FIDO2__before-py/recheck.py:VULNERABLE",
+        "CVE-2022-42731__FIDO2__before-py/start.py:NEEDS_REVIEW",
+        "CVE-2022-42731__FIDO2__before-py/begin_registeration.py:VULNERABLE",
+        "CVE-2022-42731__FIDO2__before-py/getUserCredentials.py:NEEDS_REVIEW",
+        "CVE-2022-42731__FIDO2__before-py/authenticate_complete.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-42731__FIDO2__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 12,
+      "evidence": [
+        "CVE-2022-42731__FIDO2__after-py/recheck.py:VULNERABLE",
+        "CVE-2022-42731__FIDO2__after-py/start.py:NEEDS_REVIEW",
+        "CVE-2022-42731__FIDO2__after-py/begin_registeration.py:VULNERABLE",
+        "CVE-2022-42731__FIDO2__after-py/getUserCredentials.py:NEEDS_REVIEW",
+        "CVE-2022-42731__FIDO2__after-py/authenticate_complete.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-3982__cached_db__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 9,
+      "evidence": [
+        "CVE-2015-3982__cached_db__before-py/flush.py:NEEDS_REVIEW",
+        "CVE-2015-3982__cached_db__before-py/save.py:NEEDS_REVIEW",
+        "CVE-2015-3982__cached_db__before-py/__init__.py:VULNERABLE",
+        "CVE-2015-3982__cached_db__before-py/cache_key.py:VULNERABLE",
+        "CVE-2015-3982__cached_db__before-py/delete.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2012-2144__middleware__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2012-2144__middleware__before-py/process_request.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-40273__override__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 9,
+      "evidence": [
+        "CVE-2023-40273__override__before-py/create_login_manager.py:VULNERABLE",
+        "CVE-2023-40273__override__before-py/load_user_jwt.py:VULNERABLE",
+        "CVE-2023-40273__override__before-py/load_user.py:NEEDS_REVIEW",
+        "CVE-2023-40273__override__before-py/register_views.py:NEEDS_REVIEW",
+        "CVE-2023-40273__override__before-py/create_jwt_manager.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2012-2144__auth_forms__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 13,
+      "evidence": [
+        "CVE-2012-2144__auth_forms__before-py/_set_session_data.py:VULNERABLE",
+        "CVE-2012-2144__auth_forms__before-py/handle.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-40273__override__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 9,
+      "evidence": [
+        "CVE-2023-40273__override__after-py/create_login_manager.py:VULNERABLE",
+        "CVE-2023-40273__override__after-py/load_user_jwt.py:VULNERABLE",
+        "CVE-2023-40273__override__after-py/load_user.py:NEEDS_REVIEW",
+        "CVE-2023-40273__override__after-py/register_views.py:NEEDS_REVIEW",
+        "CVE-2023-40273__override__after-py/create_jwt_manager.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2012-2144__auth__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 6,
+      "evidence": [
+        "CVE-2012-2144__auth__after-py/switch_tenants.py:VULNERABLE",
+        "CVE-2012-2144__auth__after-py/user_home.py:NEEDS_REVIEW",
+        "CVE-2012-2144__auth__after-py/logout.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2012-2144__middleware__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2012-2144__middleware__after-py/process_request.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-32634__servers_list__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2026-32634__servers_list__before-py/update_servers_stats.py:NEEDS_REVIEW",
+        "CVE-2026-32634__servers_list__before-py/__update_stats_rpc.py:NEEDS_REVIEW",
+        "CVE-2026-32634__servers_list__before-py/get_uri.py:VULNERABLE",
+        "CVE-2026-32634__servers_list__before-py/__update_stats_rest.py:NEEDS_REVIEW",
+        "CVE-2026-32634__servers_list__before-py/__init__.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-7546__sql__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 5,
+      "evidence": [
+        "CVE-2015-7546__sql__before-py/flush_expired_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__sql__before-py/list_revoked_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__sql__before-py/delete_tokens.py:VULNERABLE",
+        "CVE-2015-7546__sql__before-py/_list_tokens_for_consumer.py:NEEDS_REVIEW",
+        "CVE-2015-7546__sql__before-py/create_token.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-7546__kvs__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2015-7546__kvs__before-py/flush_expired_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__kvs__before-py/list_revoked_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__kvs__before-py/delete_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__kvs__before-py/_set_key.py:NEEDS_REVIEW",
+        "CVE-2015-7546__kvs__before-py/_add_to_revocation_list.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-7546__sql__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2015-7546__sql__after-py/flush_expired_tokens.py:VULNERABLE",
+        "CVE-2015-7546__sql__after-py/list_revoked_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__sql__after-py/delete_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__sql__after-py/_list_tokens_for_consumer.py:NEEDS_REVIEW",
+        "CVE-2015-7546__sql__after-py/create_token.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-32634__client_browser__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 7,
+      "evidence": [
+        "CVE-2026-32634__client_browser__after-py/serve_forever.py:NEEDS_REVIEW",
+        "CVE-2026-32634__client_browser__after-py/__serve_forever.py:NEEDS_REVIEW",
+        "CVE-2026-32634__client_browser__after-py/end.py:NEEDS_REVIEW",
+        "CVE-2026-32634__client_browser__after-py/__display_server.py:VULNERABLE",
+        "CVE-2026-32634__client_browser__after-py/set_in_selected.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2015-7546__kvs__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2015-7546__kvs__after-py/flush_expired_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__kvs__after-py/list_revoked_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__kvs__after-py/delete_tokens.py:NEEDS_REVIEW",
+        "CVE-2015-7546__kvs__after-py/_set_key.py:NEEDS_REVIEW",
+        "CVE-2015-7546__kvs__after-py/_add_to_revocation_list.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-32634__servers_list__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "CVE-2026-32634__servers_list__after-py/update_servers_stats.py:NEEDS_REVIEW",
+        "CVE-2026-32634__servers_list__after-py/_get_preconfigured_password.py:NEEDS_REVIEW",
+        "CVE-2026-32634__servers_list__after-py/__update_stats_rpc.py:NEEDS_REVIEW",
+        "CVE-2026-32634__servers_list__after-py/get_uri.py:NEEDS_REVIEW",
+        "CVE-2026-32634__servers_list__after-py/__update_stats_rest.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-65430__request_validator__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 24,
+      "evidence": [
+        "CVE-2025-65430__request_validator__before-py/validate_client_id.py:NEEDS_REVIEW",
+        "CVE-2025-65430__request_validator__before-py/validate_bearer_token.py:VULNERABLE",
+        "CVE-2025-65430__request_validator__before-py/validate_silent_login.py:VULNERABLE",
+        "CVE-2025-65430__request_validator__before-py/finalize_id_token.py:NEEDS_REVIEW",
+        "CVE-2025-65430__request_validator__before-py/validate_code.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-58352__middleware__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2025-58352__middleware__before-py/process_view.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-41672__app__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2022-41672__app__before-py/purge_cached_app.py:NEEDS_REVIEW",
+        "CVE-2022-41672__app__before-py/create_app.py:VULNERABLE",
+        "CVE-2022-41672__app__before-py/sync_appbuilder_roles.py:NEEDS_REVIEW",
+        "CVE-2022-41672__app__before-py/cached_app.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-58352__utils__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2025-58352__utils__before-py/invalidate_reset_codes.py:NEEDS_REVIEW",
+        "CVE-2025-58352__utils__before-py/cycle_session_keys.py:NEEDS_REVIEW",
+        "CVE-2025-58352__utils__before-py/remove_user.py:NEEDS_REVIEW",
+        "CVE-2025-58352__utils__before-py/get_all_user_mails.py:NEEDS_REVIEW",
+        "CVE-2025-58352__utils__before-py/lock_user.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-41672__app__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2022-41672__app__after-py/purge_cached_app.py:NEEDS_REVIEW",
+        "CVE-2022-41672__app__after-py/create_app.py:VULNERABLE",
+        "CVE-2022-41672__app__after-py/sync_appbuilder_roles.py:NEEDS_REVIEW",
+        "CVE-2022-41672__app__after-py/cached_app.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-58352__utils__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 2,
+      "evidence": [
+        "CVE-2025-58352__utils__after-py/invalidate_reset_codes.py:NEEDS_REVIEW",
+        "CVE-2025-58352__utils__after-py/cycle_session_keys.py:NEEDS_REVIEW",
+        "CVE-2025-58352__utils__after-py/remove_user.py:NEEDS_REVIEW",
+        "CVE-2025-58352__utils__after-py/get_all_user_mails.py:NEEDS_REVIEW",
+        "CVE-2025-58352__utils__after-py/lock_user.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-65430__request_validator__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 24,
+      "evidence": [
+        "CVE-2025-65430__request_validator__after-py/validate_bearer_token.py:VULNERABLE",
+        "CVE-2025-65430__request_validator__after-py/validate_silent_login.py:VULNERABLE",
+        "CVE-2025-65430__request_validator__after-py/finalize_id_token.py:NEEDS_REVIEW",
+        "CVE-2025-65430__request_validator__after-py/validate_code.py:VULNERABLE",
+        "CVE-2025-65430__request_validator__after-py/save_bearer_token.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-58352__middleware__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 4,
+      "evidence": [
+        "CVE-2025-58352__middleware__after-py/process_view.py:VULNERABLE",
+        "CVE-2025-58352__middleware__after-py/__call__.py:VULNERABLE"
+      ],
+      "error": null
+    },
+    "cve:CVE-2019-19844__forms__before": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 1,
+      "evidence": [
+        "CVE-2019-19844__forms__before-py/save_3.py:NEEDS_REVIEW",
+        "CVE-2019-19844__forms__before-py/clean.py:VULNERABLE",
+        "CVE-2019-19844__forms__before-py/clean_new_password2.py:NEEDS_REVIEW",
+        "CVE-2019-19844__forms__before-py/save.py:NEEDS_REVIEW",
+        "CVE-2019-19844__forms__before-py/clean_password2_1.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    },
+    "cve:CVE-2019-19844__forms__after": {
+      "detected": true,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "CVE-2019-19844__forms__after-py/save_3.py:NEEDS_REVIEW",
+        "CVE-2019-19844__forms__after-py/clean_new_password2.py:NEEDS_REVIEW",
+        "CVE-2019-19844__forms__after-py/save.py:NEEDS_REVIEW",
+        "CVE-2019-19844__forms__after-py/clean_password2_1.py:NEEDS_REVIEW",
+        "CVE-2019-19844__forms__after-py/get_user_id.py:NEEDS_REVIEW"
+      ],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2014-2237__memcache__before": {
+      "seconds": 92.5,
+      "n_functions": 13,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2015-3206__kerberos__before": {
+      "seconds": 157.9,
+      "n_functions": 19,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2026-7723__subscriptions__before": {
+      "seconds": 18.9,
+      "n_functions": 2,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2015-3206__kerberos__after": {
+      "seconds": 138.7,
+      "n_functions": 19,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2024-47533__authn_configfile__after": {
+      "seconds": 19.3,
+      "n_functions": 3,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2014-2237__kvs__after": {
+      "seconds": 107.0,
+      "n_functions": 14,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2014-2237__memcache__after": {
+      "seconds": 93.1,
+      "n_functions": 13,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2022-42731__FIDO2__before": {
+      "seconds": 99.2,
+      "n_functions": 9,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2022-42731__FIDO2__after": {
+      "seconds": 90.1,
+      "n_functions": 9,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "ERROR",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2015-3982__cached_db__before": {
+      "seconds": 55.2,
+      "n_functions": 7,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2012-2144__middleware__before": {
+      "seconds": 18.1,
+      "n_functions": 3,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "VULNERABLE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2023-40273__override__before": {
+      "seconds": 99.9,
+      "n_functions": 13,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2012-2144__auth_forms__before": {
+      "seconds": 54.8,
+      "n_functions": 3,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2023-40273__override__after": {
+      "seconds": 113.3,
+      "n_functions": 14,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2012-2144__auth__after": {
+      "seconds": 43.5,
+      "n_functions": 5,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE"
+      ]
+    },
+    "cve:CVE-2012-2144__middleware__after": {
+      "seconds": 25.3,
+      "n_functions": 3,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "VULNERABLE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2026-32634__servers_list__before": {
+      "seconds": 91.9,
+      "n_functions": 12,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2015-7546__sql__before": {
+      "seconds": 131.5,
+      "n_functions": 15,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2015-7546__kvs__before": {
+      "seconds": 165.8,
+      "n_functions": 23,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2015-7546__sql__after": {
+      "seconds": 127.2,
+      "n_functions": 15,
+      "error": null,
+      "verdicts": [
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2026-32634__client_browser__after": {
+      "seconds": 54.7,
+      "n_functions": 6,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2015-7546__kvs__after": {
+      "seconds": 166.1,
+      "n_functions": 23,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2026-32634__servers_list__after": {
+      "seconds": 99.3,
+      "n_functions": 14,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2025-65430__request_validator__before": {
+      "seconds": 326.6,
+      "n_functions": 36,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2025-58352__middleware__before": {
+      "seconds": 52.6,
+      "n_functions": 7,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2022-41672__app__before": {
+      "seconds": 35.3,
+      "n_functions": 4,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2025-58352__utils__before": {
+      "seconds": 86.1,
+      "n_functions": 9,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2022-41672__app__after": {
+      "seconds": 30.0,
+      "n_functions": 4,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2025-58352__utils__after": {
+      "seconds": 87.0,
+      "n_functions": 9,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2025-65430__request_validator__after": {
+      "seconds": 339.1,
+      "n_functions": 36,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "VULNERABLE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2025-58352__middleware__after": {
+      "seconds": 60.7,
+      "n_functions": 7,
+      "error": null,
+      "verdicts": [
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "VULNERABLE",
+        "SAFE",
+        "SAFE"
+      ]
+    },
+    "cve:CVE-2019-19844__forms__before": {
+      "seconds": 178.0,
+      "n_functions": 26,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "VULNERABLE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW"
+      ]
+    },
+    "cve:CVE-2019-19844__forms__after": {
+      "seconds": 196.7,
+      "n_functions": 27,
+      "error": null,
+      "verdicts": [
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "NEEDS_REVIEW",
+        "SAFE",
+        "SAFE",
+        "NEEDS_REVIEW"
+      ]
+    }
+  }
+}

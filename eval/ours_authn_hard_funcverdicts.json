@@ -1,0 +1,694 @@
+{
+ "cve:CVE-2014-2237__memcache__before": {
+  "changed_funcs": [
+   "create_token"
+  ],
+  "func_verdicts": {
+   "list_revoked_tokens": "NEEDS_REVIEW",
+   "_convert_user_index_from_json": "SAFE",
+   "_prefix_token_id": "SAFE",
+   "_get_memcache_client": "SAFE",
+   "_add_to_revocation_list": "NEEDS_REVIEW",
+   "_update_user_list_with_cas": "VULNERABLE",
+   "create_token": "VULNERABLE",
+   "__init__": "SAFE",
+   "get_token": "NEEDS_REVIEW",
+   "list_tokens": "NEEDS_REVIEW",
+   "delete_token": "NEEDS_REVIEW",
+   "client": "NEEDS_REVIEW",
+   "_prefix_user_id": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2015-3206__kerberos__before": {
+  "changed_funcs": [
+   "checkPassword",
+   "changePassword"
+  ],
+  "func_verdicts": {
+   "authGSSServerClean": "NEEDS_REVIEW",
+   "authGSSClientClean": "SAFE",
+   "authGSSClientUnwrap": "SAFE",
+   "getServerPrincipalDetails": "SAFE",
+   "checkPassword": "SAFE",
+   "authGSSClientUserName": "SAFE",
+   "authGSSServerStep": "SAFE",
+   "authGSSServerResponse": "SAFE",
+   "authGSSServerStoreDelegate": "NEEDS_REVIEW",
+   "authGSSServerInit": "SAFE",
+   "authGSSClientInit": "VULNERABLE",
+   "authGSSServerCacheName": "NEEDS_REVIEW",
+   "authGSSClientResponse": "SAFE",
+   "authGSSClientResponseConf": "SAFE",
+   "authGSSClientStep": "SAFE",
+   "authGSSServerTargetName": "NEEDS_REVIEW",
+   "authGSSClientWrap": "NEEDS_REVIEW",
+   "authGSSServerUserName": "NEEDS_REVIEW",
+   "changePassword": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2026-7723__subscriptions__before": {
+  "changed_funcs": [
+   "accept_prefect_socket"
+  ],
+  "func_verdicts": {
+   "still_connected": "SAFE",
+   "accept_prefect_socket": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2015-3206__kerberos__after": {
+  "changed_funcs": [
+   "checkPassword",
+   "changePassword"
+  ],
+  "func_verdicts": {
+   "authGSSServerClean": "NEEDS_REVIEW",
+   "authGSSClientClean": "SAFE",
+   "authGSSClientUnwrap": "SAFE",
+   "getServerPrincipalDetails": "SAFE",
+   "checkPassword": "VULNERABLE",
+   "authGSSClientUserName": "SAFE",
+   "authGSSServerStep": "SAFE",
+   "authGSSServerResponse": "SAFE",
+   "authGSSServerStoreDelegate": "NEEDS_REVIEW",
+   "authGSSServerInit": "SAFE",
+   "authGSSClientInit": "VULNERABLE",
+   "authGSSServerCacheName": "NEEDS_REVIEW",
+   "authGSSClientResponse": "SAFE",
+   "authGSSClientResponseConf": "SAFE",
+   "authGSSClientStep": "SAFE",
+   "authGSSServerTargetName": "NEEDS_REVIEW",
+   "authGSSClientWrap": "NEEDS_REVIEW",
+   "authGSSServerUserName": "NEEDS_REVIEW",
+   "changePassword": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2024-47533__authn_configfile__after": {
+  "changed_funcs": [
+   "__parse_storage"
+  ],
+  "func_verdicts": {
+   "register": "SAFE",
+   "authenticate": "VULNERABLE",
+   "__parse_storage": "NEEDS_REVIEW"
+  },
+  "label": false
+ },
+ "cve:CVE-2014-2237__kvs__after": {
+  "changed_funcs": [
+   "flush_expired_tokens"
+  ],
+  "func_verdicts": {
+   "flush_expired_tokens": "NEEDS_REVIEW",
+   "list_revoked_tokens": "NEEDS_REVIEW",
+   "_list_tokens_for_consumer": "NEEDS_REVIEW",
+   "is_expired": "SAFE",
+   "trust_matches": "SAFE",
+   "create_token": "VULNERABLE",
+   "is_not_expired": "SAFE",
+   "_list_tokens_for_user": "NEEDS_REVIEW",
+   "__init__": "SAFE",
+   "_consumer_matches": "SAFE",
+   "get_token": "NEEDS_REVIEW",
+   "list_tokens": "NEEDS_REVIEW",
+   "delete_token": "VULNERABLE",
+   "_list_tokens_for_trust": "NEEDS_REVIEW"
+  },
+  "label": false
+ },
+ "cve:CVE-2014-2237__memcache__after": {
+  "changed_funcs": [
+   "create_token"
+  ],
+  "func_verdicts": {
+   "list_revoked_tokens": "NEEDS_REVIEW",
+   "_convert_user_index_from_json": "SAFE",
+   "_prefix_token_id": "SAFE",
+   "_get_memcache_client": "SAFE",
+   "_add_to_revocation_list": "NEEDS_REVIEW",
+   "_update_user_list_with_cas": "NEEDS_REVIEW",
+   "create_token": "VULNERABLE",
+   "__init__": "SAFE",
+   "get_token": "NEEDS_REVIEW",
+   "list_tokens": "NEEDS_REVIEW",
+   "delete_token": "NEEDS_REVIEW",
+   "client": "NEEDS_REVIEW",
+   "_prefix_user_id": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2022-42731__FIDO2__before": {
+  "changed_funcs": [
+   "complete_reg"
+  ],
+  "func_verdicts": {
+   "recheck": "VULNERABLE",
+   "start": "NEEDS_REVIEW",
+   "begin_registeration": "VULNERABLE",
+   "getUserCredentials": "NEEDS_REVIEW",
+   "getServer": "SAFE",
+   "authenticate_complete": "VULNERABLE",
+   "auth": "SAFE",
+   "authenticate_begin": "VULNERABLE",
+   "complete_reg": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2022-42731__FIDO2__after": {
+  "changed_funcs": [
+   "complete_reg"
+  ],
+  "func_verdicts": {
+   "recheck": "VULNERABLE",
+   "start": "NEEDS_REVIEW",
+   "begin_registeration": "VULNERABLE",
+   "getUserCredentials": "NEEDS_REVIEW",
+   "getServer": "SAFE",
+   "authenticate_complete": "VULNERABLE",
+   "auth": "SAFE",
+   "authenticate_begin": "ERROR",
+   "complete_reg": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2015-3982__cached_db__before": {
+  "changed_funcs": [
+   "flush"
+  ],
+  "func_verdicts": {
+   "flush": "NEEDS_REVIEW",
+   "save": "NEEDS_REVIEW",
+   "exists": "SAFE",
+   "__init__": "VULNERABLE",
+   "cache_key": "VULNERABLE",
+   "delete": "VULNERABLE",
+   "load": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2012-2144__middleware__before": {
+  "changed_funcs": [
+   "process_request"
+  ],
+  "func_verdicts": {
+   "process_exception": "SAFE",
+   "process_request": "VULNERABLE",
+   "process_response": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-40273__override__before": {
+  "changed_funcs": [
+   "reset_password"
+  ],
+  "func_verdicts": {
+   "create_login_manager": "VULNERABLE",
+   "auth_type": "SAFE",
+   "load_user_jwt": "VULNERABLE",
+   "auth_user_registration": "SAFE",
+   "load_user": "NEEDS_REVIEW",
+   "register_views": "NEEDS_REVIEW",
+   "create_jwt_manager": "VULNERABLE",
+   "get_user_by_id": "NEEDS_REVIEW",
+   "is_auth_limited": "SAFE",
+   "resourcemodelview": "SAFE",
+   "__init__": "VULNERABLE",
+   "reset_password": "NEEDS_REVIEW",
+   "auth_rate_limit": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2012-2144__auth_forms__before": {
+  "changed_funcs": [
+   "handle"
+  ],
+  "func_verdicts": {
+   "_set_session_data": "VULNERABLE",
+   "__init__": "SAFE",
+   "handle": "VULNERABLE"
+  },
+  "label": true
+ },
+ "cve:CVE-2023-40273__override__after": {
+  "changed_funcs": [
+   "reset_password"
+  ],
+  "func_verdicts": {
+   "create_login_manager": "VULNERABLE",
+   "auth_type": "SAFE",
+   "load_user_jwt": "VULNERABLE",
+   "auth_user_registration": "SAFE",
+   "load_user": "NEEDS_REVIEW",
+   "register_views": "NEEDS_REVIEW",
+   "create_jwt_manager": "NEEDS_REVIEW",
+   "get_user_by_id": "NEEDS_REVIEW",
+   "is_auth_limited": "SAFE",
+   "resourcemodelview": "SAFE",
+   "__init__": "VULNERABLE",
+   "reset_user_sessions": "VULNERABLE",
+   "reset_password": "NEEDS_REVIEW",
+   "auth_rate_limit": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2012-2144__auth__after": {
+  "changed_funcs": [
+   "logout"
+  ],
+  "func_verdicts": {
+   "switch_tenants": "VULNERABLE",
+   "user_home": "NEEDS_REVIEW",
+   "get_context_data": "SAFE",
+   "get_initial": "SAFE",
+   "logout": "VULNERABLE"
+  },
+  "label": false
+ },
+ "cve:CVE-2012-2144__middleware__after": {
+  "changed_funcs": [
+   "process_request"
+  ],
+  "func_verdicts": {
+   "process_exception": "SAFE",
+   "process_request": "VULNERABLE",
+   "process_response": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-32634__servers_list__before": {
+  "changed_funcs": [
+   "get_uri"
+  ],
+  "func_verdicts": {
+   "__get_key": "SAFE",
+   "update_servers_stats": "NEEDS_REVIEW",
+   "__update_stats_rpc": "NEEDS_REVIEW",
+   "get_servers_list": "SAFE",
+   "get_uri": "VULNERABLE",
+   "__update_stats_rest": "NEEDS_REVIEW",
+   "load_columns": "SAFE",
+   "__init__": "NEEDS_REVIEW",
+   "set_in_selected": "NEEDS_REVIEW",
+   "get_columns": "SAFE",
+   "load": "NEEDS_REVIEW",
+   "__update_stats": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2015-7546__sql__before": {
+  "changed_funcs": [
+   "list_revoked_tokens"
+  ],
+  "func_verdicts": {
+   "flush_expired_tokens": "NEEDS_REVIEW",
+   "_expiry_range_strategy": "SAFE",
+   "list_revoked_tokens": "NEEDS_REVIEW",
+   "delete_tokens": "VULNERABLE",
+   "_list_tokens_for_consumer": "NEEDS_REVIEW",
+   "_tenant_matches": "SAFE",
+   "create_token": "VULNERABLE",
+   "_list_tokens_for_user": "NEEDS_REVIEW",
+   "_expiry_range_all": "SAFE",
+   "_consumer_matches": "SAFE",
+   "get_token": "NEEDS_REVIEW",
+   "delete_token": "NEEDS_REVIEW",
+   "_list_tokens_for_trust": "NEEDS_REVIEW",
+   "_expiry_range_batched": "NEEDS_REVIEW",
+   "_list_tokens": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2015-7546__kvs__before": {
+  "changed_funcs": [
+   "_add_to_revocation_list"
+  ],
+  "func_verdicts": {
+   "flush_expired_tokens": "NEEDS_REVIEW",
+   "_format_token_index_item": "SAFE",
+   "list_revoked_tokens": "NEEDS_REVIEW",
+   "_prefix_token_id": "SAFE",
+   "delete_tokens": "NEEDS_REVIEW",
+   "_set_key": "NEEDS_REVIEW",
+   "_token_match_trust": "SAFE",
+   "_token_match_tenant": "SAFE",
+   "_add_to_revocation_list": "NEEDS_REVIEW",
+   "create_token": "VULNERABLE",
+   "_get_current_time": "SAFE",
+   "_get_key": "NEEDS_REVIEW",
+   "__init__": "SAFE",
+   "_get_user_token_list_with_expiry": "NEEDS_REVIEW",
+   "_update_user_token_list": "VULNERABLE",
+   "get_token": "NEEDS_REVIEW",
+   "delete_token": "NEEDS_REVIEW",
+   "_delete_key": "NEEDS_REVIEW",
+   "_token_match_consumer": "SAFE",
+   "_get_key_or_default": "SAFE",
+   "_prefix_user_id": "SAFE",
+   "_get_user_token_list": "NEEDS_REVIEW",
+   "_list_tokens": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2015-7546__sql__after": {
+  "changed_funcs": [
+   "list_revoked_tokens"
+  ],
+  "func_verdicts": {
+   "flush_expired_tokens": "VULNERABLE",
+   "_expiry_range_strategy": "SAFE",
+   "list_revoked_tokens": "NEEDS_REVIEW",
+   "delete_tokens": "NEEDS_REVIEW",
+   "_list_tokens_for_consumer": "NEEDS_REVIEW",
+   "_tenant_matches": "SAFE",
+   "create_token": "VULNERABLE",
+   "_list_tokens_for_user": "NEEDS_REVIEW",
+   "_expiry_range_all": "SAFE",
+   "_consumer_matches": "SAFE",
+   "get_token": "NEEDS_REVIEW",
+   "delete_token": "NEEDS_REVIEW",
+   "_list_tokens_for_trust": "NEEDS_REVIEW",
+   "_expiry_range_batched": "NEEDS_REVIEW",
+   "_list_tokens": "NEEDS_REVIEW"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-32634__client_browser__after": {
+  "changed_funcs": [
+   "__display_server"
+  ],
+  "func_verdicts": {
+   "serve_forever": "NEEDS_REVIEW",
+   "__serve_forever": "NEEDS_REVIEW",
+   "end": "NEEDS_REVIEW",
+   "__init__": "SAFE",
+   "__display_server": "VULNERABLE",
+   "set_in_selected": "NEEDS_REVIEW"
+  },
+  "label": false
+ },
+ "cve:CVE-2015-7546__kvs__after": {
+  "changed_funcs": [
+   "_add_to_revocation_list"
+  ],
+  "func_verdicts": {
+   "flush_expired_tokens": "NEEDS_REVIEW",
+   "_format_token_index_item": "SAFE",
+   "list_revoked_tokens": "NEEDS_REVIEW",
+   "_prefix_token_id": "SAFE",
+   "delete_tokens": "NEEDS_REVIEW",
+   "_set_key": "NEEDS_REVIEW",
+   "_token_match_trust": "SAFE",
+   "_token_match_tenant": "SAFE",
+   "_add_to_revocation_list": "NEEDS_REVIEW",
+   "create_token": "VULNERABLE",
+   "_get_current_time": "SAFE",
+   "_get_key": "NEEDS_REVIEW",
+   "__init__": "SAFE",
+   "_get_user_token_list_with_expiry": "NEEDS_REVIEW",
+   "_update_user_token_list": "VULNERABLE",
+   "get_token": "NEEDS_REVIEW",
+   "delete_token": "NEEDS_REVIEW",
+   "_delete_key": "NEEDS_REVIEW",
+   "_token_match_consumer": "SAFE",
+   "_get_key_or_default": "SAFE",
+   "_prefix_user_id": "SAFE",
+   "_get_user_token_list": "NEEDS_REVIEW",
+   "_list_tokens": "NEEDS_REVIEW"
+  },
+  "label": false
+ },
+ "cve:CVE-2026-32634__servers_list__after": {
+  "changed_funcs": [
+   "get_uri"
+  ],
+  "func_verdicts": {
+   "__get_key": "SAFE",
+   "update_servers_stats": "NEEDS_REVIEW",
+   "_get_connect_host": "SAFE",
+   "_get_preconfigured_password": "NEEDS_REVIEW",
+   "__update_stats_rpc": "NEEDS_REVIEW",
+   "get_servers_list": "SAFE",
+   "get_uri": "NEEDS_REVIEW",
+   "__update_stats_rest": "NEEDS_REVIEW",
+   "load_columns": "SAFE",
+   "__init__": "NEEDS_REVIEW",
+   "set_in_selected": "NEEDS_REVIEW",
+   "get_columns": "SAFE",
+   "load": "NEEDS_REVIEW",
+   "__update_stats": "NEEDS_REVIEW"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-65430__request_validator__before": {
+  "changed_funcs": [
+   "validate_bearer_token",
+   "validate_refresh_token"
+  ],
+  "func_verdicts": {
+   "validate_response_type": "SAFE",
+   "validate_client_id": "NEEDS_REVIEW",
+   "validate_bearer_token": "VULNERABLE",
+   "validate_silent_login": "VULNERABLE",
+   "finalize_id_token": "NEEDS_REVIEW",
+   "validate_user": "SAFE",
+   "validate_code": "VULNERABLE",
+   "save_bearer_token": "VULNERABLE",
+   "validate_jwt_bearer_token": "VULNERABLE",
+   "get_authorization_code_nonce": "NEEDS_REVIEW",
+   "get_default_redirect_uri": "SAFE",
+   "revoke_token": "NEEDS_REVIEW",
+   "validate_redirect_uri": "SAFE",
+   "save_authorization_code": "VULNERABLE",
+   "get_code_challenge": "NEEDS_REVIEW",
+   "authenticate_client": "VULNERABLE",
+   "validate_scopes": "VULNERABLE",
+   "validate_grant_type": "SAFE",
+   "is_origin_allowed": "NEEDS_REVIEW",
+   "validate_silent_authorization": "NEEDS_REVIEW",
+   "get_userinfo_claims": "NEEDS_REVIEW",
+   "client_authentication_required": "VULNERABLE",
+   "_lookup_authorization_code": "NEEDS_REVIEW",
+   "get_code_challenge_method": "NEEDS_REVIEW",
+   "authenticate_client_id": "VULNERABLE",
+   "confirm_redirect_uri": "NEEDS_REVIEW",
+   "_lookup_client": "NEEDS_REVIEW",
+   "_use_client": "NEEDS_REVIEW",
+   "get_original_scopes": "NEEDS_REVIEW",
+   "validate_user_match": "VULNERABLE",
+   "get_authorization_code_scopes": "NEEDS_REVIEW",
+   "invalidate_authorization_code": "NEEDS_REVIEW",
+   "rotate_refresh_token": "SAFE",
+   "get_default_scopes": "NEEDS_REVIEW",
+   "validate_refresh_token": "VULNERABLE",
+   "is_pkce_required": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2025-58352__middleware__before": {
+  "changed_funcs": [
+   "__call__"
+  ],
+  "func_verdicts": {
+   "__call___1": "SAFE",
+   "get_setting_re": "SAFE",
+   "__init___1": "SAFE",
+   "process_view": "VULNERABLE",
+   "__call__": "SAFE",
+   "__init__": "SAFE",
+   "get_user": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2022-41672__app__before": {
+  "changed_funcs": [
+   "create_app"
+  ],
+  "func_verdicts": {
+   "purge_cached_app": "NEEDS_REVIEW",
+   "create_app": "VULNERABLE",
+   "sync_appbuilder_roles": "NEEDS_REVIEW",
+   "cached_app": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2025-58352__utils__before": {
+  "changed_funcs": [
+   "adjust_session_expiry"
+  ],
+  "func_verdicts": {
+   "invalidate_reset_codes": "NEEDS_REVIEW",
+   "cycle_session_keys": "NEEDS_REVIEW",
+   "remove_user": "NEEDS_REVIEW",
+   "get_all_user_mails": "NEEDS_REVIEW",
+   "lock_user": "NEEDS_REVIEW",
+   "get_key_name": "SAFE",
+   "adjust_session_expiry": "VULNERABLE",
+   "register_complete": "VULNERABLE",
+   "get_key_type": "SAFE"
+  },
+  "label": true
+ },
+ "cve:CVE-2022-41672__app__after": {
+  "changed_funcs": [
+   "create_app"
+  ],
+  "func_verdicts": {
+   "purge_cached_app": "NEEDS_REVIEW",
+   "create_app": "VULNERABLE",
+   "sync_appbuilder_roles": "NEEDS_REVIEW",
+   "cached_app": "NEEDS_REVIEW"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-58352__utils__after": {
+  "changed_funcs": [
+   "adjust_session_expiry"
+  ],
+  "func_verdicts": {
+   "invalidate_reset_codes": "NEEDS_REVIEW",
+   "cycle_session_keys": "NEEDS_REVIEW",
+   "remove_user": "NEEDS_REVIEW",
+   "get_all_user_mails": "NEEDS_REVIEW",
+   "lock_user": "NEEDS_REVIEW",
+   "get_key_name": "SAFE",
+   "adjust_session_expiry": "VULNERABLE",
+   "register_complete": "VULNERABLE",
+   "get_key_type": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-65430__request_validator__after": {
+  "changed_funcs": [
+   "validate_bearer_token",
+   "validate_refresh_token"
+  ],
+  "func_verdicts": {
+   "validate_response_type": "SAFE",
+   "validate_client_id": "SAFE",
+   "validate_bearer_token": "VULNERABLE",
+   "validate_silent_login": "VULNERABLE",
+   "finalize_id_token": "NEEDS_REVIEW",
+   "validate_user": "SAFE",
+   "validate_code": "VULNERABLE",
+   "save_bearer_token": "VULNERABLE",
+   "validate_jwt_bearer_token": "SAFE",
+   "get_authorization_code_nonce": "NEEDS_REVIEW",
+   "get_default_redirect_uri": "SAFE",
+   "revoke_token": "NEEDS_REVIEW",
+   "validate_redirect_uri": "SAFE",
+   "save_authorization_code": "VULNERABLE",
+   "get_code_challenge": "NEEDS_REVIEW",
+   "authenticate_client": "VULNERABLE",
+   "validate_scopes": "VULNERABLE",
+   "validate_grant_type": "SAFE",
+   "is_origin_allowed": "NEEDS_REVIEW",
+   "validate_silent_authorization": "NEEDS_REVIEW",
+   "get_userinfo_claims": "NEEDS_REVIEW",
+   "client_authentication_required": "VULNERABLE",
+   "_lookup_authorization_code": "NEEDS_REVIEW",
+   "get_code_challenge_method": "NEEDS_REVIEW",
+   "authenticate_client_id": "VULNERABLE",
+   "confirm_redirect_uri": "NEEDS_REVIEW",
+   "_lookup_client": "VULNERABLE",
+   "_use_client": "SAFE",
+   "get_original_scopes": "NEEDS_REVIEW",
+   "validate_user_match": "VULNERABLE",
+   "get_authorization_code_scopes": "NEEDS_REVIEW",
+   "invalidate_authorization_code": "NEEDS_REVIEW",
+   "rotate_refresh_token": "SAFE",
+   "get_default_scopes": "NEEDS_REVIEW",
+   "validate_refresh_token": "VULNERABLE",
+   "is_pkce_required": "NEEDS_REVIEW"
+  },
+  "label": false
+ },
+ "cve:CVE-2025-58352__middleware__after": {
+  "changed_funcs": [
+   "__call__"
+  ],
+  "func_verdicts": {
+   "__call___1": "SAFE",
+   "get_setting_re": "SAFE",
+   "__init___1": "SAFE",
+   "process_view": "VULNERABLE",
+   "__call__": "VULNERABLE",
+   "__init__": "SAFE",
+   "get_user": "SAFE"
+  },
+  "label": false
+ },
+ "cve:CVE-2019-19844__forms__before": {
+  "changed_funcs": [
+   "get_users",
+   "save_1"
+  ],
+  "func_verdicts": {
+   "save_3": "NEEDS_REVIEW",
+   "__init___4": "SAFE",
+   "confirm_login_allowed": "SAFE",
+   "clean": "VULNERABLE",
+   "clean_new_password2": "NEEDS_REVIEW",
+   "__init___1": "SAFE",
+   "clean_password": "SAFE",
+   "has_changed": "SAFE",
+   "to_python": "SAFE",
+   "changed_data": "SAFE",
+   "save": "NEEDS_REVIEW",
+   "clean_password2_1": "NEEDS_REVIEW",
+   "get_user_id": "NEEDS_REVIEW",
+   "clean_password2": "NEEDS_REVIEW",
+   "bound_data": "SAFE",
+   "__init___3": "SAFE",
+   "__init__": "SAFE",
+   "clean_old_password": "SAFE",
+   "__init___5": "NEEDS_REVIEW",
+   "get_user": "NEEDS_REVIEW",
+   "get_users": "NEEDS_REVIEW",
+   "save_2": "NEEDS_REVIEW",
+   "__init___2": "SAFE",
+   "send_mail": "SAFE",
+   "get_context": "SAFE",
+   "save_1": "NEEDS_REVIEW"
+  },
+  "label": true
+ },
+ "cve:CVE-2019-19844__forms__after": {
+  "changed_funcs": [
+   "get_users",
+   "save_1"
+  ],
+  "func_verdicts": {
+   "save_3": "NEEDS_REVIEW",
+   "__init___4": "SAFE",
+   "confirm_login_allowed": "SAFE",
+   "clean": "SAFE",
+   "clean_new_password2": "NEEDS_REVIEW",
+   "__init___1": "SAFE",
+   "clean_password": "SAFE",
+   "has_changed": "SAFE",
+   "to_python": "SAFE",
+   "changed_data": "SAFE",
+   "save": "NEEDS_REVIEW",
+   "clean_password2_1": "NEEDS_REVIEW",
+   "_unicode_ci_compare": "SAFE",
+   "get_user_id": "NEEDS_REVIEW",
+   "clean_password2": "NEEDS_REVIEW",
+   "bound_data": "SAFE",
+   "__init___3": "SAFE",
+   "__init__": "SAFE",
+   "clean_old_password": "SAFE",
+   "__init___5": "NEEDS_REVIEW",
+   "get_user": "NEEDS_REVIEW",
+   "get_users": "NEEDS_REVIEW",
+   "save_2": "NEEDS_REVIEW",
+   "__init___2": "NEEDS_REVIEW",
+   "send_mail": "SAFE",
+   "get_context": "SAFE",
+   "save_1": "NEEDS_REVIEW"
+  },
+  "label": false
+ }
+}

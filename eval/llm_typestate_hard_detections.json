@@ -1,0 +1,320 @@
+{
+  "detections": {
+    "cve:CVE-2026-1777__serialization__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2019-11324__poolmanager__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2019-11324__ssl___before": {
+      "detected": true,
+      "cwes": [
+        "CWE-295"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]<VULNERABLE>|<CWE-295>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-39441__smtp__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-295"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-295[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-1777__serialization__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-1777__stored_function__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-39441__email__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-295"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "Looking at `_get_smtp_connection`: when `ssl_context_string == \"none\"`, it passes `context=None` to `smtplib.SMTP_SSL`. "
+      ],
+      "error": null
+    },
+    "cve:CVE-2019-11324__ssl___after": {
+      "detected": true,
+      "cwes": [
+        "CWE-295"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]<VULNERABLE>|<CWE-295>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2020-7965__webapp2parser__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2008-3909__decorators__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-352"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-352[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-4646__auth_form__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2008-3909__decorators__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-352"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-352[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-2228__domain__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]SAFE|NONE[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2022-4646__auth_form__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-352"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-352[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2023-2228__identity__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-68146___windows__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-68146___unix__before": {
+      "detected": true,
+      "cwes": [
+        "CWE-367"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-367[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-22701___soft__before": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-68146___windows__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-367"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-367[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2026-22701___soft__after": {
+      "detected": false,
+      "cwes": [],
+      "raw_count": 0,
+      "evidence": [
+        "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+      ],
+      "error": null
+    },
+    "cve:CVE-2025-68146___unix__after": {
+      "detected": true,
+      "cwes": [
+        "CWE-367"
+      ],
+      "raw_count": 1,
+      "evidence": [
+        "[VERDICT]VULNERABLE|CWE-367[/VERDICT]"
+      ],
+      "error": null
+    }
+  },
+  "meta": {
+    "cve:CVE-2026-1777__serialization__before": {
+      "seconds": 2.4,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2019-11324__poolmanager__before": {
+      "seconds": 2.6,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2019-11324__ssl___before": {
+      "seconds": 3.8,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]<VULNERABLE>|<CWE-295>[/VERDICT]"
+    },
+    "cve:CVE-2023-39441__smtp__before": {
+      "seconds": 2.3,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-295[/VERDICT]"
+    },
+    "cve:CVE-2026-1777__serialization__after": {
+      "seconds": 2.3,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2026-1777__stored_function__after": {
+      "seconds": 2.2,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2023-39441__email__after": {
+      "seconds": 4.2,
+      "verdict": "VULNERABLE",
+      "raw": "Looking at `_get_smtp_connection`: when `ssl_context_string == \"none\"`, it passes `context=None` to `smtplib.SMTP_SSL`. With no SSL context provided, Python's `smtplib.SMTP_SSL` falls back to an unver"
+    },
+    "cve:CVE-2019-11324__ssl___after": {
+      "seconds": 2.7,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]<VULNERABLE>|<CWE-295>[/VERDICT]"
+    },
+    "cve:CVE-2020-7965__webapp2parser__before": {
+      "seconds": 2.8,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2008-3909__decorators__before": {
+      "seconds": 2.1,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-352[/VERDICT]"
+    },
+    "cve:CVE-2022-4646__auth_form__before": {
+      "seconds": 1.9,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2008-3909__decorators__after": {
+      "seconds": 2.6,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-352[/VERDICT]"
+    },
+    "cve:CVE-2023-2228__domain__after": {
+      "seconds": 2.3,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]SAFE|NONE[/VERDICT]"
+    },
+    "cve:CVE-2022-4646__auth_form__after": {
+      "seconds": 3.6,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-352[/VERDICT]"
+    },
+    "cve:CVE-2023-2228__identity__after": {
+      "seconds": 2.6,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2025-68146___windows__before": {
+      "seconds": 1.9,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2025-68146___unix__before": {
+      "seconds": 4.0,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-367[/VERDICT]"
+    },
+    "cve:CVE-2026-22701___soft__before": {
+      "seconds": 2.9,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2025-68146___windows__after": {
+      "seconds": 2.0,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-367[/VERDICT]"
+    },
+    "cve:CVE-2026-22701___soft__after": {
+      "seconds": 3.2,
+      "verdict": "SAFE",
+      "raw": "[VERDICT]<SAFE>|<NONE>[/VERDICT]"
+    },
+    "cve:CVE-2025-68146___unix__after": {
+      "seconds": 3.4,
+      "verdict": "VULNERABLE",
+      "raw": "[VERDICT]VULNERABLE|CWE-367[/VERDICT]"
+    }
+  }
+}
