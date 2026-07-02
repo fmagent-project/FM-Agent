@@ -5,7 +5,7 @@ import sys
 import shutil
 import logging
 
-from src.file_utils import is_file_ready
+from src.file_utils import is_file_ready, _is_test_file
 from src.languages.registry import batch_extract_all
 
 LANG_CONFIG = {
@@ -153,61 +153,6 @@ EXT_TO_LANG = {
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
 }
-
-# Directories that typically contain test code
-_TEST_DIR_NAMES = {
-    "test", "tests", "__tests__", "testing", "test_helpers",
-    "testdata", "testutils", "fixtures", "mocks",
-}
-
-# Regex patterns matching common test file naming conventions
-_TEST_FILE_PATTERNS = [
-    re.compile(r'^test_.*\.py$'),         # Python: test_foo.py
-    re.compile(r'^.*_test\.py$'),          # Python: foo_test.py
-    re.compile(r'^conftest\.py$'),         # pytest fixtures
-    re.compile(r'^.*_test\.go$'),          # Go: foo_test.go
-    re.compile(r'^.*_test\.(?:cpp|cc|cxx|c|h|hpp)$'),  # C/C++: foo_test.cpp
-    re.compile(r'^test_.*\.(?:cpp|cc|cxx|c|h|hpp)$'),  # C/C++: test_foo.cpp
-    re.compile(r'^.*Test(?:s|Case)?\.java$'),            # Java: FooTest.java
-    re.compile(r'^.*\.(?:test|spec)\.(?:js|jsx|ts|tsx)$'),  # JS/TS: foo.test.js
-    re.compile(r'^.*_test\.rs$'),          # Rust: foo_test.rs
-    re.compile(r'^.*\.test\.(?:ets)$'),    # ArkTS: foo.test.ets
-]
-
-
-# Project-relative paths that must never be treated as test files, even when
-# their path matches the heuristics below. The entry pipeline registers the
-# source file holding its entry_func here so that file is still extracted and
-# reasoned about even if it lives in a test directory or is named like a test.
-_TEST_FILE_EXEMPTIONS = set()
-
-
-def add_test_file_exemption(rel_path):
-    """Exempt a project-relative source path from the test-file heuristics."""
-    _TEST_FILE_EXEMPTIONS.add(rel_path.replace('\\', '/'))
-
-
-def clear_test_file_exemptions():
-    """Drop all registered test-file exemptions."""
-    _TEST_FILE_EXEMPTIONS.clear()
-
-
-def _is_test_file(rel_path):
-    """Return True if the relative source path looks like a test file."""
-    norm_path = rel_path.replace('\\', '/')
-    if norm_path in _TEST_FILE_EXEMPTIONS:
-        return False
-    parts = norm_path.split('/')
-    # Check if any directory component is a known test directory
-    for part in parts[:-1]:
-        if part.lower() in _TEST_DIR_NAMES:
-            return True
-    # Check filename against test patterns
-    basename = parts[-1]
-    for pat in _TEST_FILE_PATTERNS:
-        if pat.match(basename):
-            return True
-    return False
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -19,18 +19,10 @@ from config import (
     OPENCODE_SETUP_MODEL,
     OPENCODE_MODEL_PROVIDER,
 )
-from .extract import EXT_TO_LANG, _is_test_file
+from .extract import EXT_TO_LANG
+from .file_utils import _is_test_file, _json_file_is_valid
 from .opencode_trace import run_opencode_traced
 from .cli_backend import build_agent_command, is_cli_backend_enabled
-
-
-def _json_file_is_valid(path):
-    try:
-        with open(path, "r") as f:
-            json.load(f)
-        return True
-    except (OSError, json.JSONDecodeError):
-        return False
 
 
 def _merge_descriptions(target_desc, source_desc):

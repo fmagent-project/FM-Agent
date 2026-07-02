@@ -4,7 +4,14 @@ from config import (
     OPENCODE_MODEL_PROVIDER,
 )
 from src.entry_reasoning_pipeline import run_entry_pipeline
-from src.file_utils import collect_file_names, is_file_ready
+from src.file_utils import (
+    collect_file_names,
+    is_file_ready,
+    _has_source_code,
+    _get_phase_files,
+    _json_file_is_valid,
+    _get_incomplete_verification_files,
+)
 from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
@@ -15,10 +22,15 @@ from src.opencode_trace import (
 )
 from src.cli_backend import build_agent_command, is_cli_backend_enabled
 from src.incremental_reasoner import run_incremental_pipeline
+from src.git import (
+    frozen_worktree,
+    _is_git_repo,
+    _get_head_commit,
+    _record_version,
+)
 from src.languages.codegraph import try_codegraph_init
 from src.pipeline_setup import (
     _run_setup_extract,
-    _json_file_is_valid,
 )
 import os
 import sys
@@ -28,70 +40,12 @@ import time
 import shutil
 import subprocess
 import logging
-import tempfile
 import contextlib
-
-def _get_phase_files(phases_data, phase_num, input_dir):
-    """Return relative paths of extracted function files for a given phase."""
-    phase = next(p for p in phases_data["phases"] if p["phase"] == phase_num)
-    phase_files = []
-    for module in phase["modules"]:
-        for src_file in module["source_files"]:
-            dir_part = os.path.dirname(src_file)
-            base = os.path.basename(src_file)
-            dot_idx = base.rfind(".")
-            if dot_idx >= 0:
-                subdir = base[:dot_idx] + "-" + base[dot_idx + 1:]
-            else:
-                subdir = base
-            extracted_dir = os.path.join(input_dir, dir_part, subdir)
-            if os.path.isdir(extracted_dir):
-                for fname in sorted(os.listdir(extracted_dir)):
-                    fpath = os.path.join(extracted_dir, fname)
-                    if os.path.isfile(fpath):
-                        phase_files.append(os.path.relpath(fpath, input_dir))
-    return phase_files
-
-
 
 def _clean_previous_run(work_dir):
     """Remove the fm_agent working directory from the previous pipeline run."""
     if os.path.isdir(work_dir):
         shutil.rmtree(work_dir)
-
-
-def _is_git_repo(proj_dir):
-    """Return whether proj_dir is a git repository with at least one commit."""
-    try:
-        subprocess.run(
-            ["git", "-C", proj_dir, "rev-parse", "--verify", "HEAD"],
-            check=True, capture_output=True, text=True,
-        )
-        return True
-    except subprocess.CalledProcessError:
-        return False
-
-
-def _get_head_commit(proj_dir):
-    """Return the latest git commit id of proj_dir, or None if not a git repo."""
-    try:
-        return subprocess.run(
-            ["git", "-C", proj_dir, "rev-parse", "HEAD"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-    except subprocess.CalledProcessError:
-        logging.info("_get_head_commit: %s is not a git repo.", proj_dir)
-        return None
-
-
-def _record_version(commit_id, work_dir):
-    """Append commit_id as a new line to fm_agent/version.log, building up a
-    history of processed commits. No-op when commit_id is falsy."""
-    if not commit_id:
-        return
-    version_path = os.path.join(work_dir, "version.log")
-    with open(version_path, "a") as f:
-        f.write(commit_id + "\n")
 
 
 def _get_pending_batches(batches, proj_dir):
@@ -104,127 +58,6 @@ def _get_pending_batches(batches, proj_dir):
                 pending.append(batch)
                 break
     return pending
-
-
-def _get_incomplete_verification_files(layer_files, input_dir, output_dir, work_dir):
-    """Return layer files missing verification or required bug validation output."""
-    incomplete = []
-    for rel in layer_files:
-        result_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
-        try:
-            with open(result_path, "r") as f:
-                result = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            incomplete.append(rel)
-            continue
-
-        if result.get("verdict") != "MISMATCH":
-            continue
-
-        bug_id = os.path.splitext(rel)[0].replace(os.sep, "--").replace("/", "--")
-        validation_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
-        if not _json_file_is_valid(validation_path):
-            incomplete.append(rel)
-    return incomplete
-
-
-def _has_source_code(proj_dir):
-    """Check whether proj_dir contains at least one source code file."""
-    source_exts = set(EXT_TO_LANG.keys())
-    for root, dirs, files in os.walk(proj_dir):
-        # Skip hidden dirs and common non-source dirs
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
-                   {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
-        for fname in files:
-            ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
-            if ext in source_exts:
-                return True
-    return False
-
-
-@contextlib.contextmanager
-def frozen_worktree(proj_dir, exclude=("fm_agent",), copy_excluded=True):
-    """Freeze proj_dir's current working tree into an isolated git worktree.
-
-    Captures committed state PLUS uncommitted edits and untracked files, so the
-    yielded copy is a faithful snapshot of proj_dir at entry time. Concurrent
-    edits to proj_dir afterwards do not affect the snapshot, letting the pipeline
-    run against a stable copy.
-
-    The snapshot is built through a private index (GIT_INDEX_FILE), so proj_dir's
-    real index and working tree are never touched. Falls back to a plain directory
-    copy when proj_dir is not a git repository with a commit. The snapshot folder
-    is left in place after the run (including its fm_agent/ outputs); its path is
-    logged so it can be inspected or cleaned up manually.
-
-    The `exclude` dirs (the FM-Agent's own workspace) are always kept out of the
-    git snapshot commit so it stays clean. When `copy_excluded` is set, they are
-    then copied into the worktree as-is. Incremental mode needs the previous run's
-    fm_agent/ results to detect a prior full run, and those results are typically
-    gitignored, hence absent from the snapshot commit. A full run discards any
-    prior fm_agent/, so it passes copy_excluded=False to skip the copy.
-    """
-    proj_dir = os.path.abspath(proj_dir)
-    # Include the repo name in the temp dir so concurrent runs across different
-    # repos are distinguishable (e.g. /tmp/fm_agent_wt_myrepo_a3k9d2/snapshot).
-    repo_name = os.path.basename(proj_dir.rstrip(os.sep)) or "repo"
-    base = tempfile.mkdtemp(prefix=f"fm_agent_wt_{repo_name}_")
-    wt = os.path.join(base, "snapshot")
-
-    def _git(*args, **kwargs):
-        return subprocess.run(
-            ["git", "-C", proj_dir, *args],
-            check=True, capture_output=True, text=True, **kwargs,
-        ).stdout.strip()
-
-    is_git = False
-    try:
-        _git("rev-parse", "--verify", "HEAD")
-        is_git = True
-    except subprocess.CalledProcessError:
-        pass
-
-    if is_git:
-        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(base, "index"))
-        _git("read-tree", "HEAD", env=env)
-        # Stage the full working tree (tracked edits + untracked files). Using a
-        # bare `git add -A` lets git silently skip gitignored paths; passing the
-        # workspace dirs as :(exclude) pathspecs instead errors out when a repo
-        # already gitignores them ("paths are ignored ... use -f"). Drop the
-        # workspace dirs from the private index afterwards to cover repos that do
-        # NOT gitignore them.
-        _git("add", "-A", env=env)
-        if exclude:
-            _git("rm", "-r", "--cached", "--quiet", "--ignore-unmatch", "--",
-                 *exclude, env=env)
-        tree = _git("write-tree", env=env)
-        snap = _git("commit-tree", tree, "-p", "HEAD", "-m", "fm_agent snapshot")
-        _git("worktree", "add", "--detach", wt, snap)
-    else:
-        logging.info("frozen_worktree: %s is not a git repo; copying instead.", proj_dir)
-        shutil.copytree(
-            proj_dir, wt,
-            ignore=shutil.ignore_patterns(*exclude),
-            symlinks=True,
-        )
-
-    # Copy the excluded workspace dirs (e.g. fm_agent/ with a prior full run's
-    # phases.json and extracted_functions) into the snapshot. They were kept out
-    # of the git commit, but incremental mode reads them from disk to compare
-    # against, so the snapshot must physically contain them.
-    if copy_excluded:
-        for name in exclude:
-            src = os.path.join(proj_dir, name)
-            dst = os.path.join(wt, name)
-            if os.path.isdir(src) and not os.path.exists(dst):
-                shutil.copytree(src, dst, symlinks=True)
-
-    print(f"[Pipeline] Snapshot created at: {wt}")
-    print(f"[Pipeline] Snapshot is kept after the run. "
-          f"Remove with: git -C {proj_dir} worktree remove --force {wt}"
-          if is_git else
-          f"[Pipeline] Snapshot is kept after the run. Remove with: rm -rf {wt}")
-    yield wt
 
 
 def run_pipeline(proj_dir, resume=False, required_source_files=None):

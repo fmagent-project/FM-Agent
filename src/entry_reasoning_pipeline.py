@@ -11,10 +11,12 @@ from src.extract import (
     LANG_CONFIG,
     _extract_functions_brace,
     _extract_functions_indent,
+    extract_functions_from_file,
+)
+from src.file_utils import (
     _is_test_file,
     add_test_file_exemption,
     clear_test_file_exemptions,
-    extract_functions_from_file,
 )
 import config
 

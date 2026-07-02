@@ -21,7 +21,6 @@ from config import (
 from .extract import (
     EXT_TO_LANG,
     LANG_CONFIG,
-    _is_test_file,
     extract_functions_from_file,
     run_extraction,
 )
@@ -32,7 +31,7 @@ from .generate_topdown_layers import (
     _load_phases,
     generate_topdown_layers,
 )
-from .file_utils import is_file_ready, collect_file_names
+from .file_utils import is_file_ready, collect_file_names, _is_test_file
 from .generate_batch_prompts import (
     _detect_comment_prefix,
     extract_callee_spec_from_info,
