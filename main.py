@@ -259,38 +259,132 @@ def _setup_outputs_complete(work_dir):
     return True
 
 
-def _has_source_code(proj_dir):
+def _iter_project_source_files(proj_dir, submodules=None):
+    """Yield project-relative source file paths, optionally limited to submodules."""
+    source_exts = set(EXT_TO_LANG.keys())
+    scan_roots = [proj_dir]
+    if submodules:
+        scan_roots = [os.path.join(proj_dir, sub.replace("/", os.sep)) for sub in submodules]
+
+    for scan_root in scan_roots:
+        for root, dirs, files in os.walk(scan_root):
+            # Skip hidden dirs and common non-source dirs
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
+                       {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
+            for fname in files:
+                ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
+                if ext in source_exts:
+                    rel = os.path.relpath(os.path.join(root, fname), proj_dir).replace(os.sep, '/')
+                    if _is_under_submodules(rel, submodules):
+                        yield rel
+
+
+def _has_source_code(proj_dir, submodules=None):
     """Check whether proj_dir contains at least one source code file."""
-    source_exts = set(EXT_TO_LANG.keys())
-    for root, dirs, files in os.walk(proj_dir):
-        # Skip hidden dirs and common non-source dirs
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
-                   {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
-        for fname in files:
-            ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
-            if ext in source_exts:
-                return True
-    return False
+    return any(True for _ in _iter_project_source_files(proj_dir, submodules))
 
 
-def _collect_project_source_files(proj_dir):
+def _collect_project_source_files(proj_dir, submodules=None):
     """Return non-test source files currently present in proj_dir, relative to proj_dir."""
-    source_exts = set(EXT_TO_LANG.keys())
     files = set()
-    for root, dirs, names in os.walk(proj_dir):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
-                   {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
-        for fname in names:
-            ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
-            if ext not in source_exts:
-                continue
-            rel = os.path.relpath(os.path.join(root, fname), proj_dir).replace(os.sep, '/')
-            if not _is_test_file(rel):
-                files.add(rel)
+    for rel in _iter_project_source_files(proj_dir, submodules):
+        if not _is_test_file(rel):
+            files.add(rel)
     return files
 
 
-def _phases_cover_current_sources(phases_json, proj_dir):
+def _normalize_submodules(proj_dir, submodules):
+    """Return validated project-relative submodule directories using POSIX separators."""
+    if not submodules:
+        return []
+
+    proj_dir = os.path.abspath(proj_dir)
+    normalized = []
+    seen = set()
+    for raw in submodules:
+        value = (raw or "").strip()
+        if not value:
+            continue
+        candidate = value if os.path.isabs(value) else os.path.join(proj_dir, value)
+        candidate = os.path.abspath(candidate)
+        try:
+            inside_project = os.path.commonpath([proj_dir, candidate]) == proj_dir
+        except ValueError:
+            inside_project = False
+        if not inside_project or candidate == proj_dir:
+            raise ValueError(
+                f"--submodule must name subdirectories inside proj_dir, got: {raw}"
+            )
+        if not os.path.isdir(candidate):
+            raise ValueError(f"--submodule path is not a directory: {raw}")
+
+        rel = os.path.relpath(candidate, proj_dir).replace(os.sep, "/")
+        if rel not in seen:
+            normalized.append(rel)
+            seen.add(rel)
+
+    collapsed = []
+    for rel in sorted(normalized, key=lambda path: (path.count("/"), path)):
+        if not collapsed or not _is_under_submodules(rel, collapsed):
+            collapsed.append(rel)
+    return collapsed
+
+
+def _is_under_submodules(rel_path, submodules):
+    """Return whether rel_path is inside one of the selected submodule dirs."""
+    if not submodules:
+        return True
+    norm = rel_path.replace("\\", "/")
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return any(norm == sub or norm.startswith(sub + "/") for sub in submodules)
+
+
+def _filter_phases_to_submodules(phases_json, submodules):
+    """Remove phase source files outside selected submodules and renumber phases."""
+    if not submodules:
+        return 0
+
+    with open(phases_json, "r") as f:
+        data = json.load(f)
+
+    removed = 0
+    kept_phases = []
+    for phase in sorted(data.get("phases", []), key=lambda p: p.get("phase", 0)):
+        kept_modules = []
+        for module in phase.get("modules", []):
+            source_files = module.get("source_files", [])
+            kept_source_files = [
+                sf for sf in source_files if _is_under_submodules(sf, submodules)
+            ]
+            removed += len(source_files) - len(kept_source_files)
+            if kept_source_files:
+                module["source_files"] = kept_source_files
+                kept_modules.append(module)
+        if kept_modules:
+            phase["modules"] = kept_modules
+            kept_phases.append(phase)
+
+    old_to_new = {
+        phase.get("phase"): idx
+        for idx, phase in enumerate(kept_phases, start=1)
+        if phase.get("phase") is not None
+    }
+    for idx, phase in enumerate(kept_phases, start=1):
+        phase["phase"] = idx
+        phase["depends_on_phases"] = [
+            old_to_new[dep]
+            for dep in phase.get("depends_on_phases", [])
+            if dep in old_to_new
+        ]
+    data["phases"] = kept_phases
+
+    with open(phases_json, "w") as f:
+        json.dump(data, f, indent=2)
+    return removed
+
+
+def _phases_cover_current_sources(phases_json, proj_dir, submodules=None):
     """Return whether phases.json is valid for the current source-file set."""
     try:
         with open(phases_json, "r") as f:
@@ -306,9 +400,11 @@ def _phases_cover_current_sources(phases_json, proj_dir):
 
     if not listed:
         return False
+    if submodules and any(not _is_under_submodules(sf, submodules) for sf in listed):
+        return False
     if any(not os.path.exists(os.path.join(proj_dir, sf)) for sf in listed):
         return False
-    return _collect_project_source_files(proj_dir).issubset(listed)
+    return _collect_project_source_files(proj_dir, submodules).issubset(listed)
 
 
 def _ensure_source_files_in_phases(phases_json, required_source_files):
@@ -368,7 +464,7 @@ def _ensure_source_files_in_phases(phases_json, required_source_files):
     return missing
 
 
-def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False, resume=False):
+def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False, resume=False, submodules=None):
     """Stage 1: prepare the setup workflow file and run opencode (with retries) to produce phases.json."""
     # On resume, reuse the existing phase plan instead of paying for the
     # setup_context LLM call again.
@@ -402,6 +498,14 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False, res
                             "reflects the current version of the code: add modules and source files that "
                             "are new, remove entries whose files no longer exist, and adjust phases as "
                             "needed. Preserve entries that are still accurate.")
+    submodule_reminder = ""
+    if submodules:
+        allowed = ", ".join(f"`{submodule}/`" for submodule in submodules)
+        submodule_reminder = (
+            "IMPORTANT: Only process source files under these project-relative "
+            f"subdirectories: {allowed}. Do NOT include files outside these "
+            "subdirectories in phases.json."
+        )
 
     phases_json = os.path.join(work_dir, "phases.json")
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
@@ -410,7 +514,7 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False, res
         if _resume_skip_setup:
             break
         if attempt == 1 and not resume:
-            prompt = f"Follow the instructions in the attached file. {fm_reminder}"
+            prompt = f"Follow the instructions in the attached file. {fm_reminder} {submodule_reminder}"
         else:
             # Either resuming a previously interrupted run or retrying after a
             # failed attempt — in both cases some setup outputs may already
@@ -422,7 +526,7 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False, res
                       "check the current progress in fm_agent/ (e.g. phases.json and the "
                       "spec_prompts/domain_context/ files). Keep any existing valid output as-is and only "
                       "generate the files that are missing or incomplete — do NOT regenerate or overwrite "
-                      f"work that is already done. {fm_reminder}")
+                      f"work that is already done. {fm_reminder} {submodule_reminder}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
         prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md")
@@ -460,7 +564,7 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False, res
             if (
                 not is_incremental
                 or os.path.getmtime(phases_json) != prev_mtime
-                or _phases_cover_current_sources(phases_json, proj_dir)
+                or _phases_cover_current_sources(phases_json, proj_dir, submodules)
             ):
                 break
 
@@ -571,13 +675,14 @@ def frozen_worktree(proj_dir, exclude=("fm_agent",), copy_excluded=True):
     yield wt
 
 
-def run_pipeline(proj_dir, resume=False, required_source_files=None):
+def run_pipeline(proj_dir, resume=False, required_source_files=None, submodules=None):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
 
-    if not _has_source_code(proj_dir):
-        print(f"[Pipeline] ERROR: No source code files found in {proj_dir}. "
+    if not _has_source_code(proj_dir, submodules):
+        scope = f" selected submodule(s): {', '.join(submodules)}" if submodules else f" {proj_dir}"
+        print(f"[Pipeline] ERROR: No source code files found in{scope}. "
               f"Supported extensions: {', '.join(sorted(EXT_TO_LANG.keys()))}")
         sys.exit(1)
 
@@ -601,7 +706,7 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
 
     # Copy workflow_setup_extract.md to proj_dir and run opencode against it
     print("[Pipeline] Stage 1/4: Understanding codebase and extracting functions ...")
-    _run_setup_extract(proj_dir, work_dir, script_dir, resume=resume)
+    _run_setup_extract(proj_dir, work_dir, script_dir, resume=resume, submodules=submodules)
 
     # The setup agent may have omitted required files (e.g. an entry point that
     # looks like a test) from phases.json. Force them in before extraction so the
@@ -611,6 +716,12 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
     )
     if forced:
         print(f"[Pipeline] Forced {len(forced)} required source file(s) into phases.json: {', '.join(forced)}")
+
+    removed = _filter_phases_to_submodules(os.path.join(work_dir, "phases.json"), submodules)
+    if submodules:
+        print(f"[Pipeline] Submodule scope: {', '.join(submodules)}")
+        if removed:
+            print(f"[Pipeline] Removed {removed} out-of-scope source file(s) from phases.json.")
 
     # Build codegraph index if codegraph is installed and index not yet present.
     # Both run_extraction (Stage 2) and generate_topdown_layers (Stage 3) will
@@ -640,8 +751,22 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
         os.path.join(spec_prompts_dir, "file_utils.py"),
     )
 
+    phases_path = os.path.join(work_dir, "phases.json")
+    with open(phases_path, "r") as f:
+        phases_data = json.load(f)
+
     print("[Pipeline] Stage 2/4: Collecting file list...")
-    file_list = collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
+    file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
+    file_list = collect_file_names(input_dir, file_list_path)
+    if submodules:
+        scoped_files = set()
+        for phase_info in phases_data.get("phases", []):
+            phase_num = phase_info.get("phase")
+            if phase_num is not None:
+                scoped_files.update(_get_phase_files(phases_data, phase_num, input_dir))
+        file_list = [rel for rel in file_list if rel in scoped_files]
+        with open(file_list_path, "w") as f:
+            json.dump(file_list, f, indent=2, ensure_ascii=False)
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
@@ -649,7 +774,6 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
 
     # --- Stage 3: Generate topdown layers ---
     print("[Pipeline] Stage 3/4: Generating topdown layers...")
-    phases_data = json.load(open(os.path.join(work_dir, "phases.json")))
     generate_topdown_layers(work_dir)
 
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
@@ -882,7 +1006,8 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--isolate] [--entry-func PATH] [--end-func PATH ...]",
+              "[--isolate] [--submodule PATH [PATH ...]] "
+              "[--entry-func PATH] [--end-func PATH ...]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -906,6 +1031,13 @@ if __name__ == "__main__":
         "the project instead of the project directory itself.",
     )
     parser.add_argument(
+        "--submodule",
+        metavar="PATH",
+        nargs="+",
+        default=None,
+        help="Only process source code under one or more subdirectories of proj_dir.",
+    )
+    parser.add_argument(
         "--entry-func",
         metavar="PATH",
         default=None,
@@ -923,6 +1055,15 @@ if __name__ == "__main__":
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
+    try:
+        submodules = _normalize_submodules(proj_dir, args.submodule)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if submodules and args.entry_func is not None:
+        parser.error("--submodule cannot be combined with --entry-func.")
+    if submodules and args.incremental:
+        parser.error("--submodule cannot be combined with --incremental.")
 
     start_time = time.time()
 
@@ -987,7 +1128,7 @@ if __name__ == "__main__":
             if args.incremental and old_commit:
                 run_incremental_pipeline(run_dir, intent_path, old_commit)
             else:
-                run_pipeline(run_dir, resume=resume)
+                run_pipeline(run_dir, resume=resume, submodules=submodules)
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
             # copied back to the real project below. Only recorded on success so a

@@ -146,7 +146,7 @@ OpenCode provider 的配置以及可选的 prompt 缓存设置见 [docs/config_l
 ## 快速开始
 
 ```bash
-uv run python main.py <proj_dir> [--resume]
+uv run python main.py <proj_dir> [--resume] [--submodule PATH [PATH ...]]
 ```
 
 | 参数 | 描述 |
@@ -155,8 +155,17 @@ uv run python main.py <proj_dir> [--resume]
 | `--resume` | 续跑上一次中断的运行，而非从头开始 |
 | `--incremental INTENT_FILE` | 以增量模式运行，参数值为描述本次修改目标的意图文件路径。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
+| `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
 
 `proj_dir` 必须是一个 git 仓库。
+
+使用 `--submodule` 可以把完整运行限制到指定项目子目录：
+
+```bash
+uv run python main.py <proj_dir> --submodule src/core src/runtime
+```
+
+`--submodule` 路径必须是 `proj_dir` 内部目录。该参数可与 `--resume` 和 `--isolate` 一起使用，但不能与 `--incremental` 或 `--entry-func` 一起使用。
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
 
