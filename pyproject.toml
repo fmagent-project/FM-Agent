@@ -3,7 +3,7 @@ name = "fm-agent"
 version = "0.1.0"
 description = "Scaling formal methods to large systems via LLM-based Hoare-style reasoning."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "openai==2.15.0",
     "python-dotenv>=1.0.0",
