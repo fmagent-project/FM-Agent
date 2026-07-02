@@ -97,10 +97,12 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
         required_source_files=required_source_files,
     )
 
-    # Build codegraph index if codegraph is installed and index not yet present.
-    # Both run_extraction (Stage 2) and generate_topdown_layers (Stage 3) will
-    # automatically use the index when it exists.
-    try_codegraph_init(proj_dir)
+    # Build (or rebuild) the codegraph index if codegraph is installed. Both
+    # run_extraction (Stage 2) and generate_topdown_layers (Stage 3) read from it.
+    # force=not resume mirrors run_extraction below: a fresh run rebuilds so the
+    # index matches the current tree, while a resume reuses the existing index
+    # (same tree as the interrupted run — rebuilding would just be wasted work).
+    try_codegraph_init(proj_dir, force=not resume)
 
     # Run function extraction using extract.py
     # force=False on resume preserves already-specced extracted files; on a fresh
