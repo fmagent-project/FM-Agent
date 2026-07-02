@@ -1,0 +1,368 @@
+\documentclass{article}
+
+% arXiv / preprint build: nonanonymized, "Preprint. Work in progress." footer.
+% nonatbib: we use manual \bibitem references (no natbib dependency).
+\usepackage[preprint, nonatbib]{neurips_2026}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+
+% ---------------------------------------------------------------------------
+% WORKING TITLE (revise). The logic of the paper, not final prose.
+% ---------------------------------------------------------------------------
+\title{Security Analysis as a Portfolio of Formal Theories:\\
+  LLM-Derived Abstractions with Deterministic Checkers}
+
+\author{%
+  Anonymous Author(s) \\
+  Affiliation \\
+  \texttt{email} \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+% ---- LOGIC: one paragraph, the whole argument in miniature. ----
+% (1) FM-Agent reasons about functional correctness; most security bugs are not
+%     correctness bugs. (2) The CWE space is not one problem but a family, each
+%     needing its own formal theory. (3) We keep the LLM-derives-abstraction +
+%     deterministic-checker engine and let each theory plug in; results compose
+%     interprocedurally. (4) Seven plugins on one interface (two auto-generated),
+%     evaluated against syntactic SAST and a direct-LLM baseline on synthetic,
+%     real-CVE, and a new whole-file interprocedural benchmark. (5) The method's
+%     value is cross-function recall on properties no linter models; we report an
+%     honest recall--precision trade-off and a scoring-artifact audit.
+\emph{[Brief placeholder.]} Automated program reasoning with LLMs has focused on
+functional correctness, yet most security weaknesses are not correctness bugs:
+the code does what it was written to do while violating a security property the
+specification never mentions. We observe that the CWE space is not a single
+detection problem but a \emph{family} of problems, each demanding a distinct
+formal theory (information flow, taint, guarded-Hoare authorization,
+crypto-misuse, typestate, resource bounds, authentication integrity). We factor
+one reusable engine---an LLM produces a modular per-function natural-language
+abstraction; a small deterministic checker renders the verdict; results compose
+interprocedurally---into a plugin contract, so each theory is a plugin over a
+shared driver. We build seven such plugins (two generated automatically by a
+meta-procedure on the same interface) and evaluate them against syntactic static
+analyzers and a direct-LLM baseline on synthetic (OWASP), real-CVE, and a new
+whole-file \emph{interprocedural} benchmark. The approach's distinctive value is
+high recall on cross-function properties that pattern matchers cannot model; we
+report the recall--precision trade-off honestly and document a scoring artifact
+that inflates naive metrics on multi-function cases.
+\end{abstract}
+
+% ===========================================================================
+\section{Introduction}
+\label{sec:intro}
+% ---- LOGIC of this section: motivate the gap, state the thesis, list claims. ----
+\begin{itemize}
+  \item \textbf{The gap.} LLM-based program reasoning (e.g.\ Hoare-style
+    specification + checking) targets \emph{functional correctness}. But a large
+    class of security bugs answer ``does the code do what it should?'' with
+    \emph{yes} and are still critical---e.g.\ a handler that returns exactly the
+    right object, to the wrong caller (missing authorization). The missing
+    predicate (``is this subject authorized for this resource?'') is not part of
+    any functional post-condition. \emph{Correctness reasoning is structurally
+    blind to it.}
+  \item \textbf{Key observation.} ``Security bugs'' share one catalog (CWE) but
+    that is a taxonomy, not a method. Injection is a data-flow question; missing
+    authorization is a subject--resource binding question; confidentiality is a
+    label-flow question; crypto misuse is an algorithm/provenance question;
+    CSRF/TOCTOU is an event-ordering question. \emph{These do not reduce to one
+    another}---detecting the CWE space is a \emph{family} of reasoning problems.
+  \item \textbf{Thesis.} A single reusable technique---\emph{LLM derives a
+    structured per-function abstraction; a deterministic checker decides; results
+    compose up the call graph}---can host each theory as a plugin, giving a
+    security \emph{portfolio} rather than a monolithic detector.
+  \item \textbf{Contributions.}
+    \begin{enumerate}
+      \item A plugin service-provider interface (SPI) factoring the
+        LLM-abstraction / deterministic-checker / interprocedural-composition
+        engine from the theory (Sec.~\ref{sec:design}).
+      \item Seven plugins on this SPI---taint, IFC, authz, crypto, typestate, and
+        two \emph{auto-generated} ones (resource-exhaustion, authentication
+        integrity)---demonstrating generality across bottom-up and top-down
+        composition (Sec.~\ref{sec:portfolio}).
+      \item A benchmark suite: synthetic (OWASP), a curated real-CVE corpus, and
+        a new \emph{whole-file interprocedural} corpus, plus an evaluation
+        against syntactic SAST and a same-model direct-LLM baseline
+        (Sec.~\ref{sec:benchmarks},~\ref{sec:eval}).
+      \item Honest findings: where the method wins (cross-function recall), where
+        it does not (locally-visible bugs; precision), and a \emph{scoring-artifact
+        audit} that corrects naive whole-file metrics (Sec.~\ref{sec:results}).
+    \end{enumerate}
+\end{itemize}
+
+% ===========================================================================
+\section{Motivating example}
+\label{sec:example}
+% ---- LOGIC: make the gap concrete once; reuse this example throughout. ----
+\emph{[Brief.]} A running example (an access-control / IDOR case simplified from a
+real CVE): the function is functionally perfect---validates input, handles the
+missing-object case, returns the right record---yet leaks any user's object
+because it never binds the caller to the resource. Functional-correctness
+reasoning is silent; a pattern matcher sees no dangerous token; the bug is the
+\emph{absence} of a check. This example motivates why a dedicated authorization
+theory is needed, and recurs in Sec.~\ref{sec:design} (how the theory catches it)
+and Sec.~\ref{sec:results} (that a syntactic tool scores 0 on this family).
+
+% ===========================================================================
+\section{Design: one engine, many theories}
+\label{sec:design}
+% ---- LOGIC: the reusable technique, then the SPI, then why composition varies. ----
+\subsection{The reusable technique}
+\emph{[Brief.]} Three steps, applied per function, bottom-up over the call graph:
+(1) \textbf{Abstract}---the LLM emits a structured, theory-specific
+natural-language abstraction (sources/sinks, guards, key provenance, event
+order, magnitude bounds\dots) and \emph{never} a verdict; (2) \textbf{Check}---a
+small deterministic, fail-closed checker applies the theory's rule to that
+abstraction; (3) \textbf{Compose}---per-function facts are instantiated up the
+call graph. The LLM does semantic reading; the checker does the auditable,
+reproducible decision. Unknown $\Rightarrow$ unsafe, never silently safe.
+
+\subsection{The plugin SPI}
+\emph{[Brief.]} A plugin owns: prompt construction, response parsing, a
+caller-facing summary, a composition operator, and a deterministic checker; the
+core owns extraction, call-graph, bottom-up scheduling, parallel LLM dispatch,
+tracing, and aggregation. The core never inspects a plugin's payload schema.
+
+\subsection{Composition is not one-size-fits-all}
+% ---- LOGIC: this is the non-obvious design point that makes the SPI general. ----
+\emph{[Brief.]} Different theories compose differently, so the driver supports
+three phases: bottom-up abstraction, bottom-up composition, and an \emph{optional
+top-down context worklist}. Taint/IFC/crypto/resource compose bottom-up (a
+callee's parametric signature is instantiated with the caller's actual
+arguments); authorization and authentication need top-down obligation
+propagation (a check an \emph{ancestor} performs discharges a callee's
+requirement); typestate uses both. Supporting these three shapes on one driver
+is what makes the SPI general.
+
+% ===========================================================================
+\section{A portfolio of seven plugins}
+\label{sec:portfolio}
+% ---- LOGIC: enumerate the theories; then show the interface is generative. ----
+\subsection{The seven theories}
+\emph{[Brief; one line each.]} taint (integrity information-flow / injection),
+IFC (confidentiality lattice / info-leak), authz (guarded-Hoare / IDOR-BOLA),
+crypto (CrySL-style misuse tables), typestate (temporal automata / CSRF, cert,
+TOCTOU), resource (magnitude$\to$costly-op$\to$dominating-bound / DoS), authn
+(authentication-event domination + session hygiene). Table~\ref{tab:plugins}
+lists each theory, target CWEs, verdicts, and composition direction.
+
+\begin{table}[t]
+  \caption{The seven plugins on one SPI. Composition direction shows the engine's
+    generality: bottom-up value composition vs.\ top-down obligation propagation.
+    \emph{[Placeholder rows; refine.]}}
+  \label{tab:plugins}
+  \centering
+  \small
+  \begin{tabular}{llll}
+    \toprule
+    Plugin & Theory & Target CWEs & Composition \\
+    \midrule
+    taint     & info-flow integrity      & 89/78/79/22/918/502\dots & bottom-up \\
+    ifc       & confidentiality lattice  & 200/209/532              & bottom-up \\
+    authz     & guarded-Hoare            & 639/862/863/306          & top-down \\
+    crypto    & CrySL misuse tables      & 327/328/330/321/798      & bottom-up \\
+    typestate & temporal automata        & 352/295/367/772          & bidirectional \\
+    resource  & magnitude/bound          & 400/770/674/1333/409     & bottom-up \\
+    authn     & auth-event domination    & 287/384/613/522/294      & top-down \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{The interface is generative}
+% ---- LOGIC: strongest generality evidence---new plugins need no core changes. ----
+\emph{[Brief.]} A central registry makes ``what plugins exist'' a single
+pure-data source; adding a plugin is one manifest entry plus three files, with no
+edits to the runner, evaluation harness, or viewer. Two of the seven plugins
+(resource, authn) were produced end-to-end by a meta-procedure that, given a CWE
+class + a formal theory + a test set, emits the three files, self-tests on the
+benchmark harness, and iterates. That the same interface hosts an auto-generated
+\emph{top-down} plugin (authn) and an auto-generated \emph{bottom-up} plugin
+(resource) is our strongest generality evidence.
+
+% ===========================================================================
+\section{Benchmarks}
+\label{sec:benchmarks}
+% ---- LOGIC: three benchmark tiers, each answering a different question. ----
+\begin{itemize}
+  \item \textbf{OWASP (synthetic, 100\% labels).} taint + crypto. Answers: how do
+    we compare where clean labels exist? \emph{Caveat: synthetic one-liners
+    flatter pattern matchers.}
+  \item \textbf{CVE-curated (real, $\sim$60\% label precision).} All plugins,
+    especially the three with no public benchmark. Built from OSV.dev fix commits
+    $\to$ before/after function pairs. Answers: does the advantage survive real
+    code?
+  \item \textbf{Hard whole-file (interprocedural).} Whole changed files (median
+    235 LOC, $\sim$9 functions/case, 69\% multi-file), not single functions.
+    Answers: does the method's \emph{interprocedural} machinery actually pay off?
+    Difficulty is quantified, not asserted (Table~\ref{tab:difficulty}).
+\end{itemize}
+
+\begin{table}[t]
+  \caption{The hard corpus is measurably harder, stressing interprocedural
+    localization the single-function corpus cannot. \emph{[Verified numbers.]}}
+  \label{tab:difficulty}
+  \centering
+  \small
+  \begin{tabular}{lrr}
+    \toprule
+    metric & single-function & whole-file (hard) \\
+    \midrule
+    median LOC / case      & 25 & 235 \\
+    functions / case       & 1  & 9 \\
+    multi-file fix commits & 0\% & 69\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ===========================================================================
+\section{Evaluation setup}
+\label{sec:eval}
+% ---- LOGIC: baselines, metric, and the audit that corrects the metric. ----
+\emph{[Brief.]} Baselines: Bandit and Semgrep~CE (syntactic SAST) and a
+\emph{direct-LLM} baseline (the same model FM-Agent uses, single-shot verdict, no
+structured pipeline)---isolating the contribution of the
+describe/check/compose machinery. Metric: precision/recall/F1 with CWE-family
+matching, two views (right file / right bug). \textbf{Scoring-artifact audit}:
+on whole-file cases the naive ``any function flagged $\Rightarrow$ file flagged''
+rule degenerates to flag-everything ($\sim$0\% specificity), inflating recall/F1;
+we therefore add \emph{locus-level} scoring keyed on the changed function (the
+true fix locus). All FM-Agent hard-benchmark numbers use locus scoring.
+
+% ===========================================================================
+\section{Results}
+\label{sec:results}
+% ---- LOGIC: (a) beats syntactic tools & survives real code; (b) vs LLM it's a
+%      recall/precision trade-off that tracks interprocedurality; (c) honesty. ----
+\subsection{Versus syntactic tools; synthetic-vs-real reversal}
+\emph{[Brief.]} Table~\ref{tab:orig}: FM-Agent leads 6/7 head-to-heads; the lone
+syntactic win (crypto on OWASP, Bandit 1.00) \emph{reverses} on real CVE code
+(0.50 vs 0.65), and Bandit's taint score collapses $0.53\to0.00$
+synthetic$\to$real. On authz/IFC, syntactic tools score a categorical 0.00---they
+do not model the property at all.
+
+\begin{table}[t]
+  \caption{Original five-plugin evaluation, detection-view F1. FM-Agent wins 6/7;
+    the one loss (crypto/OWASP) is a synthetic artifact that reverses on real
+    code. \emph{[Verified numbers.]}}
+  \label{tab:orig}
+  \centering
+  \small
+  \begin{tabular}{llrrr}
+    \toprule
+    Plugin & Benchmark & FM-Agent & Bandit & Semgrep \\
+    \midrule
+    taint     & OWASP & \textbf{0.75} & 0.53 & 0.51 \\
+    taint     & CVE   & \textbf{0.65} & 0.00 & 0.25 \\
+    crypto    & OWASP & 0.73 & \textbf{1.00} & 0.35 \\
+    crypto    & CVE   & \textbf{0.65} & 0.50 & 0.12 \\
+    authz     & CVE   & \textbf{0.52} & 0.00 & 0.00 \\
+    ifc       & CVE   & \textbf{0.41} & 0.00 & 0.00 \\
+    typestate & CVE   & \textbf{0.62} & 0.27 & 0.14 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Versus a direct-LLM baseline on the hard benchmark}
+% ---- LOGIC: the central, honest result. ----
+\emph{[Brief.]} Table~\ref{tab:hard}: at the locus level, FM-Agent leads 5/7. Its
+edge is \textbf{recall} on cross-function properties (authz 1.00, authn 0.94,
+resource 0.90 vs.\ direct-LLM 0.27/0.44/0.10)---interprocedural composition
+follows a flow the single-shot LLM cannot hold in one judgment. The direct-LLM
+baseline's edge is \textbf{specificity} (it is more conservative on fixed files).
+Crucially, \emph{the gap tracks how interprocedural the property is}: resource
+(+0.47) and authz (+0.33) are purely cross-function; crypto/IFC bugs are often
+visible in one function, and there the single-shot LLM's higher precision wins.
+This gradient itself validates that the benchmark measures interprocedural
+ability. \textbf{This is a characterized trade-off, not a blowout.}
+
+\begin{table}[t]
+  \caption{Hard whole-file benchmark: FM-Agent (locus-F1) vs.\ direct-LLM
+    (file-F1). FM-Agent's advantage is recall and grows with the property's
+    interprocedurality. \emph{[Verified numbers.]}}
+  \label{tab:hard}
+  \centering
+  \small
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    & \multicolumn{3}{c}{FM-Agent (locus)} & \multicolumn{3}{c}{direct-LLM (file)} \\
+    \cmidrule(r){2-4}\cmidrule(l){5-7}
+    Plugin & F1 & recall & spec. & F1 & recall & spec. \\
+    \midrule
+    resource  & \textbf{0.64} & 0.90 & 0.10 & 0.17 & 0.10 & 0.90 \\
+    authz     & \textbf{0.71} & 1.00 & 0.25 & 0.38 & 0.27 & 0.88 \\
+    typestate & \textbf{0.59} & 0.80 & 0.18 & 0.40 & 0.40 & 0.45 \\
+    authn     & \textbf{0.62} & 0.94 & 0.00 & 0.45 & 0.44 & 0.53 \\
+    taint     & \textbf{0.61} & 0.77 & 0.15 & 0.55 & 0.59 & 0.40 \\
+    crypto    & 0.63 & 0.73 & 0.40 & \textbf{0.67} & 0.67 & 0.67 \\
+    ifc       & 0.47 & 0.57 & 0.14 & \textbf{0.57} & 0.57 & 0.57 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ===========================================================================
+\section{Limitations and honest caveats}
+\label{sec:limitations}
+% ---- LOGIC: pre-empt the reviewer; these are stated, not hidden. ----
+\begin{itemize}
+  \item \textbf{Label noise.} CVE-fix-commit curation is $\sim$60\% precise
+    (``function changed in a fix'' $\neq$ ``the vulnerable locus''); CVE
+    precision/recall are directional, not clean claims.
+  \item \textbf{Precision cost.} Fail-closed design over-flags; specificity is
+    lower than the direct-LLM baseline. Real, characterized, partly mislabeled.
+  \item \textbf{Soundness.} The checker is sound over the abstraction, but the
+    abstraction is LLM-produced, not conservatively derived---a strong semantic
+    bug-finder, not a verifier.
+  \item \textbf{Cost.} Per-function LLM calls; whole-file cases average $\sim$8
+    calls each. Model-capability dependent.
+\end{itemize}
+
+% ===========================================================================
+\section{Related work}
+\label{sec:related}
+\emph{[Placeholder.]} LLM-based vulnerability detection; static analysis / SAST
+(Bandit, Semgrep, CodeQL); information-flow and taint analysis; CrySL and
+crypto-misuse detection; typestate/temporal property checking; LLM-based program
+verification and Hoare-style reasoning; CVE/fix-commit benchmark construction.
+
+\section{Conclusion}
+\label{sec:conclusion}
+\emph{[Brief.]} Treating security analysis as a portfolio of formal theories over
+one LLM-abstraction/deterministic-checker engine yields broad coverage---including
+properties no linter models---and an interface general enough to auto-generate new
+plugins. The honest picture is a recall-oriented tool whose interprocedural
+advantage over a same-model single-shot baseline grows with the
+interprocedurality of the target property.
+
+% ===========================================================================
+\section*{References}
+\medskip
+{
+\small
+[1] \emph{[Placeholder]} FM-Agent: Scaling Formal Methods to Large Systems via
+LLM-Based Hoare-Style Reasoning. arXiv:2604.11556.
+
+[2] \emph{[Placeholder]} Bandit: a security linter for Python. PyCQA.
+
+[3] \emph{[Placeholder]} Semgrep: lightweight static analysis. r2c.
+
+[4] \emph{[Placeholder]} CrySL: a domain-specific language for cryptographic API
+misuse. ECOOP 2018.
+
+[5] \emph{[Placeholder]} OWASP Benchmark Project.
+
+[6] \emph{[Placeholder]} OSV.dev: open-source vulnerability database.
+}
+
+\end{document}

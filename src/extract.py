@@ -162,6 +162,8 @@ _TEST_DIR_NAMES = {
 
 # Regex patterns matching common test file naming conventions
 _TEST_FILE_PATTERNS = [
+    # Bare test-module names at any level (e.g. mintotp's top-level test.py).
+    re.compile(r'^tests?\.(?:py|go|rs|js|jsx|ts|tsx|ets|java)$'),
     re.compile(r'^test_.*\.py$'),         # Python: test_foo.py
     re.compile(r'^.*_test\.py$'),          # Python: foo_test.py
     re.compile(r'^conftest\.py$'),         # pytest fixtures
@@ -565,8 +567,8 @@ def _extract_functions_indent(lines, lang_cfg):
         line = lines[i]
         stripped = line.lstrip()
 
-        # Look for 'def ' at any indentation level
-        m = re.match(r'^(\s*)def\s+(\w+)\s*\(', line)
+        # Look for 'def ' or 'async def ' at any indentation level
+        m = re.match(r'^(\s*)(?:async\s+)?def\s+(\w+)\s*\(', line)
         if not m:
             i += 1
             continue
