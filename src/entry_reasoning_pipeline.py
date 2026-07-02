@@ -2,136 +2,21 @@ import os
 import json
 import shutil
 import logging
-import tempfile
 from collections import deque, defaultdict
 
-from src.generate_topdown_layers import _build_call_graph, _file_to_fqn
-from src.extract import (
-    EXT_TO_LANG,
-    LANG_CONFIG,
-    _extract_functions_brace,
-    _extract_functions_indent,
-    extract_functions_from_file,
+from src.generate_topdown_layers import (
+    _build_call_graph,
+    _collect_phase_files,
+    _file_to_fqn,
 )
+from src.extract import EXT_TO_LANG, _function_spans, run_extraction
+from src.languages.codegraph import try_codegraph_init
 from src.file_utils import (
     _is_test_file,
     add_test_file_exemption,
     clear_test_file_exemptions,
 )
 import config
-
-
-def _collect_all_function_files(proj_dir):
-    """Collect every extracted function file under proj_dir.
-
-    Returns a list of (filepath, module_name) tuples, where module_name is the
-    extracted directory the function file lives in (only used for bookkeeping;
-    it does not affect the call-graph edges).
-    """
-    extracted_base = os.path.join(proj_dir, "extracted_functions")
-    results = []
-    for root, _, files in os.walk(extracted_base):
-        module_name = os.path.relpath(root, extracted_base)
-        for fname in files:
-            fpath = os.path.join(root, fname)
-            if os.path.isfile(fpath):
-                results.append((fpath, module_name))
-    return results
-
-
-def _extract_for_selection(proj_dir, tmp_root):
-    """Mechanically extract every function in proj_dir into a temp workspace.
-
-    Writes the standard ``extracted_functions/`` layout (same per-file naming
-    and dedup rules as run_extraction) under ``tmp_root`` so the call-graph
-    machinery can run on it. Unlike the pipeline's extraction stage this needs
-    no phases.json — and therefore no previous run_pipeline(): it simply scans
-    every supported source file, skipping the fm_agent/ workspace, .git, and
-    test files.
-
-    Returns the number of extracted functions.
-    """
-    output_base = os.path.join(tmp_root, "extracted_functions")
-    count = 0
-    for root, dirs, files in os.walk(proj_dir):
-        dirs[:] = [d for d in dirs if d not in ("fm_agent", ".git")]
-        for fname in files:
-            src_path = os.path.join(root, fname)
-            src_rel = os.path.relpath(src_path, proj_dir)
-            if not os.path.isfile(src_path):
-                logging.debug("Skipping non-file source path during entry selection: %s", src_rel)
-                continue
-            ext = fname.rsplit(".", 1)[-1] if "." in fname else ""
-            lang_key = EXT_TO_LANG.get(ext)
-            if not lang_key or _is_test_file(src_rel):
-                continue
-            funcs = extract_functions_from_file(src_path, lang_key)
-            if not funcs:
-                continue
-            # Same layout as run_extraction: replace the source filename's
-            # last dot with a hyphen to form the function directory.
-            src_dir = os.path.dirname(src_rel)
-            base = os.path.basename(src_rel)
-            last_dot = base.rfind(".")
-            dir_name = base[:last_dot] + "-" + base[last_dot + 1:] if last_dot > 0 else base
-            out_dir = os.path.join(output_base, src_dir, dir_name)
-            os.makedirs(out_dir, exist_ok=True)
-            for func_name, func_source in funcs:
-                with open(os.path.join(out_dir, f"{func_name}.{ext}"), "w") as f:
-                    f.write(func_source)
-                count += 1
-    return count
-
-
-def build_entry_call_graph(proj_dir, entry_func):
-    """Construct the call graph of functions reachable from entry_func.
-
-    Statically approximates which functions under ``proj_dir`` are called
-    during an execution that starts at ``entry_func``: it builds the global
-    call graph over all extracted functions, then keeps only ``entry_func``
-    and the functions transitively reachable from it via callee edges.
-
-    Args:
-        proj_dir: path to a workspace directory that contains an
-            ``extracted_functions/`` tree.
-        entry_func: FQN of the entry point, e.g. ``src::engine::loader-cpp::loadData``.
-            Assumed to be a function under ``proj_dir``.
-
-    Returns:
-        A dict mapping each reachable FQN (including ``entry_func``) to a sorted
-        list of the FQNs it directly calls within the reachable set. Functions
-        with no outgoing calls map to an empty list.
-
-    Raises:
-        ValueError: if ``entry_func`` is not found among the extracted functions.
-    """
-    all_files = _collect_all_function_files(proj_dir)
-
-    # Build the global call graph over every function. Passing all files as a
-    # single "phase" makes callees_map contain every resolved within-project edge.
-    callees_map, _callers_map, _all_callees_map, file_map, _module_map = _build_call_graph(
-        all_files, proj_dir
-    )
-
-    if entry_func not in file_map:
-        raise ValueError(
-            f"entry_func {entry_func!r} not found among extracted functions under {proj_dir!r}"
-        )
-
-    # BFS over callee edges to find the functions reachable from the entry point.
-    call_graph = {}
-    queue = deque([entry_func])
-    while queue:
-        fqn = queue.popleft()
-        if fqn in call_graph:
-            continue
-        callees = callees_map.get(fqn, set())
-        call_graph[fqn] = sorted(callees)
-        for callee in callees:
-            if callee not in call_graph:
-                queue.append(callee)
-
-    return call_graph
 
 
 def _restrict_to_chains(call_graph, entry_func, end_funcs):
@@ -144,7 +29,7 @@ def _restrict_to_chains(call_graph, entry_func, end_funcs):
 
     Args:
         call_graph: dict mapping FQN -> sorted list of callee FQNs, rooted at
-            entry_func (as returned by build_entry_call_graph).
+            entry_func (as built in _select_functions_by_source).
         entry_func: FQN of the entry point.
         end_funcs: list of FQNs at which to stop. If falsy, call_graph is
             returned unchanged.
@@ -182,14 +67,6 @@ def _restrict_to_chains(call_graph, entry_func, end_funcs):
         else:
             pruned[fqn] = [c for c in call_graph[fqn] if c in on_chain]
     return pruned
-
-
-def _fqn_to_filepath_map(proj_dir):
-    """Build a map from FQN to its extracted function filepath (inverse of _file_to_fqn)."""
-    mapping = {}
-    for filepath, _module_name in _collect_all_function_files(proj_dir):
-        mapping[_file_to_fqn(filepath, proj_dir)] = filepath
-    return mapping
 
 
 # ---------------------------------------------------------------------------
@@ -236,66 +113,24 @@ def _entry_func_source_rel(entry_func):
     return _extracted_file_to_source_rel(extracted_rel).replace(os.sep, "/")
 
 
-def _group_funcs_by_source(extracted_filepaths, extracted_base):
-    """Group extracted function files by their source file.
-
-    Returns a dict mapping source-relative path -> set of (deduped) function
-    names, where the function name is the extracted file's stem (matching the
-    dedup naming run_extraction uses).
-    """
-    by_source = defaultdict(set)
-    for fpath in extracted_filepaths:
-        rel = os.path.relpath(fpath, extracted_base)
-        func_name = os.path.splitext(os.path.basename(rel))[0]
-        by_source[_extracted_file_to_source_rel(rel)].add(func_name)
-    return by_source
-
-
-def _function_spans(filepath, lang_key):
-    """Return ``(spans, raw_lines)`` for a source file.
-
-    ``spans`` is a list of ``(deduped_name, start_idx, end_idx)`` line ranges,
-    one per function, named exactly as run_extraction names the extracted files
-    (duplicate names get ``_1``, ``_2``, ... suffixes). ``raw_lines`` are the
-    file's original lines (newline characters preserved) so callers can rewrite
-    the file by line index.
-    """
-    lang_cfg = LANG_CONFIG[lang_key]
-    with open(filepath, "r", errors="replace") as f:
-        raw_lines = f.readlines()
-    # Extraction operates on newline-stripped lines; indices line up 1:1 with
-    # raw_lines (readlines yields one entry per line).
-    norm_lines = [l.rstrip("\n").rstrip("\r") for l in raw_lines]
-
-    if lang_cfg["body"] == "brace":
-        raw_funcs = _extract_functions_brace(norm_lines, lang_key, lang_cfg)
-    else:
-        raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
-
-    name_counts = {}
-    spans = []
-    for name, start, end in raw_funcs:
-        count = name_counts.get(name, 0)
-        name_counts[name] = count + 1
-        deduped = name if count == 0 else f"{name}_{count}"
-        spans.append((deduped, start, end))
-    return spans, raw_lines
-
-
-def _trim_source_file(filepath, keep_names):
+def _trim_source_file(filepath, keep_names, proj_dir=None):
     """Delete every function NOT in ``keep_names`` from a source file in place.
 
     Non-function lines (includes, declarations, globals, etc.) are preserved as
     context; only the line ranges of unselected functions are removed. Returns
     ``(kept, removed)`` counts. Files whose language is unsupported, or that
     contain no detected functions, are left untouched.
+
+    ``proj_dir`` is forwarded to _function_spans so codegraph can locate the
+    project's index; when None, function detection falls back to the regex
+    extractor.
     """
     ext = os.path.basename(filepath).rsplit(".", 1)[-1] if "." in os.path.basename(filepath) else ""
     lang_key = EXT_TO_LANG.get(ext)
     if not lang_key:
         return 0, 0
 
-    spans, raw_lines = _function_spans(filepath, lang_key)
+    spans, raw_lines = _function_spans(filepath, lang_key, proj_dir)
     if not spans:
         return 0, 0
 
@@ -334,7 +169,7 @@ def _trim_project_in_place(proj_dir, all_by_source, keep_by_source):
             os.remove(src_path)
             deleted_files += 1
             continue
-        kept, removed = _trim_source_file(src_path, keep_names)
+        kept, removed = _trim_source_file(src_path, keep_names, proj_dir)
         total_kept += kept
         total_removed += removed
 
@@ -430,45 +265,136 @@ def run_entry_pipeline(proj_dir, entry_func=None, end_funcs=None, resume=False):
         clear_test_file_exemptions()
 
 
+def _enumerate_source_files(proj_dir):
+    """List every supported, non-test source file under proj_dir (relative paths).
+
+    Skips the fm_agent/ and .git/ directories and applies the same language and
+    test-file filters run_extraction uses, so the returned files are exactly the
+    ones that will yield extracted functions. The entry_func's source file is
+    still included when it looks like a test, because run_entry_pipeline
+    registers it as a test-file exemption before selection runs.
+    """
+    source_files = []
+    for root, dirs, files in os.walk(proj_dir):
+        dirs[:] = [d for d in dirs if d not in ("fm_agent", ".git")]
+        for fname in files:
+            src_rel = os.path.relpath(os.path.join(root, fname), proj_dir).replace(os.sep, "/")
+            ext = fname.rsplit(".", 1)[-1] if "." in fname else ""
+            if EXT_TO_LANG.get(ext) and not _is_test_file(src_rel):
+                source_files.append(src_rel)
+    return sorted(source_files)
+
+
+def _select_functions_by_source(proj_dir, entry_func, end_funcs):
+    """Select the functions reachable from entry_func, grouped by source file.
+
+    Extracts a throwaway copy of proj_dir with the very machinery the main
+    pipeline uses — ``run_extraction`` plus ``_build_call_graph`` from
+    generate_topdown_layers, both codegraph-backed whenever a codegraph index
+    can be built — then builds the call graph rooted at ``entry_func``
+    (optionally restricted to chains reaching ``end_funcs``) and returns two
+    source-file-keyed groupings:
+
+        (all_by_source, keep_by_source)
+
+    ``all_by_source`` covers every extractable function; ``keep_by_source``
+    covers only the selected ones. proj_dir is read but never modified:
+    extraction, the codegraph index and all scratch state live under a sibling
+    selection copy that is discarded before returning.
+    """
+    # A full source copy lets codegraph index the project (writing .codegraph/)
+    # and lets run_extraction/_build_call_graph run exactly as they do in
+    # run_pipeline — without ever touching proj_dir. _build_call_graph resolves
+    # the codegraph index via the copy's parent (see CodeGraphExtractor
+    # .from_proj_dir), matching how run_pipeline drives it against work_dir.
+    sel_dir = proj_dir + ".fm-entry-select"
+    work_dir = os.path.join(sel_dir, "fm_agent")
+    _make_run_copy(proj_dir, sel_dir)
+    try:
+        source_files = _enumerate_source_files(sel_dir)
+        if not source_files:
+            raise ValueError(f"no extractable source files found under {proj_dir!r}")
+
+        # One all-encompassing phase, so _build_call_graph's within-phase edges
+        # span the entire project (every reachable callee is retained).
+        phase = {"phase": 0, "name": "all",
+                 "modules": [{"name": "all", "source_files": source_files}]}
+        # _make_run_copy brings along any existing fm_agent/; start the selection
+        # extraction from a clean slate so no stale extracted_functions leak in.
+        shutil.rmtree(work_dir, ignore_errors=True)
+        os.makedirs(work_dir, exist_ok=True)
+        with open(os.path.join(work_dir, "phases.json"), "w") as f:
+            json.dump({"phases": [phase]}, f)
+
+        try_codegraph_init(sel_dir)
+        run_extraction(sel_dir, work_dir=work_dir, force=True)
+
+        phase_files = _collect_phase_files(work_dir, phase)
+        if not phase_files:
+            raise ValueError(f"no extractable functions found under {proj_dir!r}")
+        callees_map, _callers, _all_callees, _file_map, _module_map = _build_call_graph(
+            phase_files, work_dir
+        )
+        all_fqns = {_file_to_fqn(fp, work_dir) for fp, _mod in phase_files}
+
+        if entry_func not in all_fqns:
+            raise ValueError(
+                f"entry_func {entry_func!r} not found among extracted functions under proj_dir"
+            )
+
+        # BFS the call graph reachable from the entry point.
+        call_graph = {}
+        queue = deque([entry_func])
+        while queue:
+            fqn = queue.popleft()
+            if fqn in call_graph:
+                continue
+            callees = callees_map.get(fqn, set())
+            call_graph[fqn] = sorted(callees)
+            for callee in callees:
+                if callee not in call_graph:
+                    queue.append(callee)
+
+        # Every extractable function, grouped by source file.
+        all_by_source = defaultdict(set)
+        for fqn in all_fqns:
+            all_by_source[_entry_func_source_rel(fqn)].add(fqn.split("::")[-1])
+    finally:
+        shutil.rmtree(sel_dir, ignore_errors=True)
+
+    # Keep only functions on a call chain from entry_func to one of end_funcs.
+    if end_funcs:
+        unreachable = sorted(set(end_funcs) - set(call_graph))
+        call_graph = _restrict_to_chains(call_graph, entry_func, end_funcs)
+        if unreachable:
+            logging.warning(
+                "[EntryPipeline] %d end function(s) are not reachable from %s: %s",
+                len(unreachable), entry_func, ", ".join(unreachable[:5]),
+            )
+        if not call_graph:
+            raise ValueError(
+                f"none of the requested end_funcs are reachable from entry_func {entry_func!r}"
+            )
+
+    print(
+        f"[EntryPipeline] Selected {len(call_graph)} of {len(all_fqns)} function(s) "
+        f"from entry {entry_func}."
+    )
+
+    # Map the selected FQNs back to their (source file, function name).
+    keep_by_source = defaultdict(set)
+    for fqn in call_graph:
+        keep_by_source[_entry_func_source_rel(fqn)].add(fqn.split("::")[-1])
+
+    return all_by_source, keep_by_source
+
+
 def _run_entry_pipeline_inner(proj_dir, work_dir, entry_func, end_funcs, resume):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
-    tmp_root = tempfile.mkdtemp(prefix="fm_entry_selection_")
-    try:
-        n_funcs = _extract_for_selection(proj_dir, tmp_root)
-        if not n_funcs:
-            raise ValueError(f"no extractable functions found under {proj_dir!r}")
-
-        call_graph = build_entry_call_graph(tmp_root, entry_func)
-
-        # Keep only functions on a call chain from entry_func to one of end_funcs.
-        if end_funcs:
-            unreachable = sorted(set(end_funcs) - set(call_graph))
-            call_graph = _restrict_to_chains(call_graph, entry_func, end_funcs)
-            if unreachable:
-                logging.warning(
-                    "[EntryPipeline] %d end function(s) are not reachable from %s: %s",
-                    len(unreachable), entry_func, ", ".join(unreachable[:5]),
-                )
-            if not call_graph:
-                raise ValueError(
-                    f"none of the requested end_funcs are reachable from entry_func {entry_func!r}"
-                )
-
-        print(
-            f"[EntryPipeline] Selected {len(call_graph)} of {n_funcs} function(s) "
-            f"from entry {entry_func}."
-        )
-
-        extracted_base = os.path.join(tmp_root, "extracted_functions")
-        fqn_to_file = _fqn_to_filepath_map(tmp_root)
-        all_by_source = _group_funcs_by_source(
-            (fp for fp, _ in _collect_all_function_files(tmp_root)), extracted_base
-        )
-        wanted_files = [fqn_to_file[fqn] for fqn in call_graph if fqn in fqn_to_file]
-        keep_by_source = _group_funcs_by_source(wanted_files, extracted_base)
-    finally:
-        shutil.rmtree(tmp_root, ignore_errors=True)
+    all_by_source, keep_by_source = _select_functions_by_source(
+        proj_dir, entry_func, end_funcs
+    )
 
     # 2. Copy the sources into a separate run directory, then trim that copy.
     # proj_dir is left untouched throughout.
