@@ -404,6 +404,16 @@ def _run_entry_pipeline_inner(proj_dir, work_dir, entry_func, end_funcs, resume)
     # the prior state in run_dir without any extra seeding here.
     _make_run_copy(proj_dir, run_dir)
     try:
+        # Build the codegraph index on the run copy before trimming so that
+        # _trim_project_in_place detects function names/spans with the same
+        # codegraph backend that _select_functions_by_source used to produce
+        # keep_by_source. Without it the trim would fall back to the regex
+        # extractor and could disagree with the selection (mismatched names or
+        # spans -> wrong functions kept/removed). Idempotent and non-fatal:
+        # no-ops if an index already exists, skips silently if codegraph is not
+        # installed (selection then also used regex, so the two stay consistent).
+        # The index also gets reused by run_pipeline's own try_codegraph_init.
+        try_codegraph_init(run_dir)
         _trim_project_in_place(run_dir, all_by_source, keep_by_source)
 
         # 3. Run the standard pipeline directly on the run copy.
