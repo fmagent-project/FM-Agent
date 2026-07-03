@@ -2,8 +2,9 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
 try:
@@ -108,10 +109,12 @@ def extract_info_block(filepath: Path) -> Optional[str]:
     return content[start + len(tag) + 1 : end].strip()
 
 
-def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[str]:
+def extract_callee_spec_from_info(
+    info_block: str,
+    callee_fqn: str,
+    aliases: Optional[Sequence[str]] = None,
+) -> Optional[str]:
     """Find the [SPLIT]-separated entry for callee_fqn in an info_block."""
-    import re
-
     # Detect comment prefix from the info_block content itself
     prefix = ""
     for line in info_block.splitlines():
@@ -132,7 +135,7 @@ def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[
                 break
 
     split_tag = f"{prefix} [SPLIT]" if prefix else "[SPLIT]"
-    callee_stem = callee_fqn.split("::")[-1]
+    names = _callee_match_names(callee_fqn, aliases or ())
     for entry in info_block.split(split_tag):
         entry = entry.strip()
         if not entry or "(no callees)" in entry:
@@ -141,9 +144,28 @@ def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[
         # Strip the comment prefix to get the actual content
         if prefix and first_line.startswith(prefix):
             first_line = first_line[len(prefix):].strip()
-        if callee_fqn in first_line or (callee_stem + "(") in first_line:
+        if any(_info_line_mentions_name(first_line, name) for name in names):
             return entry
     return None
+
+
+def _callee_match_names(callee_fqn: str, aliases: Sequence[str]) -> List[str]:
+    names = [callee_fqn, callee_fqn.split("::")[-1]]
+    for alias in aliases:
+        if not alias:
+            continue
+        names.append(alias)
+        if "::" in alias:
+            names.append(alias.rsplit("::", 1)[-1])
+    return list(dict.fromkeys(names))
+
+
+def _info_line_mentions_name(first_line: str, name: str) -> bool:
+    if not name:
+        return False
+    if "::" in name:
+        return name in first_line
+    return bool(re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?:\s*\(|\b)", first_line))
 
 
 def chunked(items: List[dict], size: int) -> List[List[dict]]:
@@ -164,6 +186,16 @@ def phase_callers_key(func: dict, phase: int) -> str:
         if key.endswith("_callers") and key.startswith("phase"):
             return key
     return target
+
+
+def phase_callee_aliases_key(func: dict, phase: int) -> Optional[str]:
+    target = f"phase{phase}_callee_aliases_by_caller"
+    if target in func:
+        return target
+    for key in func.keys():
+        if key.endswith("_callee_aliases_by_caller") and key.startswith("phase"):
+            return key
+    return None
 
 
 def detect_lang_and_comment(file_rel: str, ext_to_lang: Dict[str, str]) -> Tuple[str, str]:
@@ -212,6 +244,8 @@ def build_prompt(
     for fn in functions:
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
+        aliases_key = phase_callee_aliases_key(fn, phase)
+        aliases_by_caller = fn.get(aliases_key, {}) if aliases_key else {}
         callers = fn.get(caller_key, [])
         for caller_name in callers:
             caller_layer = func_to_layer.get(caller_name)
@@ -227,7 +261,9 @@ def build_prompt(
             info_block = extract_info_block(caller_file)
             if not info_block:
                 continue
-            entry = extract_callee_spec_from_info(info_block, fn_name)
+            entry = extract_callee_spec_from_info(
+                info_block, fn_name, aliases_by_caller.get(caller_name, [])
+            )
             if entry:
                 caller_expectations.setdefault(fn_name, []).append((caller_name, entry.strip()))
 

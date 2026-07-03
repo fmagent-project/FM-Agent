@@ -155,10 +155,26 @@ uv run python main.py <proj_dir> [--resume]
 | `--resume` | 续跑上一次中断的运行，而非从头开始 |
 | `--incremental INTENT_FILE` | 以增量模式运行，参数值为描述本次修改目标的意图文件路径。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
+| `--extra-edge FILE` | 向静态调用图补充 caller 到 callee 的边。未传参数且 `<proj_dir>/docs/extra-edge` 存在时会默认使用它。支持 `fm-agent-extra-edges-v1` JSON 文件，或包含这类 JSON 文件的目录。 |
 
 `proj_dir` 必须是一个 git 仓库。
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
+
+当静态解析无法看到关键调用关系时（例如间接 syscall 分发），可使用 `--extra-edge FILE`。补充边会同时作用于完整运行、入口函数范围运行和增量运行。旧参数名 `--extra-call-edges` 仍然兼容。JSON 格式如下：
+
+```json
+{
+  "schema": "fm-agent-extra-edges-v1",
+  "edges": [
+    {
+      "caller": "nanosleep",
+      "callee": "SysNanoSleep",
+      "callee_aliases": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+    }
+  ]
+}
+```
 
 ### 增量模式
 

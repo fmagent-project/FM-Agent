@@ -4,6 +4,7 @@ from config import (
     OPENCODE_MODEL_PROVIDER,
 )
 from src.entry_reasoning_pipeline import run_entry_pipeline
+from src.call_graph_edges import default_call_edges_path, load_call_edges
 from src.file_utils import (
     collect_file_names,
     is_file_ready,
@@ -60,7 +61,7 @@ def _get_pending_batches(batches, proj_dir):
     return pending
 
 
-def run_pipeline(proj_dir, resume=False, required_source_files=None):
+def run_pipeline(proj_dir, resume=False, required_source_files=None, extra_call_edges_path=None):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
@@ -74,6 +75,7 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    extra_call_edges = load_call_edges(extra_call_edges_path)
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -137,7 +139,7 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
     # --- Stage 3: Generate topdown layers ---
     print("[Pipeline] Stage 3/4: Generating topdown layers...")
     phases_data = json.load(open(os.path.join(work_dir, "phases.json")))
-    generate_topdown_layers(work_dir)
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
 
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
     print("[Pipeline] Stage 4/4: Generating specs & verification...")
@@ -163,7 +165,7 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
             spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
         )
         if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num])
+            generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
         total_layers = layers_data.get("total_layers", 1)
@@ -369,7 +371,8 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--isolate] [--entry-func PATH] [--end-func PATH ...]",
+              "[--isolate] [--entry-func PATH] [--end-func PATH ...] "
+              "[--extra-edge FILE]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -406,10 +409,23 @@ if __name__ == "__main__":
         help="one or more function paths at which to stop (space-separated list); "
         "if omitted, the whole call graph reachable from --entry-func is analyzed.",
     )
+    parser.add_argument(
+        "--extra-edge",
+        "--extra-call-edges",
+        dest="extra_edge",
+        metavar="FILE",
+        default=None,
+        help="optional fm-agent-extra-edges-v1 JSON file, or directory of JSON "
+        "files, containing supplemental caller->callee edges. Defaults to "
+        "<proj_dir>/docs/extra-edge when that path exists.",
+    )
     args = parser.parse_args()
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
+    extra_call_edges_path = args.extra_edge or default_call_edges_path(proj_dir)
+    if extra_call_edges_path:
+        extra_call_edges_path = os.path.abspath(extra_call_edges_path)
 
     start_time = time.time()
 
@@ -422,6 +438,7 @@ if __name__ == "__main__":
             entry_func=args.entry_func,
             end_funcs=args.end_func,
             resume=resume,
+            extra_call_edges_path=extra_call_edges_path,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -472,9 +489,18 @@ if __name__ == "__main__":
             # Incremental mode requires a recorded commit to diff against; without a
             # version.log from a previous run, fall back to the full pipeline.
             if args.incremental and old_commit:
-                run_incremental_pipeline(run_dir, intent_path, old_commit)
+                run_incremental_pipeline(
+                    run_dir,
+                    intent_path,
+                    old_commit,
+                    extra_call_edges_path=extra_call_edges_path,
+                )
             else:
-                run_pipeline(run_dir, resume=resume)
+                run_pipeline(
+                    run_dir,
+                    resume=resume,
+                    extra_call_edges_path=extra_call_edges_path,
+                )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
             # copied back to the real project below. Only recorded on success so a
