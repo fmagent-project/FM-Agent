@@ -10,6 +10,7 @@ REGISTRY in src/languages/registry.py. No other files need to change.
 
 import logging
 import os
+import shutil
 import sqlite3
 import subprocess
 from collections import defaultdict
@@ -188,6 +189,50 @@ class CodeGraphExtractor:
 
         return result
 
+    def get_function_spans(self, lang_key: str, abs_filepath: str):
+        """Return ``[(name, start_idx, end_idx), ...]`` for a single file, or None.
+
+        Line indices are 0-indexed and inclusive, matching the convention the
+        regex extractor (_extract_functions_brace / _extract_functions_indent)
+        uses, so callers can rewrite the file by line index. Functions are
+        ordered by their starting line.
+
+        Returns None when codegraph does not support ``lang_key`` or when the
+        file is not present in the index (e.g. it was never indexed) — the
+        caller then falls back to the regex extractor. An indexed file that
+        genuinely contains no functions also yields None, which is harmless:
+        the regex fallback finds none either.
+        """
+        cg_langs = _CG_LANG.get(lang_key)
+        if not cg_langs:
+            return None
+
+        # codegraph stores file paths relative to the project root, which is the
+        # parent of the .codegraph/ directory holding the database.
+        root = os.path.dirname(os.path.dirname(os.path.abspath(self._db)))
+        rel = os.path.relpath(os.path.abspath(abs_filepath), root)
+
+        conn = sqlite3.connect(self._db)
+        cur = conn.cursor()
+        placeholders = ",".join("?" * len(cg_langs))
+        cur.execute(
+            f"""
+            SELECT name, start_line, end_line
+            FROM nodes
+            WHERE kind IN ('function', 'method') AND language IN ({placeholders})
+              AND file_path = ?
+            ORDER BY start_line
+            """,
+            (*cg_langs, rel),
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            return None
+        # codegraph uses 1-indexed lines with an inclusive end_line.
+        return [(name, int(start) - 1, int(end) - 1) for name, start, end in rows]
+
     def get_call_edges(self, lang_key: str) -> dict:
         """Return {caller_fqn: {callee_fqn, ...}} for the given language.
 
@@ -266,16 +311,36 @@ class CodeGraphExtractor:
         return dict(result)
 
 
-def try_codegraph_init(proj_dir: str) -> None:
-    """Run `codegraph init` in proj_dir if the index does not yet exist.
+def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
+    """Build the codegraph index for proj_dir with `codegraph init`.
+
+    By default (``force=True``) any existing index is discarded and rebuilt, so
+    the index always reflects the current working tree rather than whatever code
+    was present when it was last built. This is the safe default: callers read
+    function bodies and spans from the index, and a stale one (e.g. after an
+    incremental run's tree changed, or after `_trim_project_in_place` edited the
+    sources) would yield boundaries for the wrong code. `codegraph init` on its
+    own no-ops when `.codegraph/` already exists, so a rebuild requires clearing
+    it first.
+
+    Pass ``force=False`` to keep an existing index and only build when it is
+    absent — an opt-in optimization for callers that know the tree is unchanged
+    since the index was built.
 
     Silently skips when codegraph is not installed so the pipeline falls back
     to the regex-based extractor without any error.
     """
-    db_path = os.path.join(proj_dir, ".codegraph", "codegraph.db")
+    codegraph_dir = os.path.join(proj_dir, ".codegraph")
+    db_path = os.path.join(codegraph_dir, "codegraph.db")
     if os.path.exists(db_path):
-        return
-    print("[Pipeline] Building codegraph index (this runs once per project)...")
+        if not force:
+            return
+        # Existing index may reflect stale sources; remove it so `codegraph init`
+        # rebuilds against the current tree instead of skipping.
+        shutil.rmtree(codegraph_dir, ignore_errors=True)
+        print("[Pipeline] Rebuilding codegraph index for current working tree...")
+    else:
+        print("[Pipeline] Building codegraph index...")
     try:
         result = subprocess.run(
             ["codegraph", "init"], cwd=proj_dir, capture_output=True, text=True

@@ -21,7 +21,6 @@ from config import (
 from .extract import (
     EXT_TO_LANG,
     LANG_CONFIG,
-    _is_test_file,
     extract_functions_from_file,
     run_extraction,
 )
@@ -32,7 +31,7 @@ from .generate_topdown_layers import (
     _load_phases,
     generate_topdown_layers,
 )
-from .file_utils import is_file_ready, collect_file_names
+from .file_utils import is_file_ready, collect_file_names, _is_test_file
 from .generate_batch_prompts import (
     _detect_comment_prefix,
     extract_callee_spec_from_info,
@@ -41,8 +40,10 @@ from .generate_batch_prompts import (
 )
 from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_call
+from .cli_backend import build_agent_command, is_cli_backend_enabled
 from .prompts import _load_spec_check_json
 from .scope import _parse_issue_signals, rank_functions_in_file
+from .languages.codegraph import try_codegraph_init
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
 
 
@@ -649,6 +650,12 @@ def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
     logging.info("[Stage 4/10] Re-extracting functions and restoring previous specs...")
     old_spec = extract_existing_specs(proj_dir)
     logging.info("  -> captured %d existing spec block(s) before re-extraction.", len(old_spec))
+    # Rebuild the codegraph index before re-extraction. The index still reflects the code as
+    # of the previous full run, but the working tree has changed since then; run_extraction
+    # (and the downstream scope ranking) read function bodies and spans from codegraph, so a
+    # stale index would yield boundaries for the old code. try_codegraph_init rebuilds by
+    # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
+    try_codegraph_init(proj_dir)
     run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
     _reapply_existing_specs(proj_dir, old_spec)
     logging.info("  -> functions re-extracted and prior [SPEC]/[INFO] headers reapplied.")
@@ -759,11 +766,20 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
         f.write(prompt_content)
     os.replace(tmp_path, prompt_path)
 
-    command = [
-        "opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
-        "--file", prompt_path,
-        "--", "Follow the instructions in the attached file.",
-    ]
+    prompt = "Follow the instructions in the attached file."
+    if is_cli_backend_enabled():
+        command = build_agent_command(
+            model=OPENCODE_SETUP_MODEL,
+            prompt=prompt,
+            cwd=proj_dir,
+            files=[prompt_path],
+        )
+    else:
+        command = [
+            "opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
+            "--file", prompt_path,
+            "--", prompt,
+        ]
 
     produced = False
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
@@ -1051,6 +1067,7 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
                     src_path=src_path,
                     issue=developer_intent,
                     signals=signals,
+                    proj_dir=proj_dir,
                 )
 
             if ranked:

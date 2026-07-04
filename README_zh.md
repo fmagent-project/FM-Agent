@@ -91,6 +91,8 @@ cp .env.example .env
 LLM_API_KEY=your-api-key-here
 LLM_API_BASE_URL=https://openrouter.ai/api/v1
 LLM_MODEL=anthropic/claude-sonnet-4.6
+LLM_EFFORT=
+FM_AGENT_MODEL_BACKEND=opencode
 OPENCODE_MODEL_PROVIDER=openrouter
 ```
 
@@ -112,7 +114,9 @@ OpenCode provider 的配置以及可选的 prompt 缓存设置见 [docs/config_l
 
 | 参数 | 默认值 | 描述 |
 |---|---|---|
-| `LLM_MODEL` | `anthropic/claude-sonnet-4.6` | 所有任务的默认模型 |
+| `LLM_MODEL` | `anthropic/claude-sonnet-4.6` | 所有任务的默认模型；本地 CLI 后端下非空时也会传给对应 CLI |
+| `LLM_EFFORT` | unset | 可选；非空时传给 `codex exec` 或 `claude -p`，留空则不传 effort 参数 |
+| `FM_AGENT_MODEL_BACKEND` | `opencode` | 模型后端；设为 `auto`、`codex-cli` 或 `claude-cli` 可绕过 OpenCode 使用本地 CLI |
 | `OPENCODE_SETUP_MODEL` | `LLM_MODEL` | 用于理解代码库、划分代码模块和生成领域知识的模型 |
 | `OPENCODE_SPEC_MODEL` | `LLM_MODEL` | 用于规约生成的模型 |
 | `OPENCODE_BUG_VALIDATION_MODEL` | `LLM_MODEL` | 用于进行 Bug 分析和生成报告的模型 |

@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import logging
 from config import *
+from .cli_backend import is_cli_backend_enabled, run_agent_for_messages
 from openai import OpenAI, RateLimitError, BadRequestError
 from .trace_writer import (
     new_event_id,
@@ -166,6 +167,9 @@ def _retry_create(client, model, messages):
     - When LLM_API_BASE_URL matches INJECT_HOST, metadata.user_id is attached so
       third-party relays that support it can keep prompt-cache routing sticky.
     """
+    if is_cli_backend_enabled():
+        return run_agent_for_messages(model, messages)
+
     rate_limit_attempts = 0
     transient_attempts = 0
     use_anthropic = _is_anthropic_model(model)
