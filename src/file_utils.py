@@ -61,6 +61,7 @@ _TEST_FILE_PATTERNS = [
     re.compile(r'^.*\.(?:test|spec)\.(?:js|jsx|ts|tsx)$'),  # JS/TS: foo.test.js
     re.compile(r'^.*_test\.rs$'),          # Rust: foo_test.rs
     re.compile(r'^.*\.test\.(?:ets)$'),    # ArkTS: foo.test.ets
+    re.compile(r'^.*_(?:SUITE|tests?)\.erl$'),  # Erlang: Common Test / EUnit
 ]
 
 

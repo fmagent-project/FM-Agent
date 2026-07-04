@@ -165,6 +165,7 @@ _TERMINATING_PATTERNS = {
     "javascript": r'\b(return\b|throw\s|process\.exit\s*\()',
     "typescript": r'\b(return\b|throw\s|process\.exit\s*\()',
     "arkts": r'\b(return\b|throw\s|process\.exit\s*\()',
+    "erlang": r'\b(?:throw|exit|error)\s*\(|\berlang:(?:error|exit)\s*\(',
 }
 
 

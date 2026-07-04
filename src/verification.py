@@ -17,6 +17,7 @@ EXT_TO_LANG = {
     ".rs": "Rust", ".c": "C", ".h": "C",
     ".cpp": "C++", ".cc": "C++", ".cxx": "C++", ".hpp": "C++",
     ".py": "Python", ".cu": "CUDA",
+    ".erl": "Erlang",
     ".java": "Java", ".go": "Go",
     ".cs": "C#",
     ".kt": "Kotlin", ".kts": "Kotlin",
