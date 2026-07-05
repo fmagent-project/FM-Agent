@@ -281,6 +281,9 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
     # For call-site detection, use global stems if available
     effective_stem_to_fqns = global_stem_to_fqns if global_stem_to_fqns else stem_to_fqns
     known_stems = set(effective_stem_to_fqns.keys())
+    # All extracted FQNs (across phases when a global map is supplied), used to
+    # keep only codegraph callees that correspond to an extracted function.
+    known_fqns = set().union(*effective_stem_to_fqns.values()) if effective_stem_to_fqns else set()
 
     callees_map = defaultdict(set)  # fqn -> set of callee fqns (within phase)
     callers_map = defaultdict(set)  # fqn -> set of caller fqns (within phase)
@@ -294,28 +297,31 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
         lang_key = _detect_lang_from_ext(filepath)
         if not lang_key:
             continue
-        keywords = _get_keywords_for_lang(lang_key)
 
-        caller_stem = fqn.split("::")[-1]
         if lang_key in registry_langs:
-            caller_module = fqn.split("::")[-2]
-            called_stems = registry_edges.get((caller_stem, caller_module), set()) & known_stems
+            # codegraph: edges are already precise caller_fqn -> callee_fqn (the
+            # exact node codegraph resolved). Keep only callees that are extracted
+            # functions; drop external/library targets.
+            callee_fqns = {c for c in registry_edges.get(fqn, set())
+                           if c != fqn and c in known_fqns}
         else:
+            # regex fallback: detect bare-name call sites, then resolve each stem
+            # to every same-named FQN (an over-approximation — unchanged).
+            keywords = _get_keywords_for_lang(lang_key)
             try:
                 with open(filepath, "r", errors="replace") as f:
                     text = f.read()
             except OSError:
                 continue
             called_stems = _find_call_sites(text, lang_key, known_stems, keywords)
+            callee_fqns = {cf for stem in called_stems
+                           for cf in effective_stem_to_fqns[stem] if cf != fqn}
 
-        # Resolve stems to FQNs, excluding self
-        for stem in called_stems:
-            for callee_fqn in effective_stem_to_fqns[stem]:
-                if callee_fqn != fqn:
-                    all_callees_map[fqn].add(callee_fqn)
-                    if callee_fqn in phase_fqns:
-                        callees_map[fqn].add(callee_fqn)
-                        callers_map[callee_fqn].add(fqn)
+        for callee_fqn in callee_fqns:
+            all_callees_map[fqn].add(callee_fqn)
+            if callee_fqn in phase_fqns:
+                callees_map[fqn].add(callee_fqn)
+                callers_map[callee_fqn].add(fqn)
 
     return callees_map, callers_map, all_callees_map, file_map, module_map
 
