@@ -17,6 +17,7 @@ EXT_TO_LANG = {
     ".rs": "Rust", ".c": "C", ".h": "C",
     ".cpp": "C++", ".cc": "C++", ".cxx": "C++", ".hpp": "C++",
     ".py": "Python", ".cu": "CUDA",
+    ".erl": "Erlang",
     ".java": "Java", ".go": "Go",
     ".cs": "C#",
     ".kt": "Kotlin", ".kts": "Kotlin",
@@ -328,7 +329,9 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
 
     os.makedirs(os.path.join(work_dir, "bug_validation"), exist_ok=True)
 
-    prompt_filename = os.path.join("fm_agent", f"bug_validator_{bug_id}.md")
+    prompt_filename = os.path.join(
+        "fm_agent", "bug_validation", f"bug_validator_{bug_id}.md"
+    )
     prompt_path = os.path.join(proj_dir, prompt_filename)
 
     tmp_path = prompt_path + ".tmp"
