@@ -9,6 +9,8 @@ from src.file_utils import (
     is_file_ready,
     _has_source_code,
     _get_phase_files,
+    _get_all_phase_files,
+    _write_file_names,
     _json_file_is_valid,
     _get_incomplete_verification_files,
     _is_under_submodules,
@@ -176,14 +178,9 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None, submodules=
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
     file_list = collect_file_names(input_dir, file_list_path)
     if submodules:
-        scoped_files = set()
-        for phase_info in phases_data.get("phases", []):
-            phase_num = phase_info.get("phase")
-            if phase_num is not None:
-                scoped_files.update(_get_phase_files(phases_data, phase_num, input_dir))
-        file_list = [rel for rel in file_list if rel in scoped_files]
-        with open(file_list_path, "w") as f:
-            json.dump(file_list, f, indent=2, ensure_ascii=False)
+        file_list = _write_file_names(
+            _get_all_phase_files(phases_data, input_dir), file_list_path
+        )
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
@@ -479,8 +476,6 @@ if __name__ == "__main__":
 
     if submodules and args.entry_func is not None:
         parser.error("--submodule cannot be combined with --entry-func.")
-    if submodules and args.incremental:
-        parser.error("--submodule cannot be combined with --incremental.")
 
     start_time = time.time()
 
@@ -543,7 +538,9 @@ if __name__ == "__main__":
             # Incremental mode requires a recorded commit to diff against; without a
             # version.log from a previous run, fall back to the full pipeline.
             if args.incremental and old_commit:
-                run_incremental_pipeline(run_dir, intent_path, old_commit)
+                run_incremental_pipeline(
+                    run_dir, intent_path, old_commit, submodules=submodules
+                )
             else:
                 run_pipeline(run_dir, resume=resume, submodules=submodules)
             # Record the commit that was processed. Written after the pipeline since

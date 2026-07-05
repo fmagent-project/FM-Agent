@@ -3,6 +3,16 @@ import json
 import re
 
 
+def _write_file_names(file_names, output_path):
+    """Write sorted, de-duplicated file names to output_path."""
+    file_names = sorted(dict.fromkeys(file_names))
+    tmp_path = output_path + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(file_names, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, output_path)
+    return file_names
+
+
 def collect_file_names(input_dir, output_path="file_list.json"):
     """Collect all file names under input_dir and write them to a JSON file.
 
@@ -14,12 +24,7 @@ def collect_file_names(input_dir, output_path="file_list.json"):
             full_path = os.path.join(root, fname)
             rel_path = os.path.relpath(full_path, input_dir)
             file_names.append(rel_path)
-    file_names.sort()
-    tmp_path = output_path + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(file_names, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, output_path)
-    return file_names
+    return _write_file_names(file_names, output_path)
 
 
 def is_file_ready(file_path):
@@ -131,6 +136,21 @@ def _get_phase_files(phases_data, phase_num, input_dir):
                     fpath = os.path.join(extracted_dir, fname)
                     if os.path.isfile(fpath):
                         phase_files.append(os.path.relpath(fpath, input_dir))
+    return phase_files
+
+
+def _get_all_phase_files(phases_data, input_dir):
+    """Return extracted function files reachable from all phases in phases.json."""
+    phase_files = []
+    seen = set()
+    for phase_info in phases_data.get("phases", []):
+        phase_num = phase_info.get("phase")
+        if phase_num is None:
+            continue
+        for rel in _get_phase_files(phases_data, phase_num, input_dir):
+            if rel not in seen:
+                seen.add(rel)
+                phase_files.append(rel)
     return phase_files
 
 

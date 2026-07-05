@@ -180,13 +180,14 @@ uv run python main.py <proj_dir> [--resume] [--submodule PATH [PATH ...]]
 
 `proj_dir` must be a git repository.
 
-Use `--submodule` to limit a full run to selected project subdirectories:
+Use `--submodule` to limit a full or incremental run to selected project subdirectories:
 
 ```bash
 uv run python main.py <proj_dir> --submodule src/core src/runtime
+uv run python main.py <proj_dir> --incremental intent.md --submodule src/core src/runtime
 ```
 
-`--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume` and `--isolate`, but not with `--incremental` or `--entry-func`.
+`--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`, but not with `--entry-func`.
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
 

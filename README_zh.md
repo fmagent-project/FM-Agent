@@ -159,13 +159,14 @@ uv run python main.py <proj_dir> [--resume] [--submodule PATH [PATH ...]]
 
 `proj_dir` 必须是一个 git 仓库。
 
-使用 `--submodule` 可以把完整运行限制到指定项目子目录：
+使用 `--submodule` 可以把完整运行或增量运行限制到指定项目子目录：
 
 ```bash
 uv run python main.py <proj_dir> --submodule src/core src/runtime
+uv run python main.py <proj_dir> --incremental intent.md --submodule src/core src/runtime
 ```
 
-`--submodule` 路径必须是 `proj_dir` 内部目录。该参数可与 `--resume` 和 `--isolate` 一起使用，但不能与 `--incremental` 或 `--entry-func` 一起使用。
+`--submodule` 路径必须是 `proj_dir` 内部目录。该参数可与 `--resume`、`--isolate` 和 `--incremental` 一起使用，但不能与 `--entry-func` 一起使用。
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
 

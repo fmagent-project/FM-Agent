@@ -31,7 +31,14 @@ from .generate_topdown_layers import (
     _load_phases,
     generate_topdown_layers,
 )
-from .file_utils import is_file_ready, collect_file_names, _is_test_file
+from .file_utils import (
+    is_file_ready,
+    collect_file_names,
+    _is_test_file,
+    _is_under_submodules,
+    _get_all_phase_files,
+    _write_file_names,
+)
 from .generate_batch_prompts import (
     _detect_comment_prefix,
     extract_callee_spec_from_info,
@@ -141,7 +148,7 @@ def _setup_incremental_logging(work_dir):
     return log_path
 
 
-def check_last_run_existence(proj_dir):
+def check_last_run_existence(proj_dir, submodules=None):
     """
     Return whether a full pipeline run (run_pipeline) has already completed under proj_dir.
 
@@ -156,8 +163,10 @@ def check_last_run_existence(proj_dir):
          previous full run did not finish, so it is not a sound basis for incremental
          analysis.
 
-    Returns True only when both hold; otherwise False (so the caller can fall back to a
-    full run rather than fail on missing/incomplete phases.json / extracted_functions).
+    When submodules is provided, only extracted functions under those selected
+    project-relative directories are considered. Returns True only when the
+    selected scope has at least one ready function and no selected function is
+    incomplete; otherwise False (so the caller can fall back to a scoped full run).
     """
     work_dir = os.path.join(proj_dir, "fm_agent")
 
@@ -171,8 +180,12 @@ def check_last_run_existence(proj_dir):
     saw_function = False
     for root, _, files in os.walk(extracted_dir):
         for fname in files:
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, extracted_dir).replace(os.sep, "/")
+            if submodules and not _is_under_submodules(rel, submodules):
+                continue
             saw_function = True
-            if not is_file_ready(os.path.join(root, fname)):
+            if not is_file_ready(fpath):
                 return False
     return saw_function
 
@@ -276,15 +289,16 @@ def _reapply_existing_specs(proj_dir, specs):
             f.write(header + "\n\n" + source.lstrip("\n"))
 
 
-def _collect_changed_functions(proj_dir, old_commit_id):
+def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     """
     Determine which functions changed between commit old_commit_id and the current working
     tree under proj_dir, so the incremental pipeline only re-analyzes what actually moved.
 
     Only source files whose extension is in EXT_TO_LANG are considered; test files (per
-    _is_test_file) and anything under the fm_agent work dir are ignored. For each candidate
-    file, functions are extracted from both the old (old_commit_id) version and the current
-    working-tree version using the same parser as extract.py, then compared by source text.
+    _is_test_file), anything under the fm_agent work dir, and files outside submodules
+    when a submodule scope is provided are ignored. For each candidate file, functions are
+    extracted from both the old (old_commit_id) version and the current working-tree
+    version using the same parser as extract.py, then compared by source text.
 
     Returns a dict mapping each changed file's absolute path to a dict with keys "added",
     "removed", and "modified", each a sorted list of function names. Files with no
@@ -320,6 +334,7 @@ def _collect_changed_functions(proj_dir, old_commit_id):
     files = [
         f for f in dict.fromkeys(changed + untracked)
         if not _is_test_file(f) and not _is_workspace_file(f)
+        and _is_under_submodules(f, submodules)
     ]
 
     def _path_exists_in_commit(rel_path):
@@ -551,7 +566,7 @@ def _topdown_ordered_fqns(work_dir):
     return ordered
 
 
-def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
+def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id, submodules=None):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
 
@@ -577,16 +592,18 @@ def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
     logging.info("  project dir : %s", proj_dir)
     logging.info("  intent file : %s", intent_file_path)
     logging.info("  base commit : %s", old_commit_id)
+    if submodules:
+        logging.info("  submodule scope : %s", ", ".join(submodules))
     logging.info("=" * 70)
 
     # 1. Check whether there is a last run to compare against; if not, fall back to a full run since we have no basis for incremental analysis.
     logging.info("[Stage 1/10] Checking for a previous full run to compare against...")
-    has_last_run = check_last_run_existence(proj_dir)
+    has_last_run = check_last_run_existence(proj_dir, submodules=submodules)
     if not has_last_run:
         logging.warning(
             "No previous full run detected (phases.json missing or incomplete extracted_functions), so falling back to a full run rather than incremental."
         )
-        run_pipeline(proj_dir)
+        run_pipeline(proj_dir, submodules=submodules)
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
 
@@ -637,8 +654,10 @@ def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
 
     # 3. Re-generate the phases.json
     logging.info("[Stage 3/10] Generating new phases.json based on current working tree...")
-    phases_json_path = os.path.join(proj_dir, "fm_agent", "phases.json")
-    _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=True)
+    _run_setup_extract(
+        proj_dir, work_dir, script_dir,
+        is_incremental=True, submodules=submodules,
+    )
     logging.info("  -> phases.json regenerated.")
 
     # 4. Update functions under fm_agent/extracted_functions/.
@@ -662,7 +681,9 @@ def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
 
     # 5. Collect changed functions by comparing against the old version of functions in commit_id
     logging.info("[Stage 5/10] Collecting changed functions vs. base commit...")
-    changed_functions = _collect_changed_functions(proj_dir, old_commit_id)
+    changed_functions = _collect_changed_functions(
+        proj_dir, old_commit_id, submodules=submodules
+    )
     n_added = sum(len(c.get("added", [])) for c in changed_functions.values())
     n_removed = sum(len(c.get("removed", [])) for c in changed_functions.values())
     n_modified = sum(len(c.get("modified", [])) for c in changed_functions.values())
@@ -679,12 +700,20 @@ def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
 
     # 6. Update file list
     logging.info("[Stage 6/10] Collecting file list...")
-    file_list = collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
+    file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
+    file_list = collect_file_names(input_dir, file_list_path)
+    if submodules:
+        with open(os.path.join(work_dir, "phases.json"), "r") as f:
+            phases_data = json.load(f)
+        file_list = _write_file_names(
+            _get_all_phase_files(phases_data, input_dir), file_list_path
+        )
     logging.info("  -> file list has %d entr(ies).", len(file_list))
 
     # 7. Update top-down layers
     logging.info("[Stage 7/10] Generating topdown layers...")
-    phases_data = json.load(open(os.path.join(work_dir, "phases.json")))
+    with open(os.path.join(work_dir, "phases.json"), "r") as f:
+        phases_data = json.load(f)
     generate_topdown_layers(work_dir)
     logging.info("  -> topdown layers generated for %d phase(s).", len(phases_data.get("phases", [])))
 
@@ -709,7 +738,8 @@ def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
     # 10. Run the verification stage only on the functions that satisfy one of the following conditions: 1) the function is changed; 2) the function spec is changed after step 9; 3) the callee spec of the function is changed.
     logging.info("[Stage 10/10] Verifying changed and affected functions...")
     buggy_files = _verify_incremental_functions(
-        proj_dir, work_dir, changed_functions, updated_spec_files
+        proj_dir, work_dir, changed_functions, updated_spec_files,
+        submodules=submodules,
     )
     logging.info("=" * 70)
     logging.info(
@@ -1680,7 +1710,9 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
     return sorted(changed_spec_files)
 
 
-def _verify_incremental_functions(proj_dir, work_dir, changed_functions, updated_spec_files):
+def _verify_incremental_functions(
+    proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None
+):
     """
     Step 10: re-run the verification stage (reasoner + bug validation) on only the functions
     whose implementation-vs-spec verdict may have drifted because of this modification.
@@ -1732,6 +1764,11 @@ def _verify_incremental_functions(proj_dir, work_dir, changed_functions, updated
         for path in verify_targets
         if os.path.exists(path)
     })
+    if submodules:
+        file_list = [
+            rel for rel in file_list
+            if _is_under_submodules(rel.replace(os.sep, "/"), submodules)
+        ]
     if not file_list:
         logging.info("    [verify] no functions require re-verification.")
         return []
