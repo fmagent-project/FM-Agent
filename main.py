@@ -83,6 +83,10 @@ def _get_phase_files(phases_data, phase_num, input_dir):
             extracted_dir = os.path.join(input_dir, dir_part, subdir)
             if os.path.isdir(extracted_dir):
                 for fname in sorted(os.listdir(extracted_dir)):
+                    # Generated spec/info documents (preserved by --resume)
+                    # live next to extracted units; they are outputs, not units.
+                    if fname.endswith(("_spec.md", "_info.md")):
+                        continue
                     fpath = os.path.join(extracted_dir, fname)
                     if os.path.isfile(fpath):
                         phase_files.append(os.path.relpath(fpath, input_dir))
@@ -119,6 +123,33 @@ def _has_source_code(proj_dir):
             if ext in source_exts:
                 return True
     return False
+
+
+_HARDWARE_LANGUAGES = {"chisel", "verilog", "systemverilog"}
+
+
+def _reject_hardware_languages(phases_path):
+    """Exit when phases.json declares a hardware language.
+
+    generate_batch_prompts.py switches Chisel/Verilog phases to standalone
+    _spec.md/_info.md outputs, but this pipeline's readiness check
+    (is_file_ready) waits for embedded [SPEC]/[INFO] markers in the extracted
+    source, so Stage 5 would retry forever. Hardware designs go through
+    --hardware (Chisel) or --hardware --verilog instead.
+    """
+    try:
+        with open(phases_path) as f:
+            languages = json.load(f).get("languages", [])
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return
+    found = sorted({str(lang).lower() for lang in languages} & _HARDWARE_LANGUAGES)
+    if found:
+        print(
+            f"[Pipeline] ERROR: phases.json declares hardware language(s): {', '.join(found)}. "
+            f"The default pipeline does not support hardware designs; rerun with "
+            f"--hardware for Chisel or --hardware --verilog for Verilog/SystemVerilog."
+        )
+        sys.exit(1)
 
 
 def run_pipeline(proj_dir):
@@ -223,6 +254,10 @@ def run_pipeline(proj_dir):
                 f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
             )
             sys.exit(1)
+
+    # Hardware designs must go through --hardware: this pipeline's readiness
+    # check cannot complete on standalone hardware spec outputs.
+    _reject_hardware_languages(os.path.join(work_dir, "phases.json"))
 
     # Deduplicate source files across phases
     _deduplicate_phases(work_dir)
@@ -455,16 +490,44 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hardware",
         action="store_true",
-        help="Treat the project as a Chisel (Scala) hardware design and generate specs "
-        "via chisel_spec_generator instead of the default pipeline.",
+        help="Treat the project as a hardware design and generate module specs "
+        "instead of running the default pipeline. The HDL defaults to Chisel; "
+        "combine with --verilog for Verilog/SystemVerilog designs.",
+    )
+    hdl = parser.add_mutually_exclusive_group()
+    hdl.add_argument(
+        "--chisel",
+        action="store_true",
+        help="With --hardware: treat the design as Chisel (Scala). This is the "
+        "default HDL, so --hardware alone is equivalent to --hardware --chisel.",
+    )
+    hdl.add_argument(
+        "--verilog",
+        action="store_true",
+        help="With --hardware: treat the design as Verilog/SystemVerilog (.v/.sv) "
+        "and generate specs via verilog_spec_generator.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume a previous --hardware run: reuse groups.json and only "
+        "regenerate missing module specs.",
     )
     args = parser.parse_args()
 
+    if (args.chisel or args.verilog) and not args.hardware:
+        parser.error("--chisel/--verilog select the HDL for --hardware runs; "
+                     "add the --hardware flag")
+
     start_time = time.time()
-    if args.hardware:
+    if args.hardware and args.verilog:
+        from src.verilog_spec_generator import run_verilog_spec_generation
+
+        run_verilog_spec_generation(os.path.abspath(args.proj_dir), resume=args.resume)
+    elif args.hardware:
         from src.chisel_spec_generator import run_chisel_spec_generation
 
-        run_chisel_spec_generation(os.path.abspath(args.proj_dir))
+        run_chisel_spec_generation(os.path.abspath(args.proj_dir), resume=args.resume)
     else:
         run_pipeline(os.path.abspath(args.proj_dir))
     end_time = time.time()

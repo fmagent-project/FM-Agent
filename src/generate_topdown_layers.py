@@ -8,12 +8,14 @@ from collections import defaultdict
 try:
     from src.extract import EXT_TO_LANG, LANG_CONFIG
     from src.chisel_support import find_chisel_call_sites, strip_chisel_comments
+    from src.verilog_support import find_verilog_call_sites
 except ModuleNotFoundError:
     # Allow standalone execution as `python3 src/generate_topdown_layers.py`.
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src.extract import EXT_TO_LANG, LANG_CONFIG
     from src.chisel_support import find_chisel_call_sites, strip_chisel_comments
+    from src.verilog_support import find_verilog_call_sites
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +58,10 @@ def _collect_phase_files(proj_dir, phase_data):
                 continue
 
             for fname in os.listdir(func_dir):
+                # Generated spec/info documents (preserved by --resume) live
+                # next to extracted units; they are outputs, not units.
+                if fname.endswith(("_spec.md", "_info.md")):
+                    continue
                 fpath = os.path.join(func_dir, fname)
                 if os.path.isfile(fpath):
                     results.append((fpath, module_name))
@@ -248,6 +254,8 @@ def _find_call_sites(text, lang_key, known_stems, keywords):
     # (new/extends/with/member access) the generic scanner does not handle.
     if LANG_CONFIG.get(lang_key, {}).get("body") == "chisel":
         return find_chisel_call_sites(text, known_stems, keywords)
+    if LANG_CONFIG.get(lang_key, {}).get("body") == "verilog":
+        return find_verilog_call_sites(text, known_stems, keywords)
     cleaned = _strip_comments_from_source(text, lang_key)
     regex = _get_call_regex(lang_key)
     found = set()
