@@ -138,6 +138,7 @@ def _get_pending_batches_verilog(batches, proj_dir):
     pending = []
     for batch in batches:
         batch_pending = False
+        validation_errors = []
         for func_rel in batch.get("functions", []):
             module_path = os.path.join(proj_dir, func_rel)
             if not verilog_spec_ready(module_path):
@@ -156,7 +157,13 @@ def _get_pending_batches_verilog(batches, proj_dir):
                     os.remove(spec_path)
                 except OSError as exc:
                     logging.warning("Could not remove invalid spec %s: %s", spec_path, exc)
+                validation_errors.append(
+                    f"{os.path.basename(spec_path)}: " + "; ".join(spec_errors[:3])
+                )
                 batch_pending = True
+        # Exposed to the retry prompt so the LLM knows WHAT failed the
+        # checklist — without feedback regeneration rarely converges.
+        batch["validation_errors"] = validation_errors
         if batch_pending:
             pending.append(batch)
     return pending
@@ -424,6 +431,18 @@ def run_verilog_spec_generation(proj_dir, resume=False):
                         ])
                     fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
                                    "Do NOT modify any existing project files.")
+                    checklist_note = ""
+                    failed = batch_info.get("validation_errors") or []
+                    if failed:
+                        checklist_note = (
+                            " WARNING: the following previously generated specs FAILED the "
+                            "quality checklist and were deleted — regenerate them and fix "
+                            "exactly these issues (re-read the Coverage Tags rules in "
+                            "fm_agent/spec_prompts/system_prompt.md: every tag is a plain "
+                            "<FG-NAME>/<FC-NAME>/<CK-NAME> on its own line, sibling tag names "
+                            "must be unique, and the <FG-API> group is mandatory): "
+                            + " | ".join(failed)
+                        )
                     if attempt == 1 and not resume:
                         prompt = (
                             f"Process the batch prompt file at {batch_prompt_rel}. "
@@ -438,7 +457,8 @@ def run_verilog_spec_generation(proj_dir, resume=False):
                             f"Some modules may already have spec/info files from a previous attempt. "
                             f"Check each module's directory and only generate outputs for modules "
                             f"that do not yet have both exact output files requested in the batch prompt. "
-                            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
+                            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. "
+                            f"{fm_reminder}{checklist_note}"
                         )
                     command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
                                "--file", os.path.join(work_dir, "workflow_spec_verilog.md"),
