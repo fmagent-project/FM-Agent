@@ -32,6 +32,10 @@ from src.languages.codegraph import try_codegraph_init
 from src.pipeline_setup import (
     _run_setup_extract,
 )
+from src.extra_knowledge import (
+    _validate_extra_knowledge_files,
+    _copy_extra_knowledge_files,
+)
 import os
 import sys
 import argparse
@@ -60,7 +64,8 @@ def _get_pending_batches(batches, proj_dir):
     return pending
 
 
-def run_pipeline(proj_dir, resume=False, required_source_files=None):
+def run_pipeline(proj_dir, resume=False, required_source_files=None,
+                 extra_knowledge_files=None):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
@@ -96,6 +101,13 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
         proj_dir, work_dir, script_dir, resume=resume,
         required_source_files=required_source_files,
     )
+
+    # Copy any user-supplied extra knowledge markdown files into the domain
+    # context directory so the spec-generation agent can read them alongside
+    # the auto-generated phase_NN_types.txt files.
+    if extra_knowledge_files:
+        domain_context_dir = os.path.join(work_dir, "spec_prompts", "domain_context")
+        _copy_extra_knowledge_files(extra_knowledge_files, domain_context_dir)
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
     # run_extraction (Stage 2) and generate_topdown_layers (Stage 3) read from it.
@@ -369,7 +381,8 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--isolate] [--entry-func PATH] [--end-func PATH ...]",
+              "[--isolate] [--entry-func PATH] [--end-func PATH ...] "
+              "[--extra-knowledge MD_FILE [MD_FILE ...]]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -406,10 +419,27 @@ if __name__ == "__main__":
         help="one or more function paths at which to stop (space-separated list); "
         "if omitted, the whole call graph reachable from --entry-func is analyzed.",
     )
+    parser.add_argument(
+        "--extra-knowledge",
+        metavar="MD_FILE",
+        nargs="+",
+        default=None,
+        help="one or more Markdown files (.md) containing additional domain "
+        "knowledge to include in the spec-generation context. Each file is "
+        "copied into fm_agent/spec_prompts/domain_context/ so the agent can "
+        "read it alongside the auto-generated phase context files.",
+    )
     args = parser.parse_args()
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
+
+    # Validate extra knowledge files early, before any pipeline work starts.
+    extra_knowledge_files = (
+        _validate_extra_knowledge_files(args.extra_knowledge)
+        if args.extra_knowledge
+        else []
+    )
 
     start_time = time.time()
 
@@ -422,6 +452,7 @@ if __name__ == "__main__":
             entry_func=args.entry_func,
             end_funcs=args.end_func,
             resume=resume,
+            extra_knowledge_files=extra_knowledge_files,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -472,9 +503,15 @@ if __name__ == "__main__":
             # Incremental mode requires a recorded commit to diff against; without a
             # version.log from a previous run, fall back to the full pipeline.
             if args.incremental and old_commit:
-                run_incremental_pipeline(run_dir, intent_path, old_commit)
+                run_incremental_pipeline(
+                    run_dir,
+                    intent_path,
+                    old_commit,
+                    extra_knowledge_files=extra_knowledge_files,
+                )
             else:
-                run_pipeline(run_dir, resume=resume)
+                run_pipeline(run_dir, resume=resume,
+                             extra_knowledge_files=extra_knowledge_files)
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
             # copied back to the real project below. Only recorded on success so a

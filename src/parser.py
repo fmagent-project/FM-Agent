@@ -26,7 +26,7 @@ class FunctionSpecMap(dict):
 
 
 def _strip_section_comment_prefix(line):
-    return re.sub(r'^(\s*)(?://+|#+|--+|%+)\s?', r'\1', line)
+    return re.sub(r'^(\s*)//+ ?', r'\1', line)
 
 
 def _extract_marked_section(lines, marker):

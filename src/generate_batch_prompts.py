@@ -199,6 +199,16 @@ def build_prompt(
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/engine_overview.txt")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/phase_{phase:02d}_types.txt")
+    # Include any user-supplied extra knowledge files that were placed in
+    # domain_context/ by the pipeline (named with a "user_" prefix).
+    domain_context_dir = work_dir / "spec_prompts" / "domain_context"
+    if domain_context_dir.is_dir():
+        for extra_file in sorted(domain_context_dir.glob("user_*.md")):
+            try:
+                rel = extra_file.relative_to(work_dir)
+            except ValueError:
+                continue
+            lines.append(f"Read: {fm_agent_prefix}{rel}")
     lines.append("")
     lines.append("## KEY RULES")
     lines.append("- Describe WHAT the function guarantees, NOT HOW it implements it")

@@ -45,6 +45,10 @@ from .prompts import _load_spec_check_json
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import try_codegraph_init
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
+from .extra_knowledge import (
+    _copy_extra_knowledge_files,
+    _format_extra_knowledge_context,
+)
 
 
 class _StdoutTee:
@@ -551,7 +555,8 @@ def _topdown_ordered_fqns(work_dir):
     return ordered
 
 
-def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
+def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id,
+                             extra_knowledge_files=None):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
 
@@ -586,7 +591,7 @@ def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
         logging.warning(
             "No previous full run detected (phases.json missing or incomplete extracted_functions), so falling back to a full run rather than incremental."
         )
-        run_pipeline(proj_dir)
+        run_pipeline(proj_dir, extra_knowledge_files=extra_knowledge_files)
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
 
@@ -603,6 +608,20 @@ def run_incremental_pipeline(proj_dir, intent_file_path, old_commit_id):
             logging.error("Intent file %s is empty; cannot run incremental pipeline.", intent_file_path)
             return
     logging.info("  -> intent loaded (%d chars).", len(developer_intent))
+
+    # Incremental prompts are self-contained and do not use the full pipeline's
+    # batch prompt generator. Preserve the files in the normal domain-context
+    # location and inline their contents into the context shared by scope
+    # selection, spec generation, and spec-update prompts.
+    if extra_knowledge_files:
+        domain_context_dir = os.path.join(
+            work_dir, "spec_prompts", "domain_context"
+        )
+        _copy_extra_knowledge_files(extra_knowledge_files, domain_context_dir)
+        developer_intent = (
+            f"{developer_intent}\n\n"
+            f"{_format_extra_knowledge_context(extra_knowledge_files)}"
+        )
 
     # Wipe the previous run's verification artifacts. The prior full run wrote a verdict for
     # EVERY function into logic_verification_results/ and every confirmed bug into

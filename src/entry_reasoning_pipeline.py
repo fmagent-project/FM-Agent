@@ -213,7 +213,8 @@ def _make_run_copy(proj_dir, run_dir):
     os.replace(tmp_dir, run_dir)
 
 
-def run_entry_pipeline(proj_dir, entry_func=None, end_funcs=None, resume=False):
+def run_entry_pipeline(proj_dir, entry_func=None, end_funcs=None, resume=False,
+                       extra_knowledge_files=None):
     """Run the entry-point-scoped reasoning pipeline.
 
     Algorithm:
@@ -245,6 +246,8 @@ def run_entry_pipeline(proj_dir, entry_func=None, end_funcs=None, resume=False):
             restriction is applied and the whole call graph reachable from
             ``entry_func`` is selected.
         resume: forwarded directly to the standard pipeline.
+        extra_knowledge_files: validated Markdown files containing additional
+            domain knowledge, forwarded to the standard pipeline.
     """
     if entry_func is None:
         raise ValueError("entry_func is required to run the entry pipeline")
@@ -260,7 +263,10 @@ def run_entry_pipeline(proj_dir, entry_func=None, end_funcs=None, resume=False):
     # a later run in the same process.
     add_test_file_exemption(_entry_func_source_rel(entry_func))
     try:
-        _run_entry_pipeline_inner(proj_dir, work_dir, entry_func, end_funcs, resume)
+        _run_entry_pipeline_inner(
+            proj_dir, work_dir, entry_func, end_funcs, resume,
+            extra_knowledge_files,
+        )
     finally:
         clear_test_file_exemptions()
 
@@ -389,7 +395,8 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs):
     return all_by_source, keep_by_source
 
 
-def _run_entry_pipeline_inner(proj_dir, work_dir, entry_func, end_funcs, resume):
+def _run_entry_pipeline_inner(proj_dir, work_dir, entry_func, end_funcs, resume,
+                              extra_knowledge_files=None):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
     all_by_source, keep_by_source = _select_functions_by_source(
@@ -428,6 +435,7 @@ def _run_entry_pipeline_inner(proj_dir, work_dir, entry_func, end_funcs, resume)
             run_dir,
             resume=resume,
             required_source_files=[_entry_func_source_rel(entry_func)],
+            extra_knowledge_files=extra_knowledge_files,
         )
     finally:
         # 4. Copy the generated fm_agent/ back into proj_dir, then discard the

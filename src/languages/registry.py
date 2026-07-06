@@ -9,7 +9,6 @@ from src.languages import java as _java
 from src.languages import rust as _rust
 from src.languages import javascript as _javascript
 from src.languages import typescript as _typescript
-from src.languages import erlang as _erlang
 
 
 @dataclass
@@ -17,7 +16,7 @@ class LanguageHandler:
     """Extraction and call-graph backend for one language.
 
     batch_extract(proj_dir)             -> {abs_filepath: [(func_name, body)]}
-    call_edges(proj_dir)                -> {caller_fqn: {callee_fqns}}
+    call_edges(proj_dir)                -> {(caller_stem, caller_module): {callee_stems}}
     function_spans(proj_dir, filepath)  -> [(func_name, start_idx, end_idx)] | None
 
     Each function handles its own backend (e.g. codegraph) internally.
@@ -45,7 +44,6 @@ REGISTRY: dict = {
     "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans),
     "javascript": LanguageHandler(batch_extract=_javascript.batch_extract, call_edges=_javascript.call_edges, function_spans=_javascript.function_spans),
     "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans),
-    "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans),
 }
 
 
@@ -83,9 +81,8 @@ def function_spans_for_file(proj_dir: str, filepath: str, lang_key: str):
 def call_edges_all(proj_dir: str, lang_keys) -> tuple:
     """Call call_edges for each language in lang_keys and merge results.
 
-    Returns (edges, langs) where edges is {caller_fqn: {callee_fqns}} and langs is
-    the set of language keys codegraph handled (it returned a dict, even if empty
-    — None means the backend was unavailable and the caller should use regex).
+    Returns (edges, langs) where edges is {(caller_stem, caller_module): {callee_stems}}
+    and langs is the set of language keys that returned data.
     """
     edges = {}
     langs = set()
@@ -93,13 +90,7 @@ def call_edges_all(proj_dir: str, lang_keys) -> tuple:
         if lang not in REGISTRY:
             continue
         result = REGISTRY[lang].call_edges(proj_dir)
-        # A handler returns None when its backend (codegraph) is unavailable, and
-        # a dict (possibly empty) when it handled the language. Treat "handled but
-        # no edges" as codegraph-authoritative — add the language to `langs` so the
-        # caller uses the codegraph path — instead of falling back to regex, which
-        # would otherwise invent edges (e.g. match a function's own signature) for
-        # a genuinely call-free project.
-        if result is not None:
+        if result:
             langs.add(lang)
             for key, callees in result.items():
                 edges.setdefault(key, set()).update(callees)

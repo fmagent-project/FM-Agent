@@ -229,12 +229,6 @@ _LANGUAGE_EXPERTISE = {
         "You understand the full JavaScript runtime semantics and how TypeScript's compile-time checks "
         "interact with runtime behavior across TypeScript versions (2.x through 5.x). "
     ),
-    "erlang": (
-        "You are an expert in logic, formal verification, and the Erlang programming language. "
-        "You have deep knowledge of Erlang modules, name/arity function identity, pattern matching, "
-        "guards, multi-clause functions, recursion, exceptions, processes, message passing, OTP "
-        "behaviours, and the BEAM execution model. "
-    ),
     "arkts": (
         "You are an expert in logic, formal verification, and the ArkTS programming language for OpenHarmony. "
         "You have deep knowledge of ArkTS's strict typing enforced at compile time, its declarative UI paradigm "
