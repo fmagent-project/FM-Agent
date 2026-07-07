@@ -73,14 +73,20 @@ def _chisel_markdown_ready(path):
         return False
 
 
-def _chisel_info_ready(path):
+def _chisel_info_ready(path, allow_no_submodules=True):
     """Readiness for ``_info.md``: as ``_chisel_markdown_ready``, except that a
     leaf module's info file may legitimately be just a heading plus
     ``(no submodules)`` — the system prompt allows it — which is smaller than
     the anti-stub byte threshold.
+
+    Pass ``allow_no_submodules=False`` for modules whose call graph shows
+    submodules: their info must document each submodule, so the small stub
+    must not satisfy readiness.
     """
     if _chisel_markdown_ready(path):
         return True
+    if not allow_no_submodules:
+        return False
     try:
         with open(path, "r", errors="replace") as f:
             content = f.read()
@@ -89,17 +95,21 @@ def _chisel_info_ready(path):
     return "#" in content and "(no submodules)" in content
 
 
-def chisel_spec_ready(module_file_path):
+def chisel_spec_ready(module_file_path, expects_submodules=False):
     """True when both standalone Chisel Markdown outputs are non-trivial.
 
     "Non-trivial" means each file is at least :data:`_CHISEL_SPEC_MIN_BYTES`
     bytes and contains at least one Markdown heading, so an empty or truncated
     stub left by an interrupted run is not mistaken for a finished spec. The
-    info file may instead be a small legal ``(no submodules)`` document.
+    info file may instead be a small legal ``(no submodules)`` document —
+    unless ``expects_submodules=True`` (the call graph shows submodules).
     """
     return (
         _chisel_markdown_ready(chisel_spec_path(module_file_path))
-        and _chisel_info_ready(chisel_info_path(module_file_path))
+        and _chisel_info_ready(
+            chisel_info_path(module_file_path),
+            allow_no_submodules=not expects_submodules,
+        )
     )
 
 

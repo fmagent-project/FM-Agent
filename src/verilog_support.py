@@ -63,14 +63,20 @@ def _verilog_markdown_ready(path):
         return False
 
 
-def _verilog_info_ready(path):
+def _verilog_info_ready(path, allow_no_submodules=True):
     """Readiness for ``_info.md``: as ``_verilog_markdown_ready``, except that a
     leaf module's info file may legitimately be just a heading plus
     ``(no submodules)`` — the system prompt allows it — which is smaller than
     the anti-stub byte threshold.
+
+    Pass ``allow_no_submodules=False`` for modules whose instantiation graph
+    shows submodules: their info must document each submodule, so the small
+    stub must not satisfy readiness.
     """
     if _verilog_markdown_ready(path):
         return True
+    if not allow_no_submodules:
+        return False
     try:
         with open(path, "r", errors="replace") as f:
             content = f.read()
@@ -79,11 +85,18 @@ def _verilog_info_ready(path):
     return "#" in content and "(no submodules)" in content
 
 
-def verilog_spec_ready(module_file_path):
-    """True when both standalone Verilog Markdown outputs are non-trivial."""
+def verilog_spec_ready(module_file_path, expects_submodules=False):
+    """True when both standalone Verilog Markdown outputs are non-trivial.
+
+    ``expects_submodules=True`` (the instantiation graph shows the module has
+    submodules) disallows the small ``(no submodules)`` info stub.
+    """
     return (
         _verilog_markdown_ready(verilog_spec_path(module_file_path))
-        and _verilog_info_ready(verilog_info_path(module_file_path))
+        and _verilog_info_ready(
+            verilog_info_path(module_file_path),
+            allow_no_submodules=not expects_submodules,
+        )
     )
 
 
