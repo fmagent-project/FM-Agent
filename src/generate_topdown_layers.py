@@ -287,13 +287,16 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
     phase_fqns = set(fqn_map.values())
     # For call-site detection, use global stems if available
     effective_stem_to_fqns = global_stem_to_fqns if global_stem_to_fqns else stem_to_fqns
+    # All extracted FQNs (across phases when a global map is supplied), used to
+    # keep only codegraph callees that correspond to an extracted function.
+    known_fqns = {
+        fqn
+        for fqns in effective_stem_to_fqns.values()
+        for fqn in fqns
+    }
     extra_callsite_edges = _extra_callsite_edges_by_alias(
         extra_call_edges,
-        exact_fqns={
-            fqn
-            for fqns in effective_stem_to_fqns.values()
-            for fqn in fqns
-        },
+        exact_fqns=known_fqns,
         stem_to_fqns=effective_stem_to_fqns,
     )
     known_stems = set(effective_stem_to_fqns.keys()) | set(extra_callsite_edges.keys())
@@ -311,28 +314,44 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
         lang_key = _detect_lang_from_ext(filepath)
         if not lang_key:
             continue
-        keywords = _get_keywords_for_lang(lang_key)
 
-        caller_stem = fqn.split("::")[-1]
+        called_stems = set()
         if lang_key in registry_langs:
-            caller_module = fqn.split("::")[-2]
-            called_stems = registry_edges.get((caller_stem, caller_module), set()) & known_stems
+            # codegraph: edges are already precise caller_fqn -> callee_fqn (the
+            # exact node codegraph resolved). Keep only callees that are extracted
+            # functions; drop external/library targets.
+            callee_fqns = {c for c in registry_edges.get(fqn, set())
+                           if c != fqn and c in known_fqns}
+            if extra_callsite_edges:
+                keywords = _get_keywords_for_lang(lang_key)
+                try:
+                    with open(filepath, "r", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    text = ""
+                called_stems = _find_call_sites(
+                    text, lang_key, set(extra_callsite_edges.keys()), keywords
+                )
         else:
+            # regex fallback: detect bare-name call sites, then resolve each stem
+            # to every same-named FQN (an over-approximation — unchanged).
+            keywords = _get_keywords_for_lang(lang_key)
             try:
                 with open(filepath, "r", errors="replace") as f:
                     text = f.read()
             except OSError:
                 continue
             called_stems = _find_call_sites(text, lang_key, known_stems, keywords)
+            callee_fqns = {cf for stem in called_stems
+                           for cf in effective_stem_to_fqns.get(stem, set()) if cf != fqn}
 
-        # Resolve stems to FQNs, excluding self
+        for callee_fqn in callee_fqns:
+            all_callees_map[fqn].add(callee_fqn)
+            if callee_fqn in phase_fqns:
+                callees_map[fqn].add(callee_fqn)
+                callers_map[callee_fqn].add(fqn)
+
         for stem in called_stems:
-            for callee_fqn in effective_stem_to_fqns.get(stem, set()):
-                if callee_fqn != fqn:
-                    all_callees_map[fqn].add(callee_fqn)
-                    if callee_fqn in phase_fqns:
-                        callees_map[fqn].add(callee_fqn)
-                        callers_map[callee_fqn].add(fqn)
             for callee_fqn, aliases in extra_callsite_edges.get(stem, ()):
                 if callee_fqn != fqn:
                     all_callees_map[fqn].add(callee_fqn)
