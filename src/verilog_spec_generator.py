@@ -158,12 +158,12 @@ def _get_pending_batches_verilog(batches, proj_dir, expects_submodules=frozenset
                             info_text = f.read()
                     except OSError:
                         info_text = ""
-                    if "(no submodules)" in info_text:
+                    if "(no submodules)" in info_text or "# Submodule:" not in info_text:
                         validation_errors.append(
-                            f"{os.path.basename(info_path)}: claims '(no submodules)' "
-                            f"but this module instantiates other extracted modules — "
-                            f"write one '# Submodule: <name>' entry per instantiated "
-                            f"submodule"
+                            f"{os.path.basename(info_path)}: this module instantiates "
+                            f"other extracted modules — the info file must contain one "
+                            f"'# Submodule: <name>' entry per instantiated submodule "
+                            f"and must not claim '(no submodules)'"
                         )
                 _remove_incomplete_verilog_outputs(
                     module_path, expects_submodules=expects

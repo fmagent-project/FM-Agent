@@ -70,18 +70,23 @@ def _verilog_info_ready(path, allow_no_submodules=True):
     the anti-stub byte threshold.
 
     Pass ``allow_no_submodules=False`` for modules whose instantiation graph
-    shows submodules: their info must document each submodule, so the small
-    stub must not satisfy readiness.
+    shows submodules: their info must contain at least one ``# Submodule:``
+    entry and must not claim ``(no submodules)`` — regardless of file size, so
+    a padded stub cannot slip through the byte threshold.
     """
-    if _verilog_markdown_ready(path):
-        return True
-    if not allow_no_submodules:
-        return False
     try:
         with open(path, "r", errors="replace") as f:
             content = f.read()
     except OSError:
         return False
+    if not allow_no_submodules:
+        return (
+            _verilog_markdown_ready(path)
+            and "(no submodules)" not in content
+            and "# Submodule:" in content
+        )
+    if _verilog_markdown_ready(path):
+        return True
     return "#" in content and "(no submodules)" in content
 
 
