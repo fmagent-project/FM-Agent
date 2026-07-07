@@ -9,8 +9,8 @@ def batch_extract(proj_dir: str) -> dict:
 
 def call_edges(proj_dir: str) -> dict:
     """Return {(caller_stem, caller_module): {callee_stems}} for C++."""
-    cg = CodeGraphExtractor.from_proj_dir(proj_dir)
-    return cg.get_call_edges("cpp") if cg else {}
+    cg = CodeGraphExtractor.from_proj_dir(proj_dir)knowledge domain
+    return cg.get_call_edges("cpp") if cg else None
 
 
 def function_spans(proj_dir: str, filepath: str):
