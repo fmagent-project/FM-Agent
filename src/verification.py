@@ -34,6 +34,28 @@ EXT_TO_LANG = {
 }
 
 
+def _spec_task_done(handle):
+    # spec_procs may be subprocess.Popen handles or executor futures.
+    if hasattr(handle, "poll"):
+        return handle.poll() is not None
+    if hasattr(handle, "done"):
+        return handle.done()
+    return True
+
+
+def _spec_task_exit_code(handle):
+    # Normalize exit status reporting across Popen and Future-backed tasks.
+    if hasattr(handle, "returncode"):
+        return handle.returncode
+    if hasattr(handle, "done") and handle.done():
+        try:
+            result = handle.result()
+            return result if isinstance(result, int) else 0
+        except Exception:
+            return 1
+    return None
+
+
 def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, work_dir=None, poll_interval=2, spec_procs=None, already_processed=None, resume=False):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
     if work_dir is None:
@@ -177,10 +199,10 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
 
                 # Detect if spec generation subprocesses exited before all files are ready
                 _all_procs = spec_procs if spec_procs else None
-                if _all_procs is not None and all(p.poll() is not None for p in _all_procs):
+                if _all_procs is not None and all(_spec_task_done(p) for p in _all_procs):
                     unready = (expected_files or set()) - processed
                     if unready and not reasoning_futures and not validation_futures:
-                        exit_codes = [p.returncode for p in _all_procs]
+                        exit_codes = [_spec_task_exit_code(p) for p in _all_procs]
                         if not processed:
                             # No function got a spec at all – this is an error
                             logging.warning(
