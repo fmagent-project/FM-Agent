@@ -11,6 +11,10 @@ COMMENT_PREFIX_BY_LANG = {
     "chisel": "//",
     "scala": "//",
     "sc": "//",
+    "verilog": "//",
+    "v": "//",
+    "sv": "//",
+    "svh": "//",
     "c": "//",
     "cpp": "//",
     "cxx": "//",
@@ -227,6 +231,8 @@ def build_ext_to_lang(exts: List[str], languages: List[str]) -> Dict[str, str]:
     normalized_langs = [lang.lower() for lang in languages]
     if "chisel" in normalized_langs:
         return {ext: "chisel" for ext in normalized_exts or ["scala"]}
+    if "verilog" in normalized_langs or "systemverilog" in normalized_langs:
+        return {ext: "verilog" for ext in normalized_exts or ["v", "sv"]}
     return {ext: lang for ext, lang in zip(normalized_exts, normalized_langs)}
 
 
@@ -247,13 +253,14 @@ def build_prompt(
     if functions:
         sample_lang, sample_comment = detect_lang_and_comment(functions[0]["file"], ext_to_lang)
 
-    is_chisel = sample_lang == "chisel"
-    if is_chisel:
-        lines.append(f"You are generating verification-oriented Chisel module specifications for Phase {phase}, Layer {layer_idx}.")
+    is_hw = sample_lang in ("chisel", "verilog")
+    hw_label = "Chisel" if sample_lang == "chisel" else "Verilog/SystemVerilog"
+    if is_hw:
+        lines.append(f"You are generating verification-oriented {hw_label} module specifications for Phase {phase}, Layer {layer_idx}.")
     else:
         lines.append(f"You are generating behavioral specifications for Phase {phase}, Layer {layer_idx}.")
     lines.append("")
-    if is_chisel:
+    if is_hw:
         lines.append(
             f"Language: {sample_lang}. Output form: two standalone Markdown files "
             f"`<ModuleName>_spec.md` and `<ModuleName>_info.md` per module, written next to the extracted module file. "
@@ -269,7 +276,7 @@ def build_prompt(
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/phase_{phase:02d}_types.txt")
     lines.append("")
     lines.append("## KEY RULES")
-    if is_chisel:
+    if is_hw:
         lines.append("- Describe WHAT the DUT guarantees, NOT HOW it is implemented")
         lines.append("- Focus on public parameters, IO ports, ready-valid/Valid protocols, reset behavior, ordering, arbitration, and observable state/data invariants")
         lines.append("- Do NOT name private wires, local registers, helper methods, or implementation assignment order unless they are part of the public verification boundary")
@@ -298,7 +305,7 @@ def build_prompt(
             if not caller_meta:
                 continue
             caller_file = work_dir / caller_meta["file"]
-            if is_chisel:
+            if is_hw:
                 # Chisel specs and submodule expectations are standalone
                 # <stem>_spec.md / <stem>_info.md documents next to the source.
                 spec_block = extract_standalone_spec(caller_file)
@@ -342,8 +349,11 @@ def build_prompt(
 
     if is_cycle:
         lines.append("## CYCLE LAYER GUIDANCE")
-        if is_chisel:
-            lines.append("These modules reference each other through instantiation, inheritance, companion objects, or member access.")
+        if is_hw:
+            if sample_lang == "chisel":
+                lines.append("These modules reference each other through instantiation, inheritance, companion objects, or member access.")
+            else:
+                lines.append("These modules reference each other through instantiation.")
             lines.append(
                 'Ask: "What observable DUT contract must hold regardless of the internal module decomposition?" '
                 "That contract belongs in the module spec."
@@ -355,16 +365,16 @@ def build_prompt(
                 "That invariant is your post-condition."
             )
         lines.append("")
-        if is_chisel:
+        if is_hw:
             lines.append("MODULE CONTRACT TEST: If your spec enumerates private wires/register assignments or mirrors source branches, you are transcribing the implementation.")
-            lines.append("A Chisel module spec should state observable IO, timing, reset, ordering, and protocol guarantees.")
+            lines.append(f"A {hw_label} module spec should state observable IO, timing, reset, ordering, and protocol guarantees.")
         else:
             lines.append("DISPATCH FUNCTION TEST: If your spec has N bullets where N equals the number")
             lines.append("of switch arms / dispatch cases, you are transcribing the implementation.")
             lines.append("A dispatch function's contract is the invariant that holds ACROSS ALL cases.")
         lines.append("")
 
-    unit_label = "MODULES" if is_chisel else "FUNCTIONS"
+    unit_label = "MODULES" if is_hw else "FUNCTIONS"
     lines.append(f"## {unit_label} ({len(functions)} total - process ALL)")
     for idx, fn in enumerate(functions, start=1):
         fn_name = fn["name"]
@@ -375,7 +385,7 @@ def build_prompt(
         spec_file = module_file.with_name(module_file.stem + "_spec.md")
         info_file = module_file.with_name(module_file.stem + "_info.md")
         lines.append(f"### {idx}. {fm_agent_prefix}{fn['file']}")
-        if is_chisel:
+        if is_hw:
             lines.append(f"  Required spec output: {fm_agent_prefix}{spec_file.as_posix()}")
             lines.append(f"  Required info output: {fm_agent_prefix}{info_file.as_posix()}")
         if earlier:
@@ -384,7 +394,7 @@ def build_prompt(
             lines.append("  Earlier-layer callers: (none)")
 
     lines.append("")
-    if is_chisel:
+    if is_hw:
         lines.append("## OUTPUT FORMAT (two standalone Markdown files per module)")
         lines.append("")
         lines.append("For each module, write BOTH files in the SAME directory as the extracted module file. Do NOT modify the source.")
@@ -409,7 +419,7 @@ def build_prompt(
         lines.append("### <ModuleName>_info.md")
         lines.append("# <ModuleName> Submodule Expected Specifications")
         lines.append("One entry per submodule the module instantiates or directly depends on, caller-driven,")
-        lines.append("each entry starting with '# Submodule: <SubmoduleName>' (exact declared Scala name)")
+        lines.append(f"each entry starting with '# Submodule: <SubmoduleName>' (exact declared {'Scala' if sample_lang == 'chisel' else 'module'} name)")
         lines.append("followed by the SAME section structure as <ModuleName>_spec.md above.")
         lines.append("If the module has no submodules, write '(no submodules)'.")
     else:
@@ -442,14 +452,14 @@ def build_prompt(
         lines.append("If the function has no callees: '<comment> (no callees)' between the [INFO] markers.")
     lines.append("")
     lines.append("## PROCESS")
-    if is_chisel:
+    if is_hw:
         lines.append("For each module:")
         lines.append("1. Read the extracted module file")
         lines.append("2. Read the earlier-layer caller specs and caller expectations above - what does the surrounding hardware NEED from this DUT?")
         lines.append("3. Write the required spec output path listed for that module, using the extracted file stem for the filename")
         lines.append("4. Write the required info output path listed for that module, with one expected-spec entry per submodule of that module (same section structure as the spec)")
         lines.append("5. Save both files in the SAME directory as the extracted module file")
-        lines.append("6. Do NOT modify the original .scala source. Use the Write tool to save the .md files")
+        lines.append(f"6. Do NOT modify the original {'.scala' if sample_lang == 'chisel' else '.v/.sv'} source. Use the Write tool to save the .md files")
     else:
         lines.append("For each function:")
         lines.append("1. Read the extracted file")

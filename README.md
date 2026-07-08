@@ -133,25 +133,37 @@ uv run python main.py <proj_dir>
 | Argument     | Description                                              |
 | ------------ | -------------------------------------------------------- |
 | `proj_dir`   | Directory of codebase that you want to check correctness |
-| `--hardware` | Treat `proj_dir` as a Chisel (Scala) hardware design and generate module specs only (see below) |
+| `--hardware` | Treat `proj_dir` as a hardware design and generate module specs only (see below). The HDL defaults to Chisel |
+| `--chisel`   | With `--hardware`: treat the design as Chisel (Scala). This is the default HDL, so `--hardware` alone is equivalent to `--hardware --chisel` |
+| `--verilog`  | With `--hardware`: treat the design as Verilog/SystemVerilog (`.v`/`.sv`/`.svh`) |
+| `--resume`   | Resume an interrupted `--hardware` run: reuse `groups.json` and only regenerate missing module specs |
 
-### Generating Specs for Chisel (`--hardware`)
+### Generating Specs for Hardware Designs (`--hardware`)
 
-For Chisel (Scala) hardware designs, pass the `--hardware` flag:
+For Chisel (Scala) hardware designs:
 
 ```bash
 uv run python main.py <proj_dir> --hardware
 ```
 
+For Verilog/SystemVerilog hardware designs:
+
+```bash
+uv run python main.py <proj_dir> --hardware --verilog
+```
+
 In this mode FM-Agent runs a **spec-only** pipeline tailored to hardware: it understands the design, splits it into subsystems, and generates verification-oriented module specifications. It does **not** run the code reasoner or bug validation — only spec generation.
 
-The `proj_dir` must contain Scala (`.scala`) source files. For each extracted module, FM-Agent writes spec Markdown files under `fm_agent/`:
+The `proj_dir` must contain Scala (`.scala`) source files for Chisel, or Verilog (`.v`/`.sv`/`.svh`) source files for Verilog. For each extracted module, FM-Agent writes spec Markdown files next to the extracted module under `fm_agent/`:
 
 | Output                  | Content                                                              |
 | ----------------------- | ------------------------------------------------------------------- |
 | `<ModuleName>_spec.md`  | Verification-oriented specification of the module's behavior         |
+| `<ModuleName>_info.md`  | Expected specifications of each submodule the module instantiates    |
 
-Generated specs are validated against a quality checklist; specs that fail are automatically deleted and regenerated within the run.
+Generated specs are validated against a quality checklist; specs that fail are automatically deleted and regenerated within the run. If a run is interrupted, rerun with `--resume` to keep completed specs and only regenerate the missing ones.
+
+**Verilog requires [Verible](https://github.com/chipsalliance/verible)**: `verible-verilog-syntax` must be on `PATH` for accurate module extraction and instantiation-edge detection. Without it the Verilog flow refuses to start (set `FM_AGENT_NO_VERIBLE=1` to force a less accurate pure-Python fallback).
 
 ### Output
 
@@ -177,7 +189,7 @@ A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results w
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
 2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Customizing them for your specific project can improve accuracy and help uncover more bugs. For example, you can include project documentation to give the agent deeper understanding of your codebase, or if you are reasoning about a compiler, modify `md/bug_validator.md` to instruct the agent to compare outputs against a reference implementation (e.g., GCC).
-3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS.
+3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS. Hardware designs (Chisel, Verilog/SystemVerilog) are supported in spec-only mode via `--hardware`.
 
 ## Citation
 

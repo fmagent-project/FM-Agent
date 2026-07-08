@@ -11,6 +11,13 @@ from .chisel_support import (
     CHISEL_TEST_FILE_PATTERNS,
     extract_chisel_functions,
 )
+from .verilog_support import (
+    VERILOG_LANG_CONFIG,
+    VERILOG_EXT_TO_LANG,
+    VERILOG_TEST_DIR_NAMES,
+    VERILOG_TEST_FILE_PATTERNS,
+    extract_verilog_functions,
+)
 
 LANG_CONFIG = {
     "cpp": {
@@ -151,6 +158,10 @@ LANG_CONFIG = {
 # supported language.
 LANG_CONFIG.update(CHISEL_LANG_CONFIG)
 
+# Register Verilog/SystemVerilog extraction support (implemented in
+# verilog_support.py), the same way Chisel is registered above.
+LANG_CONFIG.update(VERILOG_LANG_CONFIG)
+
 # Map file extensions to language keys
 EXT_TO_LANG = {
     "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "c": "c", "h": "cpp", "hpp": "cpp",
@@ -164,6 +175,7 @@ EXT_TO_LANG = {
     "ets": "arkts",
 }
 EXT_TO_LANG.update(CHISEL_EXT_TO_LANG)
+EXT_TO_LANG.update(VERILOG_EXT_TO_LANG)
 
 # Directories that typically contain test code
 _TEST_DIR_NAMES = {
@@ -183,7 +195,7 @@ _TEST_FILE_PATTERNS = [
     re.compile(r'^.*\.(?:test|spec)\.(?:js|jsx|ts|tsx)$'),  # JS/TS: foo.test.js
     re.compile(r'^.*_test\.rs$'),          # Rust: foo_test.rs
     re.compile(r'^.*\.test\.(?:ets)$'),    # ArkTS: foo.test.ets
-] + CHISEL_TEST_FILE_PATTERNS              # Chisel: FooSpec.scala / FooTest.scala
+] + CHISEL_TEST_FILE_PATTERNS + VERILOG_TEST_FILE_PATTERNS  # Chisel & Verilog test files
 
 
 def _is_test_file(rel_path):
@@ -193,8 +205,15 @@ def _is_test_file(rel_path):
     for part in parts[:-1]:
         if part.lower() in _TEST_DIR_NAMES:
             return True
-    # Check filename against test patterns
     basename = parts[-1]
+    # tb/ and sim/ hold testbench code in Verilog projects but legitimate
+    # source in software projects, so they only reject Verilog files.
+    ext = basename.rsplit('.', 1)[-1] if '.' in basename else ''
+    if ext in VERILOG_EXT_TO_LANG:
+        for part in parts[:-1]:
+            if part.lower() in VERILOG_TEST_DIR_NAMES:
+                return True
+    # Check filename against test patterns
     for pat in _TEST_FILE_PATTERNS:
         if pat.match(basename):
             return True
@@ -539,6 +558,8 @@ def extract_functions_from_file(filepath, lang_key):
 
     if lang_cfg["body"] == "chisel":
         raw_funcs = extract_chisel_functions(lines, lang_key, lang_cfg)
+    elif lang_cfg["body"] == "verilog":
+        raw_funcs = extract_verilog_functions(lines, lang_key, lang_cfg)
     elif lang_cfg["body"] == "brace":
         raw_funcs = _extract_functions_brace(lines, lang_key, lang_cfg)
     else:

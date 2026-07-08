@@ -40,7 +40,13 @@ from config import (
     OPENCODE_MODEL_PROVIDER,
 )
 from src.file_utils import collect_file_names
-from src.chisel_support import chisel_info_path, chisel_spec_path, chisel_spec_ready
+from src.chisel_support import (
+    _chisel_info_ready,
+    _chisel_markdown_ready,
+    chisel_info_path,
+    chisel_spec_path,
+    chisel_spec_ready,
+)
 from src.extract import run_extraction
 from src.generate_topdown_layers import generate_topdown_layers
 from src.opencode_trace import (
@@ -173,7 +179,33 @@ def validate_chisel_spec(spec_path):
     return (not errors), errors
 
 
-def _get_pending_batches_chisel(batches, proj_dir):
+def _remove_incomplete_chisel_outputs(module_path, expects_submodules=False):
+    """Delete spec/info outputs that exist but are incomplete (e.g. truncated).
+
+    The retry prompt tells the agent to only generate outputs for modules that
+    do not yet have both output files, so an incomplete file left in place
+    would make every retry skip the module. Complete files (including a small
+    legal ``(no submodules)`` info document for actual leaf modules) are kept.
+    """
+    def _info_ready(path):
+        return _chisel_info_ready(path, allow_no_submodules=not expects_submodules)
+
+    checks = (
+        (chisel_spec_path(module_path), _chisel_markdown_ready),
+        (chisel_info_path(module_path), _info_ready),
+    )
+    for path, ready in checks:
+        if os.path.exists(path) and not ready(path):
+            logging.warning(
+                "Removing incomplete Chisel output %s so it is regenerated.", path
+            )
+            try:
+                os.remove(path)
+            except OSError as exc:
+                logging.warning("Could not remove incomplete output %s: %s", path, exc)
+
+
+def _get_pending_batches_chisel(batches, proj_dir, expects_submodules=frozenset()):
     """Return batches that still have at least one module without a complete,
     valid spec/info output.
 
@@ -184,17 +216,42 @@ def _get_pending_batches_chisel(batches, proj_dir):
     ``_get_pending_batches``.
 
     Beyond presence, each ready ``_spec.md`` is validated against the quality
-    checklist with :func:`validate_chisel_spec`. A spec that fails validation is
-    deleted and its batch is marked pending, so the spec-generation retry loop
-    regenerates it (the module's directory no longer has both required outputs).
+    checklist with :func:`validate_chisel_spec`. Incomplete (truncated) outputs
+    and specs that fail validation are deleted so the retry loop regenerates
+    them instead of skipping modules whose output files merely exist.
+
+    ``expects_submodules`` lists the function rel-paths whose call graph shows
+    submodules: for those, a ``(no submodules)`` info stub is rejected (and
+    removed) instead of accepted, so the children do not lose their caller
+    expectations downstream.
     """
     pending = []
     for batch in batches:
+        batch_pending = False
+        validation_errors = []
         for func_rel in batch.get("functions", []):
             module_path = os.path.join(proj_dir, func_rel)
-            if not chisel_spec_ready(module_path):
-                pending.append(batch)
-                break
+            expects = func_rel in expects_submodules
+            if not chisel_spec_ready(module_path, expects_submodules=expects):
+                info_path = chisel_info_path(module_path)
+                if expects and os.path.exists(info_path):
+                    try:
+                        with open(info_path, "r", errors="replace") as f:
+                            info_text = f.read()
+                    except OSError:
+                        info_text = ""
+                    if "(no submodules)" in info_text:
+                        validation_errors.append(
+                            f"{os.path.basename(info_path)}: claims '(no submodules)' "
+                            f"but this module instantiates other extracted modules — "
+                            f"write one '# Submodule: <name>' entry per instantiated "
+                            f"submodule"
+                        )
+                _remove_incomplete_chisel_outputs(
+                    module_path, expects_submodules=expects
+                )
+                batch_pending = True
+                continue
             spec_path = chisel_spec_path(module_path)
             is_valid, spec_errors = validate_chisel_spec(spec_path)
             if not is_valid:
@@ -207,8 +264,15 @@ def _get_pending_batches_chisel(batches, proj_dir):
                     os.remove(spec_path)
                 except OSError as exc:
                     logging.warning("Could not remove invalid spec %s: %s", spec_path, exc)
-                pending.append(batch)
-                break
+                validation_errors.append(
+                    f"{os.path.basename(spec_path)}: " + "; ".join(spec_errors[:3])
+                )
+                batch_pending = True
+        # Exposed to the retry prompt so the LLM knows WHAT failed the
+        # checklist — without feedback regeneration rarely converges.
+        batch["validation_errors"] = validation_errors
+        if batch_pending:
+            pending.append(batch)
     return pending
 
 
@@ -635,6 +699,23 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         layers_data = _load_json_file(layers_json_path, f"topdown layers for subsystem {phase_num}")
         total_layers = layers_data.get("total_layers", 1)
 
+        # Modules whose call graph shows submodules must not satisfy readiness
+        # with a '(no submodules)' info stub. Keyed both by the proj_dir-
+        # relative path (batch functions) and the input_dir-relative path
+        # (layer_files readiness counts).
+        _with_subs = {
+            fn["file"]
+            for layer in layers_data.get("layers", [])
+            for fn in layer.get("functions", [])
+            if fn.get("all_callees")
+        }
+        expects_submodules = {
+            os.path.relpath(os.path.join(work_dir, f), proj_dir) for f in _with_subs
+        }
+        expects_rel = {
+            os.path.relpath(os.path.join(work_dir, f), input_dir) for f in _with_subs
+        }
+
         batch_dir = os.path.join(
             spec_prompts_dir,
             f"batch_prompts_{project_name}_phase{phase_num:02d}",
@@ -675,14 +756,14 @@ def run_chisel_spec_generation(proj_dir, resume=False):
             layer_complete = False
             for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
                 # Find batches with unspecced modules
-                pending_batches = _get_pending_batches_chisel(all_batches, proj_dir)
+                pending_batches = _get_pending_batches_chisel(all_batches, proj_dir, expects_submodules=expects_submodules)
                 if not pending_batches:
                     layer_complete = True
                     break
 
                 ready_before = sum(
                     1 for rel in layer_files
-                    if chisel_spec_ready(os.path.join(input_dir, rel))
+                    if chisel_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
                 )
 
                 # Launch one opencode process per pending batch, but cap how many
@@ -709,6 +790,18 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                         ])
                     fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
                                    "Do NOT modify any existing project files.")
+                    checklist_note = ""
+                    failed = batch_info.get("validation_errors") or []
+                    if failed:
+                        checklist_note = (
+                            " WARNING: the following previously generated specs FAILED the "
+                            "quality checklist and were deleted — regenerate them and fix "
+                            "exactly these issues (re-read the Coverage Tags rules in "
+                            "fm_agent/spec_prompts/system_prompt.md: every tag is a plain "
+                            "<FG-NAME>/<FC-NAME>/<CK-NAME> on its own line, sibling tag names "
+                            "must be unique, and the <FG-API> group is mandatory): "
+                            + " | ".join(failed)
+                        )
                     if attempt == 1 and not resume:
                         prompt = (
                             f"Process the batch prompt file at {batch_prompt_rel}. "
@@ -723,7 +816,8 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                             f"Some modules may already have spec/info files from a previous attempt. "
                             f"Check each module's directory and only generate outputs for modules "
                             f"that do not yet have both exact output files requested in the batch prompt. "
-                            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
+                            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. "
+                            f"{fm_reminder}{checklist_note}"
                         )
                     command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
                                "--file", os.path.join(work_dir, "workflow_spec_chisel.md"),
@@ -795,9 +889,9 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                 # Check if any modules in this layer received standalone spec/info outputs
                 ready_after = sum(
                     1 for rel in layer_files
-                    if chisel_spec_ready(os.path.join(input_dir, rel))
+                    if chisel_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
                 )
-                if not _get_pending_batches_chisel(all_batches, proj_dir):
+                if not _get_pending_batches_chisel(all_batches, proj_dir, expects_submodules=expects_submodules):
                     layer_complete = True
                     break
 
@@ -832,10 +926,10 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                     )
                     sys.exit(1)
 
-            if not layer_complete and _get_pending_batches_chisel(all_batches, proj_dir):
+            if not layer_complete and _get_pending_batches_chisel(all_batches, proj_dir, expects_submodules=expects_submodules):
                 ready_count = sum(
                     1 for rel in layer_files
-                    if chisel_spec_ready(os.path.join(input_dir, rel))
+                    if chisel_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
                 )
                 print(
                     f"[Chisel] ERROR: Stage 5 Subsystem {phase_num} Layer {layer_idx} "
