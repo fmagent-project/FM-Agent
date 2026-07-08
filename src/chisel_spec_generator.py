@@ -295,6 +295,20 @@ def _load_json_file(path, description):
         raise ValueError(f"{description} at {path} is not valid JSON: {exc}") from exc
 
 
+def _reset_domain_context(work_dir):
+    """Remove spec_prompts/domain_context so a rerun setup regenerates it.
+
+    The alias files (engine_overview.txt, phase_NN_types.txt) are only copied
+    when absent, and batch prompts read ONLY the aliases — leftovers from a
+    previous (possibly other-HDL) run would silently shadow the freshly
+    written context. Called on the resume path whenever the old manifest
+    cannot be reused and setup is rerun.
+    """
+    ctx_dir = os.path.join(work_dir, "spec_prompts", "domain_context")
+    if os.path.isdir(ctx_dir):
+        shutil.rmtree(ctx_dir, ignore_errors=True)
+
+
 def _groups_json_is_usable(groups_path, required_exts=None, required_languages=None):
     """Return True when groups.json is complete enough to resume from.
 
@@ -340,6 +354,15 @@ def _groups_json_is_usable(groups_path, required_exts=None, required_languages=N
             # A string-typed declaration is still a declaration — it must not
             # slip past the veto as "no languages".
             declared = [declared]
+        if declared is not None and not isinstance(declared, list):
+            # Any other shape (dict, number, ...) is declared-but-
+            # unintelligible; treating it as absence would reopen the
+            # mixed-manifest gap for mistyped manifests.
+            logging.warning(
+                "Cannot resume from groups.json: languages declaration has an "
+                "unintelligible shape (%s).", type(declared).__name__,
+            )
+            return False
         if isinstance(declared, list) and declared:
             langs = {str(lang).strip().lower() for lang in declared}
             if not langs & set(required_languages):
@@ -696,9 +719,11 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         elif os.path.exists(groups_path):
             print("[Chisel] Resume requested but groups.json is missing or incomplete; "
                   "rerunning setup in the existing fm_agent/ workspace.")
+            _reset_domain_context(work_dir)
         else:
             print("[Chisel] Resume requested but no groups.json found; "
                   "starting setup in the existing fm_agent/ workspace.")
+            _reset_domain_context(work_dir)
     else:
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)

@@ -518,6 +518,11 @@ if __name__ == "__main__":
     if (args.chisel or args.verilog) and not args.hardware:
         parser.error("--chisel/--verilog select the HDL for --hardware runs; "
                      "add the --hardware flag")
+    if args.resume and not args.hardware:
+        # run_pipeline ignores --resume and starts by WIPING fm_agent/ — the
+        # exact workspace --resume promises to preserve.
+        parser.error("--resume only applies to --hardware runs; "
+                     "add --hardware (and --verilog for Verilog designs)")
 
     start_time = time.time()
     if args.hardware and args.verilog:

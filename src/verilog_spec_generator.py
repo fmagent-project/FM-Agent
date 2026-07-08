@@ -69,6 +69,7 @@ from src.chisel_spec_generator import (
     _normalize_chisel_domain_context as _normalize_hw_domain_context,
     _load_json_file,
     _report_undocumented_submodules,
+    _reset_domain_context,
 )
 from main import (
     _clean_previous_run,
@@ -263,9 +264,11 @@ def run_verilog_spec_generation(proj_dir, resume=False):
         elif os.path.exists(groups_path):
             print("[Verilog] Resume requested but groups.json is missing or incomplete; "
                   "rerunning setup in the existing fm_agent/ workspace.")
+            _reset_domain_context(work_dir)
         else:
             print("[Verilog] Resume requested but no groups.json found; "
                   "starting setup in the existing fm_agent/ workspace.")
+            _reset_domain_context(work_dir)
     else:
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
