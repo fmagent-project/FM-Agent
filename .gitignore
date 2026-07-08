@@ -210,7 +210,6 @@ marimo/_lsp/
 __marimo__/
 
 testcase/
-scripts/generated
 
 .claude/
 
