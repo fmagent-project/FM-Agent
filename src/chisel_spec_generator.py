@@ -295,8 +295,15 @@ def _load_json_file(path, description):
         raise ValueError(f"{description} at {path} is not valid JSON: {exc}") from exc
 
 
-def _groups_json_is_usable(groups_path):
-    """Return True when groups.json is complete enough to resume from."""
+def _groups_json_is_usable(groups_path, required_exts=None):
+    """Return True when groups.json is complete enough to resume from.
+
+    ``required_exts`` names the calling flow's source extensions: a manifest
+    left behind by ANOTHER HDL flow in the same project (e.g. a Chisel
+    groups.json found by ``--hardware --verilog --resume``) lists no matching
+    sources, and reusing it would make the run silently spec nothing —
+    rejecting it here makes resume fall back to rerunning setup instead.
+    """
     try:
         groups = _load_json_file(groups_path, "groups.json")
     except (OSError, ValueError) as exc:
@@ -318,6 +325,23 @@ def _groups_json_is_usable(groups_path):
         if not isinstance(sub.get("source_groups", []), list):
             logging.warning("Cannot resume from groups.json: subsystem %s source_groups is not a list.", idx)
             return False
+
+    if required_exts is not None:
+        for sub in subsystems:
+            for group in sub.get("source_groups", []):
+                if not isinstance(group, dict):
+                    continue
+                for src in group.get("source_files", []) or []:
+                    base = os.path.basename(str(src))
+                    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+                    if ext in required_exts:
+                        return True
+        logging.warning(
+            "Cannot resume from groups.json: it lists no source file with "
+            "extension(s) %s — it likely belongs to a different HDL flow.",
+            sorted(required_exts),
+        )
+        return False
 
     return True
 
@@ -632,7 +656,9 @@ def run_chisel_spec_generation(proj_dir, resume=False):
 
     # Clean files from the previous run, unless resuming an interrupted run.
     groups_path = os.path.join(work_dir, "groups.json")
-    resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(groups_path)
+    resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(
+        groups_path, required_exts={"scala", "sc"}
+    )
     if resume:
         if resume_setup:
             print("[Chisel] Resume: preserving existing fm_agent/ workspace "
@@ -691,7 +717,7 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        if _groups_json_is_usable(groups_path):
+        if _groups_json_is_usable(groups_path, required_exts={"scala", "sc"}):
             break
 
         if attempt < OPENCODE_MAX_RETRIES:
