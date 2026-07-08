@@ -67,7 +67,7 @@ def _verilog_markdown_ready(path):
         return False
 
 
-def _verilog_info_ready(path, allow_no_submodules=True):
+def _verilog_info_ready(path, allow_no_submodules=True, expected_submodules=frozenset()):
     """Readiness for ``_info.md``: as ``_verilog_markdown_ready``, except that a
     leaf module's info file may legitimately be just a heading plus
     ``(no submodules)`` — the system prompt allows it — which is smaller than
@@ -76,7 +76,11 @@ def _verilog_info_ready(path, allow_no_submodules=True):
     Pass ``allow_no_submodules=False`` for modules whose instantiation graph
     shows submodules: their info must contain at least one ``# Submodule:``
     entry and must not claim ``(no submodules)`` — regardless of file size, so
-    a padded stub cannot slip through the byte threshold.
+    a padded stub cannot slip through the byte threshold. ``expected_submodules``
+    names the instantiated modules; every one of them must have its own
+    parseable heading, or the missing children would later be specced without
+    their caller expectations. Names are compared exactly — Verilog numeric
+    suffixes like ``fifo_64`` are real module names, never dedup aliases.
     """
     try:
         with open(path, "r", errors="replace") as f:
@@ -88,23 +92,27 @@ def _verilog_info_ready(path, allow_no_submodules=True):
             _verilog_markdown_ready(path)
             and "(no submodules)" not in content
             and _SUBMODULE_HEADING_RE.search(content) is not None
+            and set(expected_submodules) <= set(_SUBMODULE_HEADING_RE.findall(content))
         )
     if _verilog_markdown_ready(path):
         return True
     return "#" in content and "(no submodules)" in content
 
 
-def verilog_spec_ready(module_file_path, expects_submodules=False):
+def verilog_spec_ready(module_file_path, expected_submodules=frozenset()):
     """True when both standalone Verilog Markdown outputs are non-trivial.
 
-    ``expects_submodules=True`` (the instantiation graph shows the module has
-    submodules) disallows the small ``(no submodules)`` info stub.
+    A non-empty ``expected_submodules`` (the module's instantiated submodule
+    names per the instantiation graph) disallows the small ``(no submodules)``
+    info stub and requires a ``# Submodule:`` entry for EVERY expected name.
+    Pure check — never mutates files; the pending scan owns cleanup.
     """
     return (
         _verilog_markdown_ready(verilog_spec_path(module_file_path))
         and _verilog_info_ready(
             verilog_info_path(module_file_path),
-            allow_no_submodules=not expects_submodules,
+            allow_no_submodules=not expected_submodules,
+            expected_submodules=expected_submodules,
         )
     )
 

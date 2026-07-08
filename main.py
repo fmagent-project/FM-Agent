@@ -125,7 +125,7 @@ def _has_source_code(proj_dir):
     return False
 
 
-_HARDWARE_LANGUAGES = {"chisel", "verilog", "systemverilog"}
+_HARDWARE_LANGUAGES = {"chisel", "verilog", "systemverilog", "system_verilog"}
 
 
 def _reject_hardware_languages(phases_path):
@@ -504,7 +504,7 @@ if __name__ == "__main__":
     hdl.add_argument(
         "--verilog",
         action="store_true",
-        help="With --hardware: treat the design as Verilog/SystemVerilog (.v/.sv) "
+        help="With --hardware: treat the design as Verilog/SystemVerilog (.v/.sv/.svh) "
         "and generate specs via verilog_spec_generator.",
     )
     parser.add_argument(

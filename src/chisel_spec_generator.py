@@ -304,14 +304,18 @@ def _reset_derived_state(work_dir):
     the domain-context aliases shadow the fresh context (batch prompts read
     ONLY the aliases), stale topdown/batch artifacts confuse the advisory
     report, and a stale file list can smuggle the run past the zero-modules
-    guard. extracted_functions/ is deliberately PRESERVED — completed specs
+    guard. The rejected groups.json itself is removed too: leaving it in
+    place makes Stage 1 use the 'Continue where you left off… rewrite it if
+    malformed or incomplete' prompt, but a well-formed foreign-HDL manifest
+    is neither, so the retry loop would depend on the LLM volunteering a
+    rewrite. extracted_functions/ is deliberately PRESERVED — completed specs
     live there, and keeping them is the point of --resume.
     """
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
     ctx_dir = os.path.join(spec_prompts_dir, "domain_context")
     if os.path.isdir(ctx_dir):
         shutil.rmtree(ctx_dir, ignore_errors=True)
-    for name in ("phases.json", "fm_agent_file_list.json"):
+    for name in ("groups.json", "phases.json", "fm_agent_file_list.json"):
         try:
             os.remove(os.path.join(work_dir, name))
         except OSError:
