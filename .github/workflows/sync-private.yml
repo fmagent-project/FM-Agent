@@ -28,9 +28,26 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.PRIVATE_REPO_DEPLOY_KEY }}
         run: |
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "::error::PRIVATE_REPO_DEPLOY_KEY is empty or not configured."
+            exit 1
+          fi
+
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          key = os.environ["SSH_PRIVATE_KEY"].strip()
+          key = key.replace("\\r\\n", "\n").replace("\\n", "\n")
+          key = key.replace("\r\n", "\n").replace("\r", "\n")
+          Path.home().joinpath(".ssh", "id_ed25519").write_text(key + "\n", encoding="utf-8")
+          PY
           chmod 600 ~/.ssh/id_ed25519
+          if ! ssh-keygen -y -P "" -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub; then
+            echo "::error::PRIVATE_REPO_DEPLOY_KEY must be an unencrypted private key, not a public key or passphrase-protected key."
+            exit 1
+          fi
           ssh-keyscan github.com >> ~/.ssh/known_hosts
 
       - name: Push to private repository
