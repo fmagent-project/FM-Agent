@@ -38,6 +38,10 @@ import subprocess
 
 _VERILOG_SPEC_MIN_BYTES = 200
 
+# A parseable submodule entry heading — the exact per-line shape
+# generate_batch_prompts parses caller expectations from.
+_SUBMODULE_HEADING_RE = re.compile(r"^#[ \t]*Submodule:[ \t]*\S+[ \t]*$", re.M)
+
 
 def verilog_spec_path(module_file_path):
     """Return the standalone ``<module-stem>_spec.md`` path for an extracted module."""
@@ -83,7 +87,7 @@ def _verilog_info_ready(path, allow_no_submodules=True):
         return (
             _verilog_markdown_ready(path)
             and "(no submodules)" not in content
-            and "# Submodule:" in content
+            and _SUBMODULE_HEADING_RE.search(content) is not None
         )
     if _verilog_markdown_ready(path):
         return True

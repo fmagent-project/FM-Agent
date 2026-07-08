@@ -40,6 +40,7 @@ from config import (
 )
 from src.file_utils import collect_file_names
 from src.verilog_support import (
+    _SUBMODULE_HEADING_RE,
     _verilog_info_ready,
     _verilog_markdown_ready,
     verilog_info_path,
@@ -158,7 +159,8 @@ def _get_pending_batches_verilog(batches, proj_dir, expects_submodules=frozenset
                             info_text = f.read()
                     except OSError:
                         info_text = ""
-                    if "(no submodules)" in info_text or "# Submodule:" not in info_text:
+                    if ("(no submodules)" in info_text
+                            or _SUBMODULE_HEADING_RE.search(info_text) is None):
                         validation_errors.append(
                             f"{os.path.basename(info_path)}: this module instantiates "
                             f"other extracted modules — the info file must contain one "
@@ -187,10 +189,16 @@ def _get_pending_batches_verilog(batches, proj_dir, expects_submodules=frozenset
                 )
                 batch_pending = True
         # Exposed to the retry prompt so the LLM knows WHAT failed the
-        # checklist — without feedback regeneration rarely converges.
-        batch["validation_errors"] = validation_errors
+        # checklist — without feedback regeneration rarely converges. The
+        # feedback must survive the retry loop's pre-launch rescan (which runs
+        # AFTER the offending files were deleted), so only overwrite it when
+        # new errors surface, and clear it once the batch completes.
+        if validation_errors:
+            batch["validation_errors"] = validation_errors
         if batch_pending:
             pending.append(batch)
+        else:
+            batch["validation_errors"] = []
     return pending
 
 

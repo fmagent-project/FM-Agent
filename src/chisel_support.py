@@ -43,6 +43,10 @@ import re
 # considered a real spec rather than an empty stub.
 _CHISEL_SPEC_MIN_BYTES = 200
 
+# A parseable submodule entry heading — the exact per-line shape
+# generate_batch_prompts parses caller expectations from.
+_SUBMODULE_HEADING_RE = re.compile(r"^#[ \t]*Submodule:[ \t]*\S+[ \t]*$", re.M)
+
 
 def chisel_spec_path(module_file_path):
     """Return the standalone spec ``.md`` path for an extracted Chisel module.
@@ -93,7 +97,7 @@ def _chisel_info_ready(path, allow_no_submodules=True):
         return (
             _chisel_markdown_ready(path)
             and "(no submodules)" not in content
-            and "# Submodule:" in content
+            and _SUBMODULE_HEADING_RE.search(content) is not None
         )
     if _chisel_markdown_ready(path):
         return True
