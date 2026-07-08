@@ -126,10 +126,15 @@ def extract_submodule_spec_from_chisel_info(module_file: Path, submodule_fqn: st
     # The extractor deduplicates same-named units (companion object + class)
     # by suffixing later ones with _<n>, but info headings use the DECLARED
     # name — fall back to the suffix-stripped stem when the exact one misses.
+    # The dedup suffix only arises for Scala companion pairs, so the fallback
+    # is gated on the caller being a Scala unit: genuine Verilog module names
+    # routinely end in _<digits> (fifo_64), and stripping those would hand a
+    # module the WRONG caller contract.
     candidates = [stem]
-    stripped = re.sub(r"_\d+$", "", stem)
-    if stripped and stripped != stem:
-        candidates.append(stripped)
+    if module_file.suffix in (".scala", ".sc"):
+        stripped = re.sub(r"_\d+$", "", stem)
+        if stripped and stripped != stem:
+            candidates.append(stripped)
     entries: Dict[str, List[str]] = {}
     current: Optional[List[str]] = None
     for line in content.splitlines():

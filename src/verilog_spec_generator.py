@@ -255,7 +255,7 @@ def run_verilog_spec_generation(proj_dir, resume=False):
 
     # Clean files from the previous run, unless resuming an interrupted run.
     groups_path = os.path.join(work_dir, "groups.json")
-    resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(groups_path, required_exts={"v", "sv", "svh"})
+    resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(groups_path, required_exts={"v", "sv", "svh"}, required_languages={"verilog", "systemverilog", "system_verilog"})
     if resume:
         if resume_setup:
             print("[Verilog] Resume: preserving existing fm_agent/ workspace "
@@ -311,7 +311,7 @@ def run_verilog_spec_generation(proj_dir, resume=False):
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 1 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        if _groups_json_is_usable(groups_path, required_exts={"v", "sv", "svh"}):
+        if _groups_json_is_usable(groups_path, required_exts={"v", "sv", "svh"}, required_languages={"verilog", "systemverilog", "system_verilog"}):
             break
 
         if attempt < OPENCODE_MAX_RETRIES:
@@ -629,5 +629,6 @@ def run_verilog_spec_generation(proj_dir, resume=False):
                 )
                 sys.exit(1)
 
-    _report_undocumented_submodules(work_dir, verilog_info_path, "Verilog")
+    _report_undocumented_submodules(work_dir, verilog_info_path, "Verilog",
+                                    strip_dedup_suffix=False)
     print("[Verilog] Done. Generated Verilog module spec/info files only; skipped reasoning and bug validation.")

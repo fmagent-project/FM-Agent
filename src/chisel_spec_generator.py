@@ -295,7 +295,7 @@ def _load_json_file(path, description):
         raise ValueError(f"{description} at {path} is not valid JSON: {exc}") from exc
 
 
-def _groups_json_is_usable(groups_path, required_exts=None):
+def _groups_json_is_usable(groups_path, required_exts=None, required_languages=None):
     """Return True when groups.json is complete enough to resume from.
 
     ``required_exts`` names the calling flow's source extensions: a manifest
@@ -303,6 +303,14 @@ def _groups_json_is_usable(groups_path, required_exts=None):
     groups.json found by ``--hardware --verilog --resume``) lists no matching
     sources, and reusing it would make the run silently spec nothing —
     rejecting it here makes resume fall back to rerunning setup instead.
+
+    ``required_languages`` closes the mixed-manifest gap: a foreign manifest
+    with a stray file of the right extension (an LLM behavior this flow
+    defends against elsewhere) passes the extension check, but its declared
+    ``languages`` still name the other HDL — resuming on it would inherit the
+    other flow's subsystems and domain context. When the manifest declares
+    languages and none matches, it is rejected; a manifest without declared
+    languages falls back to the extension judgement.
     """
     try:
         groups = _load_json_file(groups_path, "groups.json")
@@ -325,6 +333,23 @@ def _groups_json_is_usable(groups_path, required_exts=None):
         if not isinstance(sub.get("source_groups", []), list):
             logging.warning("Cannot resume from groups.json: subsystem %s source_groups is not a list.", idx)
             return False
+
+    if required_languages is not None:
+        declared = groups.get("languages")
+        if isinstance(declared, str):
+            # A string-typed declaration is still a declaration — it must not
+            # slip past the veto as "no languages".
+            declared = [declared]
+        if isinstance(declared, list) and declared:
+            langs = {str(lang).strip().lower() for lang in declared}
+            if not langs & set(required_languages):
+                logging.warning(
+                    "Cannot resume from groups.json: declared languages %s do "
+                    "not match this flow (%s) — it belongs to a different HDL "
+                    "flow.",
+                    sorted(langs), sorted(required_languages),
+                )
+                return False
 
     if required_exts is not None:
         for sub in subsystems:
@@ -581,15 +606,18 @@ def _has_scala_source(proj_dir):
     return False
 
 
-def _report_undocumented_submodules(work_dir, info_path_fn, label):
+def _report_undocumented_submodules(work_dir, info_path_fn, label,
+                                    strip_dedup_suffix=True):
     """Advisory (report only): list modules whose call graph shows submodules
     but whose info document lacks a parseable ``# Submodule:`` entry for them.
 
     Deliberately NOT enforced through readiness: graph edges can be noisy
     (Chisel companion objects, member access) and hard enforcement deadlocks
-    genuine leaf modules — a human reading the summary can judge. Dedup
-    suffixes (``Control_1``) are stripped, since info headings use declared
-    names. Returns ``[(module_fqn, [missing names...]), ...]``.
+    genuine leaf modules — a human reading the summary can judge.
+    ``strip_dedup_suffix`` maps extractor dedup aliases (``Control_1``) back
+    to the declared name the info headings use; pass False for Verilog, where
+    ``_<digits>`` endings are genuine module names (``fifo_64``) and stripping
+    them would hide real gaps. Returns ``[(module_fqn, [missing...]), ...]``.
     """
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
     if not os.path.isdir(spec_prompts_dir):
@@ -611,10 +639,12 @@ def _report_undocumented_submodules(work_dir, info_path_fn, label):
                 except OSError:
                     continue  # a missing info file is readiness's problem
                 headings = set(_SUBMODULE_HEADING_RE.findall(content))
-                expected = {
-                    re.sub(r"_\d+$", "", str(c).split("::")[-1])
-                    for c in callees
-                }
+                expected = set()
+                for c in callees:
+                    name = str(c).split("::")[-1]
+                    if strip_dedup_suffix:
+                        name = re.sub(r"_\d+$", "", name)
+                    expected.add(name)
                 missing = sorted(e for e in expected if e and e not in headings)
                 if missing:
                     gaps.append((fn["name"], missing))
@@ -657,7 +687,7 @@ def run_chisel_spec_generation(proj_dir, resume=False):
     # Clean files from the previous run, unless resuming an interrupted run.
     groups_path = os.path.join(work_dir, "groups.json")
     resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(
-        groups_path, required_exts={"scala", "sc"}
+        groups_path, required_exts={"scala", "sc"}, required_languages={"chisel", "scala"}
     )
     if resume:
         if resume_setup:
@@ -717,7 +747,7 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        if _groups_json_is_usable(groups_path, required_exts={"scala", "sc"}):
+        if _groups_json_is_usable(groups_path, required_exts={"scala", "sc"}, required_languages={"chisel", "scala"}):
             break
 
         if attempt < OPENCODE_MAX_RETRIES:
