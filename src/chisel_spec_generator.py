@@ -408,6 +408,41 @@ def _normalize_groups_source_paths(work_dir, proj_dir):
     return unresolved
 
 
+def _filter_phase_source_files(work_dir, allowed_exts, label):
+    """Drop phases.json source files whose extension is outside the flow.
+
+    The setup LLM sometimes mixes other supported source files into an HDL
+    source group (e.g. ``["Top.scala", "Helper.java"]``). Left in place, the
+    foreign files are extracted as software units whose batch prompts use the
+    embedded ``[SPEC]`` format, while the hardware runner waits for standalone
+    ``_spec.md``/``_info.md`` outputs that never appear — retrying until the
+    layer fails. Returns the dropped file names (already logged).
+    """
+    phases_path = os.path.join(work_dir, "phases.json")
+    data = _load_json_file(phases_path, "phases.json")
+    dropped = []
+    for phase in data.get("phases", []):
+        for module in phase.get("modules", []):
+            kept = []
+            for src in module.get("source_files", []):
+                base = os.path.basename(str(src))
+                ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+                if ext in allowed_exts:
+                    kept.append(src)
+                else:
+                    dropped.append(src)
+            module["source_files"] = kept
+    if dropped:
+        logging.warning(
+            "[%s] Dropped %d non-%s source file(s) from phases.json "
+            "(the hardware flow cannot spec them): %s",
+            label, len(dropped), label, ", ".join(map(str, dropped[:10])),
+        )
+        with open(phases_path, "w") as f:
+            json.dump(data, f, indent=2)
+    return dropped
+
+
 def _groups_to_phases(work_dir):
     """Translate ``fm_agent/groups.json`` (subsystems) into the ``phases.json``
     schema the extraction / layer / batch tooling expects.
@@ -520,6 +555,53 @@ def _has_scala_source(proj_dir):
             if fname.endswith('.scala'):
                 return True
     return False
+
+
+def _report_undocumented_submodules(work_dir, info_path_fn, label):
+    """Advisory (report only): list modules whose call graph shows submodules
+    but whose info document lacks a parseable ``# Submodule:`` entry for them.
+
+    Deliberately NOT enforced through readiness: graph edges can be noisy
+    (Chisel companion objects, member access) and hard enforcement deadlocks
+    genuine leaf modules — a human reading the summary can judge. Dedup
+    suffixes (``Control_1``) are stripped, since info headings use declared
+    names. Returns ``[(module_fqn, [missing names...]), ...]``.
+    """
+    spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
+    if not os.path.isdir(spec_prompts_dir):
+        return []
+    gaps = []
+    for fname in sorted(os.listdir(spec_prompts_dir)):
+        if not re.match(r"phase_\d+_topdown_layers\.json$", fname):
+            continue
+        layers_data = _load_json_file(os.path.join(spec_prompts_dir, fname), fname)
+        for layer in layers_data.get("layers", []):
+            for fn in layer.get("functions", []):
+                callees = fn.get("all_callees") or []
+                if not callees:
+                    continue
+                info_path = info_path_fn(os.path.join(work_dir, fn["file"]))
+                try:
+                    with open(info_path, "r", errors="replace") as f:
+                        content = f.read()
+                except OSError:
+                    continue  # a missing info file is readiness's problem
+                headings = set(_SUBMODULE_HEADING_RE.findall(content))
+                expected = {
+                    re.sub(r"_\d+$", "", str(c).split("::")[-1])
+                    for c in callees
+                }
+                missing = sorted(e for e in expected if e and e not in headings)
+                if missing:
+                    gaps.append((fn["name"], missing))
+    if gaps:
+        print(f"[{label}] ADVISORY: {len(gaps)} module info document(s) lack "
+              f"entries for graph-detected submodules (report only):")
+        for name, missing in gaps[:20]:
+            print(f"[{label}]   {name}: missing {', '.join(missing)}")
+        if len(gaps) > 20:
+            print(f"[{label}]   ... and {len(gaps) - 20} more")
+    return gaps
 
 
 def run_chisel_spec_generation(proj_dir, resume=False):
@@ -640,8 +722,10 @@ def run_chisel_spec_generation(proj_dir, resume=False):
             f"First few: {unresolved[:5]}"
         )
 
-    # Bridge Chisel artifacts -> the generic-pipeline schema.
+    # Bridge Chisel artifacts -> the generic-pipeline schema. Foreign source
+    # files the setup LLM mixed into HDL groups are dropped with a warning.
     _groups_to_phases(work_dir)
+    _filter_phase_source_files(work_dir, {"scala", "sc"}, "Chisel")
 
     # Deduplicate source files across phases before aliasing subsystem context.
     # Otherwise phase_NN_types.txt can point at a subsystem that was removed and
@@ -707,22 +791,14 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         layers_data = _load_json_file(layers_json_path, f"topdown layers for subsystem {phase_num}")
         total_layers = layers_data.get("total_layers", 1)
 
-        # Modules whose call graph shows submodules must not satisfy readiness
-        # with a '(no submodules)' info stub. Keyed both by the proj_dir-
-        # relative path (batch functions) and the input_dir-relative path
-        # (layer_files readiness counts).
-        _with_subs = {
-            fn["file"]
-            for layer in layers_data.get("layers", [])
-            for fn in layer.get("functions", [])
-            if fn.get("all_callees")
-        }
-        expects_submodules = {
-            os.path.relpath(os.path.join(work_dir, f), proj_dir) for f in _with_subs
-        }
-        expects_rel = {
-            os.path.relpath(os.path.join(work_dir, f), input_dir) for f in _with_subs
-        }
+        # Unlike Verilog (whose edges are precise instantiations), Chisel
+        # all_callees include companion-object and member-access noise —
+        # enforcing the non-leaf info rule on them deadlocks genuine leaf
+        # modules (their truthful '(no submodules)' info is deleted on every
+        # retry). Chisel therefore does NOT gate readiness on the graph; the
+        # end-of-run advisory report surfaces undocumented submodules instead.
+        expects_submodules = frozenset()
+        expects_rel = frozenset()
 
         batch_dir = os.path.join(
             spec_prompts_dir,
@@ -946,4 +1022,5 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                 )
                 sys.exit(1)
 
+    _report_undocumented_submodules(work_dir, chisel_info_path, "Chisel")
     print("[Chisel] Done. Generated Chisel module spec/info files only; skipped reasoning and bug validation.")

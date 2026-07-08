@@ -40,7 +40,7 @@ _VERILOG_SPEC_MIN_BYTES = 200
 
 # A parseable submodule entry heading — the exact per-line shape
 # generate_batch_prompts parses caller expectations from.
-_SUBMODULE_HEADING_RE = re.compile(r"^#[ \t]*Submodule:[ \t]*\S+[ \t]*$", re.M)
+_SUBMODULE_HEADING_RE = re.compile(r"^#[ \t]*Submodule:[ \t]*(\S+)[ \t]*$", re.M)
 
 
 def verilog_spec_path(module_file_path):

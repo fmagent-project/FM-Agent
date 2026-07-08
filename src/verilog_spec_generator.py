@@ -62,11 +62,13 @@ from src.opencode_trace import (
 # imported under a neutral name.
 from src.chisel_spec_generator import (
     validate_chisel_spec as validate_hw_spec,
+    _filter_phase_source_files,
     _groups_json_is_usable,
     _normalize_groups_source_paths,
     _groups_to_phases,
     _normalize_chisel_domain_context as _normalize_hw_domain_context,
     _load_json_file,
+    _report_undocumented_submodules,
 )
 from main import (
     _clean_previous_run,
@@ -337,9 +339,12 @@ def run_verilog_spec_generation(proj_dir, resume=False):
             f"First few: {unresolved[:5]}"
         )
 
-    # Bridge groups.json -> the generic-pipeline schema, then force Verilog language.
+    # Bridge groups.json -> the generic-pipeline schema, then force Verilog
+    # language. Foreign source files the setup LLM mixed into HDL groups are
+    # dropped with a warning.
     _groups_to_phases(work_dir)
     _force_verilog_phase_languages(work_dir)
+    _filter_phase_source_files(work_dir, {"v", "sv", "svh"}, "Verilog")
 
     # Deduplicate source files across phases before aliasing subsystem context.
     _deduplicate_phases(work_dir)
@@ -624,4 +629,5 @@ def run_verilog_spec_generation(proj_dir, resume=False):
                 )
                 sys.exit(1)
 
+    _report_undocumented_submodules(work_dir, verilog_info_path, "Verilog")
     print("[Verilog] Done. Generated Verilog module spec/info files only; skipped reasoning and bug validation.")
