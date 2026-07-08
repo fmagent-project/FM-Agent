@@ -123,21 +123,29 @@ def extract_submodule_spec_from_chisel_info(module_file: Path, submodule_fqn: st
         return None
     content = info_file.read_text(errors="replace")
     stem = submodule_fqn.split("::")[-1]
-    entry_lines: Optional[List[str]] = None
+    # The extractor deduplicates same-named units (companion object + class)
+    # by suffixing later ones with _<n>, but info headings use the DECLARED
+    # name — fall back to the suffix-stripped stem when the exact one misses.
+    candidates = [stem]
+    stripped = re.sub(r"_\d+$", "", stem)
+    if stripped and stripped != stem:
+        candidates.append(stripped)
+    entries: Dict[str, List[str]] = {}
+    current: Optional[List[str]] = None
     for line in content.splitlines():
         m = re.match(r"^#\s*Submodule:\s*(\S+)\s*$", line)
         if m:
-            if entry_lines is not None:
-                break
-            if m.group(1) == stem:
-                entry_lines = [line]
+            current = entries.setdefault(m.group(1), [line])
             continue
-        if entry_lines is not None:
-            entry_lines.append(line)
-    if not entry_lines:
-        return None
-    entry = "\n".join(entry_lines).strip()
-    return entry or None
+        if current is not None:
+            current.append(line)
+    for name in candidates:
+        entry_lines = entries.get(name)
+        if entry_lines:
+            entry = "\n".join(entry_lines).strip()
+            if entry:
+                return entry
+    return None
 
 
 def extract_info_block(filepath: Path) -> Optional[str]:
