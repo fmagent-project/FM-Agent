@@ -295,18 +295,37 @@ def _load_json_file(path, description):
         raise ValueError(f"{description} at {path} is not valid JSON: {exc}") from exc
 
 
-def _reset_domain_context(work_dir):
-    """Remove spec_prompts/domain_context so a rerun setup regenerates it.
+def _reset_derived_state(work_dir):
+    """Remove derived artifacts so a rerun setup regenerates them all.
 
-    The alias files (engine_overview.txt, phase_NN_types.txt) are only copied
-    when absent, and batch prompts read ONLY the aliases — leftovers from a
-    previous (possibly other-HDL) run would silently shadow the freshly
-    written context. Called on the resume path whenever the old manifest
-    cannot be reused and setup is rerun.
+    Called on the resume path whenever the old manifest cannot be reused and
+    setup is rerun. Everything below is cheaply rebuilt by the fresh
+    setup/extraction, but if left behind it silently poisons the new run:
+    the domain-context aliases shadow the fresh context (batch prompts read
+    ONLY the aliases), stale topdown/batch artifacts confuse the advisory
+    report, and a stale file list can smuggle the run past the zero-modules
+    guard. extracted_functions/ is deliberately PRESERVED — completed specs
+    live there, and keeping them is the point of --resume.
     """
-    ctx_dir = os.path.join(work_dir, "spec_prompts", "domain_context")
+    spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
+    ctx_dir = os.path.join(spec_prompts_dir, "domain_context")
     if os.path.isdir(ctx_dir):
         shutil.rmtree(ctx_dir, ignore_errors=True)
+    for name in ("phases.json", "fm_agent_file_list.json"):
+        try:
+            os.remove(os.path.join(work_dir, name))
+        except OSError:
+            pass
+    if os.path.isdir(spec_prompts_dir):
+        for entry in os.listdir(spec_prompts_dir):
+            path = os.path.join(spec_prompts_dir, entry)
+            if re.match(r"phase_\d+_topdown_layers\.json$", entry):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            elif entry.startswith("batch_prompts_") and os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
 
 
 def _groups_json_is_usable(groups_path, required_exts=None, required_languages=None):
@@ -719,11 +738,11 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         elif os.path.exists(groups_path):
             print("[Chisel] Resume requested but groups.json is missing or incomplete; "
                   "rerunning setup in the existing fm_agent/ workspace.")
-            _reset_domain_context(work_dir)
+            _reset_derived_state(work_dir)
         else:
             print("[Chisel] Resume requested but no groups.json found; "
                   "starting setup in the existing fm_agent/ workspace.")
-            _reset_domain_context(work_dir)
+            _reset_derived_state(work_dir)
     else:
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
@@ -834,15 +853,21 @@ def run_chisel_spec_generation(proj_dir, resume=False):
     _normalize_chisel_domain_context(work_dir)
 
     print("[Chisel] Stage 2/4: Collecting file list...")
-    file_list = collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
+    collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
 
-    if not file_list:
+    phases_data = _load_json_file(os.path.join(work_dir, "phases.json"), "phases.json")
+    # Judge emptiness by the CURRENT phases' files: stale units from a
+    # previous run (preserved by --resume) must not smuggle the run past
+    # this guard by making the whole-tree walk non-empty.
+    if not any(
+        _get_phase_files(phases_data, phase["phase"], input_dir)
+        for phase in phases_data["phases"]
+    ):
         print("[Chisel] No modules found to spec. Skipping spec generation.")
         return
 
     # --- Stage 3: Generate topdown layers ---
     print("[Chisel] Stage 3/4: Generating topdown layers...")
-    phases_data = _load_json_file(os.path.join(work_dir, "phases.json"), "phases.json")
     generate_topdown_layers(work_dir)
 
     # --- Stage 4: Execute spec generation (per phase, per layer) ---

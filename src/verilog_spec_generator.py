@@ -69,7 +69,7 @@ from src.chisel_spec_generator import (
     _normalize_chisel_domain_context as _normalize_hw_domain_context,
     _load_json_file,
     _report_undocumented_submodules,
-    _reset_domain_context,
+    _reset_derived_state,
 )
 from main import (
     _clean_previous_run,
@@ -264,11 +264,11 @@ def run_verilog_spec_generation(proj_dir, resume=False):
         elif os.path.exists(groups_path):
             print("[Verilog] Resume requested but groups.json is missing or incomplete; "
                   "rerunning setup in the existing fm_agent/ workspace.")
-            _reset_domain_context(work_dir)
+            _reset_derived_state(work_dir)
         else:
             print("[Verilog] Resume requested but no groups.json found; "
                   "starting setup in the existing fm_agent/ workspace.")
-            _reset_domain_context(work_dir)
+            _reset_derived_state(work_dir)
     else:
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
@@ -373,15 +373,21 @@ def run_verilog_spec_generation(proj_dir, resume=False):
     _normalize_hw_domain_context(work_dir)
 
     print("[Verilog] Stage 2/4: Collecting file list...")
-    file_list = collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
+    collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
 
-    if not file_list:
+    phases_data = _load_json_file(os.path.join(work_dir, "phases.json"), "phases.json")
+    # Judge emptiness by the CURRENT phases' files: stale units from a
+    # previous run (preserved by --resume) must not smuggle the run past
+    # this guard by making the whole-tree walk non-empty.
+    if not any(
+        _get_phase_files(phases_data, phase["phase"], input_dir)
+        for phase in phases_data["phases"]
+    ):
         print("[Verilog] No modules found to spec. Skipping spec generation.")
         return
 
     # --- Stage 3: Generate topdown layers ---
     print("[Verilog] Stage 3/4: Generating topdown layers...")
-    phases_data = _load_json_file(os.path.join(work_dir, "phases.json"), "phases.json")
     generate_topdown_layers(work_dir)
 
     # --- Stage 4: Execute spec generation (per phase, per layer) ---
