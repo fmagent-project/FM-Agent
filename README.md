@@ -194,13 +194,26 @@ Use `--extra-edge FILE` when the static parser cannot see an important call rela
 {
   "edges": [
     {
-      "caller": "nanosleep",
-      "callee": "SysNanoSleep",
-      "callee_aliases": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+      "caller": {
+        "fqn": "third_party::musl::src::time::nanosleep-c::nanosleep",
+        "callsite_names": ["nanosleep"]
+      },
+      "callee": {
+        "fqn": "kernel::liteos_a::syscall::time_syscall-c::SysNanoSleep",
+        "info_names": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+      }
     }
   ]
 }
 ```
+
+Extra-edge field rules:
+
+- `caller.fqn`: exact FQN for a single caller, adding one edge to `callee.fqn`. It may be empty.
+- `caller.callsite_names`: source callsite function names. Any function containing these callsites becomes a caller and gets an edge to `callee.fqn`. It may be empty.
+  - At least one of `caller.fqn` and `caller.callsite_names` must be non-empty.
+- `callee.fqn`: exact FQN for a single callee.
+- `callee.info_names`: optional names used to match generated `[INFO]` entries for this callee. They are only used for `[INFO]` matching and passing caller expectations.
 
 ### Incremental Mode
 

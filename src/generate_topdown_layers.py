@@ -4,8 +4,8 @@ import re
 import logging
 from pathlib import Path
 from collections import defaultdict
+from dataclasses import dataclass
 
-from src.call_graph_edges import CallEdge
 from src.extract import EXT_TO_LANG, LANG_CONFIG
 from src.languages.registry import call_edges_all
 
@@ -258,17 +258,17 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
         proj_dir: project root directory
         global_stem_to_fqns: optional global stem->set(fqn) mapping across all phases,
                              used to compute all_callees (cross-phase)
-        extra_call_edges: optional iterable of CallEdge objects to add after static
-                          call-site detection. Endpoints may be exact FQNs or unique
-                          function stems.
+        extra_call_edges: optional iterable of supplemental CallEdge objects.
+                          caller.fqn is exact; caller.callsite_names are matched
+                          only against explicitly listed source callsite names.
 
     Returns:
         (callees_map, callers_map, all_callees_map, file_map, module_map,
         edge_aliases_map) where keys are FQNs.
         callees_map/callers_map contain only within-phase edges.
         all_callees_map contains callees from any phase.
-        edge_aliases_map maps callee -> caller -> supplemental labels that may
-        appear in a caller's [INFO] block.
+        edge_aliases_map maps callee -> caller -> supplemental callee labels
+        that may appear in a caller's [INFO] block.
     """
     # Build FQN mappings
     fqn_map = {}  # filepath -> fqn
@@ -294,12 +294,12 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
         for fqns in effective_stem_to_fqns.values()
         for fqn in fqns
     }
-    extra_callsite_edges = _extra_callsite_edges_by_alias(
+    extra_edges_by_caller_fqn, extra_edges_by_callsite = _resolve_extra_call_edges(
         extra_call_edges,
-        exact_fqns=known_fqns,
-        stem_to_fqns=effective_stem_to_fqns,
+        phase_fqns=phase_fqns,
+        known_fqns=known_fqns,
     )
-    known_stems = set(effective_stem_to_fqns.keys()) | set(extra_callsite_edges.keys())
+    known_stems = set(effective_stem_to_fqns.keys()) | set(extra_edges_by_callsite.keys())
 
     callees_map = defaultdict(set)  # fqn -> set of callee fqns (within phase)
     callers_map = defaultdict(set)  # fqn -> set of caller fqns (within phase)
@@ -322,7 +322,7 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
             # functions; drop external/library targets.
             callee_fqns = {c for c in registry_edges.get(fqn, set())
                            if c != fqn and c in known_fqns}
-            if extra_callsite_edges:
+            if extra_edges_by_callsite:
                 keywords = _get_keywords_for_lang(lang_key)
                 try:
                     with open(filepath, "r", errors="replace") as f:
@@ -330,7 +330,7 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
                 except OSError:
                     text = ""
                 called_stems = _find_call_sites(
-                    text, lang_key, set(extra_callsite_edges.keys()), keywords
+                    text, lang_key, set(extra_edges_by_callsite.keys()), keywords
                 )
         else:
             # regex fallback: detect bare-name call sites, then resolve each stem
@@ -352,165 +352,113 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
                 callers_map[callee_fqn].add(fqn)
 
         for stem in called_stems:
-            for callee_fqn, aliases in extra_callsite_edges.get(stem, ()):
-                if callee_fqn != fqn:
-                    all_callees_map[fqn].add(callee_fqn)
-                    if callee_fqn in phase_fqns:
-                        callees_map[fqn].add(callee_fqn)
-                        callers_map[callee_fqn].add(fqn)
-                        edge_aliases_map[callee_fqn][fqn].update(aliases)
+            for edge in extra_edges_by_callsite.get(stem, ()):
+                _add_resolved_extra_edge(
+                    fqn,
+                    edge,
+                    phase_fqns,
+                    callees_map,
+                    callers_map,
+                    all_callees_map,
+                    edge_aliases_map,
+                )
 
-    _apply_extra_call_edges(
-        extra_call_edges,
-        phase_fqns,
-        effective_stem_to_fqns,
-        stem_to_fqns,
-        callees_map,
-        callers_map,
-        all_callees_map,
-        edge_aliases_map,
-    )
+        for edge in extra_edges_by_caller_fqn.get(fqn, ()):
+            _add_resolved_extra_edge(
+                fqn,
+                edge,
+                phase_fqns,
+                callees_map,
+                callers_map,
+                all_callees_map,
+                edge_aliases_map,
+            )
 
     return callees_map, callers_map, all_callees_map, file_map, module_map, edge_aliases_map
 
 
-def _extra_callsite_edges_by_alias(extra_call_edges, exact_fqns, stem_to_fqns):
-    """Resolve supplemental edges whose caller may appear only as a callsite name."""
+@dataclass(frozen=True)
+class _ResolvedExtraEdge:
+    callee_fqn: str
+    info_names: tuple[str, ...]
+    source: str
+
+
+def _resolve_extra_call_edges(extra_call_edges, phase_fqns, known_fqns):
+    """Resolve supplemental edges into phase-local caller indexes."""
+    by_caller_fqn = defaultdict(list)
+    by_callsite = defaultdict(list)
     if not extra_call_edges:
-        return {}
+        return by_caller_fqn, by_callsite
 
-    by_alias = defaultdict(set)
+    phase_fqns = set(phase_fqns)
+    known_fqns = set(known_fqns)
     for edge in extra_call_edges:
-        callee_fqns = _resolve_extra_edge_endpoint(
-            edge.callee,
-            exact_fqns=exact_fqns,
-            stem_to_fqns=stem_to_fqns,
-            edge=edge,
-            role="callee",
-        )
-        if not callee_fqns:
+        callee_fqn = edge.callee.fqn
+        if callee_fqn not in known_fqns:
+            logging.warning(
+                "Skipping supplemental edge from %s: callee.fqn %r "
+                "was not found among extracted functions.",
+                edge.source or "edge file",
+                callee_fqn,
+            )
             continue
-        aliases = tuple(edge.callee_aliases)
-        for alias in _callsite_aliases(edge):
-            for callee_fqn in callee_fqns:
-                by_alias[alias].add((callee_fqn, aliases))
-    return by_alias
+
+        resolved = _ResolvedExtraEdge(
+            callee_fqn=callee_fqn,
+            info_names=tuple(edge.callee.info_names),
+            source=edge.source,
+        )
+
+        if edge.caller.fqn:
+            caller_fqn = edge.caller.fqn
+            if caller_fqn in phase_fqns:
+                by_caller_fqn[caller_fqn].append(resolved)
+            else:
+                logging.debug(
+                    "Skipping supplemental edge from %s in current phase: "
+                    "caller FQN %r is not in phase.",
+                    edge.source or "edge file",
+                    caller_fqn,
+                )
+
+        for callsite in edge.caller.callsite_names:
+            if not re.fullmatch(r"[A-Za-z_]\w*", callsite):
+                logging.warning(
+                    "Skipping supplemental edge callsite selector %r from %s: "
+                    "the current scanner only matches identifier callsites.",
+                    callsite,
+                    edge.source or "edge file",
+                )
+                continue
+            by_callsite[callsite].append(resolved)
+
+    return by_caller_fqn, by_callsite
 
 
-def _callsite_aliases(edge: CallEdge):
-    labels = (edge.caller, *edge.caller_aliases)
-    aliases = []
-    seen = set()
-    for label in labels:
-        stem = label.rsplit("::", 1)[-1]
-        if re.fullmatch(r"[A-Za-z_]\w*", stem) and stem not in seen:
-            aliases.append(stem)
-            seen.add(stem)
-    return aliases
-
-
-def _apply_extra_call_edges(
-    extra_call_edges,
+def _add_resolved_extra_edge(
+    caller_fqn,
+    edge: _ResolvedExtraEdge,
     phase_fqns,
-    global_stem_to_fqns,
-    phase_stem_to_fqns,
     callees_map,
     callers_map,
     all_callees_map,
     edge_aliases_map,
 ):
-    """Inject user-supplied call edges into the graph maps.
+    """Inject one resolved supplemental edge and attach its callee aliases."""
+    callee_fqn = edge.callee_fqn
+    if caller_fqn == callee_fqn:
+        return False
 
-    The caller must belong to the current phase. The callee may be outside the
-    current phase; such edges are recorded in all_callees_map, while only
-    in-phase callees are added to callees_map/callers_map for layer ordering.
-    """
-    if not extra_call_edges:
-        return
+    before = len(all_callees_map[caller_fqn])
+    all_callees_map[caller_fqn].add(callee_fqn)
+    edge_aliases_map[callee_fqn][caller_fqn].update(edge.info_names)
 
-    phase_fqns = set(phase_fqns)
-    global_fqns = set()
-    for fqns in global_stem_to_fqns.values():
-        global_fqns.update(fqns)
+    if callee_fqn in phase_fqns:
+        callees_map[caller_fqn].add(callee_fqn)
+        callers_map[callee_fqn].add(caller_fqn)
 
-    added = 0
-    for edge in extra_call_edges:
-        caller_fqns = _resolve_extra_edge_endpoint(
-            edge.caller,
-            exact_fqns=phase_fqns,
-            stem_to_fqns=phase_stem_to_fqns,
-            edge=edge,
-            role="caller",
-        )
-        callee_fqns = _resolve_extra_edge_endpoint(
-            edge.callee,
-            exact_fqns=global_fqns,
-            stem_to_fqns=global_stem_to_fqns,
-            edge=edge,
-            role="callee",
-        )
-
-        if not caller_fqns or not callee_fqns:
-            continue
-
-        for caller_fqn in caller_fqns:
-            for callee_fqn in callee_fqns:
-                if caller_fqn == callee_fqn:
-                    continue
-                before = len(all_callees_map[caller_fqn])
-                all_callees_map[caller_fqn].add(callee_fqn)
-                if callee_fqn in phase_fqns:
-                    callees_map[caller_fqn].add(callee_fqn)
-                    callers_map[callee_fqn].add(caller_fqn)
-                    edge_aliases_map[callee_fqn][caller_fqn].update(edge.callee_aliases)
-                if len(all_callees_map[caller_fqn]) != before:
-                    added += 1
-
-    if added:
-        logging.info("Supplemental call edges applied: %d added in current graph.", added)
-
-
-def _resolve_extra_edge_endpoint(label, exact_fqns, stem_to_fqns, edge: CallEdge, role):
-    """Resolve one supplemental edge endpoint to FQNs in the current graph scope."""
-    label = label.strip()
-    if label in exact_fqns:
-        return {label}
-
-    # FQN-shaped labels are expected to be exact. Falling back to the stem would
-    # hide typos and can accidentally connect the wrong overloaded/static name.
-    if "::" in label:
-        logging.debug(
-            "Skipping supplemental edge %s -> %s: %s endpoint %r is not in scope",
-            edge.caller,
-            edge.callee,
-            role,
-            label,
-        )
-        return set()
-
-    matches = set(stem_to_fqns.get(label, set()))
-    if len(matches) == 1:
-        return matches
-    if len(matches) > 1:
-        logging.warning(
-            "Skipping supplemental edge %s -> %s from %s: ambiguous %s stem %r "
-            "matches %d functions.",
-            edge.caller,
-            edge.callee,
-            edge.source or "edge file",
-            role,
-            label,
-            len(matches),
-        )
-    else:
-        logging.debug(
-            "Skipping supplemental edge %s -> %s: %s endpoint %r was not found",
-            edge.caller,
-            edge.callee,
-            role,
-            label,
-        )
-    return set()
+    return len(all_callees_map[caller_fqn]) != before
 
 
 # ---------------------------------------------------------------------------
@@ -745,7 +693,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
         # Build phase-specific key names
         phase_callers_key = f"phase{phase_num}_callers"
         phase_callees_key = f"phase{phase_num}_callees"
-        phase_aliases_key = f"phase{phase_num}_callee_aliases_by_caller"
+        phase_info_names_key = f"phase{phase_num}_callee_info_names_by_caller"
 
         # 1.6 Build output JSON
         total_functions = len(phase_fqns)
@@ -777,13 +725,13 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
                     phase_callees_key: phase_callees,
                     "all_callees": all_callees,
                 }
-                aliases_by_caller = {
-                    caller: sorted(aliases)
-                    for caller, aliases in edge_aliases_map.get(fqn, {}).items()
-                    if caller in phase_fqns and aliases
+                info_names_by_caller = {
+                    caller: sorted(info_names)
+                    for caller, info_names in edge_aliases_map.get(fqn, {}).items()
+                    if caller in phase_fqns and info_names
                 }
-                if aliases_by_caller:
-                    entry[phase_aliases_key] = aliases_by_caller
+                if info_names_by_caller:
+                    entry[phase_info_names_key] = info_names_by_caller
                 func_entries.append(entry)
 
             layer_dict["functions"] = func_entries

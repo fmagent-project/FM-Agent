@@ -188,12 +188,12 @@ def phase_callers_key(func: dict, phase: int) -> str:
     return target
 
 
-def phase_callee_aliases_key(func: dict, phase: int) -> Optional[str]:
-    target = f"phase{phase}_callee_aliases_by_caller"
+def phase_callee_info_names_key(func: dict, phase: int) -> Optional[str]:
+    target = f"phase{phase}_callee_info_names_by_caller"
     if target in func:
         return target
     for key in func.keys():
-        if key.endswith("_callee_aliases_by_caller") and key.startswith("phase"):
+        if key.endswith("_callee_info_names_by_caller") and key.startswith("phase"):
             return key
     return None
 
@@ -244,8 +244,8 @@ def build_prompt(
     for fn in functions:
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
-        aliases_key = phase_callee_aliases_key(fn, phase)
-        aliases_by_caller = fn.get(aliases_key, {}) if aliases_key else {}
+        info_names_key = phase_callee_info_names_key(fn, phase)
+        info_names_by_caller = fn.get(info_names_key, {}) if info_names_key else {}
         callers = fn.get(caller_key, [])
         for caller_name in callers:
             caller_layer = func_to_layer.get(caller_name)
@@ -262,7 +262,7 @@ def build_prompt(
             if not info_block:
                 continue
             entry = extract_callee_spec_from_info(
-                info_block, fn_name, aliases_by_caller.get(caller_name, [])
+                info_block, fn_name, info_names_by_caller.get(caller_name, [])
             )
             if entry:
                 caller_expectations.setdefault(fn_name, []).append((caller_name, entry.strip()))

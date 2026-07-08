@@ -37,7 +37,6 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
       - [日志文件（`fm_agent/fm_agent.log`）](#日志文件fm_agentfm_agentlog)
   - [注意事项](#注意事项)
   - [论文引用](#论文引用)
-  - [联系方式](#联系方式)
 
 
 ## 文件结构
@@ -174,13 +173,27 @@ uv run python main.py <proj_dir> [--resume]
 {
   "edges": [
     {
-      "caller": "nanosleep",
-      "callee": "SysNanoSleep",
-      "callee_aliases": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+      "caller": {
+        "fqn": "third_party::musl::src::time::nanosleep-c::nanosleep",
+        "callsite_names": ["nanosleep"]
+      },
+      "callee": {
+        "fqn": "kernel::liteos_a::syscall::time_syscall-c::SysNanoSleep",
+        "info_names": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+      }
     }
   ]
 }
 ```
+
+Extra-edge 字段规则：
+
+- `caller.fqn`：单个 caller 的精确 caller FQN，补一条到 `callee.fqn` 的边。可以为空。
+- `caller.callsite_names`：源码 callsite 函数名。源码中包含这些 callsite 的函数都会作为 caller，补一条到 `callee.fqn` 的边。可以为空。
+  - `caller.fqn` 和 `caller.callsite_names` 至少有一个非空。
+- `callee.fqn`：单个 callee 的精确 FQN。
+- `callee.info_names`：可选，用于匹配生成的 `[INFO]` 块里指代该 callee 的名字。它只用于 `[INFO]` 匹配和传递调用者期望。
+
 
 ### 增量模式
 
