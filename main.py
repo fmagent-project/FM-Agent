@@ -141,7 +141,6 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
-
     if not _has_source_code(proj_dir):
         print(f"[Pipeline] ERROR: No source code files found in {proj_dir}. "
               f"Supported extensions: {', '.join(sorted(EXT_TO_LANG.keys()))}")
@@ -448,6 +447,12 @@ if __name__ == "__main__":
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
+
+    # ---- pre-flight environment check (shared by all pipeline modes) ----
+    import config
+    from src.env_check import run as env_check_run
+    if not env_check_run(proj_dir, config):
+        sys.exit(0)
 
     start_time = time.time()
 
