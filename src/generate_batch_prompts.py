@@ -109,7 +109,9 @@ def standalone_info_path(module_file: Path) -> Path:
     return module_file.with_name(module_file.stem + "_info.md")
 
 
-def extract_submodule_spec_from_chisel_info(module_file: Path, submodule_fqn: str) -> Optional[str]:
+def extract_submodule_spec_from_chisel_info(
+    module_file: Path, submodule_fqn: str, submodule_declared: Optional[str] = None
+) -> Optional[str]:
     """Return the expected-spec entry for ``submodule_fqn`` from a Chisel
     ``<stem>_info.md`` document, or None.
 
@@ -124,17 +126,17 @@ def extract_submodule_spec_from_chisel_info(module_file: Path, submodule_fqn: st
     content = info_file.read_text(errors="replace")
     stem = submodule_fqn.split("::")[-1]
     # The extractor deduplicates same-named units (companion object + class)
-    # by suffixing later ones with _<n>, but info headings use the DECLARED
-    # name — fall back to the suffix-stripped stem when the exact one misses.
-    # The dedup suffix only arises for Scala companion pairs, so the fallback
-    # is gated on the caller being a Scala unit: genuine Verilog module names
-    # routinely end in _<digits> (fifo_64), and stripping those would hand a
-    # module the WRONG caller contract.
+    # by renaming the FILE with a _<n> suffix, but info headings use the
+    # DECLARED name. ``submodule_declared`` is that name, stamped into the
+    # layer metadata by generate_topdown_layers using the extractor's own
+    # declaration regex (this script runs as a standalone workspace copy and
+    # must not re-derive it). declared != stem is the proof of a dedup
+    # alias; a genuine module whose name merely ends in digits (Chisel
+    # Stage_1, Verilog fifo_64) declares its own stem, so no fallback fires
+    # and it can never receive another module's caller contract.
     candidates = [stem]
-    if module_file.suffix in (".scala", ".sc"):
-        stripped = re.sub(r"_\d+$", "", stem)
-        if stripped and stripped != stem:
-            candidates.append(stripped)
+    if submodule_declared and submodule_declared != stem:
+        candidates.append(submodule_declared)
     entries: Dict[str, List[str]] = {}
     current: Optional[List[str]] = None
     for line in content.splitlines():
@@ -240,12 +242,23 @@ def build_ext_to_lang(exts: List[str], languages: List[str]) -> Dict[str, str]:
     Chisel setup usually records languages=["chisel"] and file_extensions=["scala"].
     If additional Scala extensions are listed, they should still map to Chisel.
     """
+    if isinstance(exts, str):
+        exts = [exts]
+    if isinstance(languages, str):
+        languages = [languages]
     normalized_exts = [ext.lower().lstrip(".") for ext in exts]
     normalized_langs = [lang.lower() for lang in languages]
     if "chisel" in normalized_langs:
-        return {ext: "chisel" for ext in normalized_exts or ["scala"]}
+        # Cover the whole (two-element) Chisel extension universe rather than
+        # trusting the LLM-declared list: an undeclared .sc would otherwise
+        # be detected as non-hardware and get an embedded-[SPEC] software
+        # prompt the Chisel runner never accepts.
+        return {ext: "chisel" for ext in set(normalized_exts) | {"scala", "sc"}}
     if "verilog" in normalized_langs or "systemverilog" in normalized_langs:
-        return {ext: "verilog" for ext in normalized_exts or ["v", "sv"]}
+        # Same rationale as the Chisel branch: cover the whole (three-element)
+        # Verilog extension universe so a degenerate declared list can never
+        # route .svh/.v/.sv away from the hardware spec path.
+        return {ext: "verilog" for ext in set(normalized_exts) | {"v", "sv", "svh"}}
     return {ext: lang for ext, lang in zip(normalized_exts, normalized_langs)}
 
 
@@ -324,7 +337,9 @@ def build_prompt(
                 spec_block = extract_standalone_spec(caller_file)
                 if spec_block and (caller_name, spec_block) not in caller_specs:
                     caller_specs.append((caller_name, spec_block))
-                entry = extract_submodule_spec_from_chisel_info(caller_file, fn_name)
+                entry = extract_submodule_spec_from_chisel_info(
+                    caller_file, fn_name, submodule_declared=fn.get("declared_name")
+                )
                 if entry:
                     caller_expectations.setdefault(fn_name, []).append((caller_name, entry))
                 continue

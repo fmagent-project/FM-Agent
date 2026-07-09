@@ -163,10 +163,10 @@ VERILOG_EXT_TO_LANG = {
 # Test-bench files (e.g. foo_tb.sv, tb_foo.v, foo_test.sv) — excluded from spec
 # generation, mirroring CHISEL_TEST_FILE_PATTERNS.
 VERILOG_TEST_FILE_PATTERNS = [
-    re.compile(r'^.*_tb\.s?v$'),
-    re.compile(r'^tb_.*\.s?v$'),
-    re.compile(r'^.*_test\.s?v$'),
-    re.compile(r'^.*_testbench\.s?v$'),
+    re.compile(r'^.*_tb\.s?vh?$'),
+    re.compile(r'^tb_.*\.s?vh?$'),
+    re.compile(r'^.*_test\.s?vh?$'),
+    re.compile(r'^.*_testbench\.s?vh?$'),
 ]
 
 # Directories that conventionally hold Verilog testbench/simulation code with
@@ -423,6 +423,17 @@ _MODULE_KW_RE = re.compile(r'\bmodule\b')
 _ENDMODULE_RE = re.compile(r'\bendmodule\b')
 
 
+def verilog_declared_name(text):
+    """Name of the first module declared in an extracted Verilog unit.
+
+    Counterpart of :func:`src.chisel_support.chisel_declared_name`, using the
+    scanner's own module regex on comment-masked text. Verilog units normally
+    declare their file stem; a differing name marks an extractor dedup alias.
+    """
+    m = _MODULE_OPEN_RE.search(strip_verilog_comments(text))
+    return m.group(1) if m else None
+
+
 def _extract_via_scan(lines):
     """Fallback extractor: pair ``module NAME`` with the next ``endmodule``.
 
@@ -465,11 +476,15 @@ def extract_verilog_functions(lines, lang_key, lang_cfg):
     ``extract_chisel_functions``: returns a list of ``(name, start_idx,
     end_idx)`` inclusive line-index tuples, one per ``module ... endmodule``.
 
-    Uses verible when available, falling back to the pure-Python scanner.
+    Uses verible when available, falling back to the pure-Python scanner —
+    including when verible parses but recognizes ZERO modules: CST tag drift
+    (e.g. a verible upgrade) must not masquerade as an authoritative empty
+    result, because downstream a zero-unit extraction is what invalidates
+    stale outputs. The scanner gets the final word on emptiness.
     """
     text = "\n".join(lines)
     units = _extract_via_verible(text)
-    if units is not None:
+    if units:
         return units
     return _extract_via_scan(lines)
 
@@ -494,11 +509,8 @@ _INSTANTIATION_RE = re.compile(
 )
 
 
-def _find_verible_instantiations(text, known_stems, keywords):
-    """Return module-type names instantiated in ``text`` per the verible CST."""
-    tree = _run_verible_tree(text)
-    if tree is None:
-        return None
+def _walk_verible_instantiations(tree, known_stems, keywords):
+    """Collect instantiated module-type names from a verible CST."""
     found = set()
 
     def walk(node):
@@ -516,6 +528,67 @@ def _find_verible_instantiations(text, known_stems, keywords):
 
     walk(tree)
     return found
+
+
+# One-time canary verdict: None = untested, True = the instantiation walker
+# recognizes this verible version's tags, False = drifted (use the fallback).
+_EDGE_CANARY_RESULT = None
+
+_EDGE_CANARY_TEXT = "module __fm_canary(input a);\n  __fm_dep u0(a);\nendmodule\n"
+
+
+def _verible_edge_walker_works():
+    """Return False when this verible version's instantiation tags drifted.
+
+    The module-node sentinel in :func:`_find_verible_instantiations` catches
+    FULL tag drift, but partial drift — module tags intact, instantiation
+    tags renamed — yields a sane-looking tree with zero edges, failing the
+    per-callee gate open. The canary parses a fixture with a KNOWN
+    instantiation once per process: if verible parses it but the walker sees
+    no edge, edge-finding is declared drifted and every call falls back to
+    the regex. Real leaves are unaffected — their authority over emptiness
+    only stands while the walker demonstrably works.
+    """
+    global _EDGE_CANARY_RESULT
+    if _EDGE_CANARY_RESULT is None:
+        tree = _run_verible_tree(_EDGE_CANARY_TEXT)
+        if tree is None or not _collect_top_level_modules(tree):
+            # verible itself unusable here — the per-call None/no-module
+            # paths already route to the fallback; nothing to judge, and
+            # the verdict is deliberately NOT cached.
+            return True
+        _EDGE_CANARY_RESULT = bool(
+            _walk_verible_instantiations(tree, {"__fm_dep"}, frozenset())
+        )
+        if not _EDGE_CANARY_RESULT:
+            logging.warning(
+                "verible parses but its instantiation CST tags are not "
+                "recognized (version drift?); using the regex fallback for "
+                "edge detection."
+            )
+    return _EDGE_CANARY_RESULT
+
+
+def _find_verible_instantiations(text, known_stems, keywords):
+    """Return module-type names instantiated in ``text`` per the verible CST.
+
+    Returns None when the tree is unusable so the caller falls back to the
+    regex. ``text`` is always an extracted module unit, so a CST containing
+    no recognizable module declaration is drift (verible upgrade renamed
+    tags), not a real answer — an EMPTY edge set from such a tree would fail
+    the per-callee gate OPEN. A tree that does contain the module node keeps
+    authority over emptiness — real leaves must not be second-guessed by the
+    fallback's looser matching — provided the canary confirms the
+    instantiation walker recognizes this verible version at all.
+    """
+    tree = _run_verible_tree(text)
+    if tree is None:
+        return None
+    if not _collect_top_level_modules(tree):
+        return None
+    if not _verible_edge_walker_works():
+        return None
+    return _walk_verible_instantiations(tree, known_stems, keywords)
 
 
 def find_verilog_call_sites(text, known_stems, keywords):

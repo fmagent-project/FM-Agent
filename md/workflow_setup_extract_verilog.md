@@ -4,7 +4,7 @@
 
 > **CRITICAL — YOU MUST CREATE FILES IN THIS SESSION**: Do NOT only research, plan, or delegate to background/sub-agents. You MUST directly write `fm_agent/groups.json` and the domain context files yourself before this session ends.
 
-This codebase is a **Verilog / SystemVerilog hardware design** (`.v` / `.sv` sources describing hardware). This workflow organizes the codebase by **subsystem** (a functional cluster of related hardware) and lists **source groups** (the `.v`/`.sv` files in each subsystem).
+This codebase is a **Verilog / SystemVerilog hardware design** (`.v` / `.sv` / `.svh` sources describing hardware). This workflow organizes the codebase by **subsystem** (a functional cluster of related hardware) and lists **source groups** (the `.v`/`.sv`/`.svh` files in each subsystem).
 
 **Required output files:**
 1. `fm_agent/groups.json`
@@ -71,8 +71,8 @@ Quickly scan the Verilog/SystemVerilog source tree and **immediately** write `fm
 - `subsystems[*].subsystem` — 1-indexed integer, unique, ascending. A subsystem is a grouping bucket
 - `subsystems[*].name` — brief label, typically the architectural block name (e.g. `Adder`, `LoadStoreUnit`, `Arbiter`)
 - `subsystems[*].description` — one sentence on the hardware function this subsystem implements
-- `subsystems[*].source_groups[*].name` — matches the subdirectory or logical name of the source group. A **source group** is a `.v`/`.sv` file or a tightly-coupled set of files — it is NOT a single Verilog `module`. One `.v`/`.sv` file may declare several modules; that is fine
-- `subsystems[*].source_groups[*].source_files` — relative paths from repo root of all Verilog source files in this group. **Exclude all testbench/test files** (files named `*_tb.v`, `*_tb.sv`, `tb_*.v`, `tb_*.sv`, `*_test.sv`, `*_testbench.sv`, or living under a `tb/`, `test/`, or `sim/` directory)
+- `subsystems[*].source_groups[*].name` — matches the subdirectory or logical name of the source group. A **source group** is a `.v`/`.sv`/`.svh` file or a tightly-coupled set of files — it is NOT a single Verilog `module`. One `.v`/`.sv`/`.svh` file may declare several modules; that is fine
+- `subsystems[*].source_groups[*].source_files` — relative paths from repo root of all Verilog source files in this group. **Exclude all testbench/test files** (files named `*_tb.v`/`*_tb.sv`/`*_tb.svh`, `tb_*.v`/`tb_*.sv`/`tb_*.svh`, `*_test.sv`/`*_test.svh`, `*_testbench.sv`/`*_testbench.svh`, or living under a `tb/`, `test/`, or `sim/` directory)
 - `subsystems[*].depends_on_subsystems` — list of subsystem numbers whose hardware this subsystem instantiates (empty list when there is no cross-subsystem dependency)
 
 Each source file must belong to **at most one subsystem**. If the same file appears in more than one subsystem's `source_groups[*].source_files`, the `groups.json` is invalid and must be corrected before proceeding.
@@ -81,7 +81,7 @@ Each subsystem must be **self-contained**: all source files for a group in that 
 
 If the design is small or has no clear subsystem boundaries, a single subsystem containing all sources is valid.
 
-**Implementation tip:** Use a glob or `find` command to list `.v`/`.sv` files per directory. Do not enumerate files by hand. Filter out testbench files (`*_tb.*`, `tb_*.*`, `*_test.sv`, `*_testbench.sv`, and `tb/`/`test/`/`sim/` directories). Write `fm_agent/groups.json` immediately after listing files — do not delay.
+**Implementation tip:** Use a glob or `find` command to list `.v`/`.sv`/`.svh` files per directory. Do not enumerate files by hand. Filter out testbench files (`*_tb.*`, `tb_*.*`, `*_test.sv`/`*_test.svh`, `*_testbench.sv`/`*_testbench.svh`, and `tb/`/`test/`/`sim/` directories). Write `fm_agent/groups.json` immediately after listing files — do not delay.
 
 **IMPORTANT: After writing `fm_agent/groups.json`, proceed to Step 2 immediately. Do not revisit or refactor Step 1.**
 

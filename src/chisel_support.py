@@ -157,7 +157,7 @@ CHISEL_EXT_TO_LANG = {
 # src/test/scala (already caught by the test-dir check) but are also commonly
 # named *Spec/*Test/*Tester regardless of directory.
 CHISEL_TEST_FILE_PATTERNS = [
-    re.compile(r'^.*(?:Spec|Test|Tester)\.scala$'),
+    re.compile(r'^.*(?:Spec|Test|Tester)\.(?:scala|sc)$'),
 ]
 
 # Modifiers that may precede a top-level declaration keyword.
@@ -175,6 +175,24 @@ _CHISEL_DECL_RE = re.compile(
     r'(?P<kind>class|object|trait|def)\s+'
     r'(?P<name>[A-Za-z_$][\w$]*)'
 )
+
+
+def chisel_declared_name(text):
+    """Declared name of the first top-level declaration in an extracted unit.
+
+    Uses the SAME regex the extractor uses (``_CHISEL_DECL_RE``, scoped
+    modifiers like ``private[chisel]`` included) on the SAME comment-masked
+    text — re-deriving 'what counts as a declaration' with a second regex or
+    a second text preparation is exactly how declared names and file stems
+    drift apart. The extractor deduplicates same-named units by renaming the
+    FILE, never the declaration, so declared-name != file-stem is the proof
+    that a unit is a dedup alias.
+    """
+    for raw in strip_chisel_comments(text).splitlines():
+        m = _CHISEL_DECL_RE.match(raw.strip())
+        if m:
+            return m.group("name")
+    return None
 
 # Trailing tokens that mean "this signature continues on the next line".
 _CONT_WORDS = ("extends", "with")

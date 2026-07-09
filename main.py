@@ -7,7 +7,7 @@ from config import (
 )
 from src.file_utils import collect_file_names, is_file_ready
 from src.verification import streaming_reasoner
-from src.extract import run_extraction, EXT_TO_LANG
+from src.extract import run_extraction, EXT_TO_LANG, load_units_manifest
 from src.generate_topdown_layers import generate_topdown_layers
 from src.opencode_trace import (
     finish_opencode_trace,
@@ -24,17 +24,32 @@ import subprocess
 import logging
 import argparse
 
+def _as_phase_id(value):
+    """Phase and dependency ids may arrive as digit strings from LLM-written
+    phases.json; both sides of the renumbering map must normalize through
+    THIS function or a dep on a string-id phase is silently emptied."""
+    return int(value) if isinstance(value, str) and value.isdigit() else value
+
+
 def _deduplicate_phases(phases_dir):
     """Ensure each source file appears in at most one phase; keep the earliest."""
     phases_path = os.path.join(phases_dir, "phases.json")
     with open(phases_path, "r") as f:
         data = json.load(f)
 
+    for phase in data["phases"]:
+        phase["phase"] = _as_phase_id(phase["phase"])
+
     seen = set()
     phases_to_remove = []
     for phase in sorted(data["phases"], key=lambda p: p["phase"]):
         for module in phase["modules"]:
             original = module["source_files"]
+            if isinstance(original, str):
+                # LLM manifests sometimes write a single path as a bare
+                # string; iterating it would dedup CHARACTERS and persist
+                # the corruption for every downstream reader.
+                original = [original]
             deduped = []
             for sf in original:
                 if sf not in seen:
@@ -59,8 +74,13 @@ def _deduplicate_phases(phases_dir):
         old_to_new[phase["phase"]] = idx
         phase["phase"] = idx
     for phase in data["phases"]:
+        deps = phase.get("depends_on_phases", [])
+        if isinstance(deps, (str, int)):
+            # Same LLM-shape normalization as the groups bridge: a single
+            # dependency may arrive as a bare string or integer.
+            deps = [deps]
         phase["depends_on_phases"] = [
-            old_to_new[dep] for dep in phase.get("depends_on_phases", [])
+            old_to_new[dep] for dep in (_as_phase_id(d) for d in deps)
             if dep in old_to_new
         ]
 
@@ -68,11 +88,27 @@ def _deduplicate_phases(phases_dir):
         json.dump(data, f, indent=2)
 
 def _get_phase_files(phases_data, phase_num, input_dir):
-    """Return relative paths of extracted function files for a given phase."""
+    """Return relative paths of extracted function files for a given phase.
+
+    Prefers the extraction round's own manifest (extracted_units.json) — the
+    single source of truth for what the current sources actually produce —
+    so units left behind by previous rounds (deleted/renamed modules,
+    vanished sources) are never consumed. Directory enumeration remains as
+    the fallback for pre-manifest workspaces.
+    """
     phase = next(p for p in phases_data["phases"] if p["phase"] == phase_num)
+    manifest = load_units_manifest(os.path.dirname(input_dir))
     phase_files = []
     for module in phase["modules"]:
-        for src_file in module["source_files"]:
+        src_files = module["source_files"]
+        if isinstance(src_files, str):
+            src_files = [src_files]
+        for src_file in src_files:
+            if manifest is not None:
+                for rel in sorted(manifest.get(src_file, [])):
+                    if os.path.isfile(os.path.join(input_dir, rel)):
+                        phase_files.append(rel)
+                continue
             dir_part = os.path.dirname(src_file)
             base = os.path.basename(src_file)
             dot_idx = base.rfind(".")
@@ -126,6 +162,34 @@ def _has_source_code(proj_dir):
 
 
 _HARDWARE_LANGUAGES = {"chisel", "verilog", "systemverilog", "system_verilog"}
+# Unambiguously-hardware source extensions. scala is deliberately absent:
+# plain Scala software projects exist, so only the chisel language token is
+# hardware evidence on the Chisel side.
+_HARDWARE_EXTS = {"v", "sv", "svh"}
+
+
+def _harvest_strings(value):
+    """Best-effort string tokens from an LLM-shaped JSON field.
+
+    LLM manifests declare fields as strings, lists, or dicts
+    ({"primary": "verilog"}); an unintelligible shape may still CONTAIN
+    hardware evidence, and throwing the shape away would fail the guard
+    open. Harvests strings recursively from dict keys/values and sequences.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        out = []
+        for k, v in value.items():
+            out.extend(_harvest_strings(k))
+            out.extend(_harvest_strings(v))
+        return out
+    if isinstance(value, (list, tuple)):
+        out = []
+        for item in value:
+            out.extend(_harvest_strings(item))
+        return out
+    return []
 
 
 def _reject_hardware_languages(phases_path):
@@ -136,16 +200,45 @@ def _reject_hardware_languages(phases_path):
     (is_file_ready) waits for embedded [SPEC]/[INFO] markers in the extracted
     source, so Stage 5 would retry forever. Hardware designs go through
     --hardware (Chisel) or --hardware --verilog instead.
+
+    Best-effort with a fail-closed bias for hardware EVIDENCE: language
+    tokens are harvested from whatever shape the LLM wrote (string, list,
+    dict), and unambiguous hardware extensions in file_extensions or source
+    file suffixes backstop a silent/absent declaration. A malformed file
+    without any hardware evidence still passes through — shape alone must
+    not kill a legitimate software run (downstream stages report their own
+    errors).
     """
     try:
         with open(phases_path) as f:
-            languages = json.load(f).get("languages", [])
-    except (OSError, json.JSONDecodeError, AttributeError):
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
         return
-    found = sorted({str(lang).lower() for lang in languages} & _HARDWARE_LANGUAGES)
+    if not isinstance(data, dict):
+        return
+    found = sorted(
+        {t.lower() for t in _harvest_strings(data.get("languages", []))}
+        & _HARDWARE_LANGUAGES
+    )
+    if not found:
+        exts = {t.lower().lstrip(".")
+                for t in _harvest_strings(data.get("file_extensions", []))}
+        src_exts = set()
+        for phase in data.get("phases", []) if isinstance(data.get("phases"), list) else []:
+            if not isinstance(phase, dict):
+                continue
+            for module in phase.get("modules", []) if isinstance(phase.get("modules"), list) else []:
+                if not isinstance(module, dict):
+                    continue
+                for src in _harvest_strings(module.get("source_files", [])):
+                    base = src.rsplit(".", 1)
+                    if len(base) == 2:
+                        src_exts.add(base[1].lower())
+        found = sorted((exts | src_exts) & _HARDWARE_EXTS)
     if found:
         print(
-            f"[Pipeline] ERROR: phases.json declares hardware language(s): {', '.join(found)}. "
+            f"[Pipeline] ERROR: phases.json declares hardware language(s) or "
+            f"extension(s): {', '.join(found)}. "
             f"The default pipeline does not support hardware designs; rerun with "
             f"--hardware for Chisel or --hardware --verilog for Verilog/SystemVerilog."
         )
