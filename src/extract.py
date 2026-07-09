@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import shutil
+import hashlib
 import logging
 
 from src.file_utils import is_file_ready, _is_test_file
@@ -153,6 +154,31 @@ LANG_CONFIG = {
         "body": "brace",
     },
 }
+
+_MAX_FILENAME_LENGTH = 200  # well below typical filesystem limits (255 for most)
+
+
+def _safe_filename(name: str, ext: str) -> str:
+    """Return a safe filename from a function ``name`` and file ``ext``.
+
+    Replaces path separators (``/``) and ensures the result stays within
+    ``_MAX_FILENAME_LENGTH``.  When the name is truncated a stable 8-hex-digit
+    hash of the original name is appended to preserve uniqueness across
+    extracted functions (issue #82).
+
+    NOTE: the target platform is Linux, where ``:``, ``*``, spaces, etc. are
+    valid filename characters.  Only ``/`` (directory separator) is forbidden.
+    """
+    safe = name.replace('/', '_')
+    safe = safe.strip('_.')
+    if not safe:
+        safe = "_function"
+    max_name_len = _MAX_FILENAME_LENGTH - len(ext) - 1  # account for ".{ext}"
+    if len(safe) <= max_name_len:
+        return f"{safe}.{ext}"
+    hash_suffix = hashlib.sha256(name.encode('utf-8')).hexdigest()[:8]
+    trunc = safe[:max_name_len - 9]  # 9 = len('_') + 8 hex
+    return f"{trunc}_{hash_suffix}.{ext}"
 
 # Map file extensions to language keys
 EXT_TO_LANG = {
@@ -727,7 +753,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         os.makedirs(out_dir, exist_ok=True)
 
         for func_name, func_source in funcs:
-            out_file = os.path.join(out_dir, f"{func_name}.{ext}")
+            out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
 
             # Skip only when the file already has both [SPEC] and [INFO] blocks
             if not force and os.path.exists(out_file) and is_file_ready(out_file):

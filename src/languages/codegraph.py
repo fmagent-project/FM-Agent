@@ -10,6 +10,7 @@ REGISTRY in src/languages/registry.py. No other files need to change.
 
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -49,6 +50,42 @@ _CONSTRUCTOR_FILTER = {
     "java":       "ctor.name = cls.name",
     "cpp":        "ctor.name = cls.name",
 }
+
+
+def _bare_function_name(name: str) -> str:
+    """Return the bare identifier extracted from a tree-sitter ``name`` value.
+
+    Tree-sitter (used by codegraph) sometimes stores a full function-signature
+    string in the ``name`` column when the declarator cannot be resolved (e.g.
+    for macro-generated functions such as ``yyjson_mut_val
+    *yyjson_mut_obj_with_str(yyjson_mut_doc *doc, const char **keys, const
+    char **vals, size_t count)``).  Using that string directly as a filename
+    breaks filesystem limits (issue #82).
+
+    The extraction strategy matches the regex path's ``_extract_func_name_brace``:
+    strip angle-bracket template arguments, then look for a word immediately
+    followed by '(' — that is the function identifier.  If none is found the
+    original string is returned unchanged so callers can still make progress
+    (the downstream filename sanitization will handle the rest).
+    """
+    # Strip balanced <...> segments (template parameters)
+    cleaned = []
+    depth = 0
+    for ch in name:
+        if ch == '<':
+            depth += 1
+        elif ch == '>':
+            if depth > 0:
+                depth -= 1
+        else:
+            if depth == 0:
+                cleaned.append(ch)
+    cleaned_str = ''.join(cleaned)
+
+    m = re.search(r'\b(\w+)\s*\(', cleaned_str)
+    if m:
+        return m.group(1)
+    return name
 
 
 def _fqn_for(file_path: str, name: str) -> str:
@@ -93,10 +130,11 @@ def _node_fqn_map(cur, cg_langs) -> dict:
     counts: dict = {}
     result: dict = {}
     for node_id, name, file_path, _start in cur.fetchall():
-        key = (file_path, name)
+        bare = _bare_function_name(name)
+        key = (file_path, bare)
         c = counts.get(key, 0)
         counts[key] = c + 1
-        deduped = name if c == 0 else f"{name}_{c}"
+        deduped = bare if c == 0 else f"{bare}_{c}"
         result[node_id] = _fqn_for(file_path, deduped)
     return result
 
@@ -166,6 +204,7 @@ class CodeGraphExtractor:
             file_funcs = []
             name_counts = {}
             for name, start_line, end_line in funcs:
+                bare = _bare_function_name(name)
                 # Disambiguate functions sharing a name within one file
                 # (LocalStorage::Flush vs RemoteCache::Flush, overloads, a method
                 # and a same-named free function, ...). codegraph stores them all
@@ -175,9 +214,9 @@ class CodeGraphExtractor:
                 # both extraction and the call graph. Mirror the regex path's
                 # dedup ("Flush", "Flush_1", ...). funcs are line-ordered (SQL
                 # ORDER BY start_line), so suffix assignment is deterministic.
-                count = name_counts.get(name, 0)
-                name_counts[name] = count + 1
-                deduped = name if count == 0 else f"{name}_{count}"
+                count = name_counts.get(bare, 0)
+                name_counts[bare] = count + 1
+                deduped = bare if count == 0 else f"{bare}_{count}"
                 # codegraph uses 1-indexed lines, end_line is inclusive
                 body_lines = all_lines[start_line - 1 : end_line]
                 body = "".join(body_lines)
@@ -231,7 +270,7 @@ class CodeGraphExtractor:
         if not rows:
             return None
         # codegraph uses 1-indexed lines with an inclusive end_line.
-        return [(name, int(start) - 1, int(end) - 1) for name, start, end in rows]
+        return [(_bare_function_name(name), int(start) - 1, int(end) - 1) for name, start, end in rows]
 
     def get_call_edges(self, lang_key: str) -> dict:
         """Return {caller_fqn: {callee_fqn, ...}} for the given language.
