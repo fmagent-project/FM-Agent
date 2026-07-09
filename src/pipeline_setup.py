@@ -19,8 +19,12 @@ from config import (
     OPENCODE_SETUP_MODEL,
     OPENCODE_MODEL_PROVIDER,
 )
-from .extract import EXT_TO_LANG
-from .file_utils import _is_test_file, _json_file_is_valid
+from .file_utils import (
+    _is_test_file,
+    _json_file_is_valid,
+    _iter_project_source_files,
+    _is_under_submodules,
+)
 from .opencode_trace import run_opencode_traced
 from .cli_backend import build_agent_command, is_cli_backend_enabled
 from .domain_knowledge import (
@@ -410,39 +414,42 @@ def _clean_domain_context_files(work_dir, removed_phase_nums, renumbered):
         logging.info("Renamed domain-context file to %s", os.path.basename(final_path))
 
 
-def _collect_changed_modules(ensure_changes, dedup_changes):
+def _collect_changed_modules(ensure_changes, *change_sets):
     """Collect the modules whose source-file list changed during post-processing.
 
     Both ``_ensure_source_files_in_phases`` (which force-adds source files to a
-    module) and ``_deduplicate_phases`` (which strips duplicate source files from
-    modules) alter which files a module owns, so an affected module's description
-    may no longer match. This returns one entry per affected module, giving only
-    its phase number and name — the input to ``_update_module_description``. The
-    agent re-reads each module's current source files from phases.json itself.
+    module), ``_filter_phases_to_submodules`` (which strips out-of-scope files),
+    and ``_deduplicate_phases`` (which strips duplicate source files from modules)
+    alter which files a module owns, so an affected module's description may no
+    longer match. This returns one entry per affected module, giving only its phase
+    number and name — the input to ``_update_module_description``. The agent
+    re-reads each module's current source files from phases.json itself.
 
     Dedup no longer renumbers phases, so both sources speak the same phase
     numbering (the one in the freshly written phases.json).
     """
     entries = {}  # (phase, module_name) -> entry
-    for m in dedup_changes.get("modified_modules", []):
-        key = (m["phase"], m["module"])
-        entries[key] = {"phase": m["phase"], "module": m["module"]}
+    for changes in change_sets:
+        for m in changes.get("modified_modules", []):
+            key = (m["phase"], m["module"])
+            entries[key] = {"phase": m["phase"], "module": m["module"]}
     for a in ensure_changes.get("augmented_modules", []):
         key = (a["phase"], a["module"])
         entries[key] = {"phase": a["phase"], "module": a["module"]}
     return list(entries.values())
 
 
-def _collect_changed_phases(ensure_changes, dedup_changes):
+def _collect_changed_phases(ensure_changes, *change_sets):
     """Collect the phase numbers whose source-file composition changed during
     post-processing.
 
     Both ``_ensure_source_files_in_phases`` (which force-adds source files to a
-    phase's first module) and ``_deduplicate_phases`` (which strips duplicate
-    source files from modules) can change which files a phase owns, so its
-    domain-context types file (phase_NN_types.txt) may no longer match. This
-    returns the set of affected phase numbers so the caller can have those files
-    regenerated (see ``_sync_domain_context``).
+    phase's first module), ``_filter_phases_to_submodules`` (which strips
+    out-of-scope files), and ``_deduplicate_phases`` (which strips duplicate source
+    files from modules) can change which files a phase owns, so its domain-context
+    types file (phase_NN_types.txt) may no longer match. This returns the set of
+    affected phase numbers so the caller can have those files regenerated (see
+    ``_sync_domain_context``).
 
     Dedup no longer renumbers phases, so both sources speak the same phase
     numbering (the one in the freshly written phases.json).
@@ -451,10 +458,11 @@ def _collect_changed_phases(ensure_changes, dedup_changes):
     for phase_num in ensure_changes.get("augmented", {}):
         if phase_num is not None:
             phases.add(phase_num)
-    for m in dedup_changes.get("modified_modules", []):
-        phase_num = m.get("phase")
-        if phase_num is not None:
-            phases.add(phase_num)
+    for changes in change_sets:
+        for m in changes.get("modified_modules", []):
+            phase_num = m.get("phase")
+            if phase_num is not None:
+                phases.add(phase_num)
     return phases
 
 
@@ -619,24 +627,16 @@ def _setup_outputs_complete(work_dir):
     return True
 
 
-def _collect_project_source_files(proj_dir):
+def _collect_project_source_files(proj_dir, submodules=None):
     """Return non-test source files currently present in proj_dir, relative to proj_dir."""
-    source_exts = set(EXT_TO_LANG.keys())
     files = set()
-    for root, dirs, names in os.walk(proj_dir):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
-                   {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
-        for fname in names:
-            ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
-            if ext not in source_exts:
-                continue
-            rel = os.path.relpath(os.path.join(root, fname), proj_dir).replace(os.sep, '/')
-            if not _is_test_file(rel):
-                files.add(rel)
+    for rel in _iter_project_source_files(proj_dir, submodules):
+        if not _is_test_file(rel):
+            files.add(rel)
     return files
 
 
-def _phases_cover_current_sources(phases_json, proj_dir):
+def _phases_cover_current_sources(phases_json, proj_dir, submodules=None):
     """Return whether phases.json is valid for the current source-file set."""
     try:
         with open(phases_json, "r") as f:
@@ -652,9 +652,49 @@ def _phases_cover_current_sources(phases_json, proj_dir):
 
     if not listed:
         return False
+    if submodules and any(not _is_under_submodules(sf, submodules) for sf in listed):
+        return False
     if any(not os.path.exists(os.path.join(proj_dir, sf)) for sf in listed):
         return False
-    return _collect_project_source_files(proj_dir).issubset(listed)
+    return _collect_project_source_files(proj_dir, submodules).issubset(listed)
+
+
+def _filter_phases_to_submodules(phases_json, submodules):
+    """Remove out-of-scope source files from phases.json without renumbering."""
+    if not submodules:
+        return {"removed": 0, "modified_modules": []}
+
+    with open(phases_json, "r") as f:
+        data = json.load(f)
+
+    removed_total = 0
+    modified_modules = []
+    for phase in sorted(data.get("phases", []), key=lambda p: p.get("phase", 0)):
+        for module in phase.get("modules", []):
+            original = list(module.get("source_files", []))
+            kept = []
+            removed = []
+            for source_file in original:
+                if _is_under_submodules(source_file, submodules):
+                    kept.append(source_file)
+                else:
+                    removed.append(source_file)
+            if not removed:
+                continue
+            module["source_files"] = kept
+            removed_total += len(removed)
+            modified_modules.append({
+                "phase": phase.get("phase"),
+                "module": module.get("name", ""),
+                "removed_files": removed,
+                "source_files": list(kept),
+            })
+
+    if modified_modules:
+        with open(phases_json, "w") as f:
+            json.dump(data, f, indent=2)
+
+    return {"removed": removed_total, "modified_modules": modified_modules}
 
 
 def _ensure_source_files_in_phases(phases_json, required_source_files):
@@ -769,12 +809,15 @@ def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir):
 
 
 def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
-                       resume=False, required_source_files=None):
+                       resume=False, required_source_files=None,
+                       submodules=None):
     """Stage 1: prepare the setup workflow file and run opencode (with retries) to produce phases.json.
 
     ``required_source_files`` are paths the caller must have processed regardless
     of the agent's choices; any the agent omitted are force-listed into phases.json
     once the plan is otherwise finalized (see ``_ensure_source_files_in_phases``).
+    ``submodules`` optionally limits the full pipeline to selected project-relative
+    subdirectories.
     """
     # On resume, reuse the existing phase plan instead of paying for the
     # setup_context LLM call again.
@@ -783,7 +826,7 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
         print("[Pipeline] Stage 1/4: RESUME — all setup outputs found, skipping setup_context (reusing phase plan).")
 
     _prepare_setup_workflow_file(proj_dir, work_dir, script_dir)
-    
+
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
                     "Do NOT include fm_agent/ paths in phases.json. "
@@ -794,6 +837,14 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                             "reflects the current version of the code: add modules and source files that "
                             "are new, remove entries whose files no longer exist, and adjust phases as "
                             "needed. Preserve entries that are still accurate.")
+    submodule_reminder = ""
+    if submodules:
+        allowed = ", ".join(f"`{submodule}/`" for submodule in submodules)
+        submodule_reminder = (
+            "IMPORTANT: Only process source files under these project-relative "
+            f"subdirectories: {allowed}. Do NOT include files outside these "
+            "subdirectories in phases.json."
+        )
 
     phases_json = os.path.join(work_dir, "phases.json")
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
@@ -802,7 +853,7 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
         if _resume_skip_setup:
             break
         if attempt == 1 and not resume:
-            prompt = f"Follow the instructions in the attached file. {fm_reminder}"
+            prompt = f"Follow the instructions in the attached file. {fm_reminder} {submodule_reminder}"
         else:
             # Either resuming a previously interrupted run or retrying after a
             # failed attempt — in both cases some setup outputs may already
@@ -814,7 +865,7 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                       "check the current progress in fm_agent/ (e.g. phases.json and the "
                       "spec_prompts/domain_context/ files). Keep any existing valid output as-is and only "
                       "generate the files that are missing or incomplete — do NOT regenerate or overwrite "
-                      f"work that is already done. {fm_reminder}")
+                      f"work that is already done. {fm_reminder} {submodule_reminder}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
         prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md")
@@ -854,11 +905,17 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
         # covers the current source files, but only if the domain-context files
         # required by later spec prompts are present too.
         if os.path.exists(phases_json):
-            phase_plan_ready = (
-                not is_incremental
-                or os.path.getmtime(phases_json) != prev_mtime
-                or _phases_cover_current_sources(phases_json, proj_dir)
-            )
+            if submodules:
+                phase_plan_ready = _phases_cover_current_sources(
+                    phases_json, proj_dir, submodules
+                )
+            elif is_incremental:
+                phase_plan_ready = (
+                    os.path.getmtime(phases_json) != prev_mtime
+                    or _phases_cover_current_sources(phases_json, proj_dir)
+                )
+            else:
+                phase_plan_ready = True
             if phase_plan_ready and _setup_outputs_complete(work_dir):
                 break
 
@@ -895,6 +952,13 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
     if forced:
         print(f"[Pipeline] Forced {len(forced)} required source file(s) into phases.json: {', '.join(forced)}")
 
+    filter_changes = _filter_phases_to_submodules(phases_json, submodules)
+    if submodules:
+        print(f"[Pipeline] Submodule scope: {', '.join(submodules)}")
+        removed = filter_changes["removed"]
+        if removed:
+            print(f"[Pipeline] Removed {removed} out-of-scope source file(s) from phases.json.")
+
     # Deduplicate source files across phases. This only strips duplicate files (no
     # phase is renumbered or dropped), so the domain-context sync only needs to
     # regenerate the types file of any phase whose file set changed here or in the
@@ -905,10 +969,14 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
     # above, or duplicates removed by dedup — may have descriptions that no longer
     # match the files they own. Refresh those descriptions before the domain-context
     # sync (which reads phases.json) runs.
-    changed_modules = _collect_changed_modules(ensure_changes, dedup_changes)
+    changed_modules = _collect_changed_modules(
+        ensure_changes, filter_changes, dedup_changes
+    )
     _update_module_description(proj_dir, work_dir, changed_modules)
 
-    changed_phases = _collect_changed_phases(ensure_changes, dedup_changes)
+    changed_phases = _collect_changed_phases(
+        ensure_changes, filter_changes, dedup_changes
+    )
 
     # Drop any modules/phases left empty by the steps above (e.g. a phase whose
     # only files were deduplicated away), renumber the survivors, and keep the

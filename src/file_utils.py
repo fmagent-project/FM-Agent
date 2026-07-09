@@ -3,6 +3,16 @@ import json
 import re
 
 
+def _write_file_names(file_names, output_path):
+    """Write sorted, de-duplicated file names to output_path."""
+    file_names = sorted(dict.fromkeys(file_names))
+    tmp_path = output_path + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(file_names, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, output_path)
+    return file_names
+
+
 def collect_file_names(input_dir, output_path="file_list.json"):
     """Collect all file names under input_dir and write them to a JSON file.
 
@@ -14,12 +24,7 @@ def collect_file_names(input_dir, output_path="file_list.json"):
             full_path = os.path.join(root, fname)
             rel_path = os.path.relpath(full_path, input_dir)
             file_names.append(rel_path)
-    file_names.sort()
-    tmp_path = output_path + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(file_names, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, output_path)
-    return file_names
+    return _write_file_names(file_names, output_path)
 
 
 def is_file_ready(file_path):
@@ -135,18 +140,61 @@ def _get_phase_files(phases_data, phase_num, input_dir):
     return phase_files
 
 
-def _has_source_code(proj_dir):
-    """Check whether proj_dir contains at least one source code file."""
+def _get_all_phase_files(phases_data, input_dir):
+    """Return extracted function files reachable from all phases in phases.json."""
+    phase_files = []
+    seen = set()
+    for phase_info in phases_data.get("phases", []):
+        phase_num = phase_info.get("phase")
+        if phase_num is None:
+            continue
+        for rel in _get_phase_files(phases_data, phase_num, input_dir):
+            if rel not in seen:
+                seen.add(rel)
+                phase_files.append(rel)
+    return phase_files
+
+
+def _is_under_submodules(rel_path, submodules):
+    """Return whether rel_path is inside one of the selected submodule dirs."""
+    if not submodules:
+        return True
+    norm = rel_path.replace("\\", "/")
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return any(norm == sub or norm.startswith(sub + "/") for sub in submodules)
+
+
+def _iter_project_source_files(proj_dir, submodules=None):
+    """Yield project-relative source file paths, optionally limited to submodules."""
     from src.extract import EXT_TO_LANG  # local import to avoid circular import
     source_exts = set(EXT_TO_LANG.keys())
-    for root, dirs, files in os.walk(proj_dir):
-        # Skip hidden dirs and common non-source dirs
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
-                   {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
-        for fname in files:
-            ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
-            if ext in source_exts:
-                return True
+    scan_roots = [proj_dir]
+    if submodules:
+        scan_roots = [
+            os.path.join(proj_dir, submodule.replace("/", os.sep))
+            for submodule in submodules
+        ]
+
+    for scan_root in scan_roots:
+        for root, dirs, files in os.walk(scan_root):
+            # Skip hidden dirs and common non-source dirs
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
+                       {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
+            for fname in files:
+                ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
+                if ext not in source_exts:
+                    continue
+                rel = os.path.relpath(os.path.join(root, fname), proj_dir)
+                rel = rel.replace(os.sep, "/")
+                if _is_under_submodules(rel, submodules):
+                    yield rel
+
+
+def _has_source_code(proj_dir, submodules=None):
+    """Check whether proj_dir contains at least one source code file."""
+    for _ in _iter_project_source_files(proj_dir, submodules):
+        return True
     return False
 
 

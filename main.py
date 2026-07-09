@@ -10,8 +10,11 @@ from src.file_utils import (
     is_file_ready,
     _has_source_code,
     _get_phase_files,
+    _get_all_phase_files,
+    _write_file_names,
     _json_file_is_valid,
     _get_incomplete_verification_files,
+    _is_under_submodules,
 )
 from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
@@ -48,6 +51,7 @@ import logging
 import contextlib
 import concurrent.futures
 
+
 def _clean_previous_run(work_dir):
     """Remove the fm_agent working directory from the previous pipeline run."""
     if os.path.isdir(work_dir):
@@ -64,6 +68,43 @@ def _get_pending_batches(batches, proj_dir):
                 pending.append(batch)
                 break
     return pending
+
+
+def _normalize_submodules(proj_dir, submodules):
+    """Return validated project-relative submodule directories."""
+    if not submodules:
+        return []
+
+    proj_dir = os.path.abspath(proj_dir)
+    normalized = []
+    seen = set()
+    for raw in submodules:
+        value = (raw or "").strip()
+        if not value:
+            continue
+        candidate = value if os.path.isabs(value) else os.path.join(proj_dir, value)
+        candidate = os.path.abspath(candidate)
+        try:
+            inside_project = os.path.commonpath([proj_dir, candidate]) == proj_dir
+        except ValueError:
+            inside_project = False
+        if not inside_project or candidate == proj_dir:
+            raise ValueError(
+                f"--submodule must name subdirectories inside proj_dir, got: {raw}"
+            )
+        if not os.path.isdir(candidate):
+            raise ValueError(f"--submodule path is not a directory: {raw}")
+
+        rel = os.path.relpath(candidate, proj_dir).replace(os.sep, "/")
+        if rel not in seen:
+            normalized.append(rel)
+            seen.add(rel)
+
+    collapsed = []
+    for rel in sorted(normalized, key=lambda path: (path.count("/"), path)):
+        if not collapsed or not _is_under_submodules(rel, collapsed):
+            collapsed.append(rel)
+    return collapsed
 
 
 def _run_spec_generation_batch(
@@ -148,12 +189,14 @@ def run_pipeline(
     resume=False,
     required_source_files=None,
     domain_knowledge_files=None,
+    submodules=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
-    if not _has_source_code(proj_dir):
-        print(f"[Pipeline] ERROR: No source code files found in {proj_dir}. "
+    if not _has_source_code(proj_dir, submodules):
+        scope = f" selected submodule(s): {', '.join(submodules)}" if submodules else f" {proj_dir}"
+        print(f"[Pipeline] ERROR: No source code files found in{scope}. "
               f"Supported extensions: {', '.join(sorted(EXT_TO_LANG.keys()))}")
         sys.exit(1)
 
@@ -190,6 +233,7 @@ def run_pipeline(
     _run_setup_extract(
         proj_dir, work_dir, script_dir, resume=resume,
         required_source_files=required_source_files,
+        submodules=submodules,
     )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
@@ -222,8 +266,17 @@ def run_pipeline(
         os.path.join(spec_prompts_dir, "file_utils.py"),
     )
 
+    phases_path = os.path.join(work_dir, "phases.json")
+    with open(phases_path, "r") as f:
+        phases_data = json.load(f)
+
     print("[Pipeline] Stage 2/4: Collecting file list...")
-    file_list = collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
+    file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
+    file_list = collect_file_names(input_dir, file_list_path)
+    if submodules:
+        file_list = _write_file_names(
+            _get_all_phase_files(phases_data, input_dir), file_list_path
+        )
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
@@ -231,7 +284,6 @@ def run_pipeline(
 
     # --- Stage 3: Generate topdown layers ---
     print("[Pipeline] Stage 3/4: Generating topdown layers...")
-    phases_data = json.load(open(os.path.join(work_dir, "phases.json")))
     generate_topdown_layers(work_dir)
 
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
@@ -425,7 +477,8 @@ def run_pipeline(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--domain-knowledge FILE ...] [--isolate] [--entry-func PATH] "
+              "[--domain-knowledge FILE ...] [--isolate] "
+              "[--submodule PATH [PATH ...]] [--entry-func PATH] "
               "[--end-func PATH ...]",
         description="Run the FM agent pipeline on a project directory.",
     )
@@ -462,6 +515,13 @@ if __name__ == "__main__":
         "FM_AGENT_DOMAIN_KNOWLEDGE can also provide os.pathsep-separated files.",
     )
     parser.add_argument(
+        "--submodule",
+        metavar="PATH",
+        nargs="+",
+        default=None,
+        help="Only process source code under one or more subdirectories of proj_dir.",
+    )
+    parser.add_argument(
         "--entry-func",
         metavar="PATH",
         default=None,
@@ -480,6 +540,11 @@ if __name__ == "__main__":
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
     try:
+        submodules = _normalize_submodules(proj_dir, args.submodule)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    try:
         domain_knowledge_files = collect_domain_knowledge_paths(
             args.domain_knowledge,
             base_dir=proj_dir,
@@ -487,6 +552,9 @@ if __name__ == "__main__":
         )
     except ValueError as exc:
         parser.error(str(exc))
+
+    if submodules and args.entry_func is not None:
+        parser.error("--submodule cannot be combined with --entry-func.")
 
     # ---- pre-flight environment check (shared by all pipeline modes) ----
     import config
@@ -561,12 +629,14 @@ if __name__ == "__main__":
                     intent_path,
                     old_commit,
                     domain_knowledge_files=domain_knowledge_files,
+                    submodules=submodules,
                 )
             else:
                 run_pipeline(
                     run_dir,
                     resume=resume,
                     domain_knowledge_files=domain_knowledge_files,
+                    submodules=submodules,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is

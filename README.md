@@ -184,7 +184,7 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-uv run python main.py <proj_dir> [--resume]
+uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--submodule PATH [PATH ...]]
 ```
 
 | Argument                    | Description                                                                                     |
@@ -194,6 +194,7 @@ uv run python main.py <proj_dir> [--resume]
 | `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
+| `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
 
 `proj_dir` must be a git repository.
 
@@ -204,6 +205,15 @@ uv run python main.py <proj_dir> --domain-knowledge docs/invariants.md docs/prot
 ```
 
 FM-Agent stages these files under `fm_agent/spec_prompts/domain_context/user_knowledge/` for the current run. You can also set `FM_AGENT_DOMAIN_KNOWLEDGE` to an `os.pathsep`-separated list of Markdown files.
+
+Use `--submodule` to limit a full or incremental run to selected project subdirectories:
+
+```bash
+uv run python main.py <proj_dir> --submodule src/core src/runtime
+uv run python main.py <proj_dir> --incremental intent.md --submodule src/core src/runtime
+```
+
+`--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`, but not with `--entry-func`.
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
 
