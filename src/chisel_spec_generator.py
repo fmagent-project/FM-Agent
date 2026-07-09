@@ -41,6 +41,7 @@ from config import (
 )
 from src.file_utils import collect_file_names
 from src.chisel_support import (
+    _SUBMODULE_HEADING_RE,
     _chisel_info_ready,
     _chisel_markdown_ready,
     chisel_info_path,
@@ -228,29 +229,51 @@ def _get_pending_batches_chisel(batches, proj_dir, expects_submodules=frozenset(
     pending = []
     for batch in batches:
         batch_pending = False
-        validation_errors = []
+        feedback = batch.get("validation_errors")
+        feedback = dict(feedback) if isinstance(feedback, dict) else {}
         for func_rel in batch.get("functions", []):
             module_path = os.path.join(proj_dir, func_rel)
             expects = func_rel in expects_submodules
+            module_errors = []
             if not chisel_spec_ready(module_path, expects_submodules=expects):
                 info_path = chisel_info_path(module_path)
+                spec_ok = _chisel_markdown_ready(chisel_spec_path(module_path))
                 if expects and os.path.exists(info_path):
                     try:
                         with open(info_path, "r", errors="replace") as f:
                             info_text = f.read()
                     except OSError:
                         info_text = ""
-                    if "(no submodules)" in info_text:
-                        validation_errors.append(
-                            f"{os.path.basename(info_path)}: claims '(no submodules)' "
-                            f"but this module instantiates other extracted modules — "
-                            f"write one '# Submodule: <name>' entry per instantiated "
-                            f"submodule"
+                    if ("(no submodules)" in info_text
+                            or _SUBMODULE_HEADING_RE.search(info_text) is None):
+                        module_errors.append(
+                            f"{os.path.basename(info_path)}: this module instantiates "
+                            f"other extracted modules — the info file must contain one "
+                            f"'# Submodule: <name>' entry per instantiated submodule "
+                            f"and must not claim '(no submodules)'"
+                        )
+                if not module_errors and spec_ok:
+                    # chisel_spec_ready is False but the spec itself is fine
+                    # (leaf module, or the stub check above found nothing
+                    # this round — e.g. its own info file was just deleted
+                    # by US, pending regeneration). Only report a generic
+                    # info blocker when the CURRENTLY recorded feedback
+                    # blames the spec specifically (now moot) or there is
+                    # none yet — otherwise a more specific diagnosis from a
+                    # prior round must survive via inertia.
+                    spec_base = os.path.basename(chisel_spec_path(module_path))
+                    prior = feedback.get(func_rel) or []
+                    if not prior or any(spec_base in m for m in prior):
+                        module_errors.append(
+                            f"{os.path.basename(info_path)}: incomplete or missing "
+                            f"— regenerate it"
                         )
                 _remove_incomplete_chisel_outputs(
                     module_path, expects_submodules=expects
                 )
                 batch_pending = True
+                if module_errors:
+                    feedback[func_rel] = module_errors
                 continue
             spec_path = chisel_spec_path(module_path)
             is_valid, spec_errors = validate_chisel_spec(spec_path)
@@ -264,13 +287,21 @@ def _get_pending_batches_chisel(batches, proj_dir, expects_submodules=frozenset(
                     os.remove(spec_path)
                 except OSError as exc:
                     logging.warning("Could not remove invalid spec %s: %s", spec_path, exc)
-                validation_errors.append(
+                feedback[func_rel] = [
                     f"{os.path.basename(spec_path)}: " + "; ".join(spec_errors[:3])
-                )
+                ]
                 batch_pending = True
-        # Exposed to the retry prompt so the LLM knows WHAT failed the
-        # checklist — without feedback regeneration rarely converges.
-        batch["validation_errors"] = validation_errors
+            else:
+                # Ready and checklist-valid: this module is done — drop its
+                # stale feedback so the retry prompt stops demanding a fix
+                # for an issue that no longer exists.
+                feedback.pop(func_rel, None)
+        # Exposed to the retry prompt so the LLM knows WHAT failed — without
+        # feedback regeneration rarely converges. Keyed per module: an entry
+        # survives the pre-launch rescan (which runs AFTER the offending
+        # files were deleted) until ITS module passes, so a fixed module's
+        # errors do not ride along while batchmates are still regenerating.
+        batch["validation_errors"] = feedback if batch_pending else {}
         if batch_pending:
             pending.append(batch)
     return pending
@@ -287,8 +318,61 @@ def _load_json_file(path, description):
         raise ValueError(f"{description} at {path} is not valid JSON: {exc}") from exc
 
 
-def _groups_json_is_usable(groups_path):
-    """Return True when groups.json is complete enough to resume from."""
+def _reset_derived_state(work_dir):
+    """Remove derived artifacts so a rerun setup regenerates them all.
+
+    Called on the resume path whenever the old manifest cannot be reused and
+    setup is rerun. Everything below is cheaply rebuilt by the fresh
+    setup/extraction, but if left behind it silently poisons the new run:
+    the domain-context aliases shadow the fresh context (batch prompts read
+    ONLY the aliases), stale topdown/batch artifacts confuse the advisory
+    report, and a stale file list can smuggle the run past the zero-modules
+    guard. The rejected groups.json itself is removed too: leaving it in
+    place makes Stage 1 use the 'Continue where you left off… rewrite it if
+    malformed or incomplete' prompt, but a well-formed foreign-HDL manifest
+    is neither, so the retry loop would depend on the LLM volunteering a
+    rewrite. extracted_functions/ is deliberately PRESERVED — completed specs
+    live there, and keeping them is the point of --resume.
+    """
+    spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
+    ctx_dir = os.path.join(spec_prompts_dir, "domain_context")
+    if os.path.isdir(ctx_dir):
+        shutil.rmtree(ctx_dir, ignore_errors=True)
+    for name in ("groups.json", "phases.json", "fm_agent_file_list.json",
+                 "extracted_units.json"):
+        try:
+            os.remove(os.path.join(work_dir, name))
+        except OSError:
+            pass
+    if os.path.isdir(spec_prompts_dir):
+        for entry in os.listdir(spec_prompts_dir):
+            path = os.path.join(spec_prompts_dir, entry)
+            if re.match(r"phase_\d+_topdown_layers\.json$", entry):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            elif entry.startswith("batch_prompts_") and os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+
+
+def _groups_json_is_usable(groups_path, required_exts=None, required_languages=None):
+    """Return True when groups.json is complete enough to resume from.
+
+    ``required_exts`` names the calling flow's source extensions: a manifest
+    left behind by ANOTHER HDL flow in the same project (e.g. a Chisel
+    groups.json found by ``--hardware --verilog --resume``) lists no matching
+    sources, and reusing it would make the run silently spec nothing —
+    rejecting it here makes resume fall back to rerunning setup instead.
+
+    ``required_languages`` closes the mixed-manifest gap: a foreign manifest
+    with a stray file of the right extension (an LLM behavior this flow
+    defends against elsewhere) passes the extension check, but its declared
+    ``languages`` still name the other HDL — resuming on it would inherit the
+    other flow's subsystems and domain context. When the manifest declares
+    languages and none matches, it is rejected; a manifest without declared
+    languages falls back to the extension judgement.
+    """
     try:
         groups = _load_json_file(groups_path, "groups.json")
     except (OSError, ValueError) as exc:
@@ -310,6 +394,52 @@ def _groups_json_is_usable(groups_path):
         if not isinstance(sub.get("source_groups", []), list):
             logging.warning("Cannot resume from groups.json: subsystem %s source_groups is not a list.", idx)
             return False
+
+    if required_languages is not None:
+        declared = groups.get("languages")
+        if isinstance(declared, str):
+            # A string-typed declaration is still a declaration — it must not
+            # slip past the veto as "no languages".
+            declared = [declared]
+        if declared is not None and not isinstance(declared, list):
+            # Any other shape (dict, number, ...) is declared-but-
+            # unintelligible; treating it as absence would reopen the
+            # mixed-manifest gap for mistyped manifests.
+            logging.warning(
+                "Cannot resume from groups.json: languages declaration has an "
+                "unintelligible shape (%s).", type(declared).__name__,
+            )
+            return False
+        if isinstance(declared, list) and declared:
+            langs = {str(lang).strip().lower() for lang in declared}
+            if not langs & set(required_languages):
+                logging.warning(
+                    "Cannot resume from groups.json: declared languages %s do "
+                    "not match this flow (%s) — it belongs to a different HDL "
+                    "flow.",
+                    sorted(langs), sorted(required_languages),
+                )
+                return False
+
+    if required_exts is not None:
+        for sub in subsystems:
+            for group in sub.get("source_groups", []):
+                if not isinstance(group, dict):
+                    continue
+                srcs = group.get("source_files", []) or []
+                if isinstance(srcs, str):
+                    srcs = [srcs]
+                for src in srcs:
+                    base = os.path.basename(str(src))
+                    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+                    if ext in required_exts:
+                        return True
+        logging.warning(
+            "Cannot resume from groups.json: it lists no source file with "
+            "extension(s) %s — it likely belongs to a different HDL flow.",
+            sorted(required_exts),
+        )
+        return False
 
     return True
 
@@ -383,7 +513,14 @@ def _normalize_groups_source_paths(work_dir, proj_dir):
     for sub in groups.get("subsystems", []):
         for grp in sub.get("source_groups", []):
             new_files = []
-            for sf in grp.get("source_files", []):
+            srcs = grp.get("source_files", [])
+            if isinstance(srcs, str):
+                # First consumer of groups.json source files: heal the
+                # string shape here and persist the list for every
+                # downstream reader.
+                srcs = [srcs]
+                changed = True
+            for sf in srcs:
                 resolved = _resolve(sf)
                 if resolved is None:
                     unresolved.append(sf)
@@ -398,6 +535,47 @@ def _normalize_groups_source_paths(work_dir, proj_dir):
             json.dump(groups, f, indent=2)
 
     return unresolved
+
+
+def _filter_phase_source_files(work_dir, allowed_exts, label):
+    """Drop phases.json source files whose extension is outside the flow.
+
+    The setup LLM sometimes mixes other supported source files into an HDL
+    source group (e.g. ``["Top.scala", "Helper.java"]``). Left in place, the
+    foreign files are extracted as software units whose batch prompts use the
+    embedded ``[SPEC]`` format, while the hardware runner waits for standalone
+    ``_spec.md``/``_info.md`` outputs that never appear — retrying until the
+    layer fails. Returns the dropped file names (already logged).
+    """
+    phases_path = os.path.join(work_dir, "phases.json")
+    data = _load_json_file(phases_path, "phases.json")
+    dropped = []
+    normalized = False
+    for phase in data.get("phases", []):
+        for module in phase.get("modules", []):
+            kept = []
+            srcs = module.get("source_files", [])
+            if isinstance(srcs, str):
+                srcs = [srcs]
+                normalized = True
+            for src in srcs:
+                base = os.path.basename(str(src))
+                ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+                if ext in allowed_exts:
+                    kept.append(src)
+                else:
+                    dropped.append(src)
+            module["source_files"] = kept
+    if dropped:
+        logging.warning(
+            "[%s] Dropped %d non-%s source file(s) from phases.json "
+            "(the hardware flow cannot spec them): %s",
+            label, len(dropped), label, ", ".join(map(str, dropped[:10])),
+        )
+    if dropped or normalized:
+        with open(phases_path, "w") as f:
+            json.dump(data, f, indent=2)
+    return dropped
 
 
 def _groups_to_phases(work_dir):
@@ -418,9 +596,12 @@ def _groups_to_phases(work_dir):
         phase_num = _as_int(sub.get("subsystem"), "subsystems[*].subsystem")
         modules = []
         for grp in sub.get("source_groups", []):
+            srcs = grp.get("source_files", [])
+            if isinstance(srcs, str):
+                srcs = [srcs]
             modules.append({
                 "name": grp.get("name", ""),
-                "source_files": grp.get("source_files", []),
+                "source_files": srcs,
             })
         phases.append({
             "phase": phase_num,
@@ -428,13 +609,24 @@ def _groups_to_phases(work_dir):
             "modules": modules,
             "depends_on_phases": [
                 _as_int(dep, "subsystems[*].depends_on_subsystems[*]")
-                for dep in sub.get("depends_on_subsystems", [])
+                for dep in ([sub.get("depends_on_subsystems")]
+                            if isinstance(sub.get("depends_on_subsystems"), (str, int))
+                            else sub.get("depends_on_subsystems", []))
             ],
         })
 
     out = {
         "project": groups.get("project", os.path.basename(os.path.dirname(work_dir))),
-        "languages": groups.get("languages", ["chisel"]),
+        # This IS the Chisel flow by dispatch — languages=["chisel"] is an
+        # invariant the runner already knows, not a re-derivation. The
+        # resume veto accepts "scala" as a plausible LLM spelling (the
+        # source files literally have .scala extension), but
+        # build_ext_to_lang only routes to the hardware spec path when
+        # "chisel" is literally declared; passing groups.json's spelling
+        # through verbatim would misroute "scala"-declared modules to
+        # software-style prompts (mirrors verilog_spec_generator.py's
+        # _force_verilog_phase_languages).
+        "languages": ["chisel"],
         "file_extensions": groups.get("file_extensions", ["scala"]),
         "phases": phases,
     }
@@ -503,15 +695,82 @@ def _normalize_chisel_domain_context(work_dir):
 
 
 def _has_scala_source(proj_dir):
-    """Check whether proj_dir contains at least one Chisel (.scala) source file."""
+    """Check whether proj_dir contains at least one Chisel (.scala/.sc) source
+    file — both extensions are accepted throughout the flow (extraction,
+    resume veto, source filter), so the entry check must match."""
     for root, dirs, files in os.walk(proj_dir):
         # Skip hidden dirs and common non-source dirs (mirrors _has_source_code).
         dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
                    {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
         for fname in files:
-            if fname.endswith('.scala'):
+            if fname.endswith(('.scala', '.sc')):
                 return True
     return False
+
+
+def _report_undocumented_submodules(work_dir, info_path_fn, label,
+                                    strip_dedup_suffix=True):
+    """Advisory (report only): list modules whose call graph shows submodules
+    but whose info document lacks a parseable ``# Submodule:`` entry for them.
+
+    Deliberately NOT enforced through readiness: graph edges can be noisy
+    (Chisel companion objects, member access) and hard enforcement deadlocks
+    genuine leaf modules — a human reading the summary can judge.
+    ``strip_dedup_suffix`` maps extractor dedup aliases (``Control_1``) back
+    to the declared name the info headings use; pass False for Verilog, where
+    ``_<digits>`` endings are genuine module names (``fifo_64``) and stripping
+    them would hide real gaps. Returns ``[(module_fqn, [missing...]), ...]``.
+    """
+    spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
+    if not os.path.isdir(spec_prompts_dir):
+        return []
+    layer_files = [
+        fname for fname in sorted(os.listdir(spec_prompts_dir))
+        if re.match(r"phase_\d+_topdown_layers\.json$", fname)
+    ]
+    # First pass: fqn -> declared name, stamped by generate_topdown_layers
+    # with the extractor's own declaration regex. Maps dedup aliases
+    # (Control_1) back to the name info headings use (Control); a genuine
+    # module named Stage_1 declares its own stem, so its gap is never hidden.
+    declared_names = {}
+    for fname in layer_files:
+        layers_data = _load_json_file(os.path.join(spec_prompts_dir, fname), fname)
+        for layer in layers_data.get("layers", []):
+            for fn in layer.get("functions", []):
+                if fn.get("declared_name"):
+                    declared_names[fn["name"]] = fn["declared_name"]
+    gaps = []
+    for fname in layer_files:
+        layers_data = _load_json_file(os.path.join(spec_prompts_dir, fname), fname)
+        for layer in layers_data.get("layers", []):
+            for fn in layer.get("functions", []):
+                callees = fn.get("all_callees") or []
+                if not callees:
+                    continue
+                info_path = info_path_fn(os.path.join(work_dir, fn["file"]))
+                try:
+                    with open(info_path, "r", errors="replace") as f:
+                        content = f.read()
+                except OSError:
+                    continue  # a missing info file is readiness's problem
+                headings = set(_SUBMODULE_HEADING_RE.findall(content))
+                expected = set()
+                for c in callees:
+                    name = str(c).split("::")[-1]
+                    if strip_dedup_suffix:
+                        name = declared_names.get(str(c), name)
+                    expected.add(name)
+                missing = sorted(e for e in expected if e and e not in headings)
+                if missing:
+                    gaps.append((fn["name"], missing))
+    if gaps:
+        print(f"[{label}] ADVISORY: {len(gaps)} module info document(s) lack "
+              f"entries for graph-detected submodules (report only):")
+        for name, missing in gaps[:20]:
+            print(f"[{label}]   {name}: missing {', '.join(missing)}")
+        if len(gaps) > 20:
+            print(f"[{label}]   ... and {len(gaps) - 20} more")
+    return gaps
 
 
 def run_chisel_spec_generation(proj_dir, resume=False):
@@ -531,7 +790,7 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         sys.exit(1)
 
     if not _has_scala_source(proj_dir):
-        print(f"[Chisel] ERROR: No Scala (.scala) source files found in {proj_dir}.")
+        print(f"[Chisel] ERROR: No Scala (.scala/.sc) source files found in {proj_dir}.")
         sys.exit(1)
 
     work_dir = os.path.join(proj_dir, "fm_agent")
@@ -542,7 +801,9 @@ def run_chisel_spec_generation(proj_dir, resume=False):
 
     # Clean files from the previous run, unless resuming an interrupted run.
     groups_path = os.path.join(work_dir, "groups.json")
-    resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(groups_path)
+    resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(
+        groups_path, required_exts={"scala", "sc"}, required_languages={"chisel", "scala"}
+    )
     if resume:
         if resume_setup:
             print("[Chisel] Resume: preserving existing fm_agent/ workspace "
@@ -550,9 +811,11 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         elif os.path.exists(groups_path):
             print("[Chisel] Resume requested but groups.json is missing or incomplete; "
                   "rerunning setup in the existing fm_agent/ workspace.")
+            _reset_derived_state(work_dir)
         else:
             print("[Chisel] Resume requested but no groups.json found; "
                   "starting setup in the existing fm_agent/ workspace.")
+            _reset_derived_state(work_dir)
     else:
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
@@ -601,7 +864,7 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        if _groups_json_is_usable(groups_path):
+        if _groups_json_is_usable(groups_path, required_exts={"scala", "sc"}, required_languages={"chisel", "scala"}):
             break
 
         if attempt < OPENCODE_MAX_RETRIES:
@@ -632,8 +895,10 @@ def run_chisel_spec_generation(proj_dir, resume=False):
             f"First few: {unresolved[:5]}"
         )
 
-    # Bridge Chisel artifacts -> the generic-pipeline schema.
+    # Bridge Chisel artifacts -> the generic-pipeline schema. Foreign source
+    # files the setup LLM mixed into HDL groups are dropped with a warning.
     _groups_to_phases(work_dir)
+    _filter_phase_source_files(work_dir, {"scala", "sc"}, "Chisel")
 
     # Deduplicate source files across phases before aliasing subsystem context.
     # Otherwise phase_NN_types.txt can point at a subsystem that was removed and
@@ -661,15 +926,45 @@ def run_chisel_spec_generation(proj_dir, resume=False):
     _normalize_chisel_domain_context(work_dir)
 
     print("[Chisel] Stage 2/4: Collecting file list...")
-    file_list = collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
+    collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
 
-    if not file_list:
+    phases_data = _load_json_file(os.path.join(work_dir, "phases.json"), "phases.json")
+    # Judge emptiness by the CURRENT phases' files: stale units from a
+    # previous run (preserved by --resume) must not smuggle the run past
+    # this guard by making the whole-tree walk non-empty.
+    # A reused manifest that lists source files which no longer exist
+    # describes a PAST tree: renamed/deleted files mean the new names are
+    # absent from phases/topdown/batches entirely, so surviving sources
+    # would spec fine while the rest silently never appear (partial-missing
+    # is invisible to the zero-units guard below). Discard the stale
+    # manifest and rerun setup against the tree as it exists now; completed
+    # specs for surviving sources are preserved and reused. The recursive
+    # call starts with no groups.json, so resume_setup is False there and
+    # this cannot loop.
+    if resume_setup and any(
+        not os.path.exists(os.path.join(proj_dir, src))
+        for phase in phases_data["phases"]
+        for module in phase["modules"]
+        for src in module["source_files"]
+    ):
+        print("[Chisel] Resume: the reused groups.json points at missing "
+              "source files; discarding it and rerunning setup.")
+        try:
+            os.remove(groups_path)
+        except OSError:
+            pass
+        _reset_derived_state(work_dir)
+        return run_chisel_spec_generation(proj_dir, resume=True)
+
+    if not any(
+        _get_phase_files(phases_data, phase["phase"], input_dir)
+        for phase in phases_data["phases"]
+    ):
         print("[Chisel] No modules found to spec. Skipping spec generation.")
         return
 
     # --- Stage 3: Generate topdown layers ---
     print("[Chisel] Stage 3/4: Generating topdown layers...")
-    phases_data = _load_json_file(os.path.join(work_dir, "phases.json"), "phases.json")
     generate_topdown_layers(work_dir)
 
     # --- Stage 4: Execute spec generation (per phase, per layer) ---
@@ -699,22 +994,14 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         layers_data = _load_json_file(layers_json_path, f"topdown layers for subsystem {phase_num}")
         total_layers = layers_data.get("total_layers", 1)
 
-        # Modules whose call graph shows submodules must not satisfy readiness
-        # with a '(no submodules)' info stub. Keyed both by the proj_dir-
-        # relative path (batch functions) and the input_dir-relative path
-        # (layer_files readiness counts).
-        _with_subs = {
-            fn["file"]
-            for layer in layers_data.get("layers", [])
-            for fn in layer.get("functions", [])
-            if fn.get("all_callees")
-        }
-        expects_submodules = {
-            os.path.relpath(os.path.join(work_dir, f), proj_dir) for f in _with_subs
-        }
-        expects_rel = {
-            os.path.relpath(os.path.join(work_dir, f), input_dir) for f in _with_subs
-        }
+        # Unlike Verilog (whose edges are precise instantiations), Chisel
+        # all_callees include companion-object and member-access noise —
+        # enforcing the non-leaf info rule on them deadlocks genuine leaf
+        # modules (their truthful '(no submodules)' info is deleted on every
+        # retry). Chisel therefore does NOT gate readiness on the graph; the
+        # end-of-run advisory report surfaces undocumented submodules instead.
+        expects_submodules = frozenset()
+        expects_rel = frozenset()
 
         batch_dir = os.path.join(
             spec_prompts_dir,
@@ -791,8 +1078,11 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                     fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
                                    "Do NOT modify any existing project files.")
                     checklist_note = ""
-                    failed = batch_info.get("validation_errors") or []
+                    failed = batch_info.get("validation_errors") or {}
                     if failed:
+                        issues = " | ".join(
+                            msg for key in sorted(failed) for msg in failed[key]
+                        )
                         checklist_note = (
                             " WARNING: the following previously generated specs FAILED the "
                             "quality checklist and were deleted — regenerate them and fix "
@@ -800,7 +1090,7 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                             "fm_agent/spec_prompts/system_prompt.md: every tag is a plain "
                             "<FG-NAME>/<FC-NAME>/<CK-NAME> on its own line, sibling tag names "
                             "must be unique, and the <FG-API> group is mandatory): "
-                            + " | ".join(failed)
+                            + issues
                         )
                     if attempt == 1 and not resume:
                         prompt = (
@@ -938,4 +1228,5 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                 )
                 sys.exit(1)
 
+    _report_undocumented_submodules(work_dir, chisel_info_path, "Chisel")
     print("[Chisel] Done. Generated Chisel module spec/info files only; skipped reasoning and bug validation.")

@@ -6,16 +6,16 @@ from pathlib import Path
 from collections import defaultdict
 
 try:
-    from src.extract import EXT_TO_LANG, LANG_CONFIG
-    from src.chisel_support import find_chisel_call_sites, strip_chisel_comments
-    from src.verilog_support import find_verilog_call_sites
+    from src.extract import EXT_TO_LANG, LANG_CONFIG, load_units_manifest
+    from src.chisel_support import chisel_declared_name, find_chisel_call_sites, strip_chisel_comments
+    from src.verilog_support import find_verilog_call_sites, verilog_declared_name
 except ModuleNotFoundError:
     # Allow standalone execution as `python3 src/generate_topdown_layers.py`.
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from src.extract import EXT_TO_LANG, LANG_CONFIG
-    from src.chisel_support import find_chisel_call_sites, strip_chisel_comments
-    from src.verilog_support import find_verilog_call_sites
+    from src.extract import EXT_TO_LANG, LANG_CONFIG, load_units_manifest
+    from src.chisel_support import chisel_declared_name, find_chisel_call_sites, strip_chisel_comments
+    from src.verilog_support import find_verilog_call_sites, verilog_declared_name
 
 
 # ---------------------------------------------------------------------------
@@ -36,14 +36,29 @@ def _load_phases(proj_dir):
 def _collect_phase_files(proj_dir, phase_data):
     """For a phase, collect all extracted function file paths.
 
-    Returns list of (file_path, module_name) tuples.
+    Returns list of (file_path, module_name) tuples. Prefers the extraction
+    round's manifest (extracted_units.json) so stale units from previous
+    rounds never enter the layer graph; enumeration is the fallback for
+    pre-manifest workspaces.
     """
     extracted_base = os.path.join(proj_dir, "extracted_functions")
+    manifest = load_units_manifest(proj_dir)
     results = []
 
     for module in phase_data.get("modules", []):
         module_name = module["name"]
-        for src_file in module.get("source_files", []):
+        src_files = module.get("source_files", [])
+        if isinstance(src_files, str):
+            # Same normalization as _get_phase_files: iterating a bare string
+            # walks characters, and '/' collapses os.path.join to the root.
+            src_files = [src_files]
+        for src_file in src_files:
+            if manifest is not None:
+                for rel in sorted(manifest.get(src_file, [])):
+                    fpath = os.path.join(extracted_base, rel)
+                    if os.path.isfile(fpath):
+                        results.append((fpath, module_name))
+                continue
             # Derive extracted directory: xxx/yyy/zzz.ext -> xxx/yyy/zzz-ext
             src_dir = os.path.dirname(src_file)
             src_base = os.path.basename(src_file)
@@ -126,6 +141,29 @@ def _detect_lang_from_ext(filepath):
     base = os.path.basename(filepath)
     ext = base.rsplit(".", 1)[-1] if "." in base else ""
     return EXT_TO_LANG.get(ext)
+
+
+def _declared_name_for(filepath):
+    """Name declared INSIDE an extracted HDL unit file, or None.
+
+    Stamped into the layer metadata as ``declared_name`` — the single place
+    it is derived. Consumers (caller-expectation lookup, the advisory) read
+    the field instead of re-parsing files with their own regexes: the
+    extractor deduplicates same-named units by renaming the FILE, never the
+    declaration, so declared-name != file-stem proves a dedup alias.
+    """
+    lang_key = _detect_lang_from_ext(filepath)
+    body = LANG_CONFIG.get(lang_key, {}).get("body")
+    if body not in ("chisel", "verilog"):
+        return None
+    try:
+        with open(filepath, "r", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    if body == "chisel":
+        return chisel_declared_name(text)
+    return verilog_declared_name(text)
 
 
 def _strip_comments_from_source(text, lang_key):
@@ -673,6 +711,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
                 filepath = file_map[fqn]
                 rel_path = os.path.relpath(filepath, proj_dir)
                 unit = module_map.get(fqn, "")
+                declared = _declared_name_for(filepath)
 
                 phase_callers = sorted(callers_map.get(fqn, set()) & phase_fqns)
                 phase_callees = sorted(callees_map.get(fqn, set()) & phase_fqns)
@@ -682,6 +721,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
                     "name": fqn,
                     "file": rel_path,
                     "unit": unit,
+                    "declared_name": declared,
                     phase_callers_key: phase_callers,
                     phase_callees_key: phase_callees,
                     "all_callees": all_callees,

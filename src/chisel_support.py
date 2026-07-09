@@ -43,6 +43,10 @@ import re
 # considered a real spec rather than an empty stub.
 _CHISEL_SPEC_MIN_BYTES = 200
 
+# A parseable submodule entry heading — the exact per-line shape
+# generate_batch_prompts parses caller expectations from.
+_SUBMODULE_HEADING_RE = re.compile(r"^#[ \t]*Submodule:[ \t]*(\S+)[ \t]*$", re.M)
+
 
 def chisel_spec_path(module_file_path):
     """Return the standalone spec ``.md`` path for an extracted Chisel module.
@@ -80,18 +84,23 @@ def _chisel_info_ready(path, allow_no_submodules=True):
     the anti-stub byte threshold.
 
     Pass ``allow_no_submodules=False`` for modules whose call graph shows
-    submodules: their info must document each submodule, so the small stub
-    must not satisfy readiness.
+    submodules: their info must contain at least one ``# Submodule:`` entry
+    and must not claim ``(no submodules)`` — regardless of file size, so a
+    padded stub cannot slip through the byte threshold.
     """
-    if _chisel_markdown_ready(path):
-        return True
-    if not allow_no_submodules:
-        return False
     try:
         with open(path, "r", errors="replace") as f:
             content = f.read()
     except OSError:
         return False
+    if not allow_no_submodules:
+        return (
+            _chisel_markdown_ready(path)
+            and "(no submodules)" not in content
+            and _SUBMODULE_HEADING_RE.search(content) is not None
+        )
+    if _chisel_markdown_ready(path):
+        return True
     return "#" in content and "(no submodules)" in content
 
 
@@ -148,7 +157,7 @@ CHISEL_EXT_TO_LANG = {
 # src/test/scala (already caught by the test-dir check) but are also commonly
 # named *Spec/*Test/*Tester regardless of directory.
 CHISEL_TEST_FILE_PATTERNS = [
-    re.compile(r'^.*(?:Spec|Test|Tester)\.scala$'),
+    re.compile(r'^.*(?:Spec|Test|Tester)\.(?:scala|sc)$'),
 ]
 
 # Modifiers that may precede a top-level declaration keyword.
@@ -166,6 +175,24 @@ _CHISEL_DECL_RE = re.compile(
     r'(?P<kind>class|object|trait|def)\s+'
     r'(?P<name>[A-Za-z_$][\w$]*)'
 )
+
+
+def chisel_declared_name(text):
+    """Declared name of the first top-level declaration in an extracted unit.
+
+    Uses the SAME regex the extractor uses (``_CHISEL_DECL_RE``, scoped
+    modifiers like ``private[chisel]`` included) on the SAME comment-masked
+    text — re-deriving 'what counts as a declaration' with a second regex or
+    a second text preparation is exactly how declared names and file stems
+    drift apart. The extractor deduplicates same-named units by renaming the
+    FILE, never the declaration, so declared-name != file-stem is the proof
+    that a unit is a dedup alias.
+    """
+    for raw in strip_chisel_comments(text).splitlines():
+        m = _CHISEL_DECL_RE.match(raw.strip())
+        if m:
+            return m.group("name")
+    return None
 
 # Trailing tokens that mean "this signature continues on the next line".
 _CONT_WORDS = ("extends", "with")

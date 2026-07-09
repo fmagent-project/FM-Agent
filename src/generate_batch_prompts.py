@@ -109,7 +109,9 @@ def standalone_info_path(module_file: Path) -> Path:
     return module_file.with_name(module_file.stem + "_info.md")
 
 
-def extract_submodule_spec_from_chisel_info(module_file: Path, submodule_fqn: str) -> Optional[str]:
+def extract_submodule_spec_from_chisel_info(
+    module_file: Path, submodule_fqn: str, submodule_declared: Optional[str] = None
+) -> Optional[str]:
     """Return the expected-spec entry for ``submodule_fqn`` from a Chisel
     ``<stem>_info.md`` document, or None.
 
@@ -123,21 +125,34 @@ def extract_submodule_spec_from_chisel_info(module_file: Path, submodule_fqn: st
         return None
     content = info_file.read_text(errors="replace")
     stem = submodule_fqn.split("::")[-1]
-    entry_lines: Optional[List[str]] = None
+    # The extractor deduplicates same-named units (companion object + class)
+    # by renaming the FILE with a _<n> suffix, but info headings use the
+    # DECLARED name. ``submodule_declared`` is that name, stamped into the
+    # layer metadata by generate_topdown_layers using the extractor's own
+    # declaration regex (this script runs as a standalone workspace copy and
+    # must not re-derive it). declared != stem is the proof of a dedup
+    # alias; a genuine module whose name merely ends in digits (Chisel
+    # Stage_1, Verilog fifo_64) declares its own stem, so no fallback fires
+    # and it can never receive another module's caller contract.
+    candidates = [stem]
+    if submodule_declared and submodule_declared != stem:
+        candidates.append(submodule_declared)
+    entries: Dict[str, List[str]] = {}
+    current: Optional[List[str]] = None
     for line in content.splitlines():
         m = re.match(r"^#\s*Submodule:\s*(\S+)\s*$", line)
         if m:
-            if entry_lines is not None:
-                break
-            if m.group(1) == stem:
-                entry_lines = [line]
+            current = entries.setdefault(m.group(1), [line])
             continue
-        if entry_lines is not None:
-            entry_lines.append(line)
-    if not entry_lines:
-        return None
-    entry = "\n".join(entry_lines).strip()
-    return entry or None
+        if current is not None:
+            current.append(line)
+    for name in candidates:
+        entry_lines = entries.get(name)
+        if entry_lines:
+            entry = "\n".join(entry_lines).strip()
+            if entry:
+                return entry
+    return None
 
 
 def extract_info_block(filepath: Path) -> Optional[str]:
@@ -227,12 +242,23 @@ def build_ext_to_lang(exts: List[str], languages: List[str]) -> Dict[str, str]:
     Chisel setup usually records languages=["chisel"] and file_extensions=["scala"].
     If additional Scala extensions are listed, they should still map to Chisel.
     """
+    if isinstance(exts, str):
+        exts = [exts]
+    if isinstance(languages, str):
+        languages = [languages]
     normalized_exts = [ext.lower().lstrip(".") for ext in exts]
     normalized_langs = [lang.lower() for lang in languages]
     if "chisel" in normalized_langs:
-        return {ext: "chisel" for ext in normalized_exts or ["scala"]}
+        # Cover the whole (two-element) Chisel extension universe rather than
+        # trusting the LLM-declared list: an undeclared .sc would otherwise
+        # be detected as non-hardware and get an embedded-[SPEC] software
+        # prompt the Chisel runner never accepts.
+        return {ext: "chisel" for ext in set(normalized_exts) | {"scala", "sc"}}
     if "verilog" in normalized_langs or "systemverilog" in normalized_langs:
-        return {ext: "verilog" for ext in normalized_exts or ["v", "sv"]}
+        # Same rationale as the Chisel branch: cover the whole (three-element)
+        # Verilog extension universe so a degenerate declared list can never
+        # route .svh/.v/.sv away from the hardware spec path.
+        return {ext: "verilog" for ext in set(normalized_exts) | {"v", "sv", "svh"}}
     return {ext: lang for ext, lang in zip(normalized_exts, normalized_langs)}
 
 
@@ -311,7 +337,9 @@ def build_prompt(
                 spec_block = extract_standalone_spec(caller_file)
                 if spec_block and (caller_name, spec_block) not in caller_specs:
                     caller_specs.append((caller_name, spec_block))
-                entry = extract_submodule_spec_from_chisel_info(caller_file, fn_name)
+                entry = extract_submodule_spec_from_chisel_info(
+                    caller_file, fn_name, submodule_declared=fn.get("declared_name")
+                )
                 if entry:
                     caller_expectations.setdefault(fn_name, []).append((caller_name, entry))
                 continue

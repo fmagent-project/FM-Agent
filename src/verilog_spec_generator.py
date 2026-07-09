@@ -40,6 +40,7 @@ from config import (
 )
 from src.file_utils import collect_file_names
 from src.verilog_support import (
+    _SUBMODULE_HEADING_RE,
     _verilog_info_ready,
     _verilog_markdown_ready,
     verilog_info_path,
@@ -61,11 +62,14 @@ from src.opencode_trace import (
 # imported under a neutral name.
 from src.chisel_spec_generator import (
     validate_chisel_spec as validate_hw_spec,
+    _filter_phase_source_files,
     _groups_json_is_usable,
     _normalize_groups_source_paths,
     _groups_to_phases,
     _normalize_chisel_domain_context as _normalize_hw_domain_context,
     _load_json_file,
+    _report_undocumented_submodules,
+    _reset_derived_state,
 )
 from main import (
     _clean_previous_run,
@@ -88,10 +92,16 @@ def _force_verilog_phase_languages(work_dir):
     phases_path = os.path.join(work_dir, "phases.json")
     data = _load_json_file(phases_path, "phases.json")
     data["languages"] = ["verilog"]
-    exts = {str(e).lower().lstrip(".") for e in data.get("file_extensions", [])}
+    declared = data.get("file_extensions", [])
+    if isinstance(declared, str):
+        declared = [declared]
+    exts = {str(e).lower().lstrip(".") for e in declared}
     for phase in data.get("phases", []):
         for module in phase.get("modules", []):
-            for src in module.get("source_files", []):
+            srcs = module.get("source_files", [])
+            if isinstance(srcs, str):
+                srcs = [srcs]
+            for src in srcs:
                 base = os.path.basename(str(src))
                 if "." in base:
                     exts.add(base.rsplit(".", 1)[-1].lower())
@@ -101,16 +111,23 @@ def _force_verilog_phase_languages(work_dir):
         json.dump(data, f, indent=2)
 
 
-def _remove_incomplete_verilog_outputs(module_path, expects_submodules=False):
+def _remove_incomplete_verilog_outputs(module_path, expected_submodules=frozenset()):
     """Delete spec/info outputs that exist but are incomplete (e.g. truncated).
 
     The retry prompt tells the agent to only generate outputs for modules that
     do not yet have both output files, so an incomplete file left in place
     would make every retry skip the module. Complete files (including a small
     legal ``(no submodules)`` info document for actual leaf modules) are kept.
+    An info missing one of ``expected_submodules``'s entries counts as
+    incomplete for the same reason: leaving it in place would strand the batch
+    in a bounded retry failure.
     """
     def _info_ready(path):
-        return _verilog_info_ready(path, allow_no_submodules=not expects_submodules)
+        return _verilog_info_ready(
+            path,
+            allow_no_submodules=not expected_submodules,
+            expected_submodules=expected_submodules,
+        )
 
     checks = (
         (verilog_spec_path(module_path), _verilog_markdown_ready),
@@ -127,7 +144,7 @@ def _remove_incomplete_verilog_outputs(module_path, expects_submodules=False):
                 logging.warning("Could not remove incomplete output %s: %s", path, exc)
 
 
-def _get_pending_batches_verilog(batches, proj_dir, expects_submodules=frozenset()):
+def _get_pending_batches_verilog(batches, proj_dir, expected_submodules=None):
     """Return batches that still have at least one module without a complete,
     valid spec/info output.
 
@@ -138,37 +155,83 @@ def _get_pending_batches_verilog(batches, proj_dir, expects_submodules=frozenset
     fail validation are deleted so the retry loop regenerates them instead of
     skipping modules whose output files merely exist.
 
-    ``expects_submodules`` lists the function rel-paths whose instantiation
-    graph shows submodules: for those, a ``(no submodules)`` info stub is
-    rejected (and removed) instead of accepted, so the children do not lose
-    their caller expectations downstream.
+    ``expected_submodules`` maps function rel-paths to the module names their
+    instantiation graph shows as submodules: for those, a ``(no submodules)``
+    info stub is rejected, and the info must contain a ``# Submodule:`` entry
+    for EVERY expected name (Verilog edges are precise — verible CST,
+    in-project modules only — unlike Chisel's, which stay advisory). Invalid
+    infos are removed and the miss is fed back with the FULL required set, so
+    the next attempt regenerates a complete info instead of ping-ponging on
+    whichever single entry was last reported missing.
+
+    Design intent, pinned: this gate enforces the info document as a
+    DELIVERABLE — the design's submodule contracts must cover every
+    instantiated child, same-phase or not. It does NOT promise that every
+    callee prompt consumes every caller expectation: batch prompts propagate
+    expectations within a phase only, and cross-phase prompt propagation is
+    a recorded enhancement (upstream issue), not an unfinished part of this
+    feature. Weakening the gate to same-phase would delete correct
+    documentation to match a prompt limitation.
     """
+    expected_submodules = expected_submodules or {}
     pending = []
     for batch in batches:
         batch_pending = False
-        validation_errors = []
+        feedback = batch.get("validation_errors")
+        feedback = dict(feedback) if isinstance(feedback, dict) else {}
         for func_rel in batch.get("functions", []):
             module_path = os.path.join(proj_dir, func_rel)
-            expects = func_rel in expects_submodules
-            if not verilog_spec_ready(module_path, expects_submodules=expects):
+            expected = expected_submodules.get(func_rel, frozenset())
+            module_errors = []
+            if not verilog_spec_ready(module_path, expected_submodules=expected):
                 info_path = verilog_info_path(module_path)
-                if expects and os.path.exists(info_path):
+                spec_ok = _verilog_markdown_ready(verilog_spec_path(module_path))
+                if expected and os.path.exists(info_path):
                     try:
                         with open(info_path, "r", errors="replace") as f:
                             info_text = f.read()
                     except OSError:
                         info_text = ""
-                    if "(no submodules)" in info_text:
-                        validation_errors.append(
-                            f"{os.path.basename(info_path)}: claims '(no submodules)' "
-                            f"but this module instantiates other extracted modules — "
-                            f"write one '# Submodule: <name>' entry per instantiated "
-                            f"submodule"
+                    documented = set(_SUBMODULE_HEADING_RE.findall(info_text))
+                    if "(no submodules)" in info_text or not documented:
+                        module_errors.append(
+                            f"{os.path.basename(info_path)}: this module instantiates "
+                            f"other extracted modules — the info file must contain one "
+                            f"'# Submodule: <name>' entry per instantiated submodule "
+                            f"and must not claim '(no submodules)'"
+                        )
+                    elif expected - documented:
+                        module_errors.append(
+                            f"{os.path.basename(info_path)}: missing submodule "
+                            f"entries: {', '.join(sorted(expected - documented))}; "
+                            f"the regenerated info must contain one "
+                            f"'# Submodule: <name>' entry for EVERY required "
+                            f"entry: {', '.join(sorted(expected))}"
+                        )
+                if not module_errors and spec_ok:
+                    # verilog_spec_ready is False but the spec itself is fine
+                    # (no-expected leaf, or the per-name checks above found
+                    # nothing this round — e.g. their own info file was just
+                    # deleted by US, pending regeneration). Only report a
+                    # generic info blocker when the CURRENTLY recorded
+                    # feedback blames the spec specifically (now moot, since
+                    # the spec is fine) or there is none yet — otherwise a
+                    # more specific info diagnosis from a prior round (also
+                    # deleted pending regeneration) must survive via inertia,
+                    # not be replaced by a weaker generic message.
+                    spec_base = os.path.basename(verilog_spec_path(module_path))
+                    prior = feedback.get(func_rel) or []
+                    if not prior or any(spec_base in m for m in prior):
+                        module_errors.append(
+                            f"{os.path.basename(info_path)}: incomplete or missing "
+                            f"— regenerate it"
                         )
                 _remove_incomplete_verilog_outputs(
-                    module_path, expects_submodules=expects
+                    module_path, expected_submodules=expected
                 )
                 batch_pending = True
+                if module_errors:
+                    feedback[func_rel] = module_errors
                 continue
             spec_path = verilog_spec_path(module_path)
             is_valid, spec_errors = validate_hw_spec(spec_path)
@@ -182,13 +245,21 @@ def _get_pending_batches_verilog(batches, proj_dir, expects_submodules=frozenset
                     os.remove(spec_path)
                 except OSError as exc:
                     logging.warning("Could not remove invalid spec %s: %s", spec_path, exc)
-                validation_errors.append(
+                feedback[func_rel] = [
                     f"{os.path.basename(spec_path)}: " + "; ".join(spec_errors[:3])
-                )
+                ]
                 batch_pending = True
-        # Exposed to the retry prompt so the LLM knows WHAT failed the
-        # checklist — without feedback regeneration rarely converges.
-        batch["validation_errors"] = validation_errors
+            else:
+                # Ready and checklist-valid: this module is done — drop its
+                # stale feedback so the retry prompt stops demanding a fix
+                # for an issue that no longer exists.
+                feedback.pop(func_rel, None)
+        # Exposed to the retry prompt so the LLM knows WHAT failed — without
+        # feedback regeneration rarely converges. Keyed per module: an entry
+        # survives the pre-launch rescan (which runs AFTER the offending
+        # files were deleted) until ITS module passes, so a fixed module's
+        # errors do not ride along while batchmates are still regenerating.
+        batch["validation_errors"] = feedback if batch_pending else {}
         if batch_pending:
             pending.append(batch)
     return pending
@@ -245,7 +316,7 @@ def run_verilog_spec_generation(proj_dir, resume=False):
 
     # Clean files from the previous run, unless resuming an interrupted run.
     groups_path = os.path.join(work_dir, "groups.json")
-    resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(groups_path)
+    resume_setup = resume and os.path.exists(groups_path) and _groups_json_is_usable(groups_path, required_exts={"v", "sv", "svh"}, required_languages={"verilog", "systemverilog", "system_verilog"})
     if resume:
         if resume_setup:
             print("[Verilog] Resume: preserving existing fm_agent/ workspace "
@@ -253,9 +324,11 @@ def run_verilog_spec_generation(proj_dir, resume=False):
         elif os.path.exists(groups_path):
             print("[Verilog] Resume requested but groups.json is missing or incomplete; "
                   "rerunning setup in the existing fm_agent/ workspace.")
+            _reset_derived_state(work_dir)
         else:
             print("[Verilog] Resume requested but no groups.json found; "
                   "starting setup in the existing fm_agent/ workspace.")
+            _reset_derived_state(work_dir)
     else:
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
@@ -301,7 +374,7 @@ def run_verilog_spec_generation(proj_dir, resume=False):
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 1 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        if _groups_json_is_usable(groups_path):
+        if _groups_json_is_usable(groups_path, required_exts={"v", "sv", "svh"}, required_languages={"verilog", "systemverilog", "system_verilog"}):
             break
 
         if attempt < OPENCODE_MAX_RETRIES:
@@ -329,9 +402,12 @@ def run_verilog_spec_generation(proj_dir, resume=False):
             f"First few: {unresolved[:5]}"
         )
 
-    # Bridge groups.json -> the generic-pipeline schema, then force Verilog language.
+    # Bridge groups.json -> the generic-pipeline schema, then force Verilog
+    # language. Foreign source files the setup LLM mixed into HDL groups are
+    # dropped with a warning.
     _groups_to_phases(work_dir)
     _force_verilog_phase_languages(work_dir)
+    _filter_phase_source_files(work_dir, {"v", "sv", "svh"}, "Verilog")
 
     # Deduplicate source files across phases before aliasing subsystem context.
     _deduplicate_phases(work_dir)
@@ -357,19 +433,68 @@ def run_verilog_spec_generation(proj_dir, resume=False):
     _normalize_hw_domain_context(work_dir)
 
     print("[Verilog] Stage 2/4: Collecting file list...")
-    file_list = collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
+    collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
 
-    if not file_list:
+    phases_data = _load_json_file(os.path.join(work_dir, "phases.json"), "phases.json")
+    # Judge emptiness by the CURRENT phases' files: stale units from a
+    # previous run (preserved by --resume) must not smuggle the run past
+    # this guard by making the whole-tree walk non-empty.
+    # A reused manifest that lists source files which no longer exist
+    # describes a PAST tree: renamed/deleted files mean the new names are
+    # absent from phases/topdown/batches entirely, so surviving sources
+    # would spec fine while the rest silently never appear (partial-missing
+    # is invisible to the zero-units guard below). Discard the stale
+    # manifest and rerun setup against the tree as it exists now; completed
+    # specs for surviving sources are preserved and reused. The recursive
+    # call starts with no groups.json, so resume_setup is False there and
+    # this cannot loop.
+    if resume_setup and any(
+        not os.path.exists(os.path.join(proj_dir, src))
+        for phase in phases_data["phases"]
+        for module in phase["modules"]
+        for src in module["source_files"]
+    ):
+        print("[Verilog] Resume: the reused groups.json points at missing "
+              "source files; discarding it and rerunning setup.")
+        try:
+            os.remove(groups_path)
+        except OSError:
+            pass
+        _reset_derived_state(work_dir)
+        return run_verilog_spec_generation(proj_dir, resume=True)
+
+    if not any(
+        _get_phase_files(phases_data, phase["phase"], input_dir)
+        for phase in phases_data["phases"]
+    ):
         print("[Verilog] No modules found to spec. Skipping spec generation.")
         return
 
     # --- Stage 3: Generate topdown layers ---
     print("[Verilog] Stage 3/4: Generating topdown layers...")
-    phases_data = _load_json_file(os.path.join(work_dir, "phases.json"), "phases.json")
     generate_topdown_layers(work_dir)
 
     # --- Stage 4: Execute spec generation (per phase, per layer) ---
     print("[Verilog] Stage 4/4: Generating Verilog module specs...")
+    if os.environ.get("FM_AGENT_NO_VERIBLE"):
+        # The per-callee gate below is blocking specifically because
+        # verible's instantiation edges are precise (unlike Chisel's noisy
+        # edges, which is why THAT gate stays advisory). The regex fallback
+        # can only MISS edges (false negatives), never invent ones that
+        # don't exist — so a missed instantiation is invisible everywhere
+        # (topdown layers, the gate's expected-submodule set) and the gate
+        # cannot flag what it never learned exists. Downgrading the gate
+        # here would gain nothing (missed edges stay invisible to advisory
+        # mode too) while giving up enforcement on the edges the fallback
+        # DID find — so the gate stays blocking; this warning names the
+        # narrower guarantee instead.
+        print(
+            "[Verilog] WARNING: FM_AGENT_NO_VERIBLE=1 is set — instantiation "
+            "edges may be incomplete (the regex fallback misses one-line "
+            "modules and generate blocks). The submodule documentation gate "
+            "can only enforce the edges it detected; an undetected "
+            "submodule instantiation will not be flagged as missing."
+        )
     batch_md_src = os.path.join(md_dir, "workflow_spec_verilog.md")
     batch_md_dst = os.path.join(work_dir, "workflow_spec_verilog.md")
     shutil.copy2(batch_md_src, batch_md_dst)
@@ -394,21 +519,25 @@ def run_verilog_spec_generation(proj_dir, resume=False):
         layers_data = _load_json_file(layers_json_path, f"topdown layers for subsystem {phase_num}")
         total_layers = layers_data.get("total_layers", 1)
 
-        # Modules whose instantiation graph shows submodules must not satisfy
-        # readiness with a '(no submodules)' info stub. Keyed both by the
-        # proj_dir-relative path (batch functions) and the input_dir-relative
-        # path (layer_files readiness counts).
+        # Modules whose instantiation graph shows submodules must document an
+        # info entry for EVERY instantiated module name (FQN tail, compared
+        # exactly — numeric suffixes like fifo_64 are real Verilog names, not
+        # dedup aliases). Keyed both by the proj_dir-relative path (batch
+        # functions) and the input_dir-relative path (layer_files readiness
+        # counts).
         _with_subs = {
-            fn["file"]
+            fn["file"]: {c.split("::")[-1] for c in fn["all_callees"]}
             for layer in layers_data.get("layers", [])
             for fn in layer.get("functions", [])
             if fn.get("all_callees")
         }
-        expects_submodules = {
-            os.path.relpath(os.path.join(work_dir, f), proj_dir) for f in _with_subs
+        expected_submodules = {
+            os.path.relpath(os.path.join(work_dir, f), proj_dir): names
+            for f, names in _with_subs.items()
         }
-        expects_rel = {
-            os.path.relpath(os.path.join(work_dir, f), input_dir) for f in _with_subs
+        expected_rel = {
+            os.path.relpath(os.path.join(work_dir, f), input_dir): names
+            for f, names in _with_subs.items()
         }
 
         batch_dir = os.path.join(
@@ -447,14 +576,14 @@ def run_verilog_spec_generation(proj_dir, resume=False):
 
             layer_complete = False
             for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
-                pending_batches = _get_pending_batches_verilog(all_batches, proj_dir, expects_submodules=expects_submodules)
+                pending_batches = _get_pending_batches_verilog(all_batches, proj_dir, expected_submodules=expected_submodules)
                 if not pending_batches:
                     layer_complete = True
                     break
 
                 ready_before = sum(
                     1 for rel in layer_files
-                    if verilog_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
+                    if verilog_spec_ready(os.path.join(input_dir, rel), expected_submodules=expected_rel.get(rel, frozenset()))
                 )
 
                 def _start_batch(batch_info):
@@ -474,16 +603,22 @@ def run_verilog_spec_generation(proj_dir, resume=False):
                     fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
                                    "Do NOT modify any existing project files.")
                     checklist_note = ""
-                    failed = batch_info.get("validation_errors") or []
+                    failed = batch_info.get("validation_errors") or {}
                     if failed:
+                        issues = " | ".join(
+                            msg for key in sorted(failed) for msg in failed[key]
+                        )
                         checklist_note = (
-                            " WARNING: the following previously generated specs FAILED the "
-                            "quality checklist and were deleted — regenerate them and fix "
-                            "exactly these issues (re-read the Coverage Tags rules in "
+                            " WARNING: the following previously generated outputs FAILED "
+                            "validation and were deleted — regenerate them and fix "
+                            "exactly these issues (for *_spec.md checklist failures, "
+                            "re-read the Coverage Tags rules in "
                             "fm_agent/spec_prompts/system_prompt.md: every tag is a plain "
                             "<FG-NAME>/<FC-NAME>/<CK-NAME> on its own line, sibling tag names "
-                            "must be unique, and the <FG-API> group is mandatory): "
-                            + " | ".join(failed)
+                            "must be unique, and the <FG-API> group is mandatory; for "
+                            "*_info.md failures, write one '# Submodule: <name>' section "
+                            "for EVERY required entry listed, not only the missing ones): "
+                            + issues
                         )
                     if attempt == 1 and not resume:
                         prompt = (
@@ -568,9 +703,9 @@ def run_verilog_spec_generation(proj_dir, resume=False):
 
                 ready_after = sum(
                     1 for rel in layer_files
-                    if verilog_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
+                    if verilog_spec_ready(os.path.join(input_dir, rel), expected_submodules=expected_rel.get(rel, frozenset()))
                 )
-                if not _get_pending_batches_verilog(all_batches, proj_dir, expects_submodules=expects_submodules):
+                if not _get_pending_batches_verilog(all_batches, proj_dir, expected_submodules=expected_submodules):
                     layer_complete = True
                     break
 
@@ -604,10 +739,10 @@ def run_verilog_spec_generation(proj_dir, resume=False):
                     )
                     sys.exit(1)
 
-            if not layer_complete and _get_pending_batches_verilog(all_batches, proj_dir, expects_submodules=expects_submodules):
+            if not layer_complete and _get_pending_batches_verilog(all_batches, proj_dir, expected_submodules=expected_submodules):
                 ready_count = sum(
                     1 for rel in layer_files
-                    if verilog_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
+                    if verilog_spec_ready(os.path.join(input_dir, rel), expected_submodules=expected_rel.get(rel, frozenset()))
                 )
                 print(
                     f"[Verilog] ERROR: Stage 4 Subsystem {phase_num} Layer {layer_idx} "
@@ -616,4 +751,6 @@ def run_verilog_spec_generation(proj_dir, resume=False):
                 )
                 sys.exit(1)
 
+    _report_undocumented_submodules(work_dir, verilog_info_path, "Verilog",
+                                    strip_dedup_suffix=False)
     print("[Verilog] Done. Generated Verilog module spec/info files only; skipped reasoning and bug validation.")

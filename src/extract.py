@@ -581,6 +581,79 @@ def extract_functions_from_file(filepath, lang_key):
     return results
 
 
+def _remove_stale_hdl_outputs(out_file, new_source, lang_cfg):
+    """Delete standalone ``_spec.md``/``_info.md`` siblings when the extracted
+    unit's content is about to change.
+
+    HDL specs are written against the extracted unit exactly as the agent read
+    it — the unit is written only here and never modified in between — so the
+    on-disk unit IS the record of which source version a surviving spec
+    describes. When re-extraction (``--resume`` after a source edit, or a
+    rerun setup) produces different content, the sibling documents are
+    definitionally stale: keeping them makes the run report success with
+    specs for the OLD source. Identical content keeps them — that is the
+    resume contract. Scoped to the standalone HDL outputs; the software
+    pipeline embeds specs in the unit itself and owns no sibling Markdown.
+
+    Deliberate stop-loss line: staleness is judged by UNIT CONTENT ONLY,
+    never by domain context. Batch prompts also read the domain context
+    (engine overview / phase types), but regenerated context prose never
+    reproduces byte-identically, so invalidating specs on context changes
+    would delete EVERY completed spec on every rerun setup — gutting
+    --resume for the corrupt-manifest case. The unit is the normative
+    object a spec describes; a checklist-valid spec of an unchanged unit
+    stays valid under refreshed background prose.
+    """
+    if lang_cfg.get("body") not in ("chisel", "verilog"):
+        return
+    if not os.path.exists(out_file):
+        return
+    try:
+        with open(out_file, 'r', errors='replace') as f:
+            old_source = f.read()
+    except OSError:
+        return
+    if old_source == new_source:
+        return
+    stem = os.path.splitext(out_file)[0]
+    for sibling in (stem + "_spec.md", stem + "_info.md"):
+        if os.path.exists(sibling):
+            logging.warning(
+                "Extracted unit content changed for %s; stale standalone "
+                "spec/info removed: %s", out_file, sibling
+            )
+            try:
+                os.remove(sibling)
+            except OSError as exc:
+                logging.warning("Could not remove stale output %s: %s", sibling, exc)
+
+
+def load_units_manifest(work_dir):
+    """Return the source->units mapping written by the last extraction round.
+
+    ``extracted_units.json`` records what the CURRENT sources actually
+    produce; phase-file consumers prefer it over directory enumeration so
+    stale units left behind by previous rounds are never consumed. Returns
+    None when the manifest is absent or unreadable — callers then fall back
+    to enumeration (pre-manifest workspaces; every pipeline flow runs
+    extraction before consuming phase files, so in practice the manifest is
+    always fresh).
+    """
+    path = os.path.join(work_dir, "extracted_units.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except OSError:
+        return None
+    except json.JSONDecodeError:
+        logging.warning(
+            "extracted_units.json is corrupt; falling back to directory enumeration."
+        )
+        return None
+    units = data.get("units")
+    return units if isinstance(units, dict) else None
+
+
 def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     """Run function extraction on a project directory.
 
@@ -603,15 +676,25 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     source_files = []
     for phase in phases_data.get("phases", []):
         for module in phase.get("modules", []):
-            for sf in module.get("source_files", []):
+            srcs = module.get("source_files", [])
+            if isinstance(srcs, str):
+                srcs = [srcs]
+            for sf in srcs:
                 source_files.append(sf)
 
     output_base = os.path.join(work_dir, "extracted_functions")
     written = 0
     skipped = 0
     errors = []
+    # Single source of truth for "what did THIS round actually produce":
+    # consumers (_get_phase_files, topdown collection) read the manifest
+    # instead of enumerating directories, so stale files left by previous
+    # rounds (deleted/renamed modules, vanished sources, zero-unit results)
+    # are never consumed — and never need destructive cleanup.
+    manifest_units = {}
 
     for src_rel in source_files:
+        manifest_units.setdefault(src_rel, [])
         # Skip test files
         if _is_test_file(src_rel):
             if verbose:
@@ -651,6 +734,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
 
         for func_name, func_source in funcs:
             out_file = os.path.join(out_dir, f"{func_name}.{ext}")
+            manifest_units[src_rel].append(os.path.relpath(out_file, output_base))
 
             # Check if file already has spec marker
             if not force and os.path.exists(out_file):
@@ -665,11 +749,15 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
                 except OSError:
                     pass
 
+            _remove_stale_hdl_outputs(out_file, func_source, lang_cfg)
             with open(out_file, 'w') as f:
                 f.write(func_source)
             written += 1
             if verbose:
                 print(f"  WRITE: {os.path.relpath(out_file, proj_dir)}")
+
+    with open(os.path.join(work_dir, "extracted_units.json"), "w") as f:
+        json.dump({"units": {k: sorted(v) for k, v in manifest_units.items()}}, f, indent=2)
 
     print(f"Extraction complete: {written} written, {skipped} skipped.")
 
