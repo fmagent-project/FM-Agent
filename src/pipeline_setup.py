@@ -27,6 +27,10 @@ from .file_utils import (
 )
 from .opencode_trace import run_opencode_traced
 from .cli_backend import build_agent_command, is_cli_backend_enabled
+from .domain_knowledge import (
+    format_domain_knowledge_bullets,
+    list_staged_domain_knowledge_relpaths,
+)
 
 
 def _merge_descriptions(target_desc, source_desc):
@@ -114,8 +118,10 @@ def _build_domain_context_regen_prompt(phase_source_files, phase_cleanup=None):
         "Rules:\n"
         "- Base each file on the types in that phase's source files; do not "
         "invent new types.\n"
-        "- Do NOT modify any other files. Only edit "
-        "files under fm_agent/spec_prompts/domain_context/.\n"
+        "- Do NOT modify any other files. Only edit engine_overview.txt and "
+        "phase_NN_types.txt files directly under "
+        "fm_agent/spec_prompts/domain_context/. Do NOT edit files under "
+        "fm_agent/spec_prompts/domain_context/user_knowledge/.\n"
         f"{overview_rule}"
     )
 
@@ -213,7 +219,10 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
                 work_dir=work_dir,
                 command=command,
                 stage="sync_domain_context",
-                input_files=["fm_agent/phases.json"],
+                input_files=[
+                    "fm_agent/phases.json",
+                    *list_staged_domain_knowledge_relpaths(work_dir),
+                ],
                 output_files=[
                     "fm_agent/spec_prompts/domain_context/engine_overview.txt",
                 ],
@@ -782,6 +791,19 @@ def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir):
            f"For example, a file at `{proj_dir_abs}/path/to/file.ext` must be recorded as "
            f"`path/to/file.ext`, NOT as `{proj_dir_name}/path/to/file.ext`.")
     md = md.replace(old, new, 1)
+    user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
+    if user_knowledge_paths:
+        md += (
+            "\n---\n\n"
+            "## User-Provided Domain Knowledge\n\n"
+            "The user supplied extra Markdown files with domain knowledge for this run. "
+            "Read these files before writing `phases.json` and the generated domain "
+            "context files. Use them only as contextual knowledge about intended "
+            "behavior, terminology, business rules, data encodings, and invariants; "
+            "do NOT include these Markdown files as project source files in "
+            "`phases.json`, and do NOT edit or summarize them in place.\n\n"
+            f"{format_domain_knowledge_bullets(user_knowledge_paths)}\n"
+        )
     with open(workflow_dst, "w") as _f:
         _f.write(md)
 
@@ -863,7 +885,10 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                 work_dir=work_dir,
                 command=command,
                 stage="setup_context",
-                input_files=["fm_agent/workflow_setup_extract.md"],
+                input_files=[
+                    "fm_agent/workflow_setup_extract.md",
+                    *list_staged_domain_knowledge_relpaths(work_dir),
+                ],
                 output_files=[
                     "fm_agent/phases.json",
                     "fm_agent/spec_prompts/domain_context/engine_overview.txt",

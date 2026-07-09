@@ -9,10 +9,25 @@ from typing import Dict, List, Optional, Tuple
 try:
     # When imported as part of the src package (e.g. incremental_reasoner).
     from .file_utils import is_file_ready
+    from .domain_knowledge import list_staged_domain_knowledge_relpaths
 except ImportError:
     # When run standalone after being copied into fm_agent/spec_prompts/,
     # where file_utils.py sits beside this script.
     from file_utils import is_file_ready
+
+    def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
+        knowledge_dir = Path(work_dir) / "spec_prompts" / "domain_context" / "user_knowledge"
+        if not knowledge_dir.is_dir():
+            return []
+        relpaths = []
+        for path in knowledge_dir.rglob("*"):
+            if not path.is_file() or path.name == "manifest.json":
+                continue
+            if path.suffix.lower() not in {".md", ".markdown"}:
+                continue
+            rel_to_work = path.relative_to(work_dir).as_posix()
+            relpaths.append(f"{prefix.rstrip('/')}/{rel_to_work}")
+        return sorted(relpaths)
 
 
 COMMENT_PREFIX_BY_LANG = {
@@ -199,6 +214,14 @@ def build_prompt(
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/engine_overview.txt")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/phase_{phase:02d}_types.txt")
+    user_knowledge_paths = list_staged_domain_knowledge_relpaths(
+        work_dir,
+        prefix=fm_agent_prefix.rstrip("/"),
+    )
+    if user_knowledge_paths:
+        lines.append("Read these user-provided domain knowledge Markdown files:")
+        for path in user_knowledge_paths:
+            lines.append(f"- {path}")
     lines.append("")
     lines.append("## KEY RULES")
     lines.append("- Describe WHAT the function guarantees, NOT HOW it implements it")

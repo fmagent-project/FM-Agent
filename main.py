@@ -1,4 +1,5 @@
 from config import (
+    MAX_WORKERS,
     OPENCODE_MAX_RETRIES,
     OPENCODE_SPEC_MODEL,
     OPENCODE_MODEL_PROVIDER,
@@ -19,9 +20,8 @@ from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.opencode_trace import (
-    finish_opencode_trace,
     function_id_from_extracted_path,
-    start_opencode_traced,
+    run_opencode_traced,
 )
 from src.cli_backend import build_agent_command, is_cli_backend_enabled
 from src.incremental_reasoner import run_incremental_pipeline
@@ -35,6 +35,11 @@ from src.languages.codegraph import try_codegraph_init
 from src.pipeline_setup import (
     _run_setup_extract,
 )
+from src.domain_knowledge import (
+    collect_domain_knowledge_paths,
+    list_staged_domain_knowledge_relpaths,
+    stage_domain_knowledge_files,
+)
 import os
 import sys
 import argparse
@@ -44,6 +49,7 @@ import shutil
 import subprocess
 import logging
 import contextlib
+import concurrent.futures
 
 
 def _clean_previous_run(work_dir):
@@ -101,11 +107,93 @@ def _normalize_submodules(proj_dir, submodules):
     return collapsed
 
 
-def run_pipeline(proj_dir, resume=False, required_source_files=None, submodules=None):
+def _run_spec_generation_batch(
+    proj_dir,
+    work_dir,
+    attempt,
+    phase_num,
+    layer_idx,
+    batch_rel_dir,
+    batch_info,
+):
+    # Run one batch end-to-end so the executor can refill slots as soon as a
+    # batch finishes, instead of waiting for a whole chunk barrier.
+    batch_file = batch_info["file"]
+    batch_prompt_rel = os.path.join(batch_rel_dir, batch_file)
+    function_files = batch_info.get("functions", [])
+    function_ids = [
+        function_id_from_extracted_path(func_rel)
+        for func_rel in function_files
+    ]
+    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
+                    "Do NOT modify any existing project files.")
+    if attempt == 1:
+        prompt = (
+            f"Process the batch prompt file at {batch_prompt_rel}. "
+            f"Read it and fm_agent/spec_prompts/system_prompt.md, "
+            f"generate behavioral specs for each function listed, "
+            f"and write the complete specced files directly. {fm_reminder}"
+        )
+    else:
+        prompt = (
+            f"Continue processing the batch prompt file at {batch_prompt_rel}. "
+            f"Some functions may already have specs from a previous attempt. "
+            f"Check each function file — only generate specs for those "
+            f"that don't have [SPEC] blocks yet. "
+            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
+        )
+    prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
+    if is_cli_backend_enabled():
+        command = build_agent_command(
+            model=OPENCODE_SPEC_MODEL,
+            prompt=prompt,
+            cwd=proj_dir,
+            files=[prompt_file],
+        )
+    else:
+        command = [
+            "opencode", "run",
+            "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
+            "--file", prompt_file,
+            "--", prompt,
+        ]
+    try:
+        result = run_opencode_traced(
+            proj_dir=proj_dir,
+            work_dir=work_dir,
+            command=command,
+            stage="spec_generation",
+            function_ids=function_ids,
+            input_files=[
+                "fm_agent/workflow_spec_step4_batch.md",
+                batch_prompt_rel,
+                "fm_agent/spec_prompts/system_prompt.md",
+                *list_staged_domain_knowledge_relpaths(work_dir),
+            ],
+            output_files=function_files,
+            summary=f"OpenCode spec generation for {batch_file}",
+            metadata={
+                "attempt": attempt,
+                "phase": phase_num,
+                "layer": layer_idx,
+                "batch_file": batch_file,
+            },
+        )
+        return result.returncode
+    except subprocess.CalledProcessError as exc:
+        return exc.returncode
+
+
+def run_pipeline(
+    proj_dir,
+    resume=False,
+    required_source_files=None,
+    domain_knowledge_files=None,
+    submodules=None,
+):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
-
     if not _has_source_code(proj_dir, submodules):
         scope = f" selected submodule(s): {', '.join(submodules)}" if submodules else f" {proj_dir}"
         print(f"[Pipeline] ERROR: No source code files found in{scope}. "
@@ -129,6 +217,14 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None, submodules=
     else:
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
+    domain_knowledge_relpaths = stage_domain_knowledge_files(
+        proj_dir, work_dir, domain_knowledge_files
+    )
+    if domain_knowledge_relpaths:
+        print(
+            "[Pipeline] User domain knowledge: "
+            f"{len(domain_knowledge_relpaths)} markdown file(s)."
+        )
 
     # Copy workflow_setup_extract.md to proj_dir and run opencode against it.
     # _run_setup_extract also force-lists any required_source_files the agent
@@ -278,92 +374,53 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None, submodules=
                         layer_processed.update(newly_processed)
                     break
 
-                # Spawn concurrent opencode processes (one per pending batch)
-                spec_procs = []
-                spec_trace_records = []
-                for batch_info in pending_batches:
-                    batch_file = batch_info["file"]
-                    batch_prompt_rel = os.path.join(batch_rel_dir, batch_file)
-                    batch_prompt_abs = os.path.join(proj_dir, batch_prompt_rel)
-                    # On resume a batch whose functions are all already specced
-                    # has no prompt file written and nothing for the agent to do
-                    # — skip it instead of sending an empty batch.
-                    if batch_info.get("num_pending", 1) == 0 or not os.path.exists(batch_prompt_abs):
-                        logging.info(f"Skipping batch with no functions to spec: {batch_file}")
-                        continue
-                    function_files = batch_info.get("functions", [])
-                    function_ids = [
-                        function_id_from_extracted_path(func_rel)
-                        for func_rel in function_files
-                    ]
-                    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
-                                    "Do NOT modify any existing project files.")
-                    if attempt == 1:
-                        prompt = (
-                            f"Process the batch prompt file at {batch_prompt_rel}. "
-                            f"Read it and fm_agent/spec_prompts/system_prompt.md, "
-                            f"generate behavioral specs for each function listed, "
-                            f"and write the complete specced files directly. {fm_reminder}"
+                # Submit all pending spec batches through a bounded executor so
+                # finished slots can immediately pick up the next batch.
+                spec_futures = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                    for batch_info in pending_batches:
+                        batch_file = batch_info["file"]
+                        batch_prompt_rel = os.path.join(batch_rel_dir, batch_file)
+                        batch_prompt_abs = os.path.join(proj_dir, batch_prompt_rel)
+                        # On resume a batch whose functions are all already specced
+                        # has no prompt file written and nothing for the agent to do
+                        # — skip it instead of sending an empty batch.
+                        if batch_info.get("num_pending", 1) == 0 or not os.path.exists(batch_prompt_abs):
+                            logging.info(f"Skipping batch with no functions to spec: {batch_file}")
+                            continue
+                        spec_futures.append(
+                            executor.submit(
+                                _run_spec_generation_batch,
+                                proj_dir,
+                                work_dir,
+                                attempt,
+                                phase_num,
+                                layer_idx,
+                                batch_rel_dir,
+                                batch_info,
+                            )
                         )
-                    else:
-                        prompt = (
-                            f"Continue processing the batch prompt file at {batch_prompt_rel}. "
-                            f"Some functions may already have specs from a previous attempt. "
-                            f"Check each function file — only generate specs for those "
-                            f"that don't have [SPEC] blocks yet. "
-                            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
-                        )
-                    prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
-                    if is_cli_backend_enabled():
-                        command = build_agent_command(
-                            model=OPENCODE_SPEC_MODEL,
-                            prompt=prompt,
-                            cwd=proj_dir,
-                            files=[prompt_file],
-                        )
-                    else:
-                        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
-                                   "--file", prompt_file,
-                                   "--", prompt]
-                    trace_record = start_opencode_traced(
-                        proj_dir=proj_dir,
-                        work_dir=work_dir,
-                        command=command,
-                        stage="spec_generation",
-                        function_ids=function_ids,
-                        input_files=[
-                            "fm_agent/workflow_spec_step4_batch.md",
-                            batch_prompt_rel,
-                            "fm_agent/spec_prompts/system_prompt.md",
-                        ],
-                        output_files=function_files,
-                        summary=f"OpenCode spec generation for {batch_file}",
-                        metadata={
-                            "attempt": attempt,
-                            "phase": phase_num,
-                            "layer": layer_idx,
-                            "batch_file": batch_file,
-                        },
+
+                    logging.info(
+                        f"Phase {phase_num} Layer {layer_idx} attempt {attempt}: "
+                        f"submitted {len(spec_futures)} spec-generation batch tasks "
+                        f"(max_workers={MAX_WORKERS}, total_pending_batches={len(pending_batches)})"
                     )
-                    spec_trace_records.append(trace_record)
-                    spec_procs.append(trace_record.proc)
+                    if spec_futures:
+                        newly_processed = streaming_reasoner(
+                            input_dir, output_dir, file_list=layer_files,
+                            proj_dir=proj_dir, work_dir=work_dir,
+                            spec_procs=spec_futures,
+                            already_processed=all_processed | layer_processed,
+                            resume=resume,
+                        )
+                        layer_processed.update(newly_processed)
 
-                logging.info(
-                    f"Phase {phase_num} Layer {layer_idx} attempt {attempt}: "
-                    f"spawned {len(spec_procs)} opencode processes for {len(pending_batches)} batches"
-                )
-
-                newly_processed = streaming_reasoner(input_dir, output_dir, file_list=layer_files,
-                                   proj_dir=proj_dir, work_dir=work_dir,
-                                   spec_procs=spec_procs,
-                                   already_processed=all_processed | layer_processed,
-                                   resume=resume)
-                layer_processed.update(newly_processed)
-
-                for proc in spec_procs:
-                    proc.wait()
-                for trace_record in spec_trace_records:
-                    finish_opencode_trace(trace_record)
+                    for future in spec_futures:
+                        try:
+                            future.result()
+                        except Exception as exc:
+                            logging.error(f"Spec generation task failed unexpectedly: {exc}")
 
                 # Check if any files in this layer received specs
                 specs_generated = sum(
@@ -420,8 +477,9 @@ def run_pipeline(proj_dir, resume=False, required_source_files=None, submodules=
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--isolate] [--submodule PATH [PATH ...]] "
-              "[--entry-func PATH] [--end-func PATH ...]",
+              "[--domain-knowledge FILE ...] [--isolate] "
+              "[--submodule PATH [PATH ...]] [--entry-func PATH] "
+              "[--end-func PATH ...]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -443,6 +501,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the pipeline against an isolated git worktree snapshot of "
         "the project instead of the project directory itself.",
+    )
+    parser.add_argument(
+        "--domain-knowledge",
+        "--knowledge",
+        metavar="FILE",
+        action="append",
+        nargs="+",
+        default=[],
+        help="additional Markdown domain-knowledge file(s) to copy into "
+        "fm_agent/spec_prompts/domain_context/user_knowledge/ and provide to "
+        "setup, spec generation, and validation agents. May be repeated. "
+        "FM_AGENT_DOMAIN_KNOWLEDGE can also provide os.pathsep-separated files.",
     )
     parser.add_argument(
         "--submodule",
@@ -474,8 +544,23 @@ if __name__ == "__main__":
     except ValueError as exc:
         parser.error(str(exc))
 
+    try:
+        domain_knowledge_files = collect_domain_knowledge_paths(
+            args.domain_knowledge,
+            base_dir=proj_dir,
+            fallback_base_dir=os.getcwd(),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
     if submodules and args.entry_func is not None:
         parser.error("--submodule cannot be combined with --entry-func.")
+
+    # ---- pre-flight environment check (shared by all pipeline modes) ----
+    import config
+    from src.env_check import run as env_check_run
+    if not env_check_run(proj_dir, config):
+        sys.exit(0)
 
     start_time = time.time()
 
@@ -488,6 +573,7 @@ if __name__ == "__main__":
             entry_func=args.entry_func,
             end_funcs=args.end_func,
             resume=resume,
+            domain_knowledge_files=domain_knowledge_files,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -539,10 +625,19 @@ if __name__ == "__main__":
             # version.log from a previous run, fall back to the full pipeline.
             if args.incremental and old_commit:
                 run_incremental_pipeline(
-                    run_dir, intent_path, old_commit, submodules=submodules
+                    run_dir,
+                    intent_path,
+                    old_commit,
+                    domain_knowledge_files=domain_knowledge_files,
+                    submodules=submodules,
                 )
             else:
-                run_pipeline(run_dir, resume=resume, submodules=submodules)
+                run_pipeline(
+                    run_dir,
+                    resume=resume,
+                    domain_knowledge_files=domain_knowledge_files,
+                    submodules=submodules,
+                )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
             # copied back to the real project below. Only recorded on success so a

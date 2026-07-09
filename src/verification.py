@@ -5,6 +5,11 @@ from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
 from .file_utils import is_file_ready
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
 from .cli_backend import build_agent_command, is_cli_backend_enabled
+from .domain_knowledge import (
+    format_domain_knowledge_bullets,
+    list_staged_domain_knowledge_relpaths,
+    load_staged_domain_knowledge_text,
+)
 import os
 import re
 import json
@@ -17,6 +22,7 @@ EXT_TO_LANG = {
     ".rs": "Rust", ".c": "C", ".h": "C",
     ".cpp": "C++", ".cc": "C++", ".cxx": "C++", ".hpp": "C++",
     ".py": "Python", ".cu": "CUDA",
+    ".erl": "Erlang",
     ".java": "Java", ".go": "Go",
     ".cs": "C#",
     ".kt": "Kotlin", ".kts": "Kotlin",
@@ -31,6 +37,28 @@ EXT_TO_LANG = {
     ".ets": "ArkTS",
     ".cuh": "CUDA",
 }
+
+
+def _spec_task_done(handle):
+    # spec_procs may be subprocess.Popen handles or executor futures.
+    if hasattr(handle, "poll"):
+        return handle.poll() is not None
+    if hasattr(handle, "done"):
+        return handle.done()
+    return True
+
+
+def _spec_task_exit_code(handle):
+    # Normalize exit status reporting across Popen and Future-backed tasks.
+    if hasattr(handle, "returncode"):
+        return handle.returncode
+    if hasattr(handle, "done") and handle.done():
+        try:
+            result = handle.result()
+            return result if isinstance(result, int) else 0
+        except Exception:
+            return 1
+    return None
 
 
 def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, work_dir=None, poll_interval=2, spec_procs=None, already_processed=None, resume=False):
@@ -176,10 +204,10 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
 
                 # Detect if spec generation subprocesses exited before all files are ready
                 _all_procs = spec_procs if spec_procs else None
-                if _all_procs is not None and all(p.poll() is not None for p in _all_procs):
+                if _all_procs is not None and all(_spec_task_done(p) for p in _all_procs):
                     unready = (expected_files or set()) - processed
                     if unready and not reasoning_futures and not validation_futures:
-                        exit_codes = [p.returncode for p in _all_procs]
+                        exit_codes = [_spec_task_exit_code(p) for p in _all_procs]
                         if not processed:
                             # No function got a spec at all – this is an error
                             logging.warning(
@@ -252,6 +280,9 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 "function_id": os.path.splitext(rel_function)[0].replace(os.sep, "::"),
                 "function_file": os.path.join("extracted_functions", rel_function).replace(os.sep, "/"),
             }
+        domain_knowledge = load_staged_domain_knowledge_text(work_dir) if work_dir else ""
+        if domain_knowledge:
+            knowledge = f"{knowledge}\n\n{domain_knowledge}" if knowledge else domain_knowledge
         result = reasoner(func, spec, knowledge, language, trace_context=trace_context)
 
         if "passes the verification" in result:
@@ -318,17 +349,32 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     with open(base_md_path, "r") as f:
         base_content = f.read()
 
+    user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
+    if user_knowledge_paths:
+        user_knowledge_section = (
+            "## User-Provided Domain Knowledge\n\n"
+            "Read these Markdown files as additional context for intended behavior, "
+            "terminology, data encodings, and invariants before validating the "
+            "candidate bug:\n\n"
+            f"{format_domain_knowledge_bullets(user_knowledge_paths)}\n\n---\n\n"
+        )
+    else:
+        user_knowledge_section = ""
+
     # Generate a per-file prompt with target file and bug ID header
     prompt_content = (
         "# Bug Validator\n\n"
         f"**Target result file:** `{result_json_rel}`\n"
         f"**Bug ID:** `{bug_id}`\n\n---\n\n"
+        + user_knowledge_section
         + base_content
     )
 
     os.makedirs(os.path.join(work_dir, "bug_validation"), exist_ok=True)
 
-    prompt_filename = os.path.join("fm_agent", f"bug_validator_{bug_id}.md")
+    prompt_filename = os.path.join(
+        "fm_agent", "bug_validation", f"bug_validator_{bug_id}.md"
+    )
     prompt_path = os.path.join(proj_dir, prompt_filename)
 
     tmp_path = prompt_path + ".tmp"
@@ -370,7 +416,11 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
                     command=command,
                     stage="bug_validation",
                     function_ids=[function_id],
-                    input_files=[prompt_filename, result_json_rel],
+                    input_files=[
+                        prompt_filename,
+                        result_json_rel,
+                        *user_knowledge_paths,
+                    ],
                     output_files=[
                         os.path.join("fm_agent", "bug_validation", f"{bug_id}.md"),
                         result_relpath,

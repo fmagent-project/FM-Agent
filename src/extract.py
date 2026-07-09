@@ -110,6 +110,19 @@ LANG_CONFIG = {
         },
         "body": "brace",
     },
+    "erlang": {
+        "comment_prefix": "%",
+        "spec_marker": "% [SPEC]",
+        "skip_prefixes": ("%", "-module", "-export", "-import", "-include"),
+        "skip_keywords_line": ("-record", "-type", "-spec", "-callback"),
+        "keywords": {
+            "after", "and", "andalso", "band", "begin", "bnot", "bor", "bsl",
+            "bsr", "bxor", "case", "catch", "cond", "div", "end", "fun", "if",
+            "let", "maybe", "not", "of", "or", "orelse", "receive", "rem",
+            "try", "when", "xor",
+        },
+        "body": "external",
+    },
     "cuda": {
         "comment_prefix": "//",
         "spec_marker": "// [SPEC]",
@@ -145,6 +158,7 @@ LANG_CONFIG = {
 EXT_TO_LANG = {
     "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "c": "c", "h": "cpp", "hpp": "cpp",
     "py": "python",
+    "erl": "erlang",
     "go": "go",
     "rs": "rust",
     "java": "java",
@@ -572,8 +586,12 @@ def extract_functions_from_file(filepath, lang_key):
 
     if lang_cfg["body"] == "brace":
         raw_funcs = _extract_functions_brace(lines, lang_key, lang_cfg)
-    else:
+    elif lang_cfg["body"] == "indent":
         raw_funcs = _extract_functions_indent(lines, lang_cfg)
+    else:
+        # Semantic-only languages (currently Erlang) are extracted by their
+        # registered backend and have no reliable file-local fallback.
+        return []
 
     # Deduplicate names
     name_counts = {}
@@ -651,6 +669,10 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         phases_data = json.load(f)
 
     registry_funcs, registry_langs = batch_extract_all(proj_dir)
+    registry_funcs = {
+        os.path.normcase(os.path.normpath(path)): funcs
+        for path, funcs in registry_funcs.items()
+    }
 
     # Build source file list from phases.json
     source_files = []
@@ -693,8 +715,9 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             dir_name = src_base
         out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
 
-        if src_path in registry_funcs:
-            funcs = registry_funcs[src_path]
+        registry_key = os.path.normcase(os.path.normpath(src_path))
+        if registry_key in registry_funcs:
+            funcs = registry_funcs[registry_key]
         else:
             funcs = extract_functions_from_file(src_path, lang_key)
         if not funcs:
