@@ -507,13 +507,26 @@ def _signature_continues(line, paren_depth=0):
     return False
 
 
-def _next_code_line_starts_with(lines, start_idx, words):
-    """Return True if the next nonblank/comment line starts with one of words."""
+def _next_code_line_starts_with(lines, start_idx, tokens):
+    """Return True if the next nonblank line starts with one of tokens.
+
+    ``lines`` must already be comment-masked (:func:`strip_chisel_comments`);
+    both callers guarantee it, so comment-only lines arrive blank and are
+    skipped, and comment content can neither hide code sharing its line nor
+    fake a match. Blank lines are skipped, which per SLS 1.2 is slightly
+    over-permissive for the ``(`` token (a completely blank line yields two
+    ``nl`` tokens where the parameter-clause grammar allows one) --
+    accepted, since over-inclusion is the safe direction here and the case
+    only arises for top-level expressions in ``.sc`` scripts.
+    """
     for i in range(start_idx + 1, len(lines)):
-        stripped = _strip_trailing_comment(lines[i]).strip()
-        if not stripped or stripped.startswith(('//', '/*', '*')):
+        stripped = lines[i].strip()
+        if not stripped:
             continue
-        return any(re.match(r'^' + word + r'\b', stripped) for word in words)
+        return any(
+            re.match(r'^' + re.escape(token) + (r'\b' if token[-1].isalnum() else ''), stripped)
+            for token in tokens
+        )
     return False
 
 
@@ -526,25 +539,42 @@ def _package_block_line(line):
     )
 
 
-def _unit_end(lines, start_idx):
+def _unit_end(lines, start_idx, masked_lines=None):
     """Return the last line index of the declaration starting at ``start_idx``.
 
     If the declaration has a ``{ ... }`` body, returns the line of the matching
     closing brace.  Otherwise (a braceless ``def``/``class``, e.g.
     ``def double(x: UInt) = x + 1.U`` or ``abstract class Foo``) returns the last
     line of the (possibly multi-line) signature/expression.
+
+    The walk operates on the comment-masked counterpart of ``lines`` (the
+    same nested-comment/triple-string-aware :func:`strip_chisel_comments`
+    the extractor uses everywhere else), so a multi-line or nested block
+    comment anywhere in the signature -- including one whose ``*/`` closing
+    line carries a curried parameter clause -- cannot derail the per-line
+    state. Callers iterating over one file's declarations must mask once
+    and pass ``masked_lines`` -- re-masking per declaration is O(n^2) and
+    turns a generated ISA-definition-style file (thousands of top-level
+    declarations) from milliseconds into tens of seconds. Computed on
+    demand when omitted (single-declaration texts, tests).
     """
-    n = len(lines)
+    if masked_lines is None:
+        masked_lines = strip_chisel_comments("\n".join(lines)).splitlines()
+    n = len(masked_lines)
     i = start_idx
     paren_depth = 0
     while i < n:
-        brace_col, paren_depth = _body_brace_and_paren(lines[i], paren_depth)
+        brace_col, paren_depth = _body_brace_and_paren(masked_lines[i], paren_depth)
         if brace_col >= 0:
-            return _find_block_end(lines, i)
-        if _signature_continues(lines[i], paren_depth):
+            return _find_block_end(masked_lines, i)
+        if _signature_continues(masked_lines[i], paren_depth):
             i += 1
             continue
-        if _next_code_line_starts_with(lines, i, ("extends", "with")):
+        # `extends`/`with` may open the next line; so may a further curried
+        # parameter clause -- Scala 2 allows a single newline before each
+        # clause (``ClassParamClause ::= [nl] '(' ...``), the standard
+        # rocket-chip-ecosystem shape for trailing ``(implicit p: ...)``.
+        if _next_code_line_starts_with(masked_lines, i, ("extends", "with", "(")):
             i += 1
             continue
         return i
@@ -569,6 +599,9 @@ def extract_chisel_functions(lines, lang_key, lang_cfg):
     single extracted module re-parses to exactly one unit.
     """
     depth_start, clean_start = _scan_line_states(lines)
+    # Masked once for the whole file and shared by every _unit_end call --
+    # per-declaration re-masking is O(n^2) over the file (see _unit_end).
+    masked_lines = strip_chisel_comments("\n".join(lines)).splitlines()
     units = []
     i = 0
     n = len(lines)
@@ -604,7 +637,7 @@ def extract_chisel_functions(lines, lang_key, lang_cfg):
             continue
 
         name = m.group('name')
-        end = _unit_end(lines, i)
+        end = _unit_end(lines, i, masked_lines)
         units.append((name, i, end))
         i = end + 1
 
