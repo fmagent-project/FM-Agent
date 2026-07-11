@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+import bisect
 import shutil
 import logging
 
@@ -609,6 +610,62 @@ def extract_functions_from_file(filepath, lang_key):
     return results
 
 
+# Languages whose functions/methods can carry `@`-prefixed decorators or
+# annotations that sit ABOVE the signature line. Neither codegraph nor the regex
+# extractors include these in the function span (both start at the `def`/
+# signature line), so security-relevant guards expressed as decorators (e.g.
+# FastAPI `@router.delete(..., dependencies=[Depends(requires_access_...)])` or
+# Flask/Java `@has_access`/`@PreAuthorize`) are invisible to per-function
+# analysis. _extend_start_over_decorators() reattaches them.
+_DECORATOR_LANGS = {"python", "java", "typescript", "javascript", "arkts"}
+
+
+def _extend_start_over_decorators(norm_lines, start, lower_bound):
+    """Return a new start index that includes decorator/annotation lines
+    immediately preceding the function at ``start``.
+
+    Walks upward from ``start - 1`` down to (but not past) ``lower_bound``,
+    which is the end index of the nearest preceding function span (so we never
+    swallow a sibling's body). The walk is BRACKET-AWARE so a multi-line
+    decorator such as::
+
+        @router.delete(
+            "/task/{task_id}",
+            dependencies=[Depends(requires_access_dag(...))],
+        )
+        def delete_task_instance(...):
+
+    is captured whole: reading bottom-up, the closing ``)`` opens a bracket
+    balance that only returns to zero at the ``@router.delete(`` line, which is
+    where the decorator (and thus the new start) begins. Multiple stacked
+    decorators are absorbed one after another. A blank line at bracket depth 0
+    (decorators must be adjacent to the def in valid syntax) or any non-decorator
+    line ends the walk.
+    """
+    new_start = start
+    depth = 0
+    j = start - 1
+    while j >= lower_bound:
+        raw = norm_lines[j]
+        s = raw.strip()
+        if depth == 0 and s == "":
+            break  # blank gap: decorators must be adjacent to the signature
+        # Bottom-up bracket balance: closers add, openers subtract.
+        depth += raw.count(")") + raw.count("]") + raw.count("}")
+        depth -= raw.count("(") + raw.count("[") + raw.count("{")
+        if depth < 0:
+            depth = 0  # defensive: unbalanced line, treat as settled
+        if depth == 0:
+            if s.startswith("@"):
+                new_start = j          # a decorator (possibly multi-line) starts here
+                j -= 1
+                continue
+            break                       # settled on a non-decorator line: stop
+        # depth > 0: still inside a multi-line decorator's brackets; keep rising
+        j -= 1
+    return new_start
+
+
 def _function_spans(filepath, lang_key, proj_dir=None):
     """Return ``(spans, raw_lines)`` for a source file.
 
@@ -623,6 +680,12 @@ def _function_spans(filepath, lang_key, proj_dir=None):
     back to the regex extractor (_extract_functions_brace / _indent). Both
     backends yield the same (name, start_idx, end_idx) shape, so the dedup
     naming below is identical regardless of which one is used.
+
+    For decorator-bearing languages the span start is extended upward to include
+    any decorators/annotations attached to the function (see
+    _extend_start_over_decorators): both backends start at the signature line, so
+    without this fix decorator-expressed security guards are dropped from the
+    extracted function.
     """
     lang_cfg = LANG_CONFIG[lang_key]
     with open(filepath, "r", errors="replace") as f:
@@ -639,6 +702,21 @@ def _function_spans(filepath, lang_key, proj_dir=None):
             raw_funcs = _extract_functions_brace(norm_lines, lang_key, lang_cfg)
         else:
             raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
+
+    # Extend each span upward over attached decorators/annotations, bounded by
+    # the nearest preceding span end so we never absorb a sibling function.
+    if lang_key in _DECORATOR_LANGS and raw_funcs:
+        prior_ends = sorted(end for _, _, end in raw_funcs)
+        extended = []
+        for name, start, end in raw_funcs:
+            # Nearest span end strictly above this start = extension lower bound
+            # (exclusive of that line); default -1 so a top-of-file function can
+            # reach line 0. bisect keeps this O(log n) per function.
+            idx = bisect.bisect_left(prior_ends, start) - 1
+            lb = (prior_ends[idx] + 1) if idx >= 0 and prior_ends[idx] < start else 0
+            new_start = _extend_start_over_decorators(norm_lines, start, lb)
+            extended.append((name, new_start, end))
+        raw_funcs = extended
 
     name_counts = {}
     spans = []
