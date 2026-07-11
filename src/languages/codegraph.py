@@ -11,33 +11,34 @@ REGISTRY in src/languages/registry.py. No other files need to change.
 import hashlib
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
 from collections import defaultdict
 
 
-_SAFE_REPLACE = str.maketrans({"/": "_"})
-_UNSAFE = set("/")
+_UNSAFE_PATH_RE = re.compile(r'[\\/*?:"<>|]')
 
 
 def canonicalize(func_name):
     """Return a filesystem-safe, FQN-safe version of a function name.
 
-    C++ operator overloads like ``operator/`` contain ``/`` which breaks both
-    file paths and ``::``-separated FQNs.  This function sanitises those
-    characters so the name is safe everywhere it appears: extracted-function
-    file names, FQNs, call-edge keys, and scope.py rankings.
+    C++ operator overloads like ``operator/``, ``operator<<``, ``operator|``
+    contain characters that are illegal in filenames on one or more platforms
+    (``/`` on Unix, ``< > : " | ? *`` on Windows).  This function replaces every
+    unsafe character with ``_`` so the name is safe everywhere it appears:
+    extracted-function file names, FQNs, call-edge keys, and scope.py rankings.
+
+    The replacement is idempotent (``_`` is not in the unsafe set), so
+    calling this function more than once on the same name is harmless.
 
     Every entry point that introduces a function name into the system MUST call
     this function before using the name.
     """
     if not func_name:
         return func_name
-    for ch in _UNSAFE:
-        if ch in func_name:
-            return func_name.translate(_SAFE_REPLACE)
-    return func_name
+    return _UNSAFE_PATH_RE.sub("_", func_name)
 
 # Maps FM-Agent lang_key → the language string stored in codegraph's SQLite
 # nodes.language column. Only includes languages that codegraph actually supports.
