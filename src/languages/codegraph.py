@@ -10,6 +10,7 @@ REGISTRY in src/languages/registry.py. No other files need to change.
 
 import logging
 import os
+import re
 import sqlite3
 import subprocess
 from collections import defaultdict
@@ -48,6 +49,55 @@ _CONSTRUCTOR_FILTER = {
     "java":       "ctor.name = cls.name",
     "cpp":        "ctor.name = cls.name",
 }
+
+def _bare_function_name(name: str) -> str:
+    """Extract the bare function identifier from a potentially decorated name.
+
+    Tree-sitter sometimes stores a full function signature in the name column
+    for macro-generated C/C++ declarations (e.g. ``(*func)(type *param)``
+    instead of ``func``).  Strips decorations so the result can be used as a
+    filename stem and call-edge key.
+
+    Handled patterns (language-agnostic — safe for all codegraph languages):
+    - Simple identifier: ``"my_func"`` -> ``"my_func"``
+    - Qualified name: ``"ns::Cls::method"`` -> ``"method"``
+    - Go pointer receiver: ``"(*T).Method"`` -> ``"Method"``
+    - Function-pointer: ``"(*func)(type *param)"`` -> ``"func"``
+    - Pointer return: ``"*func_name(...)"`` -> ``"func_name"``
+    - this-dot: ``"this.onClick"`` -> ``"onClick"``
+    - Empty: ``""`` -> ``""`` (caller falls back to ``_function``)
+    """
+    name = name.strip()
+    if not name:
+        return ""
+
+    # 1. Qualified names (:: / . / (*T). / ) — take the last component.
+    #    Must come BEFORE the function-pointer check so that Go receiver
+    #    syntax "(*T).Method" returns "Method", not "T".
+    #    C++: "ns::Cls::method" -> "method"
+    #    Go:  "(*T).Method"     -> "Method"
+    #    JS:  "this.onClick"    -> "onClick"
+    m = re.search(r'(?:[:\.)])(\w+)$', name)
+    if m:
+        return m.group(1)
+
+    # 2. Function-pointer signature: (*identifier)(...)
+    #    Example from issue #82: (*yyjson_mut_obj_iter_next)(yyjson_mut_doc *, ...)
+    m = re.match(r'\(\s*\*\s*(\w+)\s*\)', name)
+    if m:
+        return m.group(1)
+
+    # 3. Pointer return: *identifier(...)
+    m = re.match(r'\*\s*(\w+)', name)
+    if m:
+        return m.group(1)
+
+    # 4. Plain identifier (__init__, _private, normal_func, etc.)
+    m = re.match(r'^(\w+)', name)
+    if m:
+        return m.group(1)
+
+    return name
 
 
 class CodeGraphExtractor:
@@ -101,7 +151,8 @@ class CodeGraphExtractor:
 
         by_file = defaultdict(list)
         for name, file_path, start_line, end_line in rows:
-            by_file[file_path].append((name, int(start_line), int(end_line)))
+            bare = _bare_function_name(name)
+            by_file[file_path].append((bare, int(start_line), int(end_line)))
 
         result = {}
         for file_path, funcs in by_file.items():
@@ -162,7 +213,7 @@ class CodeGraphExtractor:
             base = os.path.basename(caller_file)
             last_dot = base.rfind(".")
             dashed = base[:last_dot] + "-" + base[last_dot + 1:] if last_dot > 0 else base
-            result[(caller, dashed)].add(callee)
+            result[(_bare_function_name(caller), dashed)].add(_bare_function_name(callee))
 
         # Query 2: constructor calls synthesised from instantiates edges.
         # For each `caller instantiates ClassName` edge, find the constructor
@@ -187,7 +238,7 @@ class CodeGraphExtractor:
                 base = os.path.basename(caller_file)
                 last_dot = base.rfind(".")
                 dashed = base[:last_dot] + "-" + base[last_dot + 1:] if last_dot > 0 else base
-                result[(caller, dashed)].add(ctor_name)
+                result[(_bare_function_name(caller), dashed)].add(_bare_function_name(ctor_name))
 
         conn.close()
         return dict(result)

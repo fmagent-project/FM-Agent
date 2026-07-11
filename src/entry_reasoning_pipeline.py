@@ -12,6 +12,7 @@ from src.extract import (
     _extract_functions_brace,
     _extract_functions_indent,
     _is_test_file,
+    _safe_filename,
     add_test_file_exemption,
     clear_test_file_exemptions,
     extract_functions_from_file,
@@ -75,7 +76,7 @@ def _extract_for_selection(proj_dir, tmp_root):
             out_dir = os.path.join(output_base, src_dir, dir_name)
             os.makedirs(out_dir, exist_ok=True)
             for func_name, func_source in funcs:
-                with open(os.path.join(out_dir, f"{func_name}.{ext}"), "w") as f:
+                with open(os.path.join(out_dir, _safe_filename(func_name, ext)), "w") as f:
                     f.write(func_source)
                 count += 1
     return count
