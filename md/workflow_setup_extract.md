@@ -39,6 +39,7 @@ Quickly scan the codebase structure and **immediately** write `fm_agent/phases.j
       "modules": [
         {
           "name": "<module_name>",
+          "description": "<a short paragraph: what this module does>",
           "source_files": ["<path/to/source>", "..."]
         }
       ],
@@ -51,6 +52,7 @@ Quickly scan the codebase structure and **immediately** write `fm_agent/phases.j
       "modules": [
         {
           "name": "<module_name>",
+          "description": "<a short paragraph: what this module does>",
           "source_files": ["<path/to/source>"]
         }
       ],
@@ -67,14 +69,15 @@ Quickly scan the codebase structure and **immediately** write `fm_agent/phases.j
 - `file_extensions` — list of file extensions without leading dot, one per language (e.g. `["cpp", "py"]`). Order should match `languages`.
 - `phases[*].phase` — 1-indexed integer, unique, ascending
 - `phases[*].name` — brief label
+- `phases[*].modules[*].description` — one short paragraph explaining what this module does
 - `phases[*].description` — one sentence explaining what this phase does in the data pipeline
 - `phases[*].modules[*].name` — matches the subdirectory name of the module
 - `phases[*].modules[*].source_files` — relative paths from repo root of all source files that belong to this module. **Exclude all test files** (e.g., files in `test/`, `tests/`, `__tests__/` directories, or files named `*_test.*`, `test_*.*`, `*_spec.*`)
 - `phases[*].depends_on_phases` — list of phase numbers whose outputs this phase consumes (empty list for phases with no dependencies)
 
-Each source file must belong to **at most one phase**. If the same file appears in more than one phase's `modules[*].source_files`, the `phases.json` is invalid and must be corrected before proceeding.
+Each phase must be **self-contained**. Each phase should be splitted into multiple small modules. All source files for a module in that phase must be listed explicitly.
 
-Each phase must be **self-contained**: all source files for a module in that phase must be listed explicitly. No phase may silently depend on files listed in another phase's modules.
+Each source file must belong to **at most one phase** and **at most one module**. If the same file appears in more than one `modules[*].source_files`, the `phases.json` is invalid and must be corrected before proceeding.
 
 **Implementation tip:** Use a glob or `find` command to list source files per directory. Do not enumerate files by hand. Filter out test files (`test/`, `tests/`, `__tests__/`, `*_test.*`, `test_*.*`, `*_spec.*`). Write `fm_agent/phases.json` immediately after listing files — do not delay.
 

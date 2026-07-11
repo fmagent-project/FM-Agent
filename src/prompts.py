@@ -1,10 +1,99 @@
 from config import *
-from .llm_client import _openrouter_client, _retry_create, _llm_call, _extract_tagged
+import json
+from .llm_client import _llm_provider_client, _retry_create, _llm_call
 from .trace_writer import (
     new_event_id,
     record_llm_exchange,
     utc_now_iso,
 )
+
+
+def _load_spec_check_json(response):
+    """Load the first JSON object from strict, fenced, or prose-wrapped output."""
+    text = (response or "").strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as direct_exc:
+        fence_variants = (
+            ("```json", "```"),
+            ("```JSON", "```"),
+            ("```", "```"),
+            ("json```", "```"),
+            ("JSON```", "```"),
+        )
+        for prefix, suffix in fence_variants:
+            if text.startswith(prefix) and text.endswith(suffix):
+                fenced_text = text[len(prefix):-len(suffix)].strip()
+                try:
+                    return json.loads(fenced_text)
+                except json.JSONDecodeError:
+                    pass
+
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                data, _ = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                return data
+
+        raise direct_exc
+
+
+def _parse_spec_check_json(response):
+    """Parse and validate the spec-check model structured JSON verdict."""
+    try:
+        data = _load_spec_check_json(response)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"spec-check response is not valid JSON: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError("spec-check JSON must be an object")
+
+    verdict = data.get("verdict")
+    if isinstance(verdict, str):
+        verdict = verdict.upper()
+    if verdict not in ("MATCH", "MISMATCH"):
+        raise ValueError("spec-check JSON verdict must be MATCH or MISMATCH")
+
+    counterexample = data.get("counterexample")
+    offending_statements = data.get("offending_statements")
+    reason = data.get("reason")
+
+    def _nonempty_string(value):
+        return isinstance(value, str) and bool(value.strip())
+
+    data["verdict"] = verdict
+
+    if verdict == "MISMATCH":
+        missing = [
+            name for name, value in (
+                ("counterexample", counterexample),
+                ("offending_statements", offending_statements),
+                ("reason", reason),
+            )
+            if not _nonempty_string(value)
+        ]
+        if missing:
+            raise ValueError(
+                "spec-check MISMATCH JSON missing non-empty field(s): " + ", ".join(missing)
+            )
+        data["counterexample"] = counterexample.strip()
+        data["offending_statements"] = offending_statements.strip()
+        data["reason"] = reason.strip()
+        return True, data["offending_statements"], data["reason"], data
+
+    if _nonempty_string(counterexample) or _nonempty_string(offending_statements):
+        raise ValueError(
+            "spec-check MATCH JSON must not include counterexample or offending_statements"
+        )
+    data["counterexample"] = None
+    data["offending_statements"] = None
+    data["reason"] = reason.strip() if isinstance(reason, str) else ""
+    return False, None, None, data
 
 
 def _generate_block_post_condition(block, pre_condition, knowledge, language,
@@ -33,7 +122,7 @@ def _generate_block_post_condition(block, pre_condition, knowledge, language,
         **(trace_meta or {}),
     }
     return _llm_call(
-        _openrouter_client,
+        _llm_provider_client,
         REASONER_POST_CONDITION_MODEL,
         messages,
         "POST_START",
@@ -140,6 +229,12 @@ _LANGUAGE_EXPERTISE = {
         "You understand the full JavaScript runtime semantics and how TypeScript's compile-time checks "
         "interact with runtime behavior across TypeScript versions (2.x through 5.x). "
     ),
+    "erlang": (
+        "You are an expert in logic, formal verification, and the Erlang programming language. "
+        "You have deep knowledge of Erlang modules, name/arity function identity, pattern matching, "
+        "guards, multi-clause functions, recursion, exceptions, processes, message passing, OTP "
+        "behaviours, and the BEAM execution model. "
+    ),
     "arkts": (
         "You are an expert in logic, formal verification, and the ArkTS programming language for OpenHarmony. "
         "You have deep knowledge of ArkTS's strict typing enforced at compile time, its declarative UI paradigm "
@@ -168,11 +263,13 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             "  2. The code accepts inputs that the specification says should be rejected.\n"
             "  3. The code produces a wrong output value for a valid input.\n"
             "For each potential violation, construct a specific input, trace what the code does (A), and check if the specification (B) is satisfied.\n"
-            "If a violation exists, answer 'Yes' with a concrete counterexample. If no violation exists, answer 'No'.\n"
-            "Wrap 'Yes' or 'No' with reasoning within [CHECK_START] and [CHECK_END]. "
-            "If there is a violation, also wrap the offending statements within [STMT_START] and [STMT_END] "
-            "(preserve the 'Line N:' prefix from the code block so the line number in the original file is visible), "
-            "and the explanation within [REASON_START] and [REASON_END]."
+            "Return only a valid JSON object. Do not include markdown, tags, or prose. "
+            "Use exactly this schema: "
+            "{\"verdict\": \"MATCH|MISMATCH\", \"counterexample\": string|null, "
+            "\"offending_statements\": string|null, \"reason\": string}. "
+            "For MISMATCH, counterexample, offending_statements, and reason must be non-empty strings; "
+            "offending_statements must preserve any 'Line N:' prefixes from the code block. "
+            "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
         )},
         {"role": "user", "content": (
             f"Programming language: {language}\n\n"
@@ -182,7 +279,7 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             f"{info_str}\n"
             "Is there a concrete valid input where the code's behavior violates the specification? "
             "Enumerate all cases required by condition B and check if condition A covers each one. "
-            "Provide a specific counterexample if any case is missing."
+            "Provide a specific counterexample if any case is missing. Return only the JSON object."
         )}
     ]
     trace_meta = trace_meta or {}
@@ -192,7 +289,7 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
         response = None
         usage = {}
         try:
-            response, usage = _retry_create(_openrouter_client, REASONER_SPEC_CHECK_MODEL, messages)
+            response, usage = _retry_create(_llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages)
         except Exception as exc:
             event = {
                 "event_id": event_id,
@@ -212,12 +309,15 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             }
             record_llm_exchange(trace_dir, event_id, event, messages)
             raise
-        check = _extract_tagged(response, "CHECK_START", "CHECK_END")
-        stmts = _extract_tagged(response, "STMT_START", "STMT_END")
-        reason = _extract_tagged(response, "REASON_START", "REASON_END")
-        if check:
-            status = "mismatch" if "yes" in check.lower() else "success"
-        else:
+        parsed_result = None
+        parse_error = None
+        try:
+            has_violation, stmts, reason, parsed_result = _parse_spec_check_json(response)
+            status = "mismatch" if has_violation else "success"
+        except ValueError as exc:
+            has_violation = None
+            stmts = reason = None
+            parse_error = str(exc)
             status = "format_error"
         event = {
             "event_id": event_id,
@@ -233,23 +333,31 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
                 "model": REASONER_SPEC_CHECK_MODEL,
                 "attempt": attempt,
                 "usage": usage,
-                "parsed": {
-                    "CHECK_START": check,
-                    "STMT_START": stmts,
-                    "REASON_START": reason,
-                },
+                "parsed_json": parsed_result,
+                "parse_error": parse_error,
             },
         }
         record_llm_exchange(trace_dir, event_id, event, messages, response)
-        if check:
-            if "yes" in check.lower():
+        if has_violation is not None:
+            if has_violation:
                 stmts = stmts or "(unable to extract)"
-                reason = reason or check
+                reason = reason or "(unable to extract)"
                 return False, stmts, post_condition, reason
             else:
                 return True, None, None, None
         messages = messages + [
-            {"role": "assistant", "content": response},
-            {"role": "user", "content": "Please format your answer with [CHECK_START] and [CHECK_END] tags."}
+            {"role": "assistant", "content": response or ""},
+            {
+                "role": "user",
+                "content": (
+                    "Return only valid JSON with schema: "
+                    "{\"verdict\": \"MATCH|MISMATCH\", "
+                    "\"counterexample\": string|null, "
+                    "\"offending_statements\": string|null, "
+                    "\"reason\": string}. "
+                    "For MISMATCH, all evidence fields must be non-empty strings. "
+                    "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+                ),
+            }
         ]
-    return True, None, None, None
+    raise ValueError("Could not parse a valid structured JSON verdict from spec-check response.")

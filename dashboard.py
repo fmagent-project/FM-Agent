@@ -42,6 +42,7 @@ from rich.align import Align
 
 STAGES = ["init", "setup_context", "spec_generation", "verification", "bug_validation"]
 CACHE_WINDOW = 200
+LLM_STATUS_WINDOW = 80
 
 
 def _parse_iso(ts):
@@ -109,6 +110,17 @@ def _strip_star(d):
     return {(k[1:] if k.startswith("*") else k): v for k, v in d.items()}
 
 
+def _trace_value(d, *keys):
+    """Read plain or opencode-trace delta-prefixed fields."""
+    if not isinstance(d, dict):
+        return None
+    for key in keys:
+        for candidate in (key, f"+{key}", f"*{key}"):
+            if candidate in d:
+                return d[candidate]
+    return None
+
+
 def _get_nested(d, *keys):
     cur = d
     for k in keys:
@@ -133,6 +145,33 @@ def _cost_from_usage(model, usage):
         + cr * (p.get("cache_read_input_token_cost") or 0)
         + cw * (p.get("cache_creation_input_token_cost") or 0)
     )
+
+
+def _cache_rate(rows):
+    cr_total = sum(cr for cr, _ in rows)
+    in_total = sum(t for _, t in rows)
+    if in_total == 0:
+        return None, cr_total, in_total
+    return cr_total / in_total, cr_total, in_total
+
+
+def _llm_code_for_event(status):
+    if status in ("success", "mismatch"):
+        return "200"
+    if status == "format_error":
+        return "FMT"
+    if status == "error":
+        return "ERR"
+    return status or "?"
+
+
+def _llm_status_style(code, status):
+    text = str(code or status or "?")
+    if text == "200" or status in ("success", "mismatch"):
+        return "green", "200"
+    if status == "format_error" or text.startswith("4") or text == "FMT":
+        return "yellow", text
+    return "red", text
 
 
 def _locate_workdir(proj_dir):
@@ -173,10 +212,12 @@ class State:
         self.cost_native = 0.0
         self.model_seen = None
         self.cache_window = deque(maxlen=CACHE_WINDOW)              # recent (cache_read, total_input) tuples
+        self.llm_statuses = deque(maxlen=LLM_STATUS_WINDOW)         # recent LLM call status records
         self.recent_events = deque(maxlen=40)                       # (time, stage, status, summary)
         self.opencode_token_totals = defaultdict(int)               # stage → tokens
         self.opencode_cost = 0.0
         self.opencode_calls = 0
+        self._opencode_requests = {}                                # (filename, id) → request metadata
 
         # Verification verdicts
         self.verification_success = 0
@@ -239,6 +280,12 @@ class State:
                     # OpenAI shape (svip compat path or older runs)
                     inp = usage.get("prompt_tokens", 0) or 0
                     out = usage.get("completion_tokens", 0) or 0
+                    # DeepSeek reports cache as flat fields; prompt_tokens is the
+                    # TOTAL (hit + miss). Split into disjoint in:new / in:read.
+                    hit = usage.get("prompt_cache_hit_tokens")
+                    if hit is not None:
+                        cr = hit
+                        inp = usage.get("prompt_cache_miss_tokens", inp - hit)
                 self.totals["input"] += inp
                 self.totals["output"] += out
                 self.totals["cache_read"] += cr
@@ -257,6 +304,15 @@ class State:
 
             summary = ev.get("summary") or md.get("purpose") or "llm_call"
             self._push_recent(end or start, stage, status, summary)
+            self._push_llm_status(
+                ts=end or start,
+                source="direct",
+                label=md.get("purpose") or summary,
+                status=status,
+                model=model,
+                code=_llm_code_for_event(status),
+                detail=md.get("error"),
+            )
 
         elif et == "opencode_call":
             summary = ev.get("summary") or "opencode_call"
@@ -265,6 +321,20 @@ class State:
     def _push_recent(self, ts, stage, status, summary):
         when = ts.strftime("%H:%M:%S") if ts else ""
         self.recent_events.appendleft((when, stage, status, summary))
+
+    def _push_llm_status(self, ts, source, label, status, model=None, code=None, detail=None):
+        when = ts.strftime("%H:%M:%S") if ts else ""
+        self.llm_statuses.append(
+            {
+                "time": when,
+                "source": source,
+                "label": label or "llm_call",
+                "status": status or "?",
+                "model": model,
+                "code": code or status or "?",
+                "detail": detail,
+            }
+        )
 
     # ---------- opencode/*.jsonl tail ----------
     def tail_opencode(self):
@@ -290,27 +360,98 @@ class State:
                         rec = json.loads(line)
                     except Exception:
                         continue
-                    self._ingest_opencode(rec)
+                    self._ingest_opencode(rec, name)
                 self._opencode_offsets[name] = f.tell()
 
-    def _ingest_opencode(self, rec):
+    def _ingest_opencode(self, rec, trace_file=None):
         # opencode-trace alternates request and response; usage lives on responses.
         # The @lucentia plugin prefixes streaming-delta keys with "*" (e.g. "*usage",
         # "*input_tokens"). Older runs used plain names. Strip the prefix so both work.
         rec = _strip_star(rec)
+        kind = rec.get("_kind")
+        call_id = rec.get("_id")
+        trace_key = rec.get("_trace_file") or trace_file
+        if kind == "request" and call_id is not None:
+            self._opencode_requests[(trace_key, call_id)] = {
+                "ts": _parse_iso(rec.get("_ts")),
+                "model": rec.get("model"),
+                "url": rec.get("_url"),
+                "purpose": rec.get("_purpose"),
+            }
+            return
+        if kind == "error":
+            req = self._opencode_requests.get((trace_key, call_id), {})
+            self._push_llm_status(
+                ts=_parse_iso(rec.get("_ts")) or req.get("ts"),
+                source="opencode",
+                label=req.get("purpose") or rec.get("_purpose") or rec.get("_url") or "opencode",
+                status="error",
+                model=rec.get("model") or req.get("model"),
+                code=_trace_value(rec, "_status", "status", "status_code") or "ERR",
+                detail=_trace_value(rec, "_error", "error", "message"),
+            )
+            return
+        if kind != "response":
+            return
+        req = self._opencode_requests.get((trace_key, call_id), {})
+        status_code = _trace_value(rec, "_status", "status", "status_code")
+        if status_code and str(status_code) != "200":
+            self._push_llm_status(
+                ts=_parse_iso(rec.get("_ts")) or req.get("ts"),
+                source="opencode",
+                label=req.get("purpose") or rec.get("_purpose") or rec.get("_url") or "opencode",
+                status="error",
+                model=rec.get("model") or req.get("model"),
+                code=status_code,
+                detail=_trace_value(rec, "_error", "error", "message"),
+            )
+            return
         usage = rec.get("usage")
         if not isinstance(usage, dict):
+            self._push_llm_status(
+                ts=_parse_iso(rec.get("_ts")) or req.get("ts"),
+                source="opencode",
+                label=req.get("purpose") or rec.get("_purpose") or "opencode",
+                status="success",
+                model=rec.get("model") or req.get("model"),
+                code="200",
+            )
             return
         usage = _strip_star(usage)
         inp = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
         out = usage.get("output_tokens") or usage.get("completion_tokens") or 0
         if not (inp or out):
+            self._push_llm_status(
+                ts=_parse_iso(rec.get("_ts")) or req.get("ts"),
+                source="opencode",
+                label=req.get("purpose") or rec.get("_purpose") or "opencode",
+                status="success",
+                model=rec.get("model") or req.get("model"),
+                code="200",
+            )
             return  # not a response payload
+        self._push_llm_status(
+            ts=_parse_iso(rec.get("_ts")) or req.get("ts"),
+            source="opencode",
+            label=req.get("purpose") or rec.get("_purpose") or "opencode",
+            status="success",
+            model=rec.get("model") or req.get("model"),
+            code="200",
+        )
         self.opencode_calls += 1
-        cr = (usage.get("cache_read_input_tokens")
-              or _get_nested(usage, "prompt_tokens_details", "cached_tokens")
-              or _get_nested(usage, "input_tokens_details", "cached_tokens")
-              or 0)
+        # DeepSeek (openai-compat) reports cache as flat top-level fields, and
+        # prompt_tokens is the TOTAL (hit + miss). Split it into the disjoint
+        # in:new / in:read the rest of the dashboard assumes — otherwise the
+        # cached half is double-counted and the hit rate reads low.
+        hit = usage.get("prompt_cache_hit_tokens")
+        if hit is not None:
+            cr = hit
+            inp = usage.get("prompt_cache_miss_tokens", inp - hit)
+        else:
+            cr = (usage.get("cache_read_input_tokens")
+                  or _get_nested(usage, "prompt_tokens_details", "cached_tokens")
+                  or _get_nested(usage, "input_tokens_details", "cached_tokens")
+                  or 0)
         cw = (usage.get("cache_creation_input_tokens")
               or usage.get("claude_cache_creation_5_m_tokens")
               or 0)
@@ -439,36 +580,35 @@ def render_tokens(state):
 
 
 def render_cache(state):
-    def bar_line(label, cr, tot):
+    def bar_line(label, rows):
+        rate, cr, tot = _cache_rate(rows)
         if tot == 0:
             return f"[dim]{label:<14}(no data)[/]"
-        rate = cr / tot
         pct = rate * 100
         bar_w = 20
         filled = int(bar_w * rate)
         bar = "█" * filled + "░" * (bar_w - filled)
         color = "green" if pct >= 80 else ("yellow" if pct >= 50 else "red")
-        return f"{label:<14}[bold {color}]{pct:5.1f}%[/]  [{color}]{bar}[/]"
+        return (
+            f"{label:<10}[bold {color}]{pct:5.1f}%[/]  [{color}]{bar}[/] "
+            f"[dim]{_fmt_tokens(cr)} / {_fmt_tokens(tot)}[/]"
+        )
 
     n_cr = state.totals.get("cache_read", 0)
     n_in = state.totals.get("input", 0) + state.totals.get("cache_write", 0)
     o_cr = state.opencode_token_totals.get("cache_read", 0)
     o_in = (state.opencode_token_totals.get("input", 0)
             + state.opencode_token_totals.get("cache_write", 0))
+    total_cr = n_cr + o_cr
+    total_input = n_in + o_in
+    rows = list(state.cache_window)
 
     lines = [
-        bar_line("verification", n_cr, n_cr + n_in),
-        bar_line("opencode",     o_cr, o_cr + o_in),
-        "",
+        bar_line("latest 10", rows[-10:]),
+        bar_line("latest 100", rows[-100:]),
+        bar_line("overall", [(total_cr, total_cr + total_input)]),
+        "[dim]coverage = cache_read / (input + cache_write + cache_read)[/]",
     ]
-
-    wnd_cr = sum(cr for cr, _ in state.cache_window)
-    wnd_tot = sum(t for _, t in state.cache_window)
-    if wnd_tot > 0:
-        lines.append(
-            f"[dim]recent {len(state.cache_window)}/{CACHE_WINDOW} calls: "
-            f"{_fmt_tokens(wnd_cr)} / {_fmt_tokens(wnd_tot)} input[/]"
-        )
 
     # cost-savings estimate: cache_read tokens would otherwise have been
     # billed as fresh input (cache_write is its own cost, already in TOTAL).
@@ -476,7 +616,6 @@ def render_cache(state):
     if p:
         in_per = p.get("input_cost_per_token") or 0
         cr_per = p.get("cache_read_input_token_cost") or 0
-        total_cr = n_cr + o_cr
         if in_per > 0 and total_cr > 0:
             saved = total_cr * (in_per - cr_per)
             actual = state.cost_native + state.opencode_cost
@@ -487,12 +626,55 @@ def render_cache(state):
                     f"  [dim]({pct:.0f}% off no-cache)[/]"
                 )
 
-    if n_cr + n_in == 0 and o_cr + o_in == 0:
+    if total_cr + total_input == 0:
         text = Text.from_markup("[dim](no token data yet)[/]")
     else:
         text = Text.from_markup("\n".join(lines))
     return Panel(Align.center(text, vertical="middle"),
-                 title="Cache Hit Rate", border_style="green")
+                 title="Cache Coverage", border_style="green")
+
+
+def render_llm_status(state):
+    statuses = list(state.llm_statuses)[-LLM_STATUS_WINDOW:]
+    if not statuses:
+        return Panel(
+            Align.center(Text.from_markup("[dim](no LLM calls yet)[/]"), vertical="middle"),
+            title="LLM Calls",
+            border_style="cyan",
+        )
+
+    strip = Text()
+    for item in statuses[-50:]:
+        color, label = _llm_status_style(item.get("code"), item.get("status"))
+        symbol = "■" if label == "200" else "▲" if color == "yellow" else "■"
+        strip.append(symbol, style=color)
+
+    table = Table(show_header=True, header_style="bold", expand=True, pad_edge=False)
+    table.add_column("time", style="dim", no_wrap=True)
+    table.add_column("src", style="cyan", no_wrap=True)
+    table.add_column("code", no_wrap=True)
+    table.add_column("call", overflow="ellipsis", no_wrap=True)
+    for item in list(reversed(statuses[-6:])):
+        color, label = _llm_status_style(item.get("code"), item.get("status"))
+        table.add_row(
+            item.get("time") or "",
+            item.get("source") or "?",
+            f"[{color}]{label}[/]",
+            item.get("label") or "",
+        )
+
+    total = len(statuses)
+    ok = sum(1 for item in statuses if _llm_status_style(item.get("code"), item.get("status"))[1] == "200")
+    rate = ok / total * 100 if total else 0
+    text = Text.from_markup(
+        f"[dim]recent {total}/{LLM_STATUS_WINDOW} calls[/]  "
+        f"[bold {'green' if rate >= 95 else 'yellow' if rate >= 80 else 'red'}]{rate:.1f}% 200[/]\n"
+    )
+    text.append(strip)
+    group = Table.grid(expand=True)
+    group.add_row(text)
+    group.add_row(table)
+    return Panel(group, title="LLM Calls", border_style="cyan")
 
 
 def render_bugs(state):
@@ -542,11 +724,15 @@ def build_layout(state):
     )
     layout["top"].split_row(
         Layout(render_stages(state), name="stages", ratio=3),
+        Layout(name="top_right", ratio=2),
+    )
+    layout["top"]["top_right"].split_column(
         Layout(render_cache(state), name="cache", ratio=2),
+        Layout(render_bugs(state), name="bugs", ratio=1),
     )
     layout["mid"].split_row(
         Layout(render_tokens(state), name="tokens", ratio=3),
-        Layout(render_bugs(state), name="bugs", ratio=1),
+        Layout(render_llm_status(state), name="llm", ratio=2),
     )
     return layout
 

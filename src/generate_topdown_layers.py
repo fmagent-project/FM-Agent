@@ -6,6 +6,7 @@ from pathlib import Path
 from collections import defaultdict
 
 from src.extract import EXT_TO_LANG, LANG_CONFIG
+from src.languages.registry import call_edges_all
 
 
 # ---------------------------------------------------------------------------
@@ -280,34 +281,47 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
     # For call-site detection, use global stems if available
     effective_stem_to_fqns = global_stem_to_fqns if global_stem_to_fqns else stem_to_fqns
     known_stems = set(effective_stem_to_fqns.keys())
+    # All extracted FQNs (across phases when a global map is supplied), used to
+    # keep only codegraph callees that correspond to an extracted function.
+    known_fqns = set().union(*effective_stem_to_fqns.values()) if effective_stem_to_fqns else set()
 
     callees_map = defaultdict(set)  # fqn -> set of callee fqns (within phase)
     callers_map = defaultdict(set)  # fqn -> set of caller fqns (within phase)
     all_callees_map = defaultdict(set)  # fqn -> set of callee fqns (any phase)
+
+    phase_langs = {_detect_lang_from_ext(fp) for fp, _ in phase_files if _detect_lang_from_ext(fp)}
+    registry_edges, registry_langs = call_edges_all(proj_dir, phase_langs)
 
     for filepath, module_name in phase_files:
         fqn = fqn_map[filepath]
         lang_key = _detect_lang_from_ext(filepath)
         if not lang_key:
             continue
-        keywords = _get_keywords_for_lang(lang_key)
 
-        try:
-            with open(filepath, "r", errors="replace") as f:
-                text = f.read()
-        except OSError:
-            continue
+        if lang_key in registry_langs:
+            # codegraph: edges are already precise caller_fqn -> callee_fqn (the
+            # exact node codegraph resolved). Keep only callees that are extracted
+            # functions; drop external/library targets.
+            callee_fqns = {c for c in registry_edges.get(fqn, set())
+                           if c != fqn and c in known_fqns}
+        else:
+            # regex fallback: detect bare-name call sites, then resolve each stem
+            # to every same-named FQN (an over-approximation — unchanged).
+            keywords = _get_keywords_for_lang(lang_key)
+            try:
+                with open(filepath, "r", errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            called_stems = _find_call_sites(text, lang_key, known_stems, keywords)
+            callee_fqns = {cf for stem in called_stems
+                           for cf in effective_stem_to_fqns[stem] if cf != fqn}
 
-        called_stems = _find_call_sites(text, lang_key, known_stems, keywords)
-
-        # Resolve stems to FQNs, excluding self
-        for stem in called_stems:
-            for callee_fqn in effective_stem_to_fqns[stem]:
-                if callee_fqn != fqn:
-                    all_callees_map[fqn].add(callee_fqn)
-                    if callee_fqn in phase_fqns:
-                        callees_map[fqn].add(callee_fqn)
-                        callers_map[callee_fqn].add(fqn)
+        for callee_fqn in callee_fqns:
+            all_callees_map[fqn].add(callee_fqn)
+            if callee_fqn in phase_fqns:
+                callees_map[fqn].add(callee_fqn)
+                callers_map[callee_fqn].add(fqn)
 
     return callees_map, callers_map, all_callees_map, file_map, module_map
 
@@ -588,17 +602,3 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
         print(f"[TopdownLayers] Phase {phase_num} ({phase_name}): {total_functions} functions, {total_layers} layers -> {os.path.relpath(out_path, proj_dir)}")
 
     return output_files
-
-
-if __name__ == "__main__":
-    import sys
-    # Usage: python3 generate_topdown_layers.py [phase_numbers...]
-    # When run standalone, proj_dir is the parent of the script's directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    proj_dir = os.path.dirname(script_dir)
-
-    phase_nums = None
-    if len(sys.argv) > 1:
-        phase_nums = [int(x) for x in sys.argv[1:]]
-
-    generate_topdown_layers(proj_dir, phase_nums)

@@ -11,7 +11,7 @@ The target result file is a JSON file produced by a logic verification step. It 
 At the end of your run you must produce:
 
 1. One **detailed Markdown file** at `fm_agent/bug_validation/<bug_id>.md` documenting the result.
-2. One **test case file** at `fm_agent/bug_validation/_probe_<bug_id>.<ext>` containing the final probe script.
+2. One **test case file** at `fm_agent/bug_validation/probe_<bug_id>.<ext>` containing the final probe script.
 3. A **single-line result file** at `fm_agent/bug_validation/<bug_id>.result.json` recording the confirmation status (see the end of this document).
 
 ---
@@ -117,7 +117,7 @@ else:
 
 ### 2c. Write the Script to a Temporary File
 
-Write the probe script to `fm_agent/bug_validation/_probe_<bug_id>.<ext>`, where:
+Write the probe script to `fm_agent/bug_validation/probe_<bug_id>.<ext>`, where:
 - `<bug_id>` is the bug ID provided in the prompt header.
 - `<ext>` is the appropriate file extension for the project's language (`.js`, `.py`, `.go`, etc.).
 
@@ -127,10 +127,10 @@ Run the script from the **repo root** so that the entry-point import resolves co
 
 ```bash
 # JavaScript / Node.js
-node fm_agent/bug_validation/_probe_<bug_id>.js
+node fm_agent/bug_validation/probe_<bug_id>.js
 
 # Python
-python3 fm_agent/bug_validation/_probe_<bug_id>.py
+python3 fm_agent/bug_validation/probe_<bug_id>.py
 
 # Go, Java, etc. — use the appropriate run/compile-and-run command
 ```
@@ -152,7 +152,7 @@ Based on the output:
 - If the result is `confirmed`, record it and proceed to Step 3.
 - If the result is `not_confirmed` or `error`, revise the test case (different input values, adjusted assertion, or fixed script error) and repeat from step 2b. Count this as the next attempt.
 - After **3 attempts** (or `--max-attempts` if overridden) without a `confirmed` result, stop retrying. Record the final classification (`not_confirmed` or `error`) and the stdout from the last attempt.
-- Each attempt overwrites the same `_probe_<bug_id>.<ext>` file — do not create numbered copies.
+- Each attempt overwrites the same `probe_<bug_id>.<ext>` file — do not create numbered copies.
 
 The `attempts` count must be recorded in the result JSON file (see Step 3).
 
@@ -285,7 +285,7 @@ with the following schema:
   "function_name": "<base name>",
   "confirmation_status": "confirmed | not_confirmed | error",
   "attempts": "<integer — number of test-case attempts made, 1-10>",
-  "probe_script": "fm_agent/bug_validation/_probe_<bug_id>.<ext>",
+  "probe_script": "fm_agent/bug_validation/probe_<bug_id>.<ext>",
   "detail_file": "fm_agent/bug_validation/<bug_id>.md",
   "probe_stdout": "<raw stdout of the last attempt — single line, escape newlines as \\n>",
   "trigger_summary": "<one-sentence summary of the trigger condition>"
@@ -296,7 +296,7 @@ with the following schema:
 
 ## Step 4 — Cleanup (Optional)
 
-After the result files are written, you may delete the temporary `_probe_*` file from `fm_agent/bug_validation/` if it is no longer needed. Retain it if the caller has requested verbose output.
+After the result files are written, you may delete the temporary `probe_*` file from `fm_agent/bug_validation/` if it is no longer needed. Retain it if the caller has requested verbose output.
 
 ---
 
@@ -306,7 +306,7 @@ After the result files are written, you may delete the temporary `_probe_*` file
 fm_agent/bug_validation/
   <bug_id>.md                                   ← detail Markdown file (Step 3)
   <bug_id>.result.json                          ← result JSON file (Step 3)
-  _probe_<bug_id>.<ext>                         ← retained unless cleanup was performed
+  probe_<bug_id>.<ext>                         ← retained unless cleanup was performed
 ```
 
 ---

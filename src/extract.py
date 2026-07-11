@@ -5,6 +5,9 @@ import sys
 import shutil
 import logging
 
+from src.file_utils import is_file_ready, _is_test_file
+from src.languages.registry import batch_extract_all, function_spans_for_file
+
 LANG_CONFIG = {
     "cpp": {
         "comment_prefix": "//",
@@ -107,6 +110,19 @@ LANG_CONFIG = {
         },
         "body": "brace",
     },
+    "erlang": {
+        "comment_prefix": "%",
+        "spec_marker": "% [SPEC]",
+        "skip_prefixes": ("%", "-module", "-export", "-import", "-include"),
+        "skip_keywords_line": ("-record", "-type", "-spec", "-callback"),
+        "keywords": {
+            "after", "and", "andalso", "band", "begin", "bnot", "bor", "bsl",
+            "bsr", "bxor", "case", "catch", "cond", "div", "end", "fun", "if",
+            "let", "maybe", "not", "of", "or", "orelse", "receive", "rem",
+            "try", "when", "xor",
+        },
+        "body": "external",
+    },
     "cuda": {
         "comment_prefix": "//",
         "spec_marker": "// [SPEC]",
@@ -142,6 +158,7 @@ LANG_CONFIG = {
 EXT_TO_LANG = {
     "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "c": "c", "h": "cpp", "hpp": "cpp",
     "py": "python",
+    "erl": "erlang",
     "go": "go",
     "rs": "rust",
     "java": "java",
@@ -150,43 +167,6 @@ EXT_TO_LANG = {
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
 }
-
-# Directories that typically contain test code
-_TEST_DIR_NAMES = {
-    "test", "tests", "__tests__", "testing", "test_helpers",
-    "testdata", "testutils", "fixtures", "mocks",
-}
-
-# Regex patterns matching common test file naming conventions
-_TEST_FILE_PATTERNS = [
-    # Bare test-module names at any level (e.g. mintotp's top-level test.py).
-    re.compile(r'^tests?\.(?:py|go|rs|js|jsx|ts|tsx|ets|java)$'),
-    re.compile(r'^test_.*\.py$'),         # Python: test_foo.py
-    re.compile(r'^.*_test\.py$'),          # Python: foo_test.py
-    re.compile(r'^conftest\.py$'),         # pytest fixtures
-    re.compile(r'^.*_test\.go$'),          # Go: foo_test.go
-    re.compile(r'^.*_test\.(?:cpp|cc|cxx|c|h|hpp)$'),  # C/C++: foo_test.cpp
-    re.compile(r'^test_.*\.(?:cpp|cc|cxx|c|h|hpp)$'),  # C/C++: test_foo.cpp
-    re.compile(r'^.*Test(?:s|Case)?\.java$'),            # Java: FooTest.java
-    re.compile(r'^.*\.(?:test|spec)\.(?:js|jsx|ts|tsx)$'),  # JS/TS: foo.test.js
-    re.compile(r'^.*_test\.rs$'),          # Rust: foo_test.rs
-    re.compile(r'^.*\.test\.(?:ets)$'),    # ArkTS: foo.test.ets
-]
-
-
-def _is_test_file(rel_path):
-    """Return True if the relative source path looks like a test file."""
-    parts = rel_path.replace('\\', '/').split('/')
-    # Check if any directory component is a known test directory
-    for part in parts[:-1]:
-        if part.lower() in _TEST_DIR_NAMES:
-            return True
-    # Check filename against test patterns
-    basename = parts[-1]
-    for pat in _TEST_FILE_PATTERNS:
-        if pat.match(basename):
-            return True
-    return False
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -223,11 +203,20 @@ def _extract_func_name_brace(signature_text, lang_cfg):
 def _find_brace_end(lines, start_idx):
     """Find the line index of the closing '}' that matches the first '{' at or after start_idx.
 
-    Handles string/char literals and // comments.
+    Handles string/char literals and // comments. Braces belonging to Go
+    anonymous composite types (`interface{...}` / `struct{...}`, possibly
+    spanning multiple lines) are tracked separately so they are not mistaken
+    for the function body.
+
     Returns the line index of the closing brace, or len(lines)-1 if unmatched.
     """
     depth = 0
     found_open = False
+    # Depth of braces inside an anonymous composite type; these do not count
+    # toward the function body. `pending_type_brace` means an `interface`/
+    # `struct` keyword was seen and its opening `{` is expected next.
+    type_depth = 0
+    pending_type_brace = False
     for i in range(start_idx, len(lines)):
         line = lines[i]
         j = 0
@@ -271,6 +260,48 @@ def _find_brace_end(lines, start_idx):
                 # If block comment spans lines, continue on next line
                 # (simplified: assume single-line block comments for now)
                 continue
+            # Inside an anonymous composite type: its braces belong to the type,
+            # not the function body, so track them with a separate counter.
+            if type_depth > 0:
+                if ch == '{':
+                    type_depth += 1
+                elif ch == '}':
+                    type_depth -= 1
+                j += 1
+                continue
+            # A keyword's opening '{' is expected; consume whitespace until it.
+            if pending_type_brace:
+                if ch in ' \t':
+                    j += 1
+                    continue
+                if ch == '{':
+                    type_depth = 1
+                    pending_type_brace = False
+                    j += 1
+                    continue
+                # Not actually a composite type; fall through to normal handling.
+                pending_type_brace = False
+            # Detect Go anonymous composite types `interface{...}` / `struct{...}`,
+            # whose braces (even when the type spans multiple lines) must not be
+            # counted as the function body's braces.
+            if ch in 'is' and (line.startswith('interface', j) or line.startswith('struct', j)):
+                kw_len = 9 if line.startswith('interface', j) else 6
+                end = j + kw_len
+                prev_ok = j == 0 or not (line[j - 1].isalnum() or line[j - 1] == '_')
+                next_ok = end >= len(line) or not (line[end].isalnum() or line[end] == '_')
+                if prev_ok and next_ok:
+                    k = end
+                    while k < len(line) and line[k] in ' \t':
+                        k += 1
+                    if k < len(line) and line[k] == '{':
+                        type_depth = 1
+                        j = k + 1
+                        continue
+                    if k >= len(line):
+                        # The opening '{' is on a following line.
+                        pending_type_brace = True
+                    j = end
+                    continue
             if ch == '{':
                 depth += 1
                 found_open = True
@@ -293,6 +324,8 @@ def _extract_functions_brace(lines, lang_key, lang_cfg):
     i = 0
     skip_prefixes = lang_cfg["skip_prefixes"]
     skip_kw_line = lang_cfg["skip_keywords_line"]
+    in_block_comment = False
+    _block_comment_langs = {"cpp", "c", "cuda", "java", "javascript", "typescript", "arkts"}
 
     while i < len(lines):
         line = lines[i]
@@ -302,6 +335,23 @@ def _extract_functions_brace(lines, lang_key, lang_cfg):
         if not stripped:
             i += 1
             continue
+
+        # Skip /* */ block comments for C-family languages
+        if lang_key in _block_comment_langs:
+            if in_block_comment:
+                end_idx = stripped.find("*/")
+                if end_idx != -1:
+                    in_block_comment = False
+                i += 1
+                continue
+            start_idx = stripped.find("/*")
+            if start_idx != -1:
+                # Check whether the block comment closes on the same line
+                after_start = stripped[start_idx + 2:]
+                if "*/" not in after_start:
+                    in_block_comment = True
+                i += 1
+                continue
 
         # Skip comment / preprocessor / using lines
         if any(stripped.startswith(p) for p in skip_prefixes):
@@ -367,7 +417,16 @@ def _extract_functions_brace(lines, lang_key, lang_cfg):
 
         # Rust: detect fn keyword
         if lang_key == "rust":
-            m = re.match(r'(?:pub\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)', stripped)
+            m = re.match(
+                r'(?:pub(?:\s*\([^)]*\))?\s+)?'   # pub, pub(crate), pub(super), pub(in ...)
+                r'(?:default\s+)?'
+                r'(?:const\s+)?'
+                r'(?:async\s+)?'
+                r'(?:unsafe\s+)?'
+                r'(?:extern\s+"[^"]*"\s+)?'
+                r'fn\s+(\w+)',
+                stripped,
+            )
             if not m:
                 i += 1
                 continue
@@ -527,8 +586,12 @@ def extract_functions_from_file(filepath, lang_key):
 
     if lang_cfg["body"] == "brace":
         raw_funcs = _extract_functions_brace(lines, lang_key, lang_cfg)
-    else:
+    elif lang_cfg["body"] == "indent":
         raw_funcs = _extract_functions_indent(lines, lang_cfg)
+    else:
+        # Semantic-only languages (currently Erlang) are extracted by their
+        # registered backend and have no reliable file-local fallback.
+        return []
 
     # Deduplicate names
     name_counts = {}
@@ -544,6 +607,47 @@ def extract_functions_from_file(filepath, lang_key):
         results.append((deduped, source))
 
     return results
+
+
+def _function_spans(filepath, lang_key, proj_dir=None):
+    """Return ``(spans, raw_lines)`` for a source file.
+
+    ``spans`` is a list of ``(deduped_name, start_idx, end_idx)`` line ranges,
+    one per function, named exactly as run_extraction names the extracted files
+    (duplicate names get ``_1``, ``_2``, ... suffixes). ``raw_lines`` are the
+    file's original lines (newline characters preserved) so callers can rewrite
+    the file by line index.
+
+    Function boundaries come from codegraph via the language registry when
+    ``proj_dir`` is given and codegraph indexes the file; otherwise they fall
+    back to the regex extractor (_extract_functions_brace / _indent). Both
+    backends yield the same (name, start_idx, end_idx) shape, so the dedup
+    naming below is identical regardless of which one is used.
+    """
+    lang_cfg = LANG_CONFIG[lang_key]
+    with open(filepath, "r", errors="replace") as f:
+        raw_lines = f.readlines()
+    # Extraction operates on newline-stripped lines; indices line up 1:1 with
+    # raw_lines (readlines yields one entry per line).
+    norm_lines = [l.rstrip("\n").rstrip("\r") for l in raw_lines]
+
+    raw_funcs = None
+    if proj_dir is not None:
+        raw_funcs = function_spans_for_file(proj_dir, filepath, lang_key)
+    if raw_funcs is None:
+        if lang_cfg["body"] == "brace":
+            raw_funcs = _extract_functions_brace(norm_lines, lang_key, lang_cfg)
+        else:
+            raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
+
+    name_counts = {}
+    spans = []
+    for name, start, end in raw_funcs:
+        count = name_counts.get(name, 0)
+        name_counts[name] = count + 1
+        deduped = name if count == 0 else f"{name}_{count}"
+        spans.append((deduped, start, end))
+    return spans, raw_lines
 
 
 def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
@@ -563,6 +667,12 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
 
     with open(phases_path, 'r') as f:
         phases_data = json.load(f)
+
+    registry_funcs, registry_langs = batch_extract_all(proj_dir)
+    registry_funcs = {
+        os.path.normcase(os.path.normpath(path)): funcs
+        for path, funcs in registry_funcs.items()
+    }
 
     # Build source file list from phases.json
     source_files = []
@@ -594,8 +704,6 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         if not lang_key:
             logging.warning(f"Unsupported file extension '.{ext}' for {src_rel}, skipping.")
             continue
-        lang_cfg = LANG_CONFIG[lang_key]
-        spec_marker = lang_cfg["spec_marker"]
 
         # Compute output directory: replace last dot in filename with hyphen
         src_dir = os.path.dirname(src_rel)
@@ -607,7 +715,11 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             dir_name = src_base
         out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
 
-        funcs = extract_functions_from_file(src_path, lang_key)
+        registry_key = os.path.normcase(os.path.normpath(src_path))
+        if registry_key in registry_funcs:
+            funcs = registry_funcs[registry_key]
+        else:
+            funcs = extract_functions_from_file(src_path, lang_key)
         if not funcs:
             logging.warning(f"No functions extracted from {src_rel}")
             continue
@@ -617,18 +729,12 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         for func_name, func_source in funcs:
             out_file = os.path.join(out_dir, f"{func_name}.{ext}")
 
-            # Check if file already has spec marker
-            if not force and os.path.exists(out_file):
-                try:
-                    with open(out_file, 'r') as f:
-                        first_line = f.readline()
-                    if first_line.strip().startswith(spec_marker.strip()):
-                        if verbose:
-                            print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
-                        skipped += 1
-                        continue
-                except OSError:
-                    pass
+            # Skip only when the file already has both [SPEC] and [INFO] blocks
+            if not force and os.path.exists(out_file) and is_file_ready(out_file):
+                if verbose:
+                    print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
+                skipped += 1
+                continue
 
             with open(out_file, 'w') as f:
                 f.write(func_source)
@@ -643,7 +749,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         return written, skipped
 
     # --- Validation (Step 2) ---
-    validation_failures = _validate_extraction(output_base)
+    validation_failures = _validate_extraction(output_base, registry_langs=registry_langs)
     if validation_failures:
         logging.warning(
             f"Validation: {len(validation_failures)} file(s) do not contain exactly one function."
@@ -662,8 +768,13 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     return written, skipped
 
 
-def _validate_extraction(extracted_dir):
+def _validate_extraction(extracted_dir, registry_langs=None):
     """Re-parse every extracted file and verify each contains exactly one function.
+
+    Files for languages that returned data from their REGISTRY backend are skipped:
+    those backends write exactly one function body per file by construction, so
+    regex re-parsing adds no safety and produces false negatives for forms the
+    regex cannot recognise (async def, class methods, arrow functions).
 
     Returns a list of (file_path, function_count) for files that fail validation.
     """
@@ -673,6 +784,8 @@ def _validate_extraction(extracted_dir):
             ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
             lang_key = EXT_TO_LANG.get(ext)
             if not lang_key:
+                continue
+            if registry_langs and lang_key in registry_langs:
                 continue
             fpath = os.path.join(root, fname)
             funcs = extract_functions_from_file(fpath, lang_key)

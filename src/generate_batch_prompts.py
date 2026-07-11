@@ -5,6 +5,30 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+# file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
+try:
+    # When imported as part of the src package (e.g. incremental_reasoner).
+    from .file_utils import is_file_ready
+    from .domain_knowledge import list_staged_domain_knowledge_relpaths
+except ImportError:
+    # When run standalone after being copied into fm_agent/spec_prompts/,
+    # where file_utils.py sits beside this script.
+    from file_utils import is_file_ready
+
+    def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
+        knowledge_dir = Path(work_dir) / "spec_prompts" / "domain_context" / "user_knowledge"
+        if not knowledge_dir.is_dir():
+            return []
+        relpaths = []
+        for path in knowledge_dir.rglob("*"):
+            if not path.is_file() or path.name == "manifest.json":
+                continue
+            if path.suffix.lower() not in {".md", ".markdown"}:
+                continue
+            rel_to_work = path.relative_to(work_dir).as_posix()
+            relpaths.append(f"{prefix.rstrip('/')}/{rel_to_work}")
+        return sorted(relpaths)
+
 
 COMMENT_PREFIX_BY_LANG = {
     "c": "//",
@@ -38,6 +62,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=2, help="Functions per prompt file")
     parser.add_argument("--output-dir", default=None, help="Output directory for batch prompt files")
     parser.add_argument("--dry-run", action="store_true", help="Show plan without writing files")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip functions already specced (file_utils.is_file_ready) when building batches",
+    )
     return parser.parse_args()
 
 
@@ -185,6 +214,14 @@ def build_prompt(
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/engine_overview.txt")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/phase_{phase:02d}_types.txt")
+    user_knowledge_paths = list_staged_domain_knowledge_relpaths(
+        work_dir,
+        prefix=fm_agent_prefix.rstrip("/"),
+    )
+    if user_knowledge_paths:
+        lines.append("Read these user-provided domain knowledge Markdown files:")
+        for path in user_knowledge_paths:
+            lines.append(f"- {path}")
     lines.append("")
     lines.append("## KEY RULES")
     lines.append("- Describe WHAT the function guarantees, NOT HOW it implements it")
@@ -346,8 +383,10 @@ def main() -> int:
 
     manifest_batches = []
     total_functions = 0
+    skipped_functions = 0
     batch_index = 0
     write_targets: List[Tuple[Path, str]] = []
+    stale_targets: List[Path] = []
 
     for layer_idx in range(start_layer, end_layer + 1):
         layer = layers[layer_idx]
@@ -359,19 +398,35 @@ def main() -> int:
 
         for local_idx, fn_batch in enumerate(chunks):
             filename = f"batch_{batch_index:03d}_layer{layer_idx}_{tag}_b{local_idx}.txt"
-            content = build_prompt(
-                args.phase,
-                layer_idx,
-                is_cycle,
-                fn_batch,
-                func_to_layer,
-                all_funcs,
-                work_dir,
-                fm_agent_prefix,
-                ext_to_lang,
-            )
+            # On resume, don't ask the LLM to re-spec functions that are already
+            # done — but the manifest below still records the full batch.
+            prompt_funcs = fn_batch
+            if args.resume:
+                prompt_funcs = [fn for fn in fn_batch if not is_file_ready(work_dir / fn["file"])]
+                skipped_functions += len(fn_batch) - len(prompt_funcs)
             out_path = output_dir / filename
-            write_targets.append((out_path, content))
+            # On resume, a batch whose functions are all already specced has no
+            # work left for the agent — don't write an empty prompt file. The
+            # manifest still records the full batch so later verification covers
+            # these functions; run_pipeline only spawns batches that still have
+            # unspecced functions (see _get_pending_batches).
+            if prompt_funcs:
+                content = build_prompt(
+                    args.phase,
+                    layer_idx,
+                    is_cycle,
+                    prompt_funcs,
+                    func_to_layer,
+                    all_funcs,
+                    work_dir,
+                    fm_agent_prefix,
+                    ext_to_lang,
+                )
+                write_targets.append((out_path, content))
+            else:
+                # Nothing to spec — drop any stale prompt file left by a
+                # previous run so the batch dir doesn't keep an empty batch.
+                stale_targets.append(out_path)
             manifest_batches.append(
                 {
                     "index": batch_index,
@@ -379,6 +434,7 @@ def main() -> int:
                     "layer": layer_idx,
                     "is_cycle": is_cycle,
                     "num_functions": len(fn_batch),
+                    "num_pending": len(prompt_funcs),
                     "functions": [f"{fm_agent_prefix}{fn['file']}" for fn in fn_batch],
                 }
             )
@@ -396,6 +452,7 @@ def main() -> int:
         print(
             f"[dry-run] phase={args.phase} layers={args.layers} "
             f"functions={total_functions} batches={len(manifest_batches)}"
+            + (f" skipped={skipped_functions} (already specced)" if args.resume else "")
         )
         for batch in manifest_batches:
             print(
@@ -407,11 +464,14 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     for out_path, content in write_targets:
         out_path.write_text(content)
+    for out_path in stale_targets:
+        out_path.unlink(missing_ok=True)
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
     print(
         f"Generated {len(manifest_batches)} batch prompt(s) for phase {args.phase} "
         f"layers {args.layers} in {output_dir}"
+        + (f" (skipped {skipped_functions} already-specced function(s))" if args.resume else "")
     )
     return 0
 
