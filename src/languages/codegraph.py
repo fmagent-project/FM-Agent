@@ -8,12 +8,36 @@ To add support for a new language: create src/languages/<lang>.py and add an ent
 REGISTRY in src/languages/registry.py. No other files need to change.
 """
 
+import hashlib
 import logging
 import os
 import shutil
 import sqlite3
 import subprocess
 from collections import defaultdict
+
+
+_SAFE_REPLACE = str.maketrans({"/": "_"})
+_UNSAFE = set("/")
+
+
+def canonicalize(func_name):
+    """Return a filesystem-safe, FQN-safe version of a function name.
+
+    C++ operator overloads like ``operator/`` contain ``/`` which breaks both
+    file paths and ``::``-separated FQNs.  This function sanitises those
+    characters so the name is safe everywhere it appears: extracted-function
+    file names, FQNs, call-edge keys, and scope.py rankings.
+
+    Every entry point that introduces a function name into the system MUST call
+    this function before using the name.
+    """
+    if not func_name:
+        return func_name
+    for ch in _UNSAFE:
+        if ch in func_name:
+            return func_name.translate(_SAFE_REPLACE)
+    return func_name
 
 # Maps FM-Agent lang_key → the language string stored in codegraph's SQLite
 # nodes.language column. Only includes languages that codegraph actually supports.
@@ -93,10 +117,11 @@ def _node_fqn_map(cur, cg_langs) -> dict:
     counts: dict = {}
     result: dict = {}
     for node_id, name, file_path, _start in cur.fetchall():
-        key = (file_path, name)
+        cname = canonicalize(name)
+        key = (file_path, cname)
         c = counts.get(key, 0)
         counts[key] = c + 1
-        deduped = name if c == 0 else f"{name}_{c}"
+        deduped = cname if c == 0 else f"{cname}_{c}"
         result[node_id] = _fqn_for(file_path, deduped)
     return result
 
@@ -163,8 +188,8 @@ class CodeGraphExtractor:
             except OSError:
                 continue
 
-            file_funcs = []
             name_counts = {}
+            file_funcs = []
             for name, start_line, end_line in funcs:
                 # Disambiguate functions sharing a name within one file
                 # (LocalStorage::Flush vs RemoteCache::Flush, overloads, a method
@@ -175,9 +200,10 @@ class CodeGraphExtractor:
                 # both extraction and the call graph. Mirror the regex path's
                 # dedup ("Flush", "Flush_1", ...). funcs are line-ordered (SQL
                 # ORDER BY start_line), so suffix assignment is deterministic.
-                count = name_counts.get(name, 0)
-                name_counts[name] = count + 1
-                deduped = name if count == 0 else f"{name}_{count}"
+                cname = canonicalize(name)
+                count = name_counts.get(cname, 0)
+                name_counts[cname] = count + 1
+                deduped = cname if count == 0 else f"{cname}_{count}"
                 # codegraph uses 1-indexed lines, end_line is inclusive
                 body_lines = all_lines[start_line - 1 : end_line]
                 body = "".join(body_lines)
@@ -231,7 +257,7 @@ class CodeGraphExtractor:
         if not rows:
             return None
         # codegraph uses 1-indexed lines with an inclusive end_line.
-        return [(name, int(start) - 1, int(end) - 1) for name, start, end in rows]
+        return [(canonicalize(name), int(start) - 1, int(end) - 1) for name, start, end in rows]
 
     def get_call_edges(self, lang_key: str) -> dict:
         """Return {caller_fqn: {callee_fqn, ...}} for the given language.
