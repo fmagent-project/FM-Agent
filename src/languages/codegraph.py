@@ -8,36 +8,12 @@ To add support for a new language: create src/languages/<lang>.py and add an ent
 REGISTRY in src/languages/registry.py. No other files need to change.
 """
 
-import hashlib
 import logging
 import os
-import shutil
+import re
 import sqlite3
 import subprocess
 from collections import defaultdict
-
-
-_SAFE_REPLACE = str.maketrans({"/": "_"})
-_UNSAFE = set("/")
-
-
-def canonicalize(func_name):
-    """Return a filesystem-safe, FQN-safe version of a function name.
-
-    C++ operator overloads like ``operator/`` contain ``/`` which breaks both
-    file paths and ``::``-separated FQNs.  This function sanitises those
-    characters so the name is safe everywhere it appears: extracted-function
-    file names, FQNs, call-edge keys, and scope.py rankings.
-
-    Every entry point that introduces a function name into the system MUST call
-    this function before using the name.
-    """
-    if not func_name:
-        return func_name
-    for ch in _UNSAFE:
-        if ch in func_name:
-            return func_name.translate(_SAFE_REPLACE)
-    return func_name
 
 # Maps FM-Agent lang_key → the language string stored in codegraph's SQLite
 # nodes.language column. Only includes languages that codegraph actually supports.
@@ -74,56 +50,50 @@ _CONSTRUCTOR_FILTER = {
     "cpp":        "ctor.name = cls.name",
 }
 
+def _bare_function_name(name: str) -> str:
+    """Extract the bare function identifier from a potentially decorated name.
 
-def _fqn_for(file_path: str, name: str) -> str:
-    """Build the FQN of a function, identical to generate_topdown_layers._file_to_fqn.
+    Tree-sitter sometimes stores a full function signature in the name column
+    for macro-generated C/C++ declarations (e.g. ``(*func)(type *param)``
+    instead of ``func``).  Strips decorations so the result can be used as a
+    filename stem and call-edge key.
 
-    The extracted layout for a source file ``<dir>/<base>.<ext>`` is
-    ``<dir>/<base>-<ext>/<name>.<ext>``, whose FQN is ``dir::base-ext::name``.
-    Constructing the same string here lets get_call_edges emit edges keyed by the
-    exact same FQN the call-graph builder assigns to each extracted function, so
-    codegraph's precisely-resolved caller/callee node identity is preserved
-    instead of being collapsed to a bare name.
+    Handled patterns (language-agnostic — safe for all codegraph languages):
+    - Simple identifier: ``"my_func"`` -> ``"my_func"``
+    - Qualified name: ``"ns::Cls::method"`` -> ``"method"``
+    - Go pointer receiver: ``"(*T).Method"`` -> ``"Method"``
+    - Function-pointer: ``"(*func)(type *param)"`` -> ``"func"``
+    - Pointer return: ``"*func_name(...)"`` -> ``"func_name"``
+    - this-dot: ``"this.onClick"`` -> ``"onClick"``
+    - Empty: ``""`` -> ``""`` (caller falls back to ``_function``)
     """
-    norm = file_path.replace(os.sep, "/")
-    d = os.path.dirname(norm)
-    base = os.path.basename(norm)
-    last_dot = base.rfind(".")
-    dashed = base[:last_dot] + "-" + base[last_dot + 1:] if last_dot > 0 else base
-    parts = [p for p in d.split("/") if p]
-    parts += [dashed, name]
-    return "::".join(parts)
+    name = name.strip()
+    if not name:
+        return ""
 
+    # 1. Qualified names (:: / . / (*T). / ) — take the last component.
+    #    Must come BEFORE the function-pointer check so that Go receiver
+    #    syntax "(*T).Method" returns "Method", not "T".
+    m = re.search(r'(?:[:\.)])(\w+)$', name)
+    if m:
+        return m.group(1)
 
-def _node_fqn_map(cur, cg_langs) -> dict:
-    """Return {node_id: fqn} for every function/method node in the given languages.
+    # 2. Function-pointer signature: (*identifier)(...)
+    m = re.match(r'\(\s*\*\s*(\w+)\s*\)', name)
+    if m:
+        return m.group(1)
 
-    The per-file name dedup (``Flush``, ``Flush_1``, ...) uses the SAME rule and
-    ordering as get_functions_by_file (``ORDER BY file_path, start_line``, then a
-    per-(file, name) counter), so the FQN assigned to a node here matches the FQN
-    the extracted file for that node receives. Keeping the two in lockstep is what
-    makes the call-edge identities line up with the extracted-function identities.
-    """
-    placeholders = ",".join("?" * len(cg_langs))
-    cur.execute(
-        f"""
-        SELECT id, name, file_path, start_line
-        FROM nodes
-        WHERE kind IN ('function', 'method') AND language IN ({placeholders})
-        ORDER BY file_path, start_line
-        """,
-        cg_langs,
-    )
-    counts: dict = {}
-    result: dict = {}
-    for node_id, name, file_path, _start in cur.fetchall():
-        cname = canonicalize(name)
-        key = (file_path, cname)
-        c = counts.get(key, 0)
-        counts[key] = c + 1
-        deduped = cname if c == 0 else f"{cname}_{c}"
-        result[node_id] = _fqn_for(file_path, deduped)
-    return result
+    # 3. Pointer return: *identifier(...)
+    m = re.match(r'\*\s*(\w+)', name)
+    if m:
+        return m.group(1)
+
+    # 4. Plain identifier (__init__, _private, normal_func, etc.)
+    m = re.match(r'^(\w+)', name)
+    if m:
+        return m.group(1)
+
+    return name
 
 
 class CodeGraphExtractor:
@@ -177,7 +147,8 @@ class CodeGraphExtractor:
 
         by_file = defaultdict(list)
         for name, file_path, start_line, end_line in rows:
-            by_file[file_path].append((name, int(start_line), int(end_line)))
+            bare = _bare_function_name(name)
+            by_file[file_path].append((bare, int(start_line), int(end_line)))
 
         result = {}
         for file_path, funcs in by_file.items():
@@ -188,96 +159,37 @@ class CodeGraphExtractor:
             except OSError:
                 continue
 
-            name_counts = {}
             file_funcs = []
+            name_counts = {}
             for name, start_line, end_line in funcs:
-                # Disambiguate functions sharing a name within one file
-                # (LocalStorage::Flush vs RemoteCache::Flush, overloads, a method
-                # and a same-named free function, ...). codegraph stores them all
-                # under the same bare name; run_extraction writes each to
-                # "<name>.<ext>", so without a suffix the later definition
-                # silently overwrites the earlier one — dropping functions from
-                # both extraction and the call graph. Mirror the regex path's
-                # dedup ("Flush", "Flush_1", ...). funcs are line-ordered (SQL
-                # ORDER BY start_line), so suffix assignment is deterministic.
-                cname = canonicalize(name)
-                count = name_counts.get(cname, 0)
-                name_counts[cname] = count + 1
-                deduped = cname if count == 0 else f"{cname}_{count}"
+                # Deduplicate within the same source file so that e.g.
+                # Go (*A).Close and (*B).Close (both bare-ify to Close)
+                # do not overwrite each other.
+                count = name_counts.get(name, 0)
+                name_counts[name] = count + 1
+                if count > 0:
+                    name = f"{name}_{count}"
                 # codegraph uses 1-indexed lines, end_line is inclusive
                 body_lines = all_lines[start_line - 1 : end_line]
                 body = "".join(body_lines)
                 if not body.endswith("\n"):
                     body += "\n"
-                file_funcs.append((deduped, body))
+                file_funcs.append((name, body))
 
             result[abs_path] = file_funcs
 
         return result
 
-    def get_function_spans(self, lang_key: str, abs_filepath: str):
-        """Return ``[(name, start_idx, end_idx), ...]`` for a single file, or None.
-
-        Line indices are 0-indexed and inclusive, matching the convention the
-        regex extractor (_extract_functions_brace / _extract_functions_indent)
-        uses, so callers can rewrite the file by line index. Functions are
-        ordered by their starting line.
-
-        Returns None when codegraph does not support ``lang_key`` or when the
-        file is not present in the index (e.g. it was never indexed) — the
-        caller then falls back to the regex extractor. An indexed file that
-        genuinely contains no functions also yields None, which is harmless:
-        the regex fallback finds none either.
-        """
-        cg_langs = _CG_LANG.get(lang_key)
-        if not cg_langs:
-            return None
-
-        # codegraph stores file paths relative to the project root, which is the
-        # parent of the .codegraph/ directory holding the database.
-        root = os.path.dirname(os.path.dirname(os.path.abspath(self._db)))
-        rel = os.path.relpath(os.path.abspath(abs_filepath), root)
-
-        conn = sqlite3.connect(self._db)
-        cur = conn.cursor()
-        placeholders = ",".join("?" * len(cg_langs))
-        cur.execute(
-            f"""
-            SELECT name, start_line, end_line
-            FROM nodes
-            WHERE kind IN ('function', 'method') AND language IN ({placeholders})
-              AND file_path = ?
-            ORDER BY start_line
-            """,
-            (*cg_langs, rel),
-        )
-        rows = cur.fetchall()
-        conn.close()
-
-        if not rows:
-            return None
-        # codegraph uses 1-indexed lines with an inclusive end_line.
-        return [(canonicalize(name), int(start) - 1, int(end) - 1) for name, start, end in rows]
-
     def get_call_edges(self, lang_key: str) -> dict:
-        """Return {caller_fqn: {callee_fqn, ...}} for the given language.
+        """Return {(caller_stem, caller_basename): {callee_stem, ...}} for the given language.
 
-        Each FQN matches generate_topdown_layers._file_to_fqn for the
-        corresponding extracted function (``dir::file-ext::dedup_name``). Edges
-        are resolved by codegraph NODE ID (not by bare name), so the precise
-        caller/callee identity codegraph computed — which file, which same-named
-        sibling — is preserved end-to-end. This lets the call-graph builder use
-        the edges directly instead of re-resolving bare names against every
-        same-named function (which collapsed siblings and over-approximated
-        across files).
+        caller_stem / callee_stem are plain function names (fqn.split('::')[-1]).
+        caller_basename is os.path.basename(caller_file_path), used to disambiguate
+        same-name functions defined in different files.
 
         Constructor calls are synthesised from `instantiates` edges: when a
         function instantiates a class, the corresponding constructor method is
         added as a callee.  See _CONSTRUCTOR_FILTER for per-language details.
-
-        NOTE: codegraph itself collapses calls to same-named classes in different
-        files onto the first definition (a codegraph resolver limitation for C++,
-        not addressable here — see issues/codegraph-samename-class-resolution).
         """
         cg_langs = _CG_LANG.get(lang_key)
         if not cg_langs:
@@ -287,27 +199,25 @@ class CodeGraphExtractor:
         cur = conn.cursor()
         placeholders = ",".join("?" * len(cg_langs))
 
-        # Map every function/method node to its FQN once, using the same per-file
-        # dedup as get_functions_by_file, then resolve edges by node id.
-        fqn_of = _node_fqn_map(cur, cg_langs)
-
-        result = defaultdict(set)
-
-        # Query 1: regular function/method calls, kept as (source_id, target_id)
-        # so each endpoint resolves to its exact node's FQN.
+        # Query 1: regular function/method calls
         cur.execute(
             f"""
-            SELECT e.source, e.target
+            SELECT s.name, s.file_path, t.name
             FROM edges e
             JOIN nodes s ON e.source = s.id
+            JOIN nodes t ON e.target = t.id
             WHERE e.kind = 'calls' AND s.language IN ({placeholders})
             """,
             cg_langs,
         )
-        for src_id, tgt_id in cur.fetchall():
-            caller, callee = fqn_of.get(src_id), fqn_of.get(tgt_id)
-            if caller and callee:
-                result[caller].add(callee)
+        rows = cur.fetchall()
+
+        result = defaultdict(set)
+        for caller, caller_file, callee in rows:
+            base = os.path.basename(caller_file)
+            last_dot = base.rfind(".")
+            dashed = base[:last_dot] + "-" + base[last_dot + 1:] if last_dot > 0 else base
+            result[(_bare_function_name(caller), dashed)].add(_bare_function_name(callee))
 
         # Query 2: constructor calls synthesised from instantiates edges.
         # For each `caller instantiates ClassName` edge, find the constructor
@@ -316,7 +226,7 @@ class CodeGraphExtractor:
         if ctor_filter:
             cur.execute(
                 f"""
-                SELECT e.source, ctor.id
+                SELECT s.name, s.file_path, ctor.name
                 FROM edges e
                 JOIN nodes s   ON e.source = s.id
                 JOIN nodes cls ON e.target = cls.id AND cls.kind = 'class'
@@ -328,45 +238,26 @@ class CodeGraphExtractor:
                 """,
                 cg_langs,
             )
-            for src_id, ctor_id in cur.fetchall():
-                caller, callee = fqn_of.get(src_id), fqn_of.get(ctor_id)
-                if caller and callee:
-                    result[caller].add(callee)
+            for caller, caller_file, ctor_name in cur.fetchall():
+                base = os.path.basename(caller_file)
+                last_dot = base.rfind(".")
+                dashed = base[:last_dot] + "-" + base[last_dot + 1:] if last_dot > 0 else base
+                result[(_bare_function_name(caller), dashed)].add(_bare_function_name(ctor_name))
 
         conn.close()
         return dict(result)
 
 
-def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
-    """Build the codegraph index for proj_dir with `codegraph init`.
-
-    By default (``force=True``) any existing index is discarded and rebuilt, so
-    the index always reflects the current working tree rather than whatever code
-    was present when it was last built. This is the safe default: callers read
-    function bodies and spans from the index, and a stale one (e.g. after an
-    incremental run's tree changed, or after `_trim_project_in_place` edited the
-    sources) would yield boundaries for the wrong code. `codegraph init` on its
-    own no-ops when `.codegraph/` already exists, so a rebuild requires clearing
-    it first.
-
-    Pass ``force=False`` to keep an existing index and only build when it is
-    absent — an opt-in optimization for callers that know the tree is unchanged
-    since the index was built.
+def try_codegraph_init(proj_dir: str) -> None:
+    """Run `codegraph init` in proj_dir if the index does not yet exist.
 
     Silently skips when codegraph is not installed so the pipeline falls back
     to the regex-based extractor without any error.
     """
-    codegraph_dir = os.path.join(proj_dir, ".codegraph")
-    db_path = os.path.join(codegraph_dir, "codegraph.db")
+    db_path = os.path.join(proj_dir, ".codegraph", "codegraph.db")
     if os.path.exists(db_path):
-        if not force:
-            return
-        # Existing index may reflect stale sources; remove it so `codegraph init`
-        # rebuilds against the current tree instead of skipping.
-        shutil.rmtree(codegraph_dir, ignore_errors=True)
-        print("[Pipeline] Rebuilding codegraph index for current working tree...")
-    else:
-        print("[Pipeline] Building codegraph index...")
+        return
+    print("[Pipeline] Building codegraph index (this runs once per project)...")
     try:
         result = subprocess.run(
             ["codegraph", "init"], cwd=proj_dir, capture_output=True, text=True
