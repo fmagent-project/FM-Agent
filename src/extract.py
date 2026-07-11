@@ -2,12 +2,12 @@ import json
 import os
 import re
 import sys
-import bisect
 import shutil
 import logging
 
 from src.file_utils import is_file_ready, _is_test_file
 from src.languages.registry import batch_extract_all, function_spans_for_file
+from src.languages.decorator_span import apply_decorator_extension as _apply_decorator_extension
 
 LANG_CONFIG = {
     "cpp": {
@@ -594,6 +594,12 @@ def extract_functions_from_file(filepath, lang_key):
         # registered backend and have no reliable file-local fallback.
         return []
 
+    # Extend each span upward over attached decorators/annotations so guards
+    # expressed as decorators (e.g. FastAPI dependencies=[Depends(...)]) are part
+    # of the extracted body. Bounded by the nearest preceding span end so a
+    # sibling function is never absorbed. Applies to decorator-bearing languages.
+    raw_funcs = _apply_decorator_extension(lines, raw_funcs, lang_key)
+
     # Deduplicate names
     name_counts = {}
     results = []
@@ -610,60 +616,10 @@ def extract_functions_from_file(filepath, lang_key):
     return results
 
 
-# Languages whose functions/methods can carry `@`-prefixed decorators or
-# annotations that sit ABOVE the signature line. Neither codegraph nor the regex
-# extractors include these in the function span (both start at the `def`/
-# signature line), so security-relevant guards expressed as decorators (e.g.
-# FastAPI `@router.delete(..., dependencies=[Depends(requires_access_...)])` or
-# Flask/Java `@has_access`/`@PreAuthorize`) are invisible to per-function
-# analysis. _extend_start_over_decorators() reattaches them.
-_DECORATOR_LANGS = {"python", "java", "typescript", "javascript", "arkts"}
-
-
-def _extend_start_over_decorators(norm_lines, start, lower_bound):
-    """Return a new start index that includes decorator/annotation lines
-    immediately preceding the function at ``start``.
-
-    Walks upward from ``start - 1`` down to (but not past) ``lower_bound``,
-    which is the end index of the nearest preceding function span (so we never
-    swallow a sibling's body). The walk is BRACKET-AWARE so a multi-line
-    decorator such as::
-
-        @router.delete(
-            "/task/{task_id}",
-            dependencies=[Depends(requires_access_dag(...))],
-        )
-        def delete_task_instance(...):
-
-    is captured whole: reading bottom-up, the closing ``)`` opens a bracket
-    balance that only returns to zero at the ``@router.delete(`` line, which is
-    where the decorator (and thus the new start) begins. Multiple stacked
-    decorators are absorbed one after another. A blank line at bracket depth 0
-    (decorators must be adjacent to the def in valid syntax) or any non-decorator
-    line ends the walk.
-    """
-    new_start = start
-    depth = 0
-    j = start - 1
-    while j >= lower_bound:
-        raw = norm_lines[j]
-        s = raw.strip()
-        if depth == 0 and s == "":
-            break  # blank gap: decorators must be adjacent to the signature
-        # Bottom-up bracket balance: closers add, openers subtract.
-        depth += raw.count(")") + raw.count("]") + raw.count("}")
-        depth -= raw.count("(") + raw.count("[") + raw.count("{")
-        if depth < 0:
-            depth = 0  # defensive: unbalanced line, treat as settled
-        if depth == 0:
-            if s.startswith("@"):
-                new_start = j          # a decorator (possibly multi-line) starts here
-                j -= 1
-                continue
-            break                       # settled on a non-decorator line: stop
-        # depth > 0: still inside a multi-line decorator's brackets; keep rising
-        j -= 1
-    return new_start
+# Decorator/annotation span-extension is shared with the codegraph backend via a
+# dependency-free leaf module (src/languages/decorator_span.py) to avoid the
+# import cycle extract -> languages.registry -> languages.python -> codegraph.
+# _apply_decorator_extension is imported at the top of this module.
 
 
 def _function_spans(filepath, lang_key, proj_dir=None):
@@ -683,9 +639,9 @@ def _function_spans(filepath, lang_key, proj_dir=None):
 
     For decorator-bearing languages the span start is extended upward to include
     any decorators/annotations attached to the function (see
-    _extend_start_over_decorators): both backends start at the signature line, so
-    without this fix decorator-expressed security guards are dropped from the
-    extracted function.
+    src.languages.decorator_span.apply_decorator_extension): both backends start
+    at the signature line, so without this fix decorator-expressed security
+    guards are dropped from the extracted function.
     """
     lang_cfg = LANG_CONFIG[lang_key]
     with open(filepath, "r", errors="replace") as f:
@@ -705,18 +661,7 @@ def _function_spans(filepath, lang_key, proj_dir=None):
 
     # Extend each span upward over attached decorators/annotations, bounded by
     # the nearest preceding span end so we never absorb a sibling function.
-    if lang_key in _DECORATOR_LANGS and raw_funcs:
-        prior_ends = sorted(end for _, _, end in raw_funcs)
-        extended = []
-        for name, start, end in raw_funcs:
-            # Nearest span end strictly above this start = extension lower bound
-            # (exclusive of that line); default -1 so a top-of-file function can
-            # reach line 0. bisect keeps this O(log n) per function.
-            idx = bisect.bisect_left(prior_ends, start) - 1
-            lb = (prior_ends[idx] + 1) if idx >= 0 and prior_ends[idx] < start else 0
-            new_start = _extend_start_over_decorators(norm_lines, start, lb)
-            extended.append((name, new_start, end))
-        raw_funcs = extended
+    raw_funcs = _apply_decorator_extension(norm_lines, raw_funcs, lang_key)
 
     name_counts = {}
     spans = []

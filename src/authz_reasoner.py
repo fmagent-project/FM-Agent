@@ -66,6 +66,70 @@ def _norm(expr):
     return "".join(str(expr).split()).lower()
 
 
+def _key_components(expr):
+    """Split a (possibly composite) resource-id expression into a set of
+    normalized component ids. "dag_id, dag_run_id, task_id" -> {dag_id,
+    dag_run_id, task_id}. Empty/null -> empty set."""
+    if not expr or expr in ("null", "None"):
+        return set()
+    # Strip a wrapping tuple/list/paren pair so "(dag_id, dag_run_id, task_id)"
+    # and "dag_id, dag_run_id, task_id" yield the same components (the LLM emits
+    # composite keys both ways). Also strip per-component brackets/quotes.
+    text = str(expr).strip()
+    if len(text) >= 2 and text[0] in "([{" and text[-1] in ")]}":
+        text = text[1:-1]
+    comps = set()
+    for part in text.split(","):
+        tok = "".join(part.split()).lower().strip("()[]{}\"'")
+        if tok:
+            comps.add(tok)
+    return comps
+
+
+def _key_covers(guard_id, op_id):
+    """True if the guard's resource key COVERS the op's composite resource key.
+
+    Hierarchical/composite resources: an op identified by a composite key (e.g.
+    "dag_id, dag_run_id, task_id, map_index" for a TaskInstance) is authorized by
+    a guard that binds a COARSER ANCESTOR key drawn from the same request-derived
+    components (e.g. a DAG-level guard binding "dag_id" covers task-instance ops
+    under that DAG — the standard RBAC pattern in FastAPI/Flask apps). Coverage =
+    the guard's id components are a NON-EMPTY SUBSET of the op's id components.
+    Exact equality is the degenerate subset case.
+
+    Tradeoff (documented): for a truly independent multi-resource op whose
+    composite key mixes unrelated resources, subset coverage can over-discharge.
+    In practice composite keys identify ONE hierarchical resource, and this
+    heuristic removes the dominant false-positive class (requiring char-exact
+    composite-key equality flagged every guarded hierarchical route). A guard
+    binding a DIFFERENT single id (invoice_id vs user_id) is NOT a subset, so
+    genuine IDOR is still surfaced.
+    """
+    g = _key_components(guard_id)
+    o = _key_components(op_id)
+    if not g or not o:
+        return False
+    return g <= o
+
+
+def _is_framework_guard(guard):
+    """A guard declared as a decorator / dependency-injection dependency is
+    enforced by the framework BEFORE the function body runs, so it dominates all
+    paths by construction (FastAPI `dependencies=[Depends(requires_access_*)]`,
+    Flask `@has_access`, Spring `@PreAuthorize`)."""
+    return (guard.get("source") or "in_body").lower() in (
+        "decorator", "dependency_injection")
+
+
+def _type_matches(guard, op):
+    """True if the guard names the same resource type / access entity as the op
+    (case-insensitive). Lets a framework scoped-permission guard discharge an op
+    on that resource type even when it exposes no explicit per-object id."""
+    gt = _norm(guard.get("resource_type"))
+    ot = _norm(op.get("resource_type"))
+    return bool(gt) and bool(ot) and gt == ot
+
+
 def _has_authenticated_subject(abstraction):
     subj = (abstraction.get("authenticated_subject") or {})
     expr = subj.get("expr")
@@ -75,8 +139,40 @@ def _has_authenticated_subject(abstraction):
 def _guard_binds_subject(guard):
     if guard.get("kind") == "authentication":
         return True
+    # A framework-enforced guard (decorator / dependency injection) binds the
+    # authenticated principal implicitly: the framework resolves the current
+    # subject and runs the permission check before the body, so the abstraction
+    # legitimately reports subject=null (there is no in-body subject expression).
+    if _is_framework_guard(guard):
+        return True
     s = guard.get("subject")
     return bool(s) and s not in ("null", "None")
+
+
+# HTTP methods map to CRUD-ish action verbs so a route-guard whose action_scope
+# is an HTTP method (FastAPI requires_access_*(method="GET")) covers a sensitive
+# op whose action is the corresponding verb.
+#
+# Write methods (POST/PUT/PATCH/DELETE) SUBSUME read verbs: a modify-route must
+# fetch its target before acting on it, and that fetch is authorized by the same
+# route permission (you cannot delete what you cannot first read). This is the
+# monotonic privilege direction ONLY — read methods (GET/HEAD) do NOT subsume
+# write verbs, so a GET route whose body performs a delete still fails coverage
+# and is flagged. That asymmetry is deliberate and catches method/effect
+# mismatches rather than masking them.
+# Read VERBS a write-route legitimately performs before its effect. Deliberately
+# excludes the HTTP method names "get"/"head" (op actions are verbs like read/
+# list, never the method name), so a GET-scope guard cannot backdoor a delete op
+# through the reverse-direction match below.
+_READ_VERBS = {"read", "list"}
+_HTTP_METHOD_ACTIONS = {
+    "get": {"read", "list", "get"},
+    "head": {"read", "list", "get"},
+    "post": {"create", "write", "update", "post"} | _READ_VERBS,
+    "put": {"update", "write", "put"} | _READ_VERBS,
+    "patch": {"update", "write", "patch"} | _READ_VERBS,
+    "delete": {"delete"} | _READ_VERBS,
+}
 
 
 def _action_covers(scope, action):
@@ -84,7 +180,16 @@ def _action_covers(scope, action):
         return True
     if not action:
         return True
-    return _norm(scope) == _norm(action)
+    ns, na = _norm(scope), _norm(action)
+    if ns == na:
+        return True
+    # HTTP-method scope (e.g. "DELETE") covers the mapped verb (e.g. "delete"),
+    # and a scope verb covers the same HTTP method the other direction.
+    if na in _HTTP_METHOD_ACTIONS.get(ns, set()):
+        return True
+    if ns in _HTTP_METHOD_ACTIONS.get(na, set()):
+        return True
+    return False
 
 
 def _is_self_access(op):
@@ -119,7 +224,10 @@ def _discharges(guard, op):
     """
     op_kind = (op.get("kind") or "").lower()
     is_read = op_kind == "read"
-    if not guard.get("dominates_all_paths") and not is_read:
+    # A decorator / dependency-injection guard is enforced by the framework
+    # before the body runs, so it dominates every path by construction.
+    framework = _is_framework_guard(guard)
+    if not guard.get("dominates_all_paths") and not is_read and not framework:
         return False, "not_dominating"
     if not _guard_binds_subject(guard):
         return False, "no_subject_binding"
@@ -134,17 +242,39 @@ def _discharges(guard, op):
     # binds THAT id (ownership/tenant). A role/authentication guard alone does
     # not authorize a per-object action.
     if op_id:
-        if kind in ("ownership", "tenant", "other") and g_id and g_id == op_id:
+        # Coverage match: a guard whose resource key is the same as, or a coarser
+        # ANCESTOR of, the op's composite key discharges it (dag_id covers
+        # [dag_id, dag_run_id, task_id]). Handles the hierarchical-RBAC pattern.
+        if kind in ("ownership", "tenant", "other") and _key_covers(g_id, op_id):
             return True, None
-        if kind in ("ownership", "tenant") and g_id and g_id != op_id:
+        if kind in ("ownership", "tenant") and g_id and not _key_covers(g_id, op_id):
             return False, "binding_mismatch"
         if kind in ("role", "authentication"):
-            # role guard for an object-specific access: insufficient unless the
-            # op is an admin action (handled below).
+            # A role/permission guard alone does not authorize a per-object
+            # action UNLESS it is a framework-enforced permission scoped to this
+            # resource (e.g. FastAPI requires_access_dag(access_entity=
+            # TASK_INSTANCE) / Flask @has_access on a typed view). That IS the
+            # app's object-level authorization model.
             if op.get("kind") == "admin":
                 return True, None
+            if framework:
+                # When the guard names a concrete resource id, it MUST cover the
+                # op's key — a guard bound to a DIFFERENT id is IDOR, never
+                # discharged by a mere type match. Only when the guard declares
+                # NO id (a DI guard scoped by access-entity/type alone) does the
+                # resource-type match stand in for the binding.
+                if g_id:
+                    if _key_covers(g_id, op_id):
+                        return True, None
+                    return False, "binding_mismatch"
+                if _type_matches(guard, op):
+                    return True, None
             return False, "role_only_for_object"
         if not g_id:
+            # A framework guard scoped to this resource type discharges even
+            # without an explicit per-object id echoed in the decorator.
+            if framework and _type_matches(guard, op):
+                return True, None
             # dominating guard but no resource id recorded -> cannot confirm binding
             return False, "binding_unknown"
         return False, "binding_mismatch"

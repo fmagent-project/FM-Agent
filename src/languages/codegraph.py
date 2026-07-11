@@ -15,6 +15,8 @@ import sqlite3
 import subprocess
 from collections import defaultdict
 
+from src.languages.decorator_span import apply_decorator_extension
+
 # Maps FM-Agent lang_key → the language string stored in codegraph's SQLite
 # nodes.language column. Only includes languages that codegraph actually supports.
 # ArkTS is omitted (not supported by codegraph).
@@ -163,9 +165,19 @@ class CodeGraphExtractor:
             except OSError:
                 continue
 
+            # Extend each span upward over attached decorators/annotations so
+            # decorator-expressed guards (FastAPI dependencies=[Depends(...)],
+            # Flask @has_access, Spring @PreAuthorize) land in the extracted
+            # body. codegraph nodes start at the def/signature line, dropping
+            # these otherwise. Convert to the 0-indexed inclusive spans the
+            # shared helper expects, extend, then slice bodies from the new start.
+            norm_lines = [ln.rstrip("\n").rstrip("\r") for ln in all_lines]
+            zero_spans = [(name, sl - 1, el - 1) for name, sl, el in funcs]
+            zero_spans = apply_decorator_extension(norm_lines, zero_spans, lang_key)
+
             file_funcs = []
             name_counts = {}
-            for name, start_line, end_line in funcs:
+            for name, start_idx, end_idx in zero_spans:
                 # Disambiguate functions sharing a name within one file
                 # (LocalStorage::Flush vs RemoteCache::Flush, overloads, a method
                 # and a same-named free function, ...). codegraph stores them all
@@ -178,8 +190,8 @@ class CodeGraphExtractor:
                 count = name_counts.get(name, 0)
                 name_counts[name] = count + 1
                 deduped = name if count == 0 else f"{name}_{count}"
-                # codegraph uses 1-indexed lines, end_line is inclusive
-                body_lines = all_lines[start_line - 1 : end_line]
+                # zero_spans are 0-indexed, end_idx inclusive.
+                body_lines = all_lines[start_idx : end_idx + 1]
                 body = "".join(body_lines)
                 if not body.endswith("\n"):
                     body += "\n"

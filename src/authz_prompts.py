@@ -98,6 +98,28 @@ def _system_prompt(language):
         "this guard first (it returns/raises/aborts on failure BEFORE the op). If the guard "
         "is only on some branches, false.\n"
         "   - evidence: the exact statement.\n"
+        "   FRAMEWORK-ENFORCED GUARDS (CRITICAL — do NOT misfile these as obligations): "
+        "a decorator or dependency-injection declaration attached to THIS function that "
+        "performs an authorization/permission check IS a guard, and it dominates all paths "
+        "(the framework runs it before the function body executes). Treat these as guards "
+        "with dominates_all_paths=true:\n"
+        "     * FastAPI/Starlette: a route decorator carrying an authorization dependency, "
+        "e.g. `@router.delete(..., dependencies=[Depends(requires_access_dag(method=\"DELETE\", "
+        "access_entity=...))])`, or a `subject = Depends(get_current_user)` / "
+        "`_ = Depends(requires_access_*)` parameter default. The permission/access-entity/"
+        "method arguments tell you the action_scope and resource_type it authorizes.\n"
+        "     * Flask / Flask-AppBuilder / Django: `@has_access`, `@has_access_api`, "
+        "`@permission_name(...)`, `@login_required`, `@user_passes_test(...)`, "
+        "`@permission_required(...)`.\n"
+        "     * Java/Spring: `@PreAuthorize(...)`, `@Secured(...)`, `@RolesAllowed(...)`.\n"
+        "   For such a guard, set kind='role' when it checks a role/permission name, "
+        "kind='authentication' when it only proves identity, or kind='ownership'/'tenant' "
+        "when it binds a specific resource id. Set resource_id_expr to the resource id the "
+        "check binds if one is named (e.g. the `dag_id` in a DAG-level access check), else "
+        "null. Record the decorator/Depends line as evidence. Only file something under "
+        "`obligations` when the authorization is genuinely NOT attached to this function and "
+        "must come from an ancestor caller — a decorator/DI dependency present ON this "
+        "function is LOCAL enforcement, i.e. a guard, never an obligation.\n"
         "4. OBLIGATIONS: authorization this function does NOT perform locally but RELIES ON a "
         "caller/framework to have established. Record what is assumed and why (e.g. "
         "'route applies @login_required so current_user is authenticated', or 'callers must "
@@ -152,6 +174,7 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries, is_en
         '    {"predicate_nl": "<check>", "subject": "<expr>|null", '
         '"resource_type": "<Type>|null", "resource_id_expr": "<expr>|null", '
         '"action_scope": "<verb|any>", "kind": "ownership|role|tenant|authentication|other", '
+        '"source": "in_body|decorator|dependency_injection", '
         '"dominates_all_paths": true, "evidence": "<exact stmt>"}\n'
         "  ],\n"
         '  "obligations": [\n'
@@ -167,5 +190,8 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries, is_en
         "}\n"
         "Omit arrays that are empty (or use []). Report resource_id_expr verbatim; never "
         "equate two different ids. Mark dominates_all_paths=false unless the guard truly "
-        "precedes the op on every path."
+        "precedes the op on every path. EXCEPTION: a decorator/dependency-injection guard "
+        "attached to this function ALWAYS has dominates_all_paths=true and source="
+        "'decorator' or 'dependency_injection' — the framework enforces it before the body "
+        "runs. Set source='in_body' for ordinary inline checks."
     )
