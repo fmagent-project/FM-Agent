@@ -3,17 +3,19 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 # file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
 try:
     # When imported as part of the src package (e.g. incremental_reasoner).
     from .file_utils import is_file_ready
     from .domain_knowledge import list_staged_domain_knowledge_relpaths
+    from .spec_storage import metadata_paths, read_info, read_spec
 except ImportError:
     # When run standalone after being copied into fm_agent/spec_prompts/,
     # where file_utils.py sits beside this script.
     from file_utils import is_file_ready
+    from spec_storage import metadata_paths, read_info, read_spec
 
     def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
         knowledge_dir = Path(work_dir) / "spec_prompts" / "domain_context" / "user_knowledge"
@@ -83,82 +85,16 @@ def parse_layers_spec(layers_spec: str) -> Tuple[int, int]:
     return start, end
 
 
-def _detect_comment_prefix(content: str) -> Optional[str]:
-    """Find the comment prefix by locating a line containing [SPEC] and extracting its prefix."""
-    for line in content.splitlines():
-        idx = line.find("[SPEC]")
-        if idx != -1:
-            return line[:idx].rstrip()
-    return None
-
-
-def extract_spec_block(filepath: Path) -> Optional[str]:
-    """Return the '<comment> [SPEC]' block as a string, or None if not specced."""
-    content = filepath.read_text(errors="replace")
-    prefix = _detect_comment_prefix(content)
-    if prefix is None:
-        return None
-    tag = f"{prefix} [SPEC]"
-    if not content.startswith(tag):
-        return None
-    end = content.find(tag, len(tag))
-    if end == -1:
-        return None
-    return content[: end + len(tag)].strip()
-
-
-def extract_info_block(filepath: Path) -> Optional[str]:
-    """Return content between the two '<comment> [INFO]' markers, or None."""
-    content = filepath.read_text(errors="replace")
-    prefix = _detect_comment_prefix(content)
-    if prefix is None:
-        return None
-    tag = f"{prefix} [INFO]"
-    start = content.find(tag)
-    if start == -1:
-        return None
-    end = content.find(tag, start + len(tag))
-    if end == -1:
-        return None
-    return content[start + len(tag) + 1 : end].strip()
-
-
-def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[str]:
-    """Find the [SPLIT]-separated entry for callee_fqn in an info_block."""
-    import re
-
-    # Detect comment prefix from the info_block content itself
-    prefix = ""
-    for line in info_block.splitlines():
-        stripped = line.strip()
-        if stripped:
-            idx = stripped.find("[SPLIT]")
-            if idx != -1:
-                prefix = stripped[:idx].rstrip()
-                break
-    # If no [SPLIT] found in block, infer prefix from first non-empty line
-    if not prefix:
-        for line in info_block.splitlines():
-            stripped = line.strip()
-            if stripped:
-                m = re.match(r'^(\S+)\s', stripped)
-                if m:
-                    prefix = m.group(1)
-                break
-
-    split_tag = f"{prefix} [SPLIT]" if prefix else "[SPLIT]"
-    callee_stem = callee_fqn.split("::")[-1]
-    for entry in info_block.split(split_tag):
-        entry = entry.strip()
-        if not entry or "(no callees)" in entry:
-            continue
-        first_line = entry.split("\n")[0].strip()
-        # Strip the comment prefix to get the actual content
-        if prefix and first_line.startswith(prefix):
-            first_line = first_line[len(prefix):].strip()
-        if callee_fqn in first_line or (callee_stem + "(") in first_line:
-            return entry
-    return None
+def callee_expectation(info_data: dict, callee_fqn: str) -> dict | None:
+    """Return the caller expectation for exactly one callee FQN."""
+    return next(
+        (
+            callee
+            for callee in info_data["callees"]
+            if callee["function"] == callee_fqn
+        ),
+        None,
+    )
 
 
 def chunked(items: List[dict], size: int) -> List[List[dict]]:
@@ -201,15 +137,12 @@ def build_prompt(
 ) -> str:
     lines: List[str] = []
     sample_lang = "unknown"
-    sample_comment = "//"
     if functions:
-        sample_lang, sample_comment = detect_lang_and_comment(functions[0]["file"], ext_to_lang)
+        sample_lang, _ = detect_lang_and_comment(functions[0]["file"], ext_to_lang)
 
     lines.append(f"You are generating behavioral specifications for Phase {phase}, Layer {layer_idx}.")
     lines.append("")
-    lines.append(
-        f"Language: {sample_lang}. Spec comment style: `{sample_comment} [SPEC]`."
-    )
+    lines.append(f"Language: {sample_lang}. Metadata format: structured JSON schema version 1.")
     lines.append("")
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/engine_overview.txt")
@@ -228,10 +161,12 @@ def build_prompt(
     lines.append("- Do NOT name internal helper calls, loop structure, or data layout decisions")
     lines.append("- Do NOT enumerate members of sets - describe the GOVERNING RULE")
     lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
-    lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each one")
+    lines.append("- The implementation file is immutable input")
+    lines.append("- Create both JSON metadata files for every function")
+    lines.append("- Write valid JSON only; do not wrap JSON in Markdown fences")
 
-    caller_specs: List[Tuple[str, str]] = []
-    caller_expectations: Dict[str, List[Tuple[str, str]]] = {}
+    caller_specs: List[Tuple[str, dict]] = []
+    caller_expectations: Dict[str, List[Tuple[str, dict]]] = {}
     for fn in functions:
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
@@ -244,23 +179,26 @@ def build_prompt(
             if not caller_meta:
                 continue
             caller_file = work_dir / caller_meta["file"]
-            spec_block = extract_spec_block(caller_file)
-            if spec_block and (caller_name, spec_block) not in caller_specs:
-                caller_specs.append((caller_name, spec_block))
-            info_block = extract_info_block(caller_file)
-            if not info_block:
+            try:
+                spec_data = read_spec(caller_file)
+                info_data = read_info(caller_file)
+            except (OSError, ValueError):
                 continue
-            entry = extract_callee_spec_from_info(info_block, fn_name)
+            if (caller_name, spec_data) not in caller_specs:
+                caller_specs.append((caller_name, spec_data))
+            entry = callee_expectation(info_data, fn_name)
             if entry:
-                caller_expectations.setdefault(fn_name, []).append((caller_name, entry.strip()))
+                caller_expectations.setdefault(fn_name, []).append(
+                    (caller_name, entry)
+                )
 
     if caller_specs:
         lines.append("")
         lines.append("## EARLIER-LAYER CALLER SPECS")
-        for caller_name, block in caller_specs:
+        for caller_name, spec_data in caller_specs:
             lines.append(f"#### {caller_name}")
             lines.append("")
-            lines.append(block)
+            lines.append(json.dumps(spec_data, indent=2, ensure_ascii=False))
             lines.append("")
 
     if caller_expectations:
@@ -273,7 +211,7 @@ def build_prompt(
             lines.append(f"### What callers expect from {fn_name}:")
             for caller_name, entry in entries:
                 lines.append(f"#### According to {caller_name}:")
-                lines.append(entry)
+                lines.append(json.dumps(entry, indent=2, ensure_ascii=False))
             lines.append("")
 
     if is_cycle:
@@ -292,51 +230,42 @@ def build_prompt(
     lines.append(f"## FUNCTIONS ({len(functions)} total - process ALL)")
     for idx, fn in enumerate(functions, start=1):
         fn_name = fn["name"]
+        implementation_rel = Path(fn["file"])
+        spec_rel, info_rel = metadata_paths(implementation_rel)
         caller_key = phase_callers_key(fn, phase)
         callers = fn.get(caller_key, [])
         earlier = [c for c in callers if func_to_layer.get(c, 10**9) < layer_idx]
-        lines.append(f"### {idx}. {fm_agent_prefix}{fn['file']}")
+        lines.append(f"### {idx}. {fn_name}")
+        lines.append(
+            f"  Read implementation (read-only): {fm_agent_prefix}{implementation_rel.as_posix()}"
+        )
+        lines.append(
+            f"  Write spec JSON: {fm_agent_prefix}{spec_rel.as_posix()}"
+        )
+        lines.append(
+            f"  Write info JSON: {fm_agent_prefix}{info_rel.as_posix()}"
+        )
         if earlier:
             lines.append("  Earlier-layer callers: " + ", ".join(earlier))
         else:
             lines.append("  Earlier-layer callers: (none)")
 
     lines.append("")
-    lines.append("## SPEC FORMAT (prepend to file, preserving source code below)")
-    lines.append("")
-    lines.append("The exact format every specced file must start with:")
-    lines.append("")
-    lines.append(f"{sample_comment} [SPEC]")
-    lines.append(f"{sample_comment} Unit: <file path relative to repo root>")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} <FunctionName>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} Pre-condition:")
-    lines.append(f"{sample_comment}   - ...")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} Post-condition:")
-    lines.append(f"{sample_comment}   - ...")
-    lines.append(f"{sample_comment} [SPEC]")
-    lines.append("")
-    lines.append(f"{sample_comment} [INFO]")
-    lines.append(f"{sample_comment} <callee_name>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}   Pre-condition: ...")
-    lines.append(f"{sample_comment}   Post-condition: ...")
-    lines.append(f"{sample_comment} [SPLIT]")
-    lines.append(f"{sample_comment} <another_callee>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}   Pre-condition: ...")
-    lines.append(f"{sample_comment}   Post-condition: ...")
-    lines.append(f"{sample_comment} [INFO]")
-    lines.append("")
-    lines.append("If the function has no callees: '<comment> (no callees)' between the [INFO] markers.")
+    lines.append("## JSON SCHEMAS")
+    lines.append("Spec JSON fields: schema_version=1, function, unit, signature, preconditions, postconditions.")
+    lines.append("Info JSON fields: schema_version=1, function, callees.")
+    lines.append("Each callee has function, signature, preconditions, and postconditions.")
+    lines.append("All condition fields are arrays of strings. Use callees: [] when there are no callees.")
+    lines.append("The top-level function field must exactly equal the FQN shown above.")
     lines.append("")
     lines.append("## PROCESS")
     lines.append("For each function:")
-    lines.append("1. Read the extracted file")
+    lines.append("1. Read the implementation file without modifying it")
     lines.append("2. Read caller expectations above - what do callers NEED from this function?")
     lines.append("3. Write a behavioral spec describing WHAT it guarantees (not HOW)")
-    lines.append("4. Write the COMPLETE file with [SPEC] and [INFO] blocks prepended, then UNCHANGED source")
-    lines.append("5. Use the Write tool to save the complete file")
+    lines.append("4. Write the complete structured object to the listed spec JSON path")
+    lines.append("5. Write the complete structured object to the listed info JSON path")
+    lines.append("6. Do not edit, rewrite, or otherwise modify the implementation file")
     return "\n".join(lines).rstrip() + "\n"
 
 

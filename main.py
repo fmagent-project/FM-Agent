@@ -265,6 +265,10 @@ def run_pipeline(
         os.path.join(script_dir, "src", "file_utils.py"),
         os.path.join(spec_prompts_dir, "file_utils.py"),
     )
+    shutil.copy2(
+        os.path.join(script_dir, "src", "spec_storage.py"),
+        os.path.join(spec_prompts_dir, "spec_storage.py"),
+    )
 
     phases_path = os.path.join(work_dir, "phases.json")
     with open(phases_path, "r") as f:

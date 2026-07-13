@@ -2,7 +2,11 @@ import os
 import json
 import re
 
-from src.spec_storage import is_function_ready, is_metadata_file
+try:
+    from src.spec_storage import is_function_ready, is_metadata_file
+except ImportError:
+    # This module is copied beside generate_batch_prompts.py for standalone use.
+    from spec_storage import is_function_ready, is_metadata_file
 
 
 def _is_extracted_function_file(path):

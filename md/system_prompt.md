@@ -1,149 +1,86 @@
 ## Behavioral Spec Generation Rules
 
-You are writing behavioral specifications for functions/methods in a codebase. The codebase may be written in any programming language. Read these rules carefully before writing any spec.
+You are writing behavioral specifications for functions and methods in a
+codebase. Read these rules before generating metadata.
 
----
+### Describe WHAT, not HOW
 
-### Rule 1: Describe WHAT, not HOW
+Describe what the function guarantees to callers, not how it achieves it.
+Specify data and state invariants, input/output relationships, error contracts,
+resource ownership, and output formats.
 
-Describe what the function GUARANTEES to callers, not how it achieves it. Frame specs in terms of:
+Do not name internal helper calls, describe loops or branch choices, enumerate
+dispatch cases, list internal data layout decisions, or document performance
+micro-optimizations.
 
-- Data structure invariants: sizes, element types, valid ranges, ordering
-- State invariants: what must hold before and after the call
-- Result contracts: return value properties, relationships between inputs and outputs
-- Output format contracts: shape, encoding, schema of produced data
-- Error contracts: what errors/exceptions are raised and under exactly what condition
-- Resource contracts: ownership transfer, allocation/deallocation obligations
+### Be precise
 
-### Rule 2: Do NOT describe the implementation
+Every claim must be verifiable and falsifiable. Do not use vague phrases such
+as “correctly handles”, “as expected”, “processes”, “manages”, “properly”, or
+“validates the input”. State the exact condition and guaranteed result.
 
-Specifically do NOT:
-- Name internal helper calls ("calls fmtShort, then returns")
-- Describe conditional branch choices ("if long is true, calls fmtLong, else fmtShort")
-- Enumerate specific constant values, configuration keys, or lookup entries
-- Name performance micro-optimizations
-- Enumerate dispatch cases by name — describe the governing dispatch rule instead
+### Be caller-driven
 
-### Rule 3: No vague terms
+- Preconditions come from what callers guarantee before invoking the function.
+- Postconditions come from what callers need after the function returns.
+- Use caller context supplied in the batch prompt.
+- Describe intended correct behavior even when the implementation has a bug.
 
-Do NOT use: "appropriate", "correctly handles", "as expected", "processes", "manages", "properly", "validates the input", "handles the case".
+The specification must support verification or an alternative conforming
+implementation without reconstructing the current implementation. Prefer the
+governing invariant over an enumeration of individual cases.
 
-Every claim must be verifiable and falsifiable. Replace vague terms with precise invariants:
-- BAD: "correctly parses the input string"
-- GOOD: "returns the number of milliseconds corresponding to the numeric and unit parts of str"
+### Structured Metadata Format
 
-### Rule 4: Specs are CALLER-DRIVEN
+The implementation file is immutable input. Never edit, replace, or add content
+to it. For every function, write the two JSON files named in the batch prompt.
+Write valid JSON only and do not wrap it in Markdown fences.
 
-- The pre-condition comes from what callers guarantee before calling
-- The post-condition comes from what callers NEED from this function
-- If caller context is provided in the prompt, use it
+The spec JSON schema is:
 
-### Rule 5: Specs describe INTENDED CORRECT BEHAVIOR
-
-- The implementation may have bugs. The spec does NOT document bugs.
-- If the code fails to satisfy what callers need, the spec still describes what callers need — the gap IS the bug.
-- Write the spec as if you are defining the contract an ideal correct implementation must satisfy.
-
-### Rule 6: Specs must allow verification, not reconstruction
-
-A correct spec must let you VERIFY the implementation against it, or write an alternative implementation satisfying the same contract. It must NOT let you reconstruct the exact implementation.
-
-**Litmus test:** If deleting one branch or one helper call makes the spec wrong, the spec is too tightly coupled to the implementation. Rewrite as a cross-cutting invariant.
-
-### Rule 7: Precision = governing rule, not enumeration
-
-Do not name specific members of a set — not even as examples. Describe the governing rule.
-
-- BAD: "Dispatches to fmtShort or fmtLong based on options.long"
-- GOOD: "Returns a short-form string when options.long is absent or false; returns a long-form string when options.long is true"
-
----
-
-### Spec Format
-
-Use the comment syntax native to the source language (e.g., `//` for C/C++/Java/Go/Rust, `#` for Python/Ruby/Shell, `--` for Lua/Haskell/SQL, `%` for Erlang/MATLAB, `<!-- -->` for HTML/XML). Denote the comment prefix as `<C>` below.
-
-```
-<C> [SPEC]
-<C> Unit: <file path relative to repo root>
-<C>
-<C> <FunctionName>(<params>) -> <ReturnType>
-<C>
-<C> Pre-condition:
-<C>   - ...
-<C>
-<C> Post-condition:
-<C>   - ...
-<C> [SPEC]
-
-<C> [INFO]
-<C> <callee_name>(<params>) -> <ReturnType>
-<C>   Pre-condition: ...
-<C>   Post-condition: ...
-<C> [SPLIT]
-<C> <another_callee>(<params>) -> <ReturnType>
-<C>   Pre-condition: ...
-<C>   Post-condition: ...
-<C> [INFO]
-
-<original source code — UNCHANGED>
+```json
+{
+  "schema_version": 1,
+  "function": "src::module-py::load_data",
+  "unit": "src/module.py",
+  "signature": "load_data(path) -> Result",
+  "preconditions": ["path identifies a readable input"],
+  "postconditions": ["returns the decoded value"]
+}
 ```
 
-If a function has no callees relevant to the spec, write `<C> (no callees)` between the `<C> [INFO]` markers.
+The info JSON schema is:
 
-Adapt the signature notation to the conventions of the source language:
-- For languages without explicit return types (e.g., Python, Ruby, JavaScript), omit `-> <ReturnType>` or use it informally to document the expected return.
-- For methods on classes/structs, include the receiver (e.g., `self`, `this`, or the type name) as context.
-- For languages with multiple return values (e.g., Go, Lua), list them all (e.g., `-> (ResultType, error)`).
-
----
-
-### Examples
-
-**BAD (implementation-describing):**
-```
-Post-condition:
-  - Calls fmtShort() for short format and fmtLong() for long format.
-  - Uses plural() helper to append 's' when appropriate.
-```
-
-**GOOD (behavioral):**
-```
-Post-condition:
-  - Returns a string representation of ms in the largest unit whose magnitude does not exceed |ms|.
-  - The returned string is a valid StringValue that parse() can recover to approximately ms.
-  - When options.long is true, the unit name is written out in full (e.g., "2 days", "1 minute").
-  - When options.long is absent or false, the unit is abbreviated (e.g., "2d", "1m").
+```json
+{
+  "schema_version": 1,
+  "function": "src::module-py::load_data",
+  "callees": [
+    {
+      "function": "src::module-py::parse_header",
+      "signature": "parse_header(data) -> Header",
+      "preconditions": ["data contains a complete header"],
+      "postconditions": ["returns the validated header"]
+    }
+  ]
+}
 ```
 
-**BAD (enumerating dispatch cases):**
-```
-Post-condition:
-  - Dispatches to case 'years', 'months', 'weeks', 'days', ... based on matchUnit.
-```
+All condition fields are arrays of strings. Use an empty array when there are
+no conditions. The info file is always required; use `"callees": []` when the
+function has no callees. Every `function` field uses the complete FQN supplied
+by the batch prompt.
 
-**GOOD (governing rule):**
-```
-Post-condition:
-  - For each recognized unit alias, returns n * (the millisecond value of that unit),
-    where n is the numeric part of str parsed as a float.
-  - All aliases mapping to the same time magnitude return the same millisecond value.
-```
+Adapt signature notation to the source language. Include receivers for methods
+and all result values for languages with multiple returns.
 
----
+### Quality Checks
 
-### Quick Reference
+- A precondition states only obligations the caller can satisfy.
+- A postcondition describes results observable by the caller.
+- Error and exceptional behavior has an exact triggering condition.
+- No claim depends on a particular helper, branch, loop, or dispatch table.
+- Every condition is a complete string in the appropriate JSON array.
 
-**Write WHAT, not HOW.**
-
-| ✅ Do | ❌ Do Not |
-|------|----------|
-| Describe data structure invariants: sizes, types, valid ranges, ordering | Name internal helper functions called |
-| Describe result properties and output format contracts | Describe conditional or branch choices |
-| Describe error contract: what errors are raised and under exactly what condition | Enumerate switch/match cases or dispatch entries by name |
-| Use verifiable, falsifiable claims | Use vague terms: "correctly handles", "processes", "manages" |
-| Describe the governing invariant across all code paths | Name specific set members "as examples" |
-
-**Cycle layer guidance:** Ask "what is true after return regardless of which caller invoked it and which code path executed?" That is the post-condition.
-
-**Litmus test:** If deleting one branch makes the spec wrong, the spec is implementation-coupled. Rewrite as an invariant that holds regardless of path.
+For a cycle layer, ask what remains true after return regardless of the caller
+and control-flow path. That cross-cutting invariant is the postcondition.
