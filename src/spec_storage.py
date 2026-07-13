@@ -181,35 +181,3 @@ def metadata_status(
 def is_function_ready(function_path: str | Path) -> bool:
     ready, _ = metadata_status(function_path)
     return ready
-
-
-def format_spec_for_reasoner(spec: dict[str, Any]) -> str:
-    """Adapt structured spec data to the Phase 1 reasoner text contract."""
-    pre = "\n".join(
-        f"- {item}" for item in spec["preconditions"]
-    ) or "- (none)"
-    post = "\n".join(
-        f"- {item}" for item in spec["postconditions"]
-    ) or "- (none)"
-    return f"Pre-condition:\n{pre}\nPost-condition:\n{post}"
-
-
-def info_to_function_spec_map(info: dict[str, Any]):
-    """Adapt structured callee data to the Phase 1 reasoner knowledge map."""
-    from src.parser import FunctionSpecMap
-
-    result = FunctionSpecMap()
-    for callee in info["callees"]:
-        pre = "\n".join(
-            f"- {item}" for item in callee["preconditions"]
-        ) or "- (none)"
-        post = "\n".join(
-            f"- {item}" for item in callee["postconditions"]
-        ) or "- (none)"
-        name = callee["function"].split("::")[-1]
-        result.add_entry(
-            name,
-            callee["signature"],
-            f"Pre-condition:\n{pre}\nPost-condition:\n{post}",
-        )
-    return result

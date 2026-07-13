@@ -4,9 +4,7 @@ import unittest
 
 from src.spec_storage import (
     MetadataValidationError,
-    format_spec_for_reasoner,
     function_fqn_from_path,
-    info_to_function_spec_map,
     is_function_ready,
     is_metadata_file,
     metadata_paths,
@@ -120,27 +118,6 @@ class SpecStorageTests(unittest.TestCase):
 
         with self.assertRaisesRegex(MetadataValidationError, "postconditions"):
             write_info(self.function, bad)
-
-    def test_phase_one_adapters_preserve_reasoner_shape(self):
-        spec_text = format_spec_for_reasoner(self.valid_spec())
-        info = self.valid_info()
-        info["callees"] = [
-            {
-                "function": "src::loader-cpp::parseHeader",
-                "signature": "parseHeader(data) -> Header",
-                "preconditions": ["data contains a complete header"],
-                "postconditions": ["returns a validated header"],
-            }
-        ]
-
-        knowledge = info_to_function_spec_map(info)
-
-        self.assertIn("Pre-condition:", spec_text)
-        self.assertIn("Post-condition:", spec_text)
-        self.assertIn("returns the decoded value", spec_text)
-        self.assertIn("parseHeader", knowledge)
-        self.assertIn("returns a validated header", knowledge["parseHeader"])
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 import config
 from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL, OPENCODE_MODEL_PROVIDER
 from .parser import parse_input_function
-from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
+from .reasoner import reasoner, _condition_text, _sanitize_strings
 from .file_utils import is_file_ready
 from .spec_storage import metadata_status
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
@@ -279,11 +279,11 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     try:
-        func, spec, knowledge = parse_input_function(file_path)
+        func, spec, info = parse_input_function(file_path)
         if not spec:
             return file_path, "SKIPPED"
 
-        _, spec_post = _parse_spec_conditions(spec)
+        spec_post = _condition_text(spec["postconditions"])
         trace_context = None
         if work_dir:
             rel_function = os.path.relpath(file_path, input_dir)
@@ -294,8 +294,9 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
             }
         domain_knowledge = load_staged_domain_knowledge_text(work_dir) if work_dir else ""
         if domain_knowledge:
-            knowledge = f"{knowledge}\n\n{domain_knowledge}" if knowledge else domain_knowledge
-        result = reasoner(func, spec, knowledge, language, trace_context=trace_context)
+            info = dict(info)
+            info["domain_knowledge"] = domain_knowledge
+        result = reasoner(func, spec, info, language, trace_context=trace_context)
 
         if "passes the verification" in result:
             output = {"function": file_path, "verdict": "MATCH", "gaps": None}

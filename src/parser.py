@@ -1,29 +1,7 @@
 from src.spec_storage import (
-    format_spec_for_reasoner,
-    info_to_function_spec_map,
     read_info,
     read_spec,
 )
-
-
-class FunctionSpecMap(dict):
-    def __init__(self):
-        super().__init__()
-        self.signatures = {}
-
-    def add_entry(self, function_name, signature, spec):
-        self[function_name] = spec
-        self.signatures[function_name] = signature
-
-    def __str__(self):
-        formatted_entries = []
-        for function_name, spec in self.items():
-            signature = self.signatures.get(function_name, function_name)
-            if spec:
-                formatted_entries.append(f"{signature}\n{spec}")
-            else:
-                formatted_entries.append(signature)
-        return "\n\n".join(formatted_entries)
 
 
 def _remove_func_comments(code):
@@ -100,7 +78,7 @@ def parse_input_function(file_path):
     Parse an implementation and its two adjacent structured metadata files.
     
     Returns:
-        tuple: (func, nl_spec, knowledge)
+        tuple: (numbered implementation, spec dictionary, info dictionary)
     """
     with open(file_path, 'r') as file:
         content = file.read()
@@ -113,8 +91,4 @@ def parse_input_function(file_path):
     numbered_lines = [f"Line {i+1}: {line}" for i, line in enumerate(func_lines)]
     func = '\n'.join(numbered_lines)
 
-    return (
-        func,
-        format_spec_for_reasoner(spec_data),
-        info_to_function_spec_map(info_data),
-    )
+    return func, spec_data, info_data

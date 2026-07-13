@@ -60,14 +60,20 @@ class StructuredParserTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_parser_reads_implementation_and_adjacent_metadata(self):
-        func, spec, knowledge = parse_input_function(self.function)
+        func, spec, info = parse_input_function(self.function)
 
         self.assertIn("Line 1: def load_data", func)
-        self.assertIn("Pre-condition:", spec)
-        self.assertIn("returns the decoded header", spec)
-        self.assertIn("parse_header", knowledge)
-        self.assertIn("returns a validated header", knowledge["parse_header"])
-        self.assertNotIn("[SPEC]", spec)
+        self.assertEqual(spec["function"], "src::module-py::load_data")
+        self.assertEqual(spec["postconditions"], ["returns the decoded header"])
+        self.assertEqual(info["function"], "src::module-py::load_data")
+        self.assertEqual(
+            info["callees"][0]["function"],
+            "src::module-py::parse_header",
+        )
+        self.assertEqual(
+            info["callees"][0]["postconditions"],
+            ["returns a validated header"],
+        )
 
     def test_parser_reports_malformed_spec_path(self):
         spec_path, _ = metadata_paths(self.function)
