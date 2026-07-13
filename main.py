@@ -190,6 +190,7 @@ def run_pipeline(
     required_source_files=None,
     domain_knowledge_files=None,
     submodules=None,
+    one_phase=False,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -234,6 +235,7 @@ def run_pipeline(
         proj_dir, work_dir, script_dir, resume=resume,
         required_source_files=required_source_files,
         submodules=submodules,
+        one_phase=one_phase,
     )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
@@ -477,7 +479,7 @@ def run_pipeline(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--domain-knowledge FILE ...] [--isolate] "
+              "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
               "[--end-func PATH ...]",
         description="Run the FM agent pipeline on a project directory.",
@@ -501,6 +503,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the pipeline against an isolated git worktree snapshot of "
         "the project instead of the project directory itself.",
+    )
+    parser.add_argument(
+        "--one-phase",
+        action="store_true",
+        help="Put all planned source files into a single analysis phase.",
     )
     parser.add_argument(
         "--domain-knowledge",
@@ -574,6 +581,7 @@ if __name__ == "__main__":
             end_funcs=args.end_func,
             resume=resume,
             domain_knowledge_files=domain_knowledge_files,
+            one_phase=args.one_phase,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -630,6 +638,7 @@ if __name__ == "__main__":
                     old_commit,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
+                    one_phase=args.one_phase,
                 )
             else:
                 run_pipeline(
@@ -637,6 +646,7 @@ if __name__ == "__main__":
                     resume=resume,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
+                    one_phase=args.one_phase,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is

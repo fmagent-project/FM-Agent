@@ -414,6 +414,38 @@ def _clean_domain_context_files(work_dir, removed_phase_nums, renumbered):
         logging.info("Renamed domain-context file to %s", os.path.basename(final_path))
 
 
+def _collapse_phases_to_one(work_dir):
+    """Merge every planned module and its type context into phase 1."""
+    phases_path = os.path.join(work_dir, "phases.json")
+    with open(phases_path) as f:
+        data = json.load(f)
+    phases = sorted(data.get("phases", []), key=lambda phase: phase.get("phase", 0))
+    if len(phases) <= 1:
+        return
+
+    first = phases[0]
+    first["modules"] = [
+        module
+        for phase in phases
+        for module in phase.get("modules", [])
+    ]
+    first["depends_on_phases"] = []
+    data["phases"] = [first]
+    with open(phases_path, "w") as f:
+        json.dump(data, f, indent=2)
+
+    domain_dir = os.path.join(work_dir, "spec_prompts", "domain_context")
+    type_context = []
+    for phase in phases:
+        types_path = os.path.join(domain_dir, f"phase_{phase['phase']:02d}_types.txt")
+        if os.path.isfile(types_path):
+            with open(types_path) as f:
+                type_context.append(f.read().strip())
+    if type_context:
+        with open(os.path.join(domain_dir, "phase_01_types.txt"), "w") as f:
+            f.write("\n\n".join(type_context) + "\n")
+
+
 def _collect_changed_modules(ensure_changes, *change_sets):
     """Collect the modules whose source-file list changed during post-processing.
 
@@ -810,7 +842,7 @@ def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir):
 
 def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                        resume=False, required_source_files=None,
-                       submodules=None):
+                       submodules=None, one_phase=False):
     """Stage 1: prepare the setup workflow file and run opencode (with retries) to produce phases.json.
 
     ``required_source_files`` are paths the caller must have processed regardless
@@ -818,6 +850,7 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
     once the plan is otherwise finalized (see ``_ensure_source_files_in_phases``).
     ``submodules`` optionally limits the full pipeline to selected project-relative
     subdirectories.
+    ``one_phase`` merges the finalized plan before downstream stages consume it.
     """
     # On resume, reuse the existing phase plan instead of paying for the
     # setup_context LLM call again.
@@ -1001,3 +1034,6 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
             "phase_NN_types.txt per phase."
         )
         sys.exit(1)
+
+    if one_phase:
+        _collapse_phases_to_one(work_dir)

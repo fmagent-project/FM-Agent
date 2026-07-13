@@ -578,6 +578,7 @@ def run_incremental_pipeline(
     old_commit_id,
     domain_knowledge_files=None,
     submodules=None,
+    one_phase=False,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -627,6 +628,7 @@ def run_incremental_pipeline(
             proj_dir,
             domain_knowledge_files=domain_knowledge_files,
             submodules=submodules,
+            one_phase=one_phase,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -681,6 +683,7 @@ def run_incremental_pipeline(
     _run_setup_extract(
         proj_dir, work_dir, script_dir,
         is_incremental=True, submodules=submodules,
+        one_phase=one_phase,
     )
     logging.info("  -> phases.json regenerated.")
 
