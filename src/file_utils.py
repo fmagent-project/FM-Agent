@@ -2,6 +2,19 @@ import os
 import json
 import re
 
+from src.spec_storage import is_function_ready, is_metadata_file
+
+
+def _is_extracted_function_file(path):
+    """Return whether path is a supported implementation artifact."""
+    if is_metadata_file(path):
+        return False
+    from src.extract import EXT_TO_LANG  # local import avoids a circular import
+
+    name = os.path.basename(path)
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    return ext in EXT_TO_LANG
+
 
 def _write_file_names(file_names, output_path):
     """Write sorted, de-duplicated file names to output_path."""
@@ -22,30 +35,16 @@ def collect_file_names(input_dir, output_path="file_list.json"):
     for root, _, files in os.walk(input_dir):
         for fname in files:
             full_path = os.path.join(root, fname)
+            if not _is_extracted_function_file(full_path):
+                continue
             rel_path = os.path.relpath(full_path, input_dir)
             file_names.append(rel_path)
     return _write_file_names(file_names, output_path)
 
 
 def is_file_ready(file_path):
-    """Check if a file has [SPEC] ... [SPEC] and [INFO] ... [INFO] headers."""
-    try:
-        with open(file_path, 'r') as f:
-            content = f.read()
-    except (OSError, UnicodeDecodeError):
-        return False
-
-    lines = content.splitlines()
-    spec_count = 0
-    info_count = 0
-
-    for line in lines:
-        if '[SPEC]' in line:
-            spec_count += 1
-        if '[INFO]' in line:
-            info_count += 1
-
-    return spec_count >= 2 and info_count >= 2
+    """Return whether both structured metadata files are valid for a function."""
+    return is_function_ready(file_path)
 
 
 # Directories that typically contain test code
@@ -135,7 +134,7 @@ def _get_phase_files(phases_data, phase_num, input_dir):
             if os.path.isdir(extracted_dir):
                 for fname in sorted(os.listdir(extracted_dir)):
                     fpath = os.path.join(extracted_dir, fname)
-                    if os.path.isfile(fpath):
+                    if os.path.isfile(fpath) and _is_extracted_function_file(fpath):
                         phase_files.append(os.path.relpath(fpath, input_dir))
     return phase_files
 

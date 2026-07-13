@@ -7,6 +7,7 @@ from collections import defaultdict
 
 from src.extract import EXT_TO_LANG, LANG_CONFIG
 from src.languages.registry import call_edges_all
+from src.spec_storage import is_metadata_file
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +51,11 @@ def _collect_phase_files(proj_dir, phase_data):
 
             for fname in os.listdir(func_dir):
                 fpath = os.path.join(func_dir, fname)
-                if os.path.isfile(fpath):
+                if (
+                    os.path.isfile(fpath)
+                    and not is_metadata_file(fpath)
+                    and _detect_lang_from_ext(fpath) is not None
+                ):
                     results.append((fpath, module_name))
 
     return results

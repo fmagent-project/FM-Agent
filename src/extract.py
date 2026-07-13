@@ -5,9 +5,10 @@ import sys
 import shutil
 import logging
 
-from src.file_utils import is_file_ready, _is_test_file
+from src.file_utils import _is_test_file
 from src.languages.codegraph import canonicalize
 from src.languages.registry import batch_extract_all, function_spans_for_file
+from src.spec_storage import metadata_paths
 
 LANG_CONFIG = {
     "cpp": {
@@ -755,12 +756,27 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         for func_name, func_source in funcs:
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
 
-            # Skip only when the file already has both [SPEC] and [INFO] blocks
-            if not force and os.path.exists(out_file) and is_file_ready(out_file):
+            existing_source = None
+            if os.path.exists(out_file):
+                with open(out_file, "r", errors="replace") as f:
+                    existing_source = f.read()
+
+            if not force and existing_source == func_source:
                 if verbose:
-                    print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
+                    print(f"  SKIP (unchanged): {os.path.relpath(out_file, proj_dir)}")
                 skipped += 1
                 continue
+
+            # A resumed run with changed source must not retain metadata for the
+            # previous implementation. Incremental force-reextraction preserves
+            # it intentionally so the update stage can compare and revise it.
+            if (
+                not force
+                and existing_source is not None
+                and existing_source != func_source
+            ):
+                for metadata_path in metadata_paths(out_file):
+                    metadata_path.unlink(missing_ok=True)
 
             with open(out_file, 'w') as f:
                 f.write(func_source)
