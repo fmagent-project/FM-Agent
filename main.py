@@ -544,7 +544,7 @@ if __name__ == "__main__":
         "--resume",
         action="store_true",
         help="continue a previous run in <proj_dir>/fm_agent instead of wiping it: "
-        "keeps phases.json, generated specs, and existing verification results; "
+        "keeps phases.json, valid structured spec/info JSON, and existing verification results; "
         "only does the remaining work.",
     )
     parser.add_argument(

@@ -196,6 +196,28 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
 
+### 结构化函数元数据
+
+每个提取出的函数现在由同目录下的三个文件组成。函数实现文件只保存源码，不再在文件开头写入生成的元数据：
+
+```text
+fm_agent/extracted_functions/src/loader-cpp/
+├── loadData.cpp
+├── loadData.spec.json
+└── loadData.info.json
+```
+
+两个 JSON 文件都使用 `schema_version: 1`，并保存函数的精确全限定名。spec 对象包含 `unit`、`signature`、`preconditions` 和 `postconditions`；info 对象包含 `callees` 数组，其中每一项都保存 callee 的精确全限定名、签名、前置条件和后置条件。没有 callee 的函数也必须有 info 文件，并使用 `"callees": []`。
+
+使用 `--resume` 时，只有相邻的两个 JSON 文件都存在且通过 schema 校验，函数才算完成并被跳过。缺失、损坏或函数名不匹配的元数据会重新生成。如果续跑提取阶段发现函数实现文本发生变化，会使该函数原有元数据失效，防止复用过期 spec。
+
+新布局与旧的“把 marker 块写入函数实现文件”格式不兼容。仅当现有目标工作区是由旧格式生成、需要升级时，删除一次其中生成的 `fm_agent/` 目录并重新运行。使用 WSL：
+
+```bash
+rm -rf /mnt/d/tmp/fm-agent-structured-smoke/fm_agent
+uv run python main.py /mnt/d/tmp/fm-agent-structured-smoke
+```
+
 ### 增量模式
 
 增量模式会复用上一次运行的结果，仅重新检测发生变化的部分。它将当前代码与上一次运行记录在 `fm_agent/version.log` 中的提交进行 diff。每次运行都会把所处理的提交 id 写入该文件，因此后续的 `--incremental` 运行会自动读取它：
