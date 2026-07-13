@@ -3,6 +3,7 @@ from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL, OPENCODE_MODEL_PR
 from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
 from .file_utils import is_file_ready
+from .spec_storage import metadata_status
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
 from .cli_backend import build_agent_command, is_cli_backend_enabled
 from .domain_knowledge import (
@@ -104,6 +105,7 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
             reasoning_futures = {}
             validation_futures = {}
             submitted = set()
+            readiness_reasons = {}
 
             while True:
                 # Scan for new ready files
@@ -120,9 +122,18 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                         if file_path in submitted:
                             continue
                         if not is_file_ready(file_path):
+                            _, reason = metadata_status(file_path)
+                            if readiness_reasons.get(file_path) != reason:
+                                readiness_reasons[file_path] = reason
+                                logging.info(
+                                    "Pending structured metadata for %s: %s",
+                                    file_path,
+                                    reason,
+                                )
                             continue
 
                         # File is ready and not yet submitted or processed.
+                        readiness_reasons.pop(file_path, None)
                         submitted.add(file_path)
                         language = EXT_TO_LANG.get(ext, "C")
                         future = executor.submit(
@@ -212,17 +223,18 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                             # No function got a spec at all – this is an error
                             logging.warning(
                                 f"Spec generation process(es) exited (codes {exit_codes}) "
-                                f"but no files received [SPEC]/[INFO] markers."
+                                f"but no files received valid structured metadata."
                             )
                         else:
-                            # Some functions are missing specs; leave them pending for retry.
+                            # Some functions are missing metadata; leave them pending for retry.
                             logging.warning(
                                 f"Spec generation process(es) exited (codes {exit_codes}), "
-                                f"{len(unready)} files missing specs, leaving them pending for retry."
+                                f"{len(unready)} files missing valid metadata, leaving them pending for retry."
                             )
                             for uf in sorted(unready):
                                 rel_path = os.path.relpath(uf, proj_dir) if proj_dir else os.path.relpath(uf, input_dir)
-                                print(f"[pending] {rel_path}: no spec yet; will retry")
+                                _, reason = metadata_status(uf)
+                                print(f"[pending] {rel_path}: {reason}; will retry")
                         break
 
                 time.sleep(poll_interval)
