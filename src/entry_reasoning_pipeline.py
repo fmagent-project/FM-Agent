@@ -219,6 +219,7 @@ def run_entry_pipeline(
     end_funcs=None,
     resume=False,
     domain_knowledge_files=None,
+    one_phase=False,
 ):
     """Run the entry-point-scoped reasoning pipeline.
 
@@ -251,6 +252,7 @@ def run_entry_pipeline(
             restriction is applied and the whole call graph reachable from
             ``entry_func`` is selected.
         resume: forwarded directly to the standard pipeline.
+        one_phase: forwarded directly to the standard pipeline.
     """
     if entry_func is None:
         raise ValueError("entry_func is required to run the entry pipeline")
@@ -273,6 +275,7 @@ def run_entry_pipeline(
             end_funcs,
             resume,
             domain_knowledge_files=domain_knowledge_files,
+            one_phase=one_phase,
         )
     finally:
         clear_test_file_exemptions()
@@ -409,6 +412,7 @@ def _run_entry_pipeline_inner(
     end_funcs,
     resume,
     domain_knowledge_files=None,
+    one_phase=False,
 ):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
@@ -449,6 +453,7 @@ def _run_entry_pipeline_inner(
             resume=resume,
             required_source_files=[_entry_func_source_rel(entry_func)],
             domain_knowledge_files=domain_knowledge_files,
+            one_phase=one_phase,
         )
     finally:
         # 4. Copy the generated fm_agent/ back into proj_dir, then discard the
