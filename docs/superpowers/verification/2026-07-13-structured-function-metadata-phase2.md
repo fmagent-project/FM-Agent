@@ -19,9 +19,9 @@ Branch: `feat/structured-reasoner-phase2`
 
 ## Live gate
 
-The requested `/mnt/d/fmagent/demo` run was not permitted by the execution policy because it would send private workspace code to an unverified external service. Its source files were not modified. The already-generated `demo/fm_agent` directory had been removed before the policy denial.
+The execution layer reported that the requested `/mnt/d/fmagent/demo` full run was denied because it could send private workspace code to an unverified external service. A later filesystem audit showed that a background process had nevertheless materialized a complete `demo/fm_agent` workspace during the same interval. No further external demo commands were issued after the denial. A read-only production-schema audit confirmed three implementation files, six valid adjacent metadata files, three verdicts, and no embedded markers.
 
-The equivalent end-to-end gate used a synthetic two-function Git project at `/mnt/d/tmp/fm-agent-structured-smoke-phase2`, containing only `caller(value)` and `callee(value)`.
+To avoid any further export of demo content, the repeatable full/resume/corrupt/incremental/entry gate used a synthetic two-function Git project at `/mnt/d/tmp/fm-agent-structured-smoke-phase2`, containing only `caller(value)` and `callee(value)`.
 
 - Fresh full mode generated two implementation files, two `.spec.json` files, two `.info.json` files, and two MATCH verdicts.
 - Production `read_spec()` and `read_info()` validation passed for both functions; the leaf used `"callees": []`.
