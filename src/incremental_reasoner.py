@@ -34,16 +34,24 @@ from .generate_topdown_layers import (
 from .file_utils import (
     is_file_ready,
     collect_file_names,
+    _is_extracted_function_file,
     _is_test_file,
     _is_under_submodules,
     _get_all_phase_files,
     _write_file_names,
 )
 from .generate_batch_prompts import (
-    _detect_comment_prefix,
-    extract_callee_spec_from_info,
-    extract_info_block,
-    extract_spec_block,
+    callee_expectation,
+)
+from .spec_storage import (
+    MetadataValidationError,
+    metadata_paths,
+    read_info,
+    read_spec,
+    validate_info_data,
+    validate_spec_data,
+    write_info,
+    write_spec,
 )
 from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_call
@@ -53,7 +61,6 @@ from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import try_codegraph_init
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
 from .domain_knowledge import (
-    format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
     load_staged_domain_knowledge_text,
     stage_domain_knowledge_files,
@@ -164,7 +171,7 @@ def check_last_run_existence(proj_dir, submodules=None):
 
       1. phases.json exists — the module/phase plan that the full run aborts without, and
       2. extracted_functions/ holds at least one function file and EVERY function file
-         there is specced (carries the [SPEC]/[INFO] blocks, per is_file_ready) — proving
+         has valid structured metadata, per is_file_ready — proving
          the spec-generation stage ran to completion. A partially specced tree means the
          previous full run did not finish, so it is not a sound basis for incremental
          analysis.
@@ -187,6 +194,8 @@ def check_last_run_existence(proj_dir, submodules=None):
     for root, _, files in os.walk(extracted_dir):
         for fname in files:
             fpath = os.path.join(root, fname)
+            if not _is_extracted_function_file(fpath):
+                continue
             rel = os.path.relpath(fpath, extracted_dir).replace(os.sep, "/")
             if submodules and not _is_under_submodules(rel, submodules):
                 continue
@@ -194,105 +203,6 @@ def check_last_run_existence(proj_dir, submodules=None):
             if not is_file_ready(fpath):
                 return False
     return saw_function
-
-
-def extract_existing_specs(proj_dir):
-    """
-    Collect the leading [SPEC]/[INFO] blocks from every specced file produced by a
-    previous full run (the extracted_functions tree that _run_setup_extract +
-    extraction/spec-generation leaves behind under proj_dir/fm_agent/).
-
-    Each extracted function file begins with a behavioral specification block, in the
-    Spec Format from md/system_prompt.md: a `<comment> [SPEC]` ... `<comment> [SPEC]`
-    block optionally followed by a `<comment> [INFO]` ... `<comment> [INFO]` block, and
-    then the (unchanged) function source. This walks fm_agent/extracted_functions/ and,
-    for every file that carries a [SPEC] block, records that header text so a caller can
-    reuse the previous run's specs instead of re-deriving them.
-
-    Returns a dict mapping each file's path (relative to the extracted_functions dir,
-    matching the convention used elsewhere in this module) to a
-    {"spec": <spec block>, "info": <info block or None>} entry. The "spec" string is the
-    full `[SPEC]` ... `[SPEC]` block (markers included); "info" is the full
-    `[INFO]` ... `[INFO]` block (markers included), or None when the file has no [INFO]
-    block. Files without a [SPEC] block are skipped. Returns an empty dict when the
-    extracted_functions directory does not exist.
-    """
-    extracted_dir = os.path.join(proj_dir, "fm_agent", "extracted_functions")
-    if not os.path.isdir(extracted_dir):
-        return {}
-
-    specs = {}
-    for root, _, files in os.walk(extracted_dir):
-        for fname in files:
-            file_path = Path(root) / fname
-            spec_block = extract_spec_block(file_path)
-            info_block = extract_info_block(file_path)
-
-            if spec_block is None:
-                continue
-            rel_path = os.path.relpath(str(file_path), extracted_dir)
-
-            # extract_info_block returns only the content between the [INFO]
-            # markers; re-wrap it with the markers so we record the entire
-            # info block (ready to prepend verbatim).
-            full_info_block = None
-            if info_block is not None:
-                prefix = _detect_comment_prefix(spec_block) or ""
-                info_tag = f"{prefix} [INFO]".strip()
-                full_info_block = f"{info_tag}\n{info_block}\n{info_tag}"
-
-            specs[rel_path] = {
-                "spec": spec_block,
-                "info": full_info_block,
-            }
-    return specs
-
-
-def _reapply_existing_specs(proj_dir, specs):
-    """
-    Prepend previously captured [SPEC]/[INFO] header blocks back onto the freshly
-    re-extracted function files.
-
-    specs is the mapping returned by extract_existing_specs (rel_path ->
-    {"spec": ..., "info": ...}), captured BEFORE the extracted_functions tree was
-    regenerated for the current working tree (re-extraction writes the raw function source
-    only, dropping the spec header). For every recorded entry whose file still exists after
-    re-extraction, this reconstructs the leading spec-comment block — the [SPEC] block,
-    plus an [INFO] block when one was recorded — and prepends it to the file, restoring the
-    Spec Format the previous run produced. Entries whose file no longer exists (their
-    function was removed or renamed) and files that already carry a [SPEC] block are
-    skipped, so the call is idempotent.
-
-    Returns the number of files to which a spec block was (re)applied.
-    """
-    extracted_dir = os.path.join(proj_dir, "fm_agent", "extracted_functions")
-    for rel_path, entry in specs.items():
-        spec_block = entry.get("spec")
-        if not spec_block:
-            continue
-        file_path = os.path.join(extracted_dir, rel_path)
-        if not os.path.isfile(file_path):
-            continue
-
-        with open(file_path, "r") as f:
-            source = f.read()
-
-        # Skip files that already carry a spec header (idempotency / nothing to restore on).
-        first_line = source.splitlines()[0] if source else ""
-        if "[SPEC]" in first_line:
-            continue
-
-        # Reassemble in the full run's specced-file layout: [SPEC], blank line,
-        # optional [INFO], blank line, source (mirrors _update_specs_for_intent's splice).
-        header = spec_block.rstrip("\n")
-        info_block = entry.get("info")
-        if info_block is not None:
-            # "info" already holds the entire [INFO] block (markers included),
-            # so it can be appended to the spec header verbatim.
-            header += "\n\n" + info_block.strip("\n")
-
-        with open(file_path, "w") as f:
-            f.write(header + "\n\n" + source.lstrip("\n"))
 
 
 def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
@@ -454,92 +364,12 @@ def _remove_stale_extracted(proj_dir, modified_functions):
         proj_dir, modified_functions, classes=("removed",)
     )
     for path in removed.values():
-        if os.path.isfile(path):
-            os.remove(path)
+        for artifact in (Path(path), *metadata_paths(path)):
+            artifact.unlink(missing_ok=True)
     for path in removed.values():
         func_dir = os.path.dirname(path)
         if os.path.isdir(func_dir) and not os.listdir(func_dir):
             os.rmdir(func_dir)
-
-
-def _extract_leading_spec_comments(content, comment_prefix, spec_marker):
-    """
-    Return the leading spec-comment block of content, or None if absent.
-
-    A spec-comment block is the run of leading lines (per the "### Spec Format" in
-    md/system_prompt.md) that begins, ignoring blank lines, with the language's spec
-    marker (e.g. "# [SPEC]") and consists of comment lines (lines whose first
-    non-whitespace character sequence is comment_prefix) optionally interleaved with
-    blank lines, up to the first line of original source code. The returned string
-    includes any blank separator line(s) between the comment block and the source, so
-    that prepending it to the raw source reconstructs the specced file.
-    """
-    lines = content.splitlines(keepends=True)
-
-    # First non-blank line must be the spec marker for this to be a spec block.
-    first = 0
-    while first < len(lines) and lines[first].strip() == "":
-        first += 1
-    if first >= len(lines) or lines[first].strip() != spec_marker.strip():
-        return None
-
-    # Consume comment lines (and interspersed blank lines) until the source begins,
-    # i.e. the first non-blank line that is not a comment.
-    i = first
-    last_comment = first
-    while i < len(lines):
-        stripped = lines[i].strip()
-        if stripped == "":
-            i += 1
-            continue
-        if stripped.startswith(comment_prefix):
-            last_comment = i
-            i += 1
-            continue
-        break
-
-    # A genuine spec block has more than one comment line.
-    if last_comment == first:
-        return None
-
-    return "".join(lines[:i])
-
-
-def _split_spec_and_info(block, comment_prefix, spec_marker):
-    """
-    Split a leading spec-comment block into its [SPEC] portion and its [INFO] portion.
-
-    block is a spec-comment block as returned by _extract_leading_spec_comments (the
-    [SPEC] ... [SPEC] block optionally followed by an [INFO] ... [INFO] block, per the
-    Spec Format in md/system_prompt.md). Returns a (spec_block, info_block) tuple of
-    strings stripped of surrounding blank lines; info_block is None when no [INFO]
-    section is present. If the markers cannot be located the whole block is returned as
-    spec_block with a None info_block, so callers always get the spec text back.
-    """
-    lines = block.splitlines()
-    spec_tag = spec_marker.strip()
-    info_tag = (comment_prefix + " [INFO]").strip()
-
-    spec_idxs = [i for i, ln in enumerate(lines) if ln.strip() == spec_tag]
-    info_idxs = [i for i, ln in enumerate(lines) if ln.strip() == info_tag]
-
-    if len(spec_idxs) >= 2:
-        spec_end = spec_idxs[1]
-    elif info_idxs:
-        spec_end = info_idxs[0] - 1
-    else:
-        return block.strip("\n"), None
-
-    spec_block = "\n".join(lines[: spec_end + 1]).strip("\n")
-
-    if len(info_idxs) >= 2:
-        info_block = "\n".join(lines[info_idxs[0]: info_idxs[1] + 1]).strip("\n")
-    elif info_idxs:
-        info_block = "\n".join(lines[info_idxs[0]:]).strip("\n")
-    else:
-        info_block = None
-
-    return spec_block, info_block
 
 
 def _topdown_ordered_fqns(work_dir):
@@ -684,15 +514,9 @@ def run_incremental_pipeline(
     )
     logging.info("  -> phases.json regenerated.")
 
-    # 4. Update functions under fm_agent/extracted_functions/.
-    #    Capture the previous run's specs first (re-extraction overwrites each file with
-    #    the raw source for the current code), then re-extract, then restore the captured
-    #    [SPEC]/[INFO] headers onto every function that still exists. Functions that were
-    #    added or whose extraction path changed are left unspecced for the spec-update
-    #    stage to handle; unchanged functions keep their previous specs verbatim.
-    logging.info("[Stage 4/10] Re-extracting functions and restoring previous specs...")
-    old_spec = extract_existing_specs(proj_dir)
-    logging.info("  -> captured %d existing spec block(s) before re-extraction.", len(old_spec))
+    # 4. Re-extract implementations. Structured metadata lives in adjacent JSON files,
+    #    so force extraction can refresh source without being captured and reapplied.
+    logging.info("[Stage 4/10] Re-extracting function implementations...")
     # Rebuild the codegraph index before re-extraction. The index still reflects the code as
     # of the previous full run, but the working tree has changed since then; run_extraction
     # (and the downstream scope ranking) read function bodies and spans from codegraph, so a
@@ -700,8 +524,7 @@ def run_incremental_pipeline(
     # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
     try_codegraph_init(proj_dir)
     run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
-    _reapply_existing_specs(proj_dir, old_spec)
-    logging.info("  -> functions re-extracted and prior [SPEC]/[INFO] headers reapplied.")
+    logging.info("  -> function implementations refreshed; metadata sidecars preserved.")
 
     # 5. Collect changed functions by comparing against the old version of functions in commit_id
     logging.info("[Stage 5/10] Collecting changed functions vs. base commit...")
@@ -1180,285 +1003,127 @@ def _project_call_graph(work_dir):
     return callees_map, callers_map, file_map
 
 
-def _resolve_callee_fqns(caller_fqn, callee_names, callees_map):
-    """
-    Map callee names reported by opencode (the [INFO] entries whose expected spec changed)
-    back to the FQNs of caller_fqn's callees.
-
-    A callee is identified in the [INFO] block by its name; this matches that name against
-    the final component (stem) of each of caller_fqn's callee FQNs, case-insensitively, and
-    returns every matching callee FQN (a name shared by callees in several files resolves to
-    all of them).
-    """
-    wanted = {n.strip() for n in callee_names if n and n.strip()}
-    wanted_lower = {n.lower() for n in wanted}
-    resolved = set()
-    for callee_fqn in callees_map.get(caller_fqn, ()):
-        stem = callee_fqn.split("::")[-1]
-        if stem in wanted or stem.lower() in wanted_lower:
-            resolved.add(callee_fqn)
-    return resolved
-
-
-def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
-                           developer_intent, spec_block, info_block, callee_names, source):
-    """
-    Ask the LLM whether a function's [SPEC] (and, if so, its [INFO]) block must change to
-    reflect developer_intent, and return the parsed decision.
-
-    The prompt inlines the entire function source, its current [SPEC]/[INFO] blocks, and the
-    developer intent, so it needs no repository file access and is issued as a direct LLM
-    call (via _llm_select_json) rather than an opencode run. idx is used only to label the
-    traced exchange.
-
-    Returns the parsed result dict — keys: "spec_updated" (bool), "new_spec" (str),
-    "info_updated" (bool), "new_info" (str), "updated_callees" (list[str]) — or None when
-    the LLM produced nothing usable.
-    """
-    callee_hint = ", ".join(sorted(callee_names)) if callee_names else "(none)"
-    if not callee_names:
-        info_section = "This function has no callees, so there is no [INFO] block to maintain.\n\n"
-    elif info_block is not None:
-        info_section = (
-            "## Current [INFO] block (the expected specs of the callees this function depends on)\n\n"
-            f"{info_block}\n\n"
-            "NOTE: a modification may have changed which callees this function calls, so this "
-            f"block may be missing entries for some current callees ({callee_hint}) or contain "
-            "entries for callees no longer called.\n\n"
-        )
-    else:
-        info_section = (
-            "This function currently has no [INFO] block, but a modification may have made it "
-            f"call other functions, so it now has callees ({callee_hint}); a new [INFO] block "
-            "may need to be created for them.\n\n"
-        )
-
-    knowledge_section = _domain_knowledge_prompt_section(work_dir)
-
-    prompt_content = (
-        "# Update Function Specification\n\n"
-        "A modification is being applied to a codebase to achieve the developer intent "
-        "below. Decide whether this function's behavioral specification must change to "
-        "reflect that intent.\n\n"
-        f"- Function fully-qualified name: `{fqn}` (language: `{lang_key}`).\n"
-        f"- Comment prefix for this language: `{comment_prefix}`.\n"
-        f"- Known callees of this function: {callee_hint}.\n\n"
-        "## Developer intent\n\n"
-        f"{developer_intent}\n\n"
-        f"{knowledge_section}"
-        "## Current function source\n\n"
-        f"```{lang_key}\n{source.strip()}\n```\n\n"
-        "## Current [SPEC] block (this function's own behavioral specification)\n\n"
-        f"{spec_block}\n\n"
-        f"{info_section}"
-        "## Steps\n\n"
-        "1. Decide whether the [SPEC] block still correctly and completely describes the "
-        "function's behavior after the intended modification. If it remains correct, no "
-        "update is needed.\n"
-        "2. If it must change, produce the COMPLETE replacement [SPEC] block — the "
-        "`[SPEC]` ... `[SPEC]` block only, markers included, every line prefixed with "
-        f"`{comment_prefix}`, and NO source code.\n"
-        "3. ONLY if you updated the [SPEC] block AND this function has callees: bring the "
-        f"[INFO] block into line with this function's CURRENT callees ({callee_hint}). That "
-        "means: (a) keep entries whose recorded expectation still matches the callee's role, "
-        "(b) ADD an entry for any current callee not yet recorded (e.g. one the modification "
-        "introduced), (c) DROP entries for callees this function no longer calls, and (d) "
-        "revise any entry whose expected spec must change as a consequence of the new [SPEC]. "
-        "If any of (a)-(d) changes the block, produce the COMPLETE replacement [INFO] block "
-        f"(the `[INFO]` ... `[INFO]` block only, markers included, lines prefixed with "
-        f"`{comment_prefix}`) and list the names of the callees whose expected spec you added "
-        "or changed.\n"
-        "4. Return ONLY a JSON object with keys:\n"
-        '   - "spec_updated": boolean.\n'
-        '   - "new_spec": string — the full replacement [SPEC] block, or "" if not updated.\n'
-        '   - "info_updated": boolean — true when you produced a new/replacement [INFO] block.\n'
-        '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
-        '   - "updated_callees": array of callee name strings whose expected spec you added or changed, or [].\n'
-        "   Wrap the JSON object between `[JSON]` and `[JSON]` markers.\n"
-    )
-
-    return _llm_select_json(
-        work_dir, prompt_content, stage="update_function_spec",
-        trace_meta={"fqn": fqn, "idx": idx},
-    )
-
-
-def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_name,
-                                  lang_key, comment_prefix, callee_new_spec,
-                                  caller_info_block, caller_source):
-    """
-    Ask the LLM whether a caller's [INFO] block must change to stay consistent with a callee
-    whose [SPEC] block was just updated.
-
-    The caller's [INFO] block records the expected specs of the callees it depends on. This
-    asks the model to reconcile only the entry for callee_name with the callee's new spec —
-    consistency, not equality: the entry must merely not conflict with the new spec, and the
-    entries for other callees are left untouched. The prompt inlines the callee's new spec
-    and the caller's source/[INFO], so it is issued as a direct LLM call (via
-    _llm_select_json) rather than an opencode run; idx only labels the traced exchange.
-
-    Returns the parsed result dict — keys "info_updated" (bool) and "new_info" (str) — or
-    None when the LLM produced nothing usable.
-    """
-    knowledge_section = _domain_knowledge_prompt_section(work_dir)
-
-    prompt_content = (
-        "# Reconcile a Caller's [INFO] Block with a Changed Callee\n\n"
-        f"The callee `{callee_name}`'s behavioral specification was just updated. The caller "
-        f"`{caller_fqn}` (language `{lang_key}`) records the expected specs of the callees it "
-        "depends on in its [INFO] block. Update that block so its entry for the callee is "
-        "CONSISTENT with the callee's new spec — it need NOT be identical, it only must not "
-        "conflict (no contradictory pre/post-conditions). Leave the entries for every other "
-        "callee unchanged.\n\n"
-        f"Comment prefix for this language: `{comment_prefix}`.\n\n"
-        f"{knowledge_section}"
-        "## Callee's updated [SPEC] block\n\n"
-        f"{callee_new_spec}\n\n"
-        "## Caller's current source\n\n"
-        f"```{lang_key}\n{caller_source.strip()}\n```\n\n"
-        "## Caller's current [INFO] block (the expected specs of its callees)\n\n"
-        f"{caller_info_block}\n\n"
-        "## Steps\n\n"
-        f"1. Decide whether the caller's [INFO] entry for `{callee_name}` already is consistent "
-        "with the callee's new spec. If it is, no update is needed.\n"
-        f"2. If it conflicts, produce the COMPLETE replacement [INFO] block (the `[INFO]` ... "
-        f"`[INFO]` block only, markers included, every line prefixed with `{comment_prefix}`), "
-        f"adjusting only the `{callee_name}` entry to be consistent and leaving the other "
-        "entries as-is.\n"
-        "3. Return ONLY a JSON object with keys:\n"
-        '   - "info_updated": boolean.\n'
-        '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
-        "   Wrap the JSON object between `[JSON]` and `[JSON]` markers.\n"
-    )
-
-    return _llm_select_json(
-        work_dir, prompt_content, stage="update_caller_info",
-        trace_meta={"caller_fqn": caller_fqn, "callee_name": callee_name, "idx": idx},
-    )
+def _resolve_callee_fqns(caller_fqn, reported_fqns, callees_map):
+    """Keep only exact reported FQNs that are actual callees of caller_fqn."""
+    wanted = {fqn.strip() for fqn in reported_fqns if fqn and fqn.strip()}
+    return set(callees_map.get(caller_fqn, ())) & wanted
 
 
 def _collect_caller_context(fqn, callers_map, file_map):
     """
-    Gather the context an existing caller provides about fqn, mirroring the caller context
-    run_pipeline feeds into spec generation: each caller's own [SPEC] block and the entry in
-    its [INFO] block that records what the caller expects from fqn (as one of its callees).
+    Gather each existing caller's spec object and its exact-FQN callee expectation.
 
-    Returns a list of (caller_fqn, caller_spec, callee_expectation) tuples — caller_spec and
-    callee_expectation are None when the caller has no such block — for every caller of fqn
-    whose extracted-function file exists and yields at least one of the two. Callers with no
-    file or no usable block are skipped.
+    Returns structured (caller_fqn, caller_spec, callee_expectation) tuples. Callers with
+    missing or invalid sidecars are skipped.
     """
     context = []
     for caller_fqn in sorted(callers_map.get(fqn, ())):
         cpath = file_map.get(caller_fqn)
         if not cpath or not os.path.isfile(cpath):
             continue
-        cpath_p = Path(cpath)
-        caller_spec = extract_spec_block(cpath_p)
-        info_block = extract_info_block(cpath_p)
-        expectation = extract_callee_spec_from_info(info_block, fqn) if info_block else None
+        try:
+            caller_spec = read_spec(cpath)
+            info_data = read_info(cpath)
+        except MetadataValidationError:
+            continue
+        expectation = callee_expectation(info_data, fqn)
         if caller_spec or expectation:
             context.append((caller_fqn, caller_spec, expectation))
     return context
 
 
-def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
-                            developer_intent, callee_names, source, caller_context):
-    """
-    Ask opencode to generate a brand-new [SPEC] (and, when the function has callees, [INFO])
-    block from scratch for a function that has no existing specification — e.g. a function
-    freshly added by the modification.
-
-    Mirrors the full run's spec generation (run_pipeline Stage 5) but for a single function:
-    opencode reads the project's spec format rules (fm_agent/spec_prompts/system_prompt.md),
-    is given the same caller context the full run provides (each caller's [SPEC] block and what
-    that caller's [INFO] block expects from this function, in caller_context as returned by
-    _collect_caller_context), and produces the block(s) directly. Returns the parsed decision
-    in the SAME shape as _opencode_check_spec_update so the caller can splice and propagate it
-    identically.
-
-    Returns the parsed result dict — keys: "spec_updated" (bool, true when a [SPEC] block was
-    produced), "new_spec" (str), "info_updated" (bool), "new_info" (str), "updated_callees"
-    (list[str]) — or None when opencode produced nothing usable.
-    """
-    result_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.json")
-    prompt_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.md")
-
-    # Caller context (callers' own specs + what each caller's [INFO] expects from this
-    # function), mirroring run_pipeline's "EARLIER-LAYER CALLER SPECS" / "CALLEE EXPECTATIONS
-    # FROM CALLERS" sections so the generated spec satisfies what callers depend on.
-    caller_specs = [
-        (cfqn, spec) for cfqn, spec, _ in caller_context if spec
-    ]
-    caller_expectations = [
-        (cfqn, exp) for cfqn, _, exp in caller_context if exp
-    ]
-    caller_section = ""
-    if caller_specs:
-        caller_section += "## Specs of this function's callers\n\n"
-        for cfqn, spec in caller_specs:
-            caller_section += f"### {cfqn}\n\n{spec.strip()}\n\n"
-    if caller_expectations:
-        caller_section += (
-            "## What callers expect from this function (from their [INFO] blocks)\n\n"
-            "Your generated [SPEC] must be consistent with these expectations.\n\n"
-        )
-        for cfqn, exp in caller_expectations:
-            caller_section += f"### According to {cfqn}\n\n{exp.strip()}\n\n"
-
-    callee_hint = ", ".join(sorted(callee_names)) if callee_names else "(none)"
-    user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
-    if user_knowledge_paths:
-        user_knowledge_step = (
-            "2. Read these user-provided domain knowledge Markdown files and use "
-            "them as additional context:\n"
-            f"{format_domain_knowledge_bullets(user_knowledge_paths)}\n"
-        )
-        step_offset = 1
-    else:
-        user_knowledge_step = ""
-        step_offset = 0
-    info_step_number = 3 + step_offset
-    if callee_names:
-        info_step = (
-            f"{info_step_number}. Because this function has callees, also produce an [INFO] block recording the "
-            "expected behavioral spec of each callee it depends on (the `[INFO]` ... `[INFO]` "
-            f"block only, markers included, every line prefixed with `{comment_prefix}`), and "
-            "list the names of the callees you recorded.\n"
-        )
-    else:
-        info_step = f"{info_step_number}. This function has no callees, so produce no [INFO] block.\n"
-
+def _structured_llm_check_spec_update(
+    proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
+    developer_intent, spec_data, info_data, callee_fqns, source,
+):
+    """Ask for structured replacements for one function's metadata JSON."""
+    del proj_dir, comment_prefix
     prompt_content = (
-        "# Generate Function Specification\n\n"
-        "A modification has been applied to a codebase to achieve the developer intent below, "
-        "adding a function that has no behavioral specification yet. Generate its "
-        "specification from scratch.\n\n"
-        f"- Function fully-qualified name: `{fqn}` (language: `{lang_key}`).\n"
-        f"- Comment prefix for this language: `{comment_prefix}`.\n"
-        f"- Known callees of this function: {callee_hint}.\n\n"
-        "## Developer intent\n\n"
-        f"{developer_intent}\n\n"
-        "## Function source\n\n"
-        f"```{lang_key}\n{source.strip()}\n```\n\n"
-        f"{caller_section}"
-        "## Steps\n\n"
-        "1. Read `fm_agent/spec_prompts/system_prompt.md` for the exact [SPEC]/[INFO] format "
-        "rules used by this project.\n"
-        f"{user_knowledge_step}"
-        f"{2 + step_offset}. Produce the COMPLETE [SPEC] block describing this function's behavior — the "
-        "`[SPEC]` ... `[SPEC]` block only, markers included, every line prefixed with "
-        f"`{comment_prefix}`, and NO source code.\n"
-        f"{info_step}"
-        f"{4 + step_offset}. Write your answer to `{result_relpath}` as a JSON object with keys:\n"
-        '   - "spec_updated": boolean — true when you produced a [SPEC] block.\n'
-        '   - "new_spec": string — the full [SPEC] block.\n'
-        '   - "info_updated": boolean — true when you produced an [INFO] block.\n'
-        '   - "new_info": string — the full [INFO] block, or "" if none.\n'
-        '   - "updated_callees": array of callee name strings recorded in [INFO], or [].\n'
-        "   Write ONLY that JSON file; do not modify any other project files.\n"
+        "# Update structured function metadata\n\n"
+        f"Function FQN: `{fqn}`\nLanguage: `{lang_key}`\n"
+        f"Current callees (exact FQNs): {json.dumps(sorted(callee_fqns), ensure_ascii=False)}\n\n"
+        f"## Developer intent\n\n{developer_intent}\n\n"
+        f"{_domain_knowledge_prompt_section(work_dir)}"
+        f"## Immutable function implementation\n\n```{lang_key}\n{source}\n```\n\n"
+        "## Current spec JSON\n\n"
+        f"```json\n{json.dumps(spec_data, indent=2, ensure_ascii=False)}\n```\n\n"
+        "## Current info JSON\n\n"
+        f"```json\n{json.dumps(info_data, indent=2, ensure_ascii=False)}\n```\n\n"
+        "Decide whether either metadata object must change. Return only an object between "
+        "`[JSON]` markers with keys `spec_updated`, `new_spec`, `info_updated`, "
+        "`new_info`, and `updated_callees`. `new_spec` and `new_info` must be complete "
+        "schema_version 1 JSON objects when their update flag is true, otherwise null. "
+        "`updated_callees` must contain exact full FQNs. The info object is always required "
+        "and must use `callees: []` when there are no callees. Do not return source code.\n"
+    )
+    return _llm_select_json(
+        work_dir,
+        prompt_content,
+        stage="update_function_spec",
+        trace_meta={"fqn": fqn, "idx": idx},
     )
 
+
+def _structured_llm_check_caller_info_update(
+    proj_dir, work_dir, idx, caller_fqn, callee_fqn, lang_key,
+    comment_prefix, callee_new_spec, caller_info_data, caller_source,
+):
+    """Reconcile one caller info object with a changed callee spec object."""
+    del proj_dir, comment_prefix
+    prompt_content = (
+        "# Reconcile structured caller metadata\n\n"
+        f"Caller FQN: `{caller_fqn}`\nChanged callee FQN: `{callee_fqn}`\n\n"
+        f"{_domain_knowledge_prompt_section(work_dir)}"
+        "## Changed callee spec JSON\n\n"
+        f"```json\n{json.dumps(callee_new_spec, indent=2, ensure_ascii=False)}\n```\n\n"
+        f"## Immutable caller implementation\n\n```{lang_key}\n{caller_source}\n```\n\n"
+        "## Current caller info JSON\n\n"
+        f"```json\n{json.dumps(caller_info_data, indent=2, ensure_ascii=False)}\n```\n\n"
+        "Update only the expectation whose `function` exactly equals the changed callee "
+        "FQN, and leave all other entries unchanged. Return only an object between "
+        "`[JSON]` markers with `info_updated` and `new_info`. When updated, `new_info` "
+        "must be the complete schema_version 1 info JSON object; otherwise it must be null.\n"
+    )
+    return _llm_select_json(
+        work_dir,
+        prompt_content,
+        stage="update_caller_info",
+        trace_meta={
+            "caller_fqn": caller_fqn,
+            "callee_fqn": callee_fqn,
+            "idx": idx,
+        },
+    )
+
+
+def _structured_opencode_generate_spec(
+    proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
+    developer_intent, callee_fqns, source, caller_context,
+):
+    """Generate both required structured metadata objects for a new function."""
+    del comment_prefix
+    result_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.json")
+    prompt_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.md")
+    caller_data = [
+        {"function": caller_fqn, "spec": spec, "expectation": expectation}
+        for caller_fqn, spec, expectation in caller_context
+    ]
+    user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
+    prompt_content = (
+        "# Generate structured function metadata\n\n"
+        f"Function FQN: `{fqn}`\nLanguage: `{lang_key}`\n"
+        f"Callees (exact FQNs): {json.dumps(sorted(callee_fqns), ensure_ascii=False)}\n\n"
+        f"## Developer intent\n\n{developer_intent}\n\n"
+        f"## Immutable implementation\n\n```{lang_key}\n{source}\n```\n\n"
+        "## Structured caller context\n\n"
+        f"```json\n{json.dumps(caller_data, indent=2, ensure_ascii=False)}\n```\n\n"
+        "Read `fm_agent/spec_prompts/system_prompt.md` and any supplied domain knowledge. "
+        "Generate complete schema_version 1 objects for both `new_spec` and `new_info`; "
+        "`new_info.callees` must be `[]` when there are no callees. Every function identity "
+        "must be an exact full FQN. Write only the result JSON object to "
+        f"`{result_relpath}` with `spec_updated: true`, `new_spec`, `info_updated: true`, "
+        "`new_info`, and `updated_callees` (exact full FQNs). Do not modify implementation files.\n"
+    )
     return _opencode_select_json(
         proj_dir,
         work_dir,
@@ -1476,26 +1141,21 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
 
 def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_functions, relevant_rel_files):
     """
-    re-generate the [SPEC] (and dependent [INFO]) blocks of every function that is
-    either changed or relevant to the developer intent, propagating to callees.
+    Update structured spec/info sidecars for functions changed by the developer intent.
 
     Seeds from the changed functions (added/modified) and the relevant extracted-function
     files returned by collect_relevent_function_scope, then processes functions in top-down
-    order (callers before callees). For each function, opencode reads its current [SPEC]
-    block and decides whether it must change to reflect developer_intent. A function with no
-    existing [SPEC] block (e.g. one freshly added by the modification) instead has a spec
-    generated from scratch the way the full run does. If a spec is written or generated, the
-    new [SPEC] is written back (source untouched), and then:
+    order (callers before callees). Existing JSON metadata is updated, while a function with
+    missing or invalid metadata gets both objects generated from scratch. Implementation
+    files remain read-only. When metadata changes:
 
-      - Downward: opencode decides whether the function's own [INFO] block (the expected
-        specs of its callees) must change too, and any callee whose expected spec changed is
+      - Downward: changed info entries identify exact callee FQNs whose specs must be
         queued to have its own spec file re-checked.
-      - Upward: every caller's [INFO] block (which records this function as one of its
-        callees) is reconciled with the function's new [SPEC] so the two do not conflict
+      - Upward: every caller's info object is reconciled with the function's new spec
         (they need not be identical).
 
     Returns the sorted list of extracted-function files (paths relative to the
-    extracted_functions dir) whose [SPEC]/[INFO] block was changed.
+    extracted_functions dir) whose structured metadata changed.
     """
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
@@ -1529,11 +1189,11 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
 
     def _plan_spec_update(fqn, idx):
         """
-        Decide fqn's new [SPEC]/[INFO] and return an apply-plan, or None to skip.
+        Decide fqn's new structured metadata and return an apply-plan, or None to skip.
 
         Makes the opencode LLM call (the slow part) but performs NO file writes, so a batch of
         mutually independent functions can run this concurrently. The returned plan carries the
-        exact file content to write plus what the serial apply phase needs for downward
+        validated JSON objects plus what the serial apply phase needs for downward
         propagation; None means the function does not exist, is an unsupported language, or its
         spec did not change.
         """
@@ -1544,80 +1204,58 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
         lang_key = EXT_TO_LANG.get(ext)
         if not lang_key:
             return None
-        lang_cfg = LANG_CONFIG[lang_key]
-        comment_prefix = lang_cfg["comment_prefix"]
-        spec_marker = lang_cfg["spec_marker"]
+        comment_prefix = LANG_CONFIG[lang_key]["comment_prefix"]
 
-        with open(fpath, "r", errors="replace") as f:
-            content = f.read()
-        leading = _extract_leading_spec_comments(content, comment_prefix, spec_marker)
-        callee_names = sorted({c.split("::")[-1] for c in callees_map.get(fqn, ())})
+        with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+            source = f.read()
+        callee_fqns = sorted(callees_map.get(fqn, ()))
 
-        if leading is None:
-            # No existing specification (e.g. a freshly added, unspecced function) — generate
-            # one from scratch the way the full run does, rather than skipping the function.
-            source = content
+        try:
+            old_spec = read_spec(fpath)
+            old_info = read_info(fpath)
+        except MetadataValidationError:
             old_spec, old_info = None, None
             caller_context = _collect_caller_context(fqn, callers_map, file_map)
-            result = _opencode_generate_spec(
+            result = _structured_opencode_generate_spec(
                 proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
-                developer_intent, callee_names, source, caller_context,
+                developer_intent, callee_fqns, source, caller_context,
             )
         else:
-            source = content[len(leading):]
-            old_spec, old_info = _split_spec_and_info(leading, comment_prefix, spec_marker)
-            result = _llm_check_spec_update(
+            result = _structured_llm_check_spec_update(
                 proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
-                developer_intent, old_spec, old_info, callee_names, source,
+                developer_intent, old_spec, old_info, callee_fqns, source,
             )
 
-        if not result or not result.get("spec_updated"):
+        if not result:
             return None
-        new_spec = (result.get("new_spec") or "").strip()
-        if not new_spec:
+        spec_updated = bool(result.get("spec_updated"))
+        info_updated = bool(result.get("info_updated"))
+        if not spec_updated and not info_updated:
             return None
 
-        if leading is None:
-            # Freshly generated: take the [INFO] block opencode produced (if any). Treat it as
-            # "updated" so its recorded callee expectations propagate downward below.
-            new_info = (result.get("new_info") or "").strip()
-            info_block = new_info or None
-            info_updated = bool(new_info)
-        else:
-            # Keep the existing [INFO] block unless opencode rewrote it. A modified function may
-            # now call a different set of callees, so a fresh [INFO] block can legitimately be
-            # created even when the function previously had none (old_info is None) — gate on
-            # whether opencode produced a block, not on a prior block existing.
-            info_block = old_info
-            info_updated = False
-            if result.get("info_updated"):
-                new_info = (result.get("new_info") or "").strip()
-                if new_info:
-                    info_block = new_info
-                    info_updated = True
-
-        # Splice the new block(s) back in, leaving the function source unchanged (mirrors the
-        # full run's specced-file layout: [SPEC], blank line, optional [INFO], blank line, source).
-        new_block = new_spec.rstrip("\n")
-        if info_block is not None:
-            new_block += "\n\n" + info_block.strip("\n")
+        new_spec = result.get("new_spec") if spec_updated else old_spec
+        new_info = result.get("new_info") if info_updated else old_info
+        if new_spec is None or new_info is None:
+            raise MetadataValidationError(
+                f"incremental metadata response for {fqn} omitted a required object"
+            )
 
         return {
             "fqn": fqn,
             "fpath": fpath,
-            "write_content": new_block + "\n\n" + source.lstrip("\n"),
-            "new_spec": new_spec,
+            "spec_updated": spec_updated,
+            "new_spec": validate_spec_data(new_spec, fqn),
             "info_updated": info_updated,
+            "new_info": validate_info_data(new_info, fqn),
             "updated_callees": result.get("updated_callees") or [],
         }
 
     def _reconcile_caller(caller_fqn, updates, base_idx):
         """
-        Reconcile caller_fqn's [INFO] block against a sequence of changed callees.
+        Reconcile caller_fqn's info JSON against a sequence of changed callees.
 
-        updates is a list of (callee_name, callee_new_spec). The entries are applied
-        sequentially, re-reading the caller file between each, because they all edit the same
-        file — so a single caller is one unit of work and DIFFERENT callers run concurrently
+        updates is a list of (callee_fqn, callee_new_spec). Entries are applied sequentially
+        because they all edit one sidecar, while different callers run concurrently
         (see the batch loop). base_idx + offset gives each opencode call a unique artifact name.
         Returns the caller's path if any reconciliation changed it, else None.
         """
@@ -1628,38 +1266,37 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
         clang = EXT_TO_LANG.get(cext)
         if not clang:
             return None
-        ccfg = LANG_CONFIG[clang]
-        cprefix = ccfg["comment_prefix"]
-        cmarker = ccfg["spec_marker"]
+        cprefix = LANG_CONFIG[clang]["comment_prefix"]
 
         changed = False
-        for offset, (callee_name, callee_new_spec) in enumerate(updates):
-            with open(cpath, "r", errors="replace") as f:
-                ccontent = f.read()
-            cleading = _extract_leading_spec_comments(ccontent, cprefix, cmarker)
-            if cleading is None:
+        for offset, (callee_fqn, callee_new_spec) in enumerate(updates):
+            with open(cpath, "r", encoding="utf-8", errors="replace") as f:
+                caller_source = f.read()
+            try:
+                caller_info = read_info(cpath)
+            except MetadataValidationError:
                 continue
-            csource = ccontent[len(cleading):]
-            c_spec, c_info = _split_spec_and_info(cleading, cprefix, cmarker)
-            if c_info is None:
-                # No callee-contract block to reconcile.
-                continue
-
-            cresult = _llm_check_caller_info_update(
-                proj_dir, work_dir, base_idx + offset, caller_fqn, callee_name, clang, cprefix,
-                callee_new_spec, c_info, csource,
+            result = _structured_llm_check_caller_info_update(
+                proj_dir,
+                work_dir,
+                base_idx + offset,
+                caller_fqn,
+                callee_fqn,
+                clang,
+                cprefix,
+                callee_new_spec,
+                caller_info,
+                caller_source,
             )
-            if not cresult or not cresult.get("info_updated"):
+            if not result or not result.get("info_updated"):
                 continue
-            c_new_info = (cresult.get("new_info") or "").strip()
-            if not c_new_info:
-                continue
-
-            c_block = c_spec.rstrip("\n") + "\n\n" + c_new_info.strip("\n")
-            with open(cpath, "w") as f:
-                f.write(c_block + "\n\n" + csource.lstrip("\n"))
+            write_info(
+                cpath,
+                validate_info_data(result.get("new_info"), caller_fqn),
+            )
             changed = True
         return cpath if changed else None
+
 
     checked = set()
     to_check = set(seed)
@@ -1711,8 +1348,10 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
         # Kept serial so the shared to_check / changed_spec_files sets need no locking.
         queued_callees = 0
         for plan in applied:
-            with open(plan["fpath"], "w") as f:
-                f.write(plan["write_content"])
+            if plan["spec_updated"]:
+                write_spec(plan["fpath"], plan["new_spec"])
+            if plan["info_updated"]:
+                write_info(plan["fpath"], plan["new_info"])
             changed_spec_files.add(os.path.relpath(plan["fpath"], extracted_dir))
             if plan["info_updated"]:
                 for callee_fqn in _resolve_callee_fqns(
@@ -1726,16 +1365,18 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
             round_num, len(applied), queued_callees,
         )
 
-        # Stage 3 (concurrent): upward reconciliation. Each function whose [SPEC] changed needs
-        # every caller's [INFO] entry for it reconciled. Group the work by caller file so edits
+        # Stage 3 (concurrent): reconcile each changed spec with its callers' info entries.
+        # Group the work by caller file so edits
         # to one file are serialized while different caller files reconcile in parallel. Callers
         # sit above the batch in top-down order and are never themselves in the batch, so their
         # files don't collide with the Stage 2 writes.
-        caller_updates = {}  # caller_fqn -> list of (callee_name, callee_new_spec)
+        caller_updates = {}  # caller_fqn -> list of (callee_fqn, callee_new_spec)
         for plan in applied:
-            callee_name = plan["fqn"].split("::")[-1]
+            if not plan["spec_updated"]:
+                continue
+            callee_fqn = plan["fqn"]
             for caller_fqn in sorted(callers_map.get(plan["fqn"], ())):
-                caller_updates.setdefault(caller_fqn, []).append((callee_name, plan["new_spec"]))
+                caller_updates.setdefault(caller_fqn, []).append((callee_fqn, plan["new_spec"]))
 
         if caller_updates:
             group_base = {}  # pre-assign a contiguous idx block per caller for unique artifacts
@@ -1754,7 +1395,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
                     try:
                         cpath = future.result()
                     except Exception:
-                        logging.exception("Caller [INFO] reconciliation failed for %s", caller_fqn)
+                        logging.exception("Caller info reconciliation failed for %s", caller_fqn)
                         continue
                     if cpath:
                         changed_spec_files.add(os.path.relpath(cpath, extracted_dir))
@@ -1771,13 +1412,10 @@ def _verify_incremental_functions(
 
     A function is verified when it satisfies at least one of:
       1) it was changed in the working tree (added or modified), or
-      2) its own [SPEC] or [INFO] block was updated in step 9.
+      2) its own spec or info JSON was updated in step 9.
 
-    Note on callees: a function whose callee's [SPEC] changed needs re-verification ONLY if
-    that change forced its own [INFO] block (the callee contract it reasons against) to be
-    updated. Step 9's upward reconciliation already rewrites exactly those callers' [INFO]
-    blocks and includes them in updated_spec_files, so condition (2) covers them — a caller
-    whose [INFO] did not need to change is left alone and is correctly NOT re-verified.
+    A caller is re-verified only when reconciliation changed its info JSON. Step 9 includes
+    exactly those callers in updated_spec_files.
 
     Each target is verified by invoking the reasoner (src/reasoner.py, via the per-file
     wrapper verification._verify_single_file, which calls reasoner() and writes the result
@@ -1803,14 +1441,14 @@ def _verify_incremental_functions(
         ).values()
     )
 
-    # (2) Functions whose [SPEC] or [INFO] block was updated in step 9 (updated_spec_files
-    #     already includes both functions whose own spec changed and callers whose [INFO]
+    # (2) Functions whose spec or info JSON was updated in step 9 (updated_spec_files
+    #     already includes both functions whose own spec changed and callers whose info
     #     was reconciled against an updated callee).
     for rel in updated_spec_files:
         verify_targets.add(os.path.join(extracted_dir, rel))
 
     # Keep only functions that still exist on disk; the reasoner reads these extracted files
-    # directly and skips any without a [SPEC] block.
+    # directly and skips any without valid metadata sidecars.
     file_list = sorted({
         os.path.relpath(path, extracted_dir)
         for path in verify_targets
