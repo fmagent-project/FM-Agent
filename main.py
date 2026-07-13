@@ -606,6 +606,25 @@ if __name__ == "__main__":
         help="Resume a previous --hardware run: reuse groups.json and only "
         "regenerate missing module specs.",
     )
+    parser.add_argument(
+        "--chisel-modules-only",
+        action="store_true",
+        help="With --hardware --chisel: skip spec generation for Chisel classes "
+        "confidently identified as non-hardware (IO Bundles, constant objects, "
+        "and similar), keeping units that transitively extend "
+        "Module/RawModule/ExtModule/BlackBox/MultiIOModule. Classes whose "
+        "module-ness can't be determined heuristically (unresolved external "
+        "bases, ambiguous or cyclic inheritance) are conservatively kept, not "
+        "excluded. This is a text-only heuristic with no real Scala import/"
+        "package resolution, so an unrelated class elsewhere in the project "
+        "sharing a parent's bare name can, in rare cases, still cause a "
+        "misclassification. An import alias that renames a base to "
+        "Module/RawModule/ExtModule/BlackBox/MultiIOModule/Bundle/Record/Data "
+        "(e.g. `import chisel3.{Module => Bundle}`) is treated as if it named "
+        "that class directly, which can deterministically misclassify a real "
+        "module. Extraction itself is unaffected; this only filters spec "
+        "generation.",
+    )
     args = parser.parse_args()
 
     if (args.chisel or args.verilog) and not args.hardware:
@@ -616,6 +635,12 @@ if __name__ == "__main__":
         # exact workspace --resume promises to preserve.
         parser.error("--resume only applies to --hardware runs; "
                      "add --hardware (and --verilog for Verilog designs)")
+    if args.chisel_modules_only and not args.hardware:
+        parser.error("--chisel-modules-only only applies to --hardware Chisel runs; "
+                     "add --hardware")
+    if args.chisel_modules_only and args.verilog:
+        parser.error("--chisel-modules-only is Chisel-only and cannot be combined "
+                     "with --verilog")
 
     start_time = time.time()
     if args.hardware and args.verilog:
@@ -625,7 +650,8 @@ if __name__ == "__main__":
     elif args.hardware:
         from src.chisel_spec_generator import run_chisel_spec_generation
 
-        run_chisel_spec_generation(os.path.abspath(args.proj_dir), resume=args.resume)
+        run_chisel_spec_generation(os.path.abspath(args.proj_dir), resume=args.resume,
+                                    chisel_modules_only=args.chisel_modules_only)
     else:
         run_pipeline(os.path.abspath(args.proj_dir))
     end_time = time.time()

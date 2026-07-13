@@ -137,6 +137,7 @@ uv run python main.py <proj_dir>
 | `--chisel`   | With `--hardware`: treat the design as Chisel (Scala). This is the default HDL, so `--hardware` alone is equivalent to `--hardware --chisel` |
 | `--verilog`  | With `--hardware`: treat the design as Verilog/SystemVerilog (`.v`/`.sv`/`.svh`) |
 | `--resume`   | Resume an interrupted `--hardware` run: reuse `groups.json` and only regenerate missing module specs |
+| `--chisel-modules-only` | With `--hardware --chisel`: skip spec generation for Chisel classes confidently identified as non-hardware (IO Bundles, constant objects, and similar), keeping units that transitively extend `Module`/`RawModule`/`ExtModule`/`BlackBox`/`MultiIOModule`. Classes whose module-ness can't be determined heuristically (unresolved external bases, ambiguous or cyclic inheritance) are conservatively kept, not excluded. This is a text-only heuristic with no real Scala import/package resolution, so an unrelated class elsewhere in the project sharing a parent's bare name can, in rare cases, still cause a misclassification. An import alias that renames a base to `Module`/`RawModule`/`ExtModule`/`BlackBox`/`MultiIOModule`/`Bundle`/`Record`/`Data` (e.g. `import chisel3.{Module => Bundle}`) is treated as if it named that class directly, which can deterministically misclassify a real module. Extraction is unaffected; this only filters spec generation. |
 
 ### Generating Specs for Hardware Designs (`--hardware`)
 
@@ -144,6 +145,12 @@ For Chisel (Scala) hardware designs:
 
 ```bash
 uv run python main.py <proj_dir> --hardware
+```
+
+To skip spec generation for non-hardware Chisel units (IO Bundles, constant objects, `Main` entry points):
+
+```bash
+uv run python main.py <proj_dir> --hardware --chisel-modules-only
 ```
 
 For Verilog/SystemVerilog hardware designs:
@@ -155,6 +162,8 @@ uv run python main.py <proj_dir> --hardware --verilog
 In this mode FM-Agent runs a **spec-only** pipeline tailored to hardware: it understands the design, splits it into subsystems, and generates verification-oriented module specifications. It does **not** run the code reasoner or bug validation — only spec generation.
 
 The `proj_dir` must contain Scala (`.scala`) source files for Chisel, or Verilog (`.v`/`.sv`/`.svh`) source files for Verilog. For each extracted module, FM-Agent writes spec Markdown files next to the extracted module under `fm_agent/`:
+
+Chisel support is scoped to official Chisel syntax, corresponding to Scala 2 (2.12/2.13), consistent with the Scala version used by current Chisel releases. Scala 2's deprecated early-initializer syntax and Scala 3 are not within the supported scope.
 
 | Output                  | Content                                                              |
 | ----------------------- | ------------------------------------------------------------------- |

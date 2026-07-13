@@ -116,6 +116,7 @@ uv run python main.py <proj_dir>
 | `--chisel` | 搭配 `--hardware`：将设计视为 Chisel（Scala）。这是默认 HDL，`--hardware` 单独使用等价于 `--hardware --chisel` |
 | `--verilog` | 搭配 `--hardware`：将设计视为 Verilog/SystemVerilog（`.v`/`.sv`/`.svh`） |
 | `--resume` | 恢复中断的 `--hardware` 运行：复用 `groups.json`，仅重新生成缺失的模块规约 |
+| `--chisel-modules-only` | 搭配 `--hardware --chisel`：对可明确判定为非硬件的 Chisel 类（IO Bundle、常量 object 等）跳过规约生成，保留传递继承 `Module`/`RawModule`/`ExtModule`/`BlackBox`/`MultiIOModule` 的单元。模块归属无法通过启发式规则确定的类（父类无法解析、存在歧义或循环继承）一律保守判定为需保留，不予排除。该判定基于纯文本启发式规则，不执行 Scala import/package 解析，故项目中若存在与某父类同名的无关类，仍存在低概率误判风险。若 import 别名将某个基类重命名为 `Module`/`RawModule`/`ExtModule`/`BlackBox`/`MultiIOModule`/`Bundle`/`Record`/`Data`（例如 `import chisel3.{Module => Bundle}`），该判定会将其等同于直接使用该名称，可能导致对真实模块的确定性误判。此选项不影响提取（extraction）阶段，仅作用于规约生成阶段。 |
 
 ### 为硬件设计生成规约（`--hardware`）
 
@@ -123,6 +124,12 @@ uv run python main.py <proj_dir>
 
 ```bash
 uv run python main.py <proj_dir> --hardware
+```
+
+跳过非硬件 Chisel 单元（IO Bundle、常量 object、`Main` 入口）的规约生成：
+
+```bash
+uv run python main.py <proj_dir> --hardware --chisel-modules-only
 ```
 
 对于 Verilog/SystemVerilog 硬件设计：
@@ -135,6 +142,8 @@ uv run python main.py <proj_dir> --hardware --verilog
 
 Chisel 设计的 `proj_dir` 中必须包含 Scala（`.scala`）源文件，Verilog 设计则必须包含 Verilog（`.v`/`.sv`/`.svh`）源文件。对于每个提取出的模块，FM-Agent 会在 `fm_agent/` 下、提取出的模块文件旁写入独立的 Markdown 文件描述硬件规约：
 
+Chisel 支持范围限定为官方 Chisel 语法，对应 Scala 2（2.12/2.13）版本，与当前 Chisel 发行版所使用的 Scala 版本一致。Scala 2 已废弃的 early-initializer 语法，Scala 3 不属于支持范围。
+
 | 输出 | 内容 |
 |---|---|
 | `<ModuleName>_spec.md` | 模块行为的面向验证的规约 |
@@ -142,7 +151,7 @@ Chisel 设计的 `proj_dir` 中必须包含 Scala（`.scala`）源文件，Veril
 
 生成的规约会在运行过程中按质量检查清单进行校验；未通过校验的规约会被自动删除并重新生成。若运行中断，可加 `--resume` 重新运行：已完成的规约会保留，仅重新生成缺失部分。
 
-**Verilog 流程要求安装 [Verible](https://github.com/chipsalliance/verible)**：`verible-verilog-syntax` 必须在 `PATH` 上，以保证模块提取和实例化依赖分析的准确性。未安装时 Verilog 流程会拒绝启动（可设置 `FM_AGENT_NO_VERIBLE=1` 强制使用精度较低的纯 Python 兜底解析器）。
+**Verilog 流程要求安装 [Verible](https://github.com/chipsalliance/verible)**：`verible-verilog-syntax` 必须在 `PATH` 上，以保证模块提取和实例化依赖分析的准确性。未安装时 Verilog 流程会拒绝启动（可设置 `FM_AGENT_NO_VERIBLE=1` 强制使用精度较低的纯 Python 备用解析器）。
 
 ### 输出说明
 

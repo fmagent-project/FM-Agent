@@ -581,6 +581,140 @@ def _unit_end(lines, start_idx, masked_lines=None):
     return n - 1
 
 
+def _signature_text(lines, start_idx):
+    """Join the declaration signature's lines starting at ``start_idx``.
+
+    Mirrors ``_unit_end``'s walk over continuation lines, but returns the
+    assembled signature text (up to, not including, any body ``{``) instead
+    of a line index. This is what lets an ``extends`` clause be found even
+    when it falls on a line after the declaration keyword, e.g. behind a
+    multi-line constructor parameter list.
+    """
+    n = len(lines)
+    i = start_idx
+    paren_depth = 0
+    parts = []
+    while i < n:
+        brace_col, paren_depth = _body_brace_and_paren(lines[i], paren_depth)
+        if brace_col >= 0:
+            parts.append(lines[i][:brace_col])
+            return "\n".join(parts)
+        parts.append(lines[i])
+        if _signature_continues(lines[i], paren_depth):
+            i += 1
+            continue
+        # Same continuation set as _unit_end: a next line opening with `(`
+        # is a further curried parameter clause (SLS: ClassParamClause ::=
+        # [nl] '(' ...), commonly a trailing `(implicit p: Parameters)`.
+        if _next_code_line_starts_with(lines, i, ("extends", "with", "(")):
+            i += 1
+            continue
+        return "\n".join(parts)
+    return "\n".join(parts)
+
+
+_EXTENDS_CLAUSE_RE = re.compile(r'\bextends\b')
+_WITH_CLAUSE_RE = re.compile(r'\bwith\b')
+
+
+def _extract_extends_expr(sig_text):
+    """Return the raw ``extends`` clause expression from assembled signature
+    text (stopping before any ``with`` mixin), or None if there is no clause.
+    """
+    m = _EXTENDS_CLAUSE_RE.search(sig_text)
+    if not m:
+        return None
+    rest = sig_text[m.end():]
+    wm = _WITH_CLAUSE_RE.search(rest)
+    if wm:
+        rest = rest[:wm.start()]
+    rest = rest.strip()
+    return rest or None
+
+
+def _strip_trailing_group(expr):
+    """Strip one trailing balanced ``(...)``/``[...]`` group from ``expr``.
+
+    Returns the shortened expression, or None if ``expr`` doesn't end with a
+    closing bracket or the brackets aren't balanced.
+    """
+    expr = expr.rstrip()
+    if not expr or expr[-1] not in ')]':
+        return None
+    close = expr[-1]
+    open_ch = '(' if close == ')' else '['
+    depth = 0
+    i = len(expr) - 1
+    while i >= 0:
+        if expr[i] == close:
+            depth += 1
+        elif expr[i] == open_ch:
+            depth -= 1
+            if depth == 0:
+                return expr[:i].rstrip()
+        i -= 1
+    return None
+
+
+def _normalize_parent_name(expr):
+    """Normalize an ``extends`` clause expression to ``(parent, prefix)``.
+
+    Repeatedly strips trailing constructor-argument/type-argument groups
+    (handling nesting, e.g. ``Foo[Vec[UInt]](x)``), then splits off the last
+    ``.``-qualified segment as ``parent``. ``prefix`` is everything before
+    that last segment (e.g. ``"chisel3"``, ``"_root_.chisel3"``, or a
+    project's own package like ``"mypkg"``), or None for a bare name.
+
+    Exposing the actual prefix -- not just a "was qualified" bool -- matters:
+    ``chisel3.Data`` and a project's own ``mypkg.Data`` both normalize to the
+    same bare ``parent="Data"``, but only the former is chisel3's own Data.
+    Callers must check ``prefix`` to tell them apart rather than treating any
+    qualified name ending in ``.Data`` as chisel3's.
+    """
+    expr = expr.strip()
+    if not expr:
+        return None, None
+    while True:
+        stripped = _strip_trailing_group(expr)
+        if stripped is None:
+            break
+        expr = stripped
+        if not expr:
+            return None, None
+    if '.' in expr:
+        prefix, _, name = expr.rpartition('.')
+        return (name or None), (prefix or None)
+    return (expr or None), None
+
+
+def chisel_decl_info(text):
+    """Single source of truth for ``(kind, name, parent, parent_prefix)``
+    of the first top-level Chisel/Scala declaration in an extracted unit.
+
+    Extends ``chisel_declared_name``'s declaration lookup with the parent
+    class/trait named in an ``extends`` clause, assembling the full
+    (possibly multi-line) signature first so an ``extends`` clause that
+    falls after the declaration keyword line is still found. ``parent`` is
+    the normalized bare name (trailing argument/type groups and package
+    qualification stripped), or None when there is no ``extends`` clause.
+    ``parent_prefix`` is the qualifying package portion of a qualified
+    ``extends`` clause (e.g. ``"chisel3"`` for ``chisel3.Module``), or None
+    for a bare name or when there is no ``extends`` clause. Returns
+    ``(None, None, None, None)`` when no declaration is found.
+    """
+    lines = strip_chisel_comments(text).splitlines()
+    for i, raw in enumerate(lines):
+        m = _CHISEL_DECL_RE.match(raw.strip())
+        if m:
+            extends_expr = _extract_extends_expr(_signature_text(lines, i))
+            if extends_expr:
+                parent, parent_prefix = _normalize_parent_name(extends_expr)
+            else:
+                parent, parent_prefix = None, None
+            return m.group("kind"), m.group("name"), parent, parent_prefix
+    return None, None, None, None
+
+
 # ---------------------------------------------------------------------------
 # Public entry point invoked by extract.py
 # ---------------------------------------------------------------------------
