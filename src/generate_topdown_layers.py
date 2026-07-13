@@ -523,14 +523,11 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
             stem = fqn.split("::")[-1]
             global_stem_to_fqns[stem].add(fqn)
 
-    output_files = []
-
+    phase_results = []
+    global_callees_map = defaultdict(set)
     for phase_info in phases_data["phases"]:
         phase_num = phase_info["phase"]
         phase_name = phase_info["name"]
-
-        if phase_numbers and phase_num not in phase_numbers:
-            continue
 
         # 1.2 Collect files
         phase_files = _collect_phase_files(proj_dir, phase_info)
@@ -546,6 +543,70 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
 
         # 1.5 Compute topological layers
         layers = _compute_layers(phase_fqns, callees_map, callers_map)
+
+        for caller_fqn, callee_fqns in all_callees_map.items():
+            global_callees_map[caller_fqn].update(callee_fqns)
+
+        phase_results.append({
+            "phase": phase_num,
+            "phase_name": phase_name,
+            "callees_map": callees_map,
+            "callers_map": callers_map,
+            "file_map": file_map,
+            "module_map": module_map,
+            "phase_fqns": phase_fqns,
+            "layers": layers,
+        })
+
+    global_callers_map = defaultdict(set)
+    for caller_fqn, callee_fqns in global_callees_map.items():
+        for callee_fqn in callee_fqns:
+            global_callers_map[callee_fqn].add(caller_fqn)
+
+    global_functions = {}
+    for result in phase_results:
+        layer_by_fqn = {
+            fqn: layer_info["layer"]
+            for layer_info in result["layers"]
+            for fqn in layer_info["functions"]
+        }
+        for fqn in result["phase_fqns"]:
+            global_functions[fqn] = {
+                "phase": result["phase"],
+                "layer": layer_by_fqn[fqn],
+                "file": os.path.relpath(result["file_map"][fqn], proj_dir),
+                "unit": result["module_map"].get(fqn, ""),
+            }
+
+    global_graph = {
+        "schema_version": 1,
+        "functions": dict(sorted(global_functions.items())),
+        "callees": {
+            fqn: sorted(global_callees_map.get(fqn, set()))
+            for fqn in sorted(global_functions)
+        },
+        "callers": {
+            fqn: sorted(global_callers_map.get(fqn, set()))
+            for fqn in sorted(global_functions)
+        },
+    }
+    global_graph_path = os.path.join(output_dir, "global_call_graph.json")
+    with open(global_graph_path, "w") as f:
+        json.dump(global_graph, f, indent=2, ensure_ascii=False)
+
+    output_files = []
+    for result in phase_results:
+        phase_num = result["phase"]
+        phase_name = result["phase_name"]
+        if phase_numbers and phase_num not in phase_numbers:
+            continue
+
+        callees_map = result["callees_map"]
+        callers_map = result["callers_map"]
+        file_map = result["file_map"]
+        module_map = result["module_map"]
+        phase_fqns = result["phase_fqns"]
+        layers = result["layers"]
 
         # Build phase-specific key names
         phase_callers_key = f"phase{phase_num}_callers"
@@ -571,7 +632,8 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
 
                 phase_callers = sorted(callers_map.get(fqn, set()) & phase_fqns)
                 phase_callees = sorted(callees_map.get(fqn, set()) & phase_fqns)
-                all_callees = sorted(all_callees_map.get(fqn, set()))
+                all_callers = sorted(global_callers_map.get(fqn, set()))
+                all_callees = sorted(global_callees_map.get(fqn, set()))
 
                 func_entries.append({
                     "name": fqn,
@@ -579,6 +641,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
                     "unit": unit,
                     phase_callers_key: phase_callers,
                     phase_callees_key: phase_callees,
+                    "all_callers": all_callers,
                     "all_callees": all_callees,
                 })
 

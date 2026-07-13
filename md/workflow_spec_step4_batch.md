@@ -11,7 +11,7 @@ You are given a single batch prompt file path in the prompt. Your ONLY job is to
 3. Read any domain context files mentioned in the batch prompt (e.g., `engine_overview.txt`, `phase_NN_types.txt`, and user-provided Markdown files under `user_knowledge/`)
 4. For EACH function listed in the batch prompt:
    a. Read the extracted function file
-   b. If layer > 0, read earlier-layer caller specs mentioned in the batch prompt
+   b. Read all available same-phase and cross-phase caller contracts mentioned in the batch prompt
    c. Generate a behavioral spec following the `[SPEC]` format
    d. Generate callee expectations in `[INFO]` format
    e. Write the COMPLETE file — prepend `[SPEC]` and `[INFO]` blocks, followed by the **UNCHANGED** original source code

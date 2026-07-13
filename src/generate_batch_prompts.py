@@ -123,7 +123,11 @@ def extract_info_block(filepath: Path) -> Optional[str]:
     return content[start + len(tag) + 1 : end].strip()
 
 
-def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[str]:
+def extract_callee_spec_from_info(
+    info_block: str,
+    callee_fqn: str,
+    candidate_callee_fqns=None,
+) -> Optional[str]:
     """Find the [SPLIT]-separated entry for callee_fqn in an info_block."""
     import re
 
@@ -156,8 +160,18 @@ def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[
         # Strip the comment prefix to get the actual content
         if prefix and first_line.startswith(prefix):
             first_line = first_line[len(prefix):].strip()
-        if callee_fqn in first_line or (callee_stem + "(") in first_line:
+        if callee_fqn in first_line:
             return entry
+        if (callee_stem + "(") not in first_line:
+            continue
+        if candidate_callee_fqns is not None:
+            same_stem = {
+                name for name in candidate_callee_fqns
+                if name.split("::")[-1] == callee_stem
+            }
+            if len(same_stem) != 1:
+                continue
+        return entry
     return None
 
 
@@ -168,6 +182,13 @@ def chunked(items: List[dict], size: int) -> List[List[dict]]:
 def read_json(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"missing required file: {path}")
+    return json.loads(path.read_text())
+
+
+def load_global_call_graph(work_dir: Path) -> dict:
+    path = work_dir / "spec_prompts" / "global_call_graph.json"
+    if not path.exists():
+        return {}
     return json.loads(path.read_text())
 
 
@@ -198,6 +219,7 @@ def build_prompt(
     work_dir: Path,
     fm_agent_prefix: str,
     ext_to_lang: Dict[str, str],
+    global_call_graph: Optional[dict] = None,
 ) -> str:
     lines: List[str] = []
     sample_lang = "unknown"
@@ -230,35 +252,72 @@ def build_prompt(
     lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
     lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each one")
 
-    caller_specs: List[Tuple[str, str]] = []
-    caller_expectations: Dict[str, List[Tuple[str, str]]] = {}
+    graph = global_call_graph or {}
+    global_funcs = graph.get("functions", {})
+    global_callers = graph.get("callers", {})
+    global_callees = graph.get("callees", {})
+    caller_specs = []
+    caller_expectations = {}
+    available_callers = {}
+    pending_callers = []
+    seen_specs = set()
+    seen_expectations = set()
     for fn in functions:
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
-        callers = fn.get(caller_key, [])
-        for caller_name in callers:
-            caller_layer = func_to_layer.get(caller_name)
-            if caller_layer is None or caller_layer >= layer_idx:
-                continue
-            caller_meta = all_funcs.get(caller_name)
+        callers = global_callers.get(fn_name, fn.get(caller_key, []))
+        for caller_name in sorted(set(callers)):
+            caller_meta = global_funcs.get(caller_name) or all_funcs.get(caller_name)
             if not caller_meta:
+                pending_callers.append((fn_name, caller_name, "function metadata not found"))
+                continue
+            caller_phase = caller_meta.get("phase", phase)
+            caller_layer = caller_meta.get("layer", func_to_layer.get(caller_name))
+            if caller_phase == phase and (
+                caller_layer is None or caller_layer >= layer_idx
+            ):
                 continue
             caller_file = work_dir / caller_meta["file"]
-            spec_block = extract_spec_block(caller_file)
-            if spec_block and (caller_name, spec_block) not in caller_specs:
-                caller_specs.append((caller_name, spec_block))
-            info_block = extract_info_block(caller_file)
-            if not info_block:
+            if not is_file_ready(caller_file):
+                pending_callers.append((fn_name, caller_name, "specification not generated yet"))
                 continue
-            entry = extract_callee_spec_from_info(info_block, fn_name)
+            spec_block = extract_spec_block(caller_file)
+            info_block = extract_info_block(caller_file)
+            if not spec_block or info_block is None:
+                pending_callers.append((fn_name, caller_name, "SPEC or INFO block is incomplete"))
+                continue
+            caller_kind = "same-phase" if caller_phase == phase else "cross-phase"
+            spec_key = (caller_name, spec_block)
+            if spec_key not in seen_specs:
+                seen_specs.add(spec_key)
+                caller_specs.append((caller_name, caller_phase, caller_kind, spec_block))
+            available_callers.setdefault(fn_name, []).append(caller_name)
+            entry = extract_callee_spec_from_info(
+                info_block,
+                fn_name,
+                global_callees.get(caller_name) if graph else None,
+            )
             if entry:
-                caller_expectations.setdefault(fn_name, []).append((caller_name, entry.strip()))
+                expectation_key = (fn_name, caller_name, entry.strip())
+                if expectation_key not in seen_expectations:
+                    seen_expectations.add(expectation_key)
+                    caller_expectations.setdefault(fn_name, []).append(
+                        (caller_name, caller_phase, caller_kind, entry.strip())
+                    )
+            elif global_callees.get(caller_name):
+                pending_callers.append((
+                    fn_name,
+                    caller_name,
+                    "matching INFO entry not found or callee name is ambiguous",
+                ))
 
     if caller_specs:
         lines.append("")
-        lines.append("## EARLIER-LAYER CALLER SPECS")
-        for caller_name, block in caller_specs:
-            lines.append(f"#### {caller_name}")
+        lines.append("## AVAILABLE CALLER CONTRACTS")
+        for caller_name, caller_phase, caller_kind, block in caller_specs:
+            lines.append(
+                f"#### {caller_name} ({caller_kind}, phase {caller_phase})"
+            )
             lines.append("")
             lines.append(block)
             lines.append("")
@@ -271,10 +330,22 @@ def build_prompt(
             if not entries:
                 continue
             lines.append(f"### What callers expect from {fn_name}:")
-            for caller_name, entry in entries:
-                lines.append(f"#### According to {caller_name}:")
+            for caller_name, caller_phase, caller_kind, entry in entries:
+                lines.append(
+                    f"#### According to {caller_name} ({caller_kind}, phase {caller_phase}):"
+                )
                 lines.append(entry)
             lines.append("")
+
+        lines.append("Treat caller expectations as contract evidence, not unquestionable truth.")
+        lines.append("Reconcile them with domain requirements and the callee's responsibility.")
+        lines.append("If callers conflict, do not silently choose one expectation.")
+
+    if pending_callers:
+        lines.append("")
+        lines.append("## PENDING CALLER CONTRACTS")
+        for fn_name, caller_name, reason in sorted(set(pending_callers)):
+            lines.append(f"- {caller_name} -> {fn_name}: {reason}")
 
     if is_cycle:
         lines.append("## CYCLE LAYER GUIDANCE")
@@ -292,14 +363,12 @@ def build_prompt(
     lines.append(f"## FUNCTIONS ({len(functions)} total - process ALL)")
     for idx, fn in enumerate(functions, start=1):
         fn_name = fn["name"]
-        caller_key = phase_callers_key(fn, phase)
-        callers = fn.get(caller_key, [])
-        earlier = [c for c in callers if func_to_layer.get(c, 10**9) < layer_idx]
         lines.append(f"### {idx}. {fm_agent_prefix}{fn['file']}")
-        if earlier:
-            lines.append("  Earlier-layer callers: " + ", ".join(earlier))
+        callers = sorted(set(available_callers.get(fn_name, [])))
+        if callers:
+            lines.append("  Available callers: " + ", ".join(callers))
         else:
-            lines.append("  Earlier-layer callers: (none)")
+            lines.append("  Available callers: (none)")
 
     lines.append("")
     lines.append("## SPEC FORMAT (prepend to file, preserving source code below)")
@@ -359,6 +428,7 @@ def main() -> int:
 
     topdown_path = work_dir / "spec_prompts" / f"phase_{args.phase:02d}_topdown_layers.json"
     topdown = read_json(topdown_path)
+    global_call_graph = load_global_call_graph(work_dir)
     layers = topdown.get("layers", [])
     total_layers = len(layers)
     start_layer, end_layer = parse_layers_spec(args.layers)
@@ -421,6 +491,7 @@ def main() -> int:
                     work_dir,
                     fm_agent_prefix,
                     ext_to_lang,
+                    global_call_graph,
                 )
                 write_targets.append((out_path, content))
             else:
