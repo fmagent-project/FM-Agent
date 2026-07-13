@@ -3,7 +3,7 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
 try:
@@ -83,6 +83,55 @@ def parse_layers_spec(layers_spec: str) -> Tuple[int, int]:
     if start > end:
         raise ValueError("invalid --layers range: start > end")
     return start, end
+
+
+# Temporary compatibility for incremental_reasoner during Phase 1 Tasks 3-5.
+# Task 6 removes these marker readers together with their remaining callers.
+def _detect_comment_prefix(content: str) -> Optional[str]:
+    for line in content.splitlines():
+        index = line.find("[SPEC]")
+        if index != -1:
+            return line[:index].rstrip()
+    return None
+
+
+def extract_spec_block(filepath: Path) -> Optional[str]:
+    content = filepath.read_text(errors="replace")
+    prefix = _detect_comment_prefix(content)
+    if prefix is None:
+        return None
+    tag = f"{prefix} [SPEC]"
+    if not content.startswith(tag):
+        return None
+    end = content.find(tag, len(tag))
+    if end == -1:
+        return None
+    return content[:end + len(tag)].strip()
+
+
+def extract_info_block(filepath: Path) -> Optional[str]:
+    content = filepath.read_text(errors="replace")
+    prefix = _detect_comment_prefix(content)
+    if prefix is None:
+        return None
+    tag = f"{prefix} [INFO]"
+    start = content.find(tag)
+    if start == -1:
+        return None
+    end = content.find(tag, start + len(tag))
+    if end == -1:
+        return None
+    return content[start + len(tag) + 1:end].strip()
+
+
+def extract_callee_spec_from_info(
+    info_block: str, callee_fqn: str
+) -> Optional[str]:
+    callee_stem = callee_fqn.split("::")[-1]
+    for entry in info_block.split("[SPLIT]"):
+        if callee_fqn in entry or f"{callee_stem}(" in entry:
+            return entry.strip()
+    return None
 
 
 def callee_expectation(info_data: dict, callee_fqn: str) -> dict | None:

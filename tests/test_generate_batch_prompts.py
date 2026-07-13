@@ -1,9 +1,12 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
+import main
 from src.generate_batch_prompts import build_prompt, callee_expectation
-from src.spec_storage import write_info, write_spec
+from src.spec_storage import metadata_paths, write_info, write_spec
 
 
 class StructuredBatchPromptTests(unittest.TestCase):
@@ -115,6 +118,114 @@ class StructuredBatchPromptTests(unittest.TestCase):
         self.assertNotIn("prepend", prompt.lower())
         self.assertNotIn("overwriting the original", prompt.lower())
         self.assertNotIn("save the complete file", prompt.lower())
+
+
+class BatchIntegrityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.project = Path(self.tmp.name)
+        self.work_dir = self.project / "fm_agent"
+        self.function = (
+            self.work_dir
+            / "extracted_functions"
+            / "src"
+            / "module-py"
+            / "load_data.py"
+        )
+        self.function.parent.mkdir(parents=True)
+        self.original = b"def load_data():\n    return 1\n"
+        self.function.write_bytes(self.original)
+        (self.work_dir / "workflow_spec_step4_batch.md").write_text(
+            "structured workflow\n",
+            encoding="utf-8",
+        )
+        self.function_rel = self.function.relative_to(self.project).as_posix()
+        self.batch = {
+            "file": "batch_000_layer0_extracted_b0.txt",
+            "functions": [self.function_rel],
+        }
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _write_generated_metadata(self):
+        write_spec(
+            self.function,
+            {
+                "schema_version": 1,
+                "function": "src::module-py::load_data",
+                "unit": "src/module.py",
+                "signature": "load_data() -> int",
+                "preconditions": [],
+                "postconditions": ["returns one"],
+            },
+        )
+        write_info(
+            self.function,
+            {
+                "schema_version": 1,
+                "function": "src::module-py::load_data",
+                "callees": [],
+            },
+        )
+
+    def test_batch_restores_modified_implementation_and_rejects_outputs(self):
+        def fake_run(**kwargs):
+            self.function.write_text(
+                "# generated header\ndef load_data():\n    return 1\n",
+                encoding="utf-8",
+            )
+            self._write_generated_metadata()
+            return SimpleNamespace(returncode=0)
+
+        with (
+            patch.object(main, "is_cli_backend_enabled", return_value=False),
+            patch.object(main, "run_opencode_traced", side_effect=fake_run),
+        ):
+            return_code = main._run_spec_generation_batch(
+                str(self.project),
+                str(self.work_dir),
+                1,
+                1,
+                0,
+                "fm_agent/spec_prompts/batches",
+                self.batch,
+            )
+
+        self.assertEqual(return_code, 1)
+        self.assertEqual(self.function.read_bytes(), self.original)
+        for metadata_path in metadata_paths(self.function):
+            self.assertFalse(metadata_path.exists())
+
+    def test_trace_declares_metadata_as_outputs(self):
+        captured = {}
+
+        def fake_run(**kwargs):
+            captured.update(kwargs)
+            self._write_generated_metadata()
+            return SimpleNamespace(returncode=0)
+
+        with (
+            patch.object(main, "is_cli_backend_enabled", return_value=False),
+            patch.object(main, "run_opencode_traced", side_effect=fake_run),
+        ):
+            return_code = main._run_spec_generation_batch(
+                str(self.project),
+                str(self.work_dir),
+                1,
+                1,
+                0,
+                "fm_agent/spec_prompts/batches",
+                self.batch,
+            )
+
+        spec_path, info_path = metadata_paths(Path(self.function_rel))
+        self.assertEqual(return_code, 0)
+        self.assertEqual(
+            captured["output_files"],
+            [spec_path.as_posix(), info_path.as_posix()],
+        )
+        self.assertIn(self.function_rel, captured["input_files"])
 
 
 if __name__ == "__main__":
