@@ -40,7 +40,7 @@ from .file_utils import (
     _get_all_phase_files,
     _write_file_names,
 )
-from .generate_batch_prompts import (
+from .spec_generation.batch_prompts import (
     callee_expectation,
 )
 from .spec_storage import (

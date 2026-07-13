@@ -1,29 +1,15 @@
-from config import (
-    MAX_WORKERS,
-    OPENCODE_MAX_RETRIES,
-    OPENCODE_SPEC_MODEL,
-    OPENCODE_MODEL_PROVIDER,
-)
 from src.entry_reasoning_pipeline import run_entry_pipeline
 from src.file_utils import (
     collect_file_names,
-    is_file_ready,
     _has_source_code,
-    _get_phase_files,
     _get_all_phase_files,
     _write_file_names,
     _json_file_is_valid,
-    _get_incomplete_verification_files,
     _is_under_submodules,
 )
-from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
-from src.opencode_trace import (
-    function_id_from_extracted_path,
-    run_opencode_traced,
-)
-from src.cli_backend import build_agent_command, is_cli_backend_enabled
+from src.spec_generation import run_spec_generation
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -37,39 +23,22 @@ from src.pipeline_setup import (
 )
 from src.domain_knowledge import (
     collect_domain_knowledge_paths,
-    list_staged_domain_knowledge_relpaths,
     stage_domain_knowledge_files,
 )
-from src.spec_storage import metadata_paths, metadata_status
 import os
 import sys
 import argparse
 import json
 import time
 import shutil
-import subprocess
 import logging
 import contextlib
-import concurrent.futures
-from pathlib import Path
 
 
 def _clean_previous_run(work_dir):
     """Remove the fm_agent working directory from the previous pipeline run."""
     if os.path.isdir(work_dir):
         shutil.rmtree(work_dir)
-
-
-def _get_pending_batches(batches, proj_dir):
-    """Return batches with at least one incomplete metadata pair."""
-    pending = []
-    for batch in batches:
-        for func_rel in batch.get("functions", []):
-            full_path = os.path.join(proj_dir, func_rel)
-            if not is_file_ready(full_path):
-                pending.append(batch)
-                break
-    return pending
 
 
 def _normalize_submodules(proj_dir, submodules):
@@ -107,129 +76,6 @@ def _normalize_submodules(proj_dir, submodules):
         if not collapsed or not _is_under_submodules(rel, collapsed):
             collapsed.append(rel)
     return collapsed
-
-
-def _snapshot_function_sources(proj_dir, function_files):
-    """Capture implementation bytes before an external spec agent runs."""
-    return {
-        rel: Path(proj_dir, rel).read_bytes()
-        for rel in function_files
-    }
-
-
-def _restore_modified_sources(proj_dir, snapshots):
-    """Restore agent-modified implementations and invalidate their metadata."""
-    modified = []
-    for rel, original in snapshots.items():
-        path = Path(proj_dir, rel)
-        current = path.read_bytes() if path.exists() else None
-        if current == original:
-            continue
-        temporary = path.with_name(path.name + ".restore.tmp")
-        temporary.write_bytes(original)
-        os.replace(temporary, path)
-        for metadata_path in metadata_paths(path):
-            metadata_path.unlink(missing_ok=True)
-        modified.append(rel)
-    return modified
-
-
-def _run_spec_generation_batch(
-    proj_dir,
-    work_dir,
-    attempt,
-    phase_num,
-    layer_idx,
-    batch_rel_dir,
-    batch_info,
-):
-    # Run one batch end-to-end so the executor can refill slots as soon as a
-    # batch finishes, instead of waiting for a whole chunk barrier.
-    batch_file = batch_info["file"]
-    batch_prompt_rel = os.path.join(batch_rel_dir, batch_file)
-    function_files = batch_info.get("functions", [])
-    source_snapshots = _snapshot_function_sources(proj_dir, function_files)
-    metadata_output_files = []
-    for function_file in function_files:
-        spec_path, info_path = metadata_paths(Path(function_file))
-        metadata_output_files.extend(
-            [spec_path.as_posix(), info_path.as_posix()]
-        )
-    function_ids = [
-        function_id_from_extracted_path(func_rel)
-        for func_rel in function_files
-    ]
-    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
-                    "Do NOT modify any existing project files.")
-    if attempt == 1:
-        prompt = (
-            f"Process the batch prompt file at {batch_prompt_rel}. "
-            f"Read it and fm_agent/spec_prompts/system_prompt.md, "
-            f"generate behavioral specs for each function listed, "
-            f"and write both structured JSON metadata files directly. {fm_reminder}"
-        )
-    else:
-        prompt = (
-            f"Continue processing the batch prompt file at {batch_prompt_rel}. "
-            f"Some functions may already have metadata from a previous attempt. "
-            f"Generate both JSON files for every incomplete function in the batch. "
-            f"Read fm_agent/spec_prompts/system_prompt.md for the schema rules. {fm_reminder}"
-        )
-    prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_SPEC_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-            files=[prompt_file],
-        )
-    else:
-        command = [
-            "opencode", "run",
-            "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
-            "--file", prompt_file,
-            "--", prompt,
-        ]
-    return_code = 1
-    try:
-        result = run_opencode_traced(
-            proj_dir=proj_dir,
-            work_dir=work_dir,
-            command=command,
-            stage="spec_generation",
-            function_ids=function_ids,
-            input_files=[
-                "fm_agent/workflow_spec_step4_batch.md",
-                batch_prompt_rel,
-                "fm_agent/spec_prompts/system_prompt.md",
-                *function_files,
-                *list_staged_domain_knowledge_relpaths(work_dir),
-            ],
-            output_files=metadata_output_files,
-            summary=f"OpenCode spec generation for {batch_file}",
-            metadata={
-                "attempt": attempt,
-                "phase": phase_num,
-                "layer": layer_idx,
-                "batch_file": batch_file,
-            },
-        )
-        return_code = result.returncode
-    except subprocess.CalledProcessError as exc:
-        return_code = exc.returncode
-    finally:
-        modified_sources = _restore_modified_sources(
-            proj_dir, source_snapshots
-        )
-
-    if modified_sources:
-        for source_path in modified_sources:
-            logging.error(
-                "Spec generation modified immutable implementation; restored: %s",
-                source_path,
-            )
-        return 1
-    return return_code
 
 
 def run_pipeline(
@@ -304,20 +150,6 @@ def run_pipeline(
         os.path.join(script_dir, "md", "system_prompt.md"),
         os.path.join(spec_prompts_dir, "system_prompt.md"),
     )
-    shutil.copy2(
-        os.path.join(script_dir, "src", "generate_batch_prompts.py"),
-        os.path.join(spec_prompts_dir, "generate_batch_prompts.py"),
-    )
-    # generate_batch_prompts.py imports is_file_ready from this module at runtime.
-    shutil.copy2(
-        os.path.join(script_dir, "src", "file_utils.py"),
-        os.path.join(spec_prompts_dir, "file_utils.py"),
-    )
-    shutil.copy2(
-        os.path.join(script_dir, "src", "spec_storage.py"),
-        os.path.join(spec_prompts_dir, "spec_storage.py"),
-    )
-
     phases_path = os.path.join(work_dir, "phases.json")
     with open(phases_path, "r") as f:
         phases_data = json.load(f)
@@ -344,181 +176,13 @@ def run_pipeline(
     batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
     shutil.copy2(batch_md_src, batch_md_dst)
 
-    all_processed = set()
-    num_phases = len(phases_data["phases"])
-    project_name = phases_data.get("project", "project")
-
-    for phase_info in sorted(phases_data["phases"], key=lambda p: p["phase"]):
-        phase_num = phase_info["phase"]
-        phase_name = phase_info["name"]
-        phase_files = _get_phase_files(phases_data, phase_num, input_dir)
-
-        if not phase_files:
-            logging.info(f"Phase {phase_num} ({phase_name}): no extracted files, skipping.")
-            continue
-
-        # Determine how many layers this phase has
-        layers_json_path = os.path.join(
-            spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
-        )
-        if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num])
-        with open(layers_json_path, "r") as f:
-            layers_data = json.load(f)
-        total_layers = layers_data.get("total_layers", 1)
-
-        batch_dir = os.path.join(
-            spec_prompts_dir,
-            f"batch_prompts_{project_name}_phase{phase_num:02d}",
-        )
-
-        for layer_idx in range(total_layers):
-            print(f"[Pipeline] Stage 4/4: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
-
-            # Generate batch prompts for this layer. On resume, skip functions
-            # whose structured metadata was already completed in a previous run.
-            batch_cmd = ["python3", "fm_agent/spec_prompts/generate_batch_prompts.py",
-                         "--phase", str(phase_num), "--layers", str(layer_idx)]
-            if resume:
-                batch_cmd.append("--resume")
-            subprocess.run(batch_cmd, cwd=proj_dir, check=True)
-
-            # Read manifest
-            manifest_path = os.path.join(batch_dir, "manifest.json")
-            with open(manifest_path, "r") as f:
-                manifest = json.load(f)
-            all_batches = manifest.get("batches", [])
-
-            if not all_batches:
-                logging.info(f"Phase {phase_num} Layer {layer_idx}: no batches, skipping.")
-                continue
-
-            batch_rel_dir = os.path.relpath(batch_dir, proj_dir)
-
-            # Build file list for this layer from the manifest
-            layer_files = []
-            for batch_info in all_batches:
-                for func_rel in batch_info.get("functions", []):
-                    rel = os.path.relpath(os.path.join(proj_dir, func_rel), input_dir)
-                    layer_files.append(rel)
-
-            layer_processed = set()
-
-            for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
-                # Find batches with incomplete structured metadata.
-                pending_batches = _get_pending_batches(all_batches, proj_dir)
-                if not pending_batches:
-                    incomplete_verification = _get_incomplete_verification_files(
-                        layer_files, input_dir, output_dir, work_dir
-                    )
-                    if incomplete_verification:
-                        logging.info(
-                            f"Phase {phase_num} Layer {layer_idx}: "
-                            f"{len(incomplete_verification)} ready file(s) still need verification or validation"
-                        )
-                        newly_processed = streaming_reasoner(
-                            input_dir, output_dir, file_list=layer_files,
-                            proj_dir=proj_dir, work_dir=work_dir,
-                            spec_procs=None,
-                            already_processed=all_processed | layer_processed,
-                            resume=resume,
-                        )
-                        layer_processed.update(newly_processed)
-                    break
-
-                # Submit all pending spec batches through a bounded executor so
-                # finished slots can immediately pick up the next batch.
-                spec_futures = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                    for batch_info in pending_batches:
-                        batch_file = batch_info["file"]
-                        batch_prompt_rel = os.path.join(batch_rel_dir, batch_file)
-                        batch_prompt_abs = os.path.join(proj_dir, batch_prompt_rel)
-                        # On resume a batch whose functions all have valid metadata
-                        # has no prompt file written and nothing for the agent to do
-                        # — skip it instead of sending an empty batch.
-                        if batch_info.get("num_pending", 1) == 0 or not os.path.exists(batch_prompt_abs):
-                            logging.info(f"Skipping batch with no functions to spec: {batch_file}")
-                            continue
-                        spec_futures.append(
-                            executor.submit(
-                                _run_spec_generation_batch,
-                                proj_dir,
-                                work_dir,
-                                attempt,
-                                phase_num,
-                                layer_idx,
-                                batch_rel_dir,
-                                batch_info,
-                            )
-                        )
-
-                    logging.info(
-                        f"Phase {phase_num} Layer {layer_idx} attempt {attempt}: "
-                        f"submitted {len(spec_futures)} spec-generation batch tasks "
-                        f"(max_workers={MAX_WORKERS}, total_pending_batches={len(pending_batches)})"
-                    )
-                    if spec_futures:
-                        newly_processed = streaming_reasoner(
-                            input_dir, output_dir, file_list=layer_files,
-                            proj_dir=proj_dir, work_dir=work_dir,
-                            spec_procs=spec_futures,
-                            already_processed=all_processed | layer_processed,
-                            resume=resume,
-                        )
-                        layer_processed.update(newly_processed)
-
-                    for future in spec_futures:
-                        try:
-                            future.result()
-                        except Exception as exc:
-                            logging.error(f"Spec generation task failed unexpectedly: {exc}")
-
-                # Check if any files in this layer received complete metadata.
-                specs_generated = sum(
-                    1 for rel in layer_files
-                    if is_file_ready(os.path.join(input_dir, rel))
-                )
-                if specs_generated > 0 and not _get_pending_batches(all_batches, proj_dir):
-                    break
-
-                if specs_generated > 0:
-                    # Partial progress — retry remaining batches without delay
-                    logging.info(
-                        f"Phase {phase_num} Layer {layer_idx} attempt {attempt}: "
-                        f"{specs_generated} metadata pairs generated, retrying remaining batches"
-                    )
-                    continue
-
-                if attempt < OPENCODE_MAX_RETRIES:
-                    delay = 10
-                    print(
-                        f"[Pipeline] Stage 4 Phase {phase_num} Layer {layer_idx} produced no valid metadata "
-                        f"(attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
-                        f"Retrying in {delay}s..."
-                    )
-                    logging.warning(
-                        f"Stage 4 Phase {phase_num} Layer {layer_idx} attempt {attempt} failed: "
-                        f"no valid metadata generated. Retrying in {delay}s."
-                    )
-                    for rel in layer_files:
-                        function_path = os.path.join(input_dir, rel)
-                        ready, reason = metadata_status(function_path)
-                        if not ready:
-                            logging.warning("  pending %s: %s", rel, reason)
-                    time.sleep(delay)
-                else:
-                    print(
-                        f"[Pipeline] ERROR: Stage 4 Phase {phase_num} Layer {layer_idx} failed "
-                        f"after {OPENCODE_MAX_RETRIES} attempts. "
-                        f"No valid metadata was generated. "
-                        f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
-                    )
-                    sys.exit(1)
-
-        # Mark all files from this phase as processed for subsequent phases
-        for rel in phase_files:
-            all_processed.add(os.path.join(input_dir, rel))
+    run_spec_generation(
+        proj_dir,
+        work_dir,
+        phases_data,
+        output_dir,
+        resume=resume,
+    )
 
     # Print confirmed bug count
     summary_path = os.path.join(work_dir, "bug_validation", "summary.json")

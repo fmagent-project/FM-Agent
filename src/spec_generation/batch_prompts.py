@@ -1,35 +1,12 @@
-"""Generate per-layer spec batch prompts from topdown layer metadata."""
+"""Build per-layer spec batches from extracted functions and layer metadata."""
 
-import argparse
 import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
-try:
-    # When imported as part of the src package (e.g. incremental_reasoner).
-    from .file_utils import is_file_ready
-    from .domain_knowledge import list_staged_domain_knowledge_relpaths
-    from .spec_storage import metadata_paths, read_info, read_spec
-except ImportError:
-    # When run standalone after being copied into fm_agent/spec_prompts/,
-    # where file_utils.py sits beside this script.
-    from file_utils import is_file_ready
-    from spec_storage import metadata_paths, read_info, read_spec
-
-    def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
-        knowledge_dir = Path(work_dir) / "spec_prompts" / "domain_context" / "user_knowledge"
-        if not knowledge_dir.is_dir():
-            return []
-        relpaths = []
-        for path in knowledge_dir.rglob("*"):
-            if not path.is_file() or path.name == "manifest.json":
-                continue
-            if path.suffix.lower() not in {".md", ".markdown"}:
-                continue
-            rel_to_work = path.relative_to(work_dir).as_posix()
-            relpaths.append(f"{prefix.rstrip('/')}/{rel_to_work}")
-        return sorted(relpaths)
+from ..domain_knowledge import list_staged_domain_knowledge_relpaths
+from ..file_utils import is_file_ready
+from ..spec_storage import metadata_paths, read_info, read_spec
 
 
 COMMENT_PREFIX_BY_LANG = {
@@ -55,21 +32,6 @@ COMMENT_PREFIX_BY_LANG = {
     "erlang": "%",
     "prolog": "%",
 }
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate spec batch prompts for one phase/layer range.")
-    parser.add_argument("--phase", type=int, required=True, help="Phase number, e.g. 3")
-    parser.add_argument("--layers", required=True, help="Layer index or inclusive range, e.g. 0 or 0-5")
-    parser.add_argument("--batch-size", type=int, default=2, help="Functions per prompt file")
-    parser.add_argument("--output-dir", default=None, help="Output directory for batch prompt files")
-    parser.add_argument("--dry-run", action="store_true", help="Show plan without writing files")
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Skip functions already specced (file_utils.is_file_ready) when building batches",
-    )
-    return parser.parse_args()
 
 
 def parse_layers_spec(layers_spec: str) -> Tuple[int, int]:
@@ -269,34 +231,44 @@ def build_prompt(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def main() -> int:
-    args = parse_args()
-    if args.batch_size <= 0:
+def generate_batch_manifest(
+    extracted_functions_dir: str | Path,
+    layer_json_path: str | Path,
+    output_dir: str | Path,
+    *,
+    phase: int,
+    layers_spec: str,
+    project: str,
+    ext_to_lang: Dict[str, str],
+    batch_size: int = 2,
+    resume: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Create prompt batches for layer JSON over one extracted-functions tree.
+
+    The returned manifest always records every function in the selected layers. In
+    resume mode, ready functions are excluded only from prompt content and counted as
+    non-pending. No implementation or metadata file is modified.
+    """
+    if batch_size <= 0:
         raise ValueError("--batch-size must be > 0")
 
-    # work_dir is the fm_agent/ directory (parent of spec_prompts/ where this script lives)
-    work_dir = Path(__file__).resolve().parent.parent
-    # fm_agent_prefix is the relative path from the project root to work_dir
-    repo_root = work_dir.parent
-    fm_agent_prefix = str(work_dir.relative_to(repo_root)) + "/"
-
-    phases_json = read_json(work_dir / "phases.json")
-    project = phases_json["project"]
-    languages = phases_json.get("languages", [])
-    exts = phases_json.get("file_extensions", [])
-    ext_to_lang = {ext.lower().lstrip("."): lang for ext, lang in zip(exts, languages)}
-
-    topdown_path = work_dir / "spec_prompts" / f"phase_{args.phase:02d}_topdown_layers.json"
-    topdown = read_json(topdown_path)
+    extracted_functions_dir = Path(extracted_functions_dir).resolve()
+    if not extracted_functions_dir.is_dir():
+        raise FileNotFoundError(
+            f"missing extracted functions directory: {extracted_functions_dir}"
+        )
+    work_dir = extracted_functions_dir.parent
+    fm_agent_prefix = f"{work_dir.name}/"
+    output_dir = Path(output_dir)
+    topdown = read_json(Path(layer_json_path))
     layers = topdown.get("layers", [])
     total_layers = len(layers)
-    start_layer, end_layer = parse_layers_spec(args.layers)
+    start_layer, end_layer = parse_layers_spec(layers_spec)
     if start_layer < 0 or end_layer >= total_layers:
-        raise ValueError(f"layer range {args.layers} out of bounds [0, {total_layers - 1}]")
-
-    output_dir = Path(args.output_dir) if args.output_dir else (
-        work_dir / "spec_prompts" / f"batch_prompts_{project}_phase{args.phase:02d}"
-    )
+        raise ValueError(
+            f"layer range {layers_spec} out of bounds [0, {total_layers - 1}]"
+        )
 
     func_to_layer: Dict[str, int] = {}
     all_funcs: Dict[str, dict] = {}
@@ -307,6 +279,17 @@ def main() -> int:
             # topdown scripts sometimes include it, causing double-prefix)
             if fn["file"].startswith(fm_agent_prefix):
                 fn["file"] = fn["file"][len(fm_agent_prefix):]
+            function_path = (work_dir / fn["file"]).resolve()
+            try:
+                function_path.relative_to(extracted_functions_dir)
+            except ValueError as exc:
+                raise ValueError(
+                    f"layer function is outside extracted functions: {fn['file']}"
+                ) from exc
+            if not function_path.is_file():
+                raise FileNotFoundError(
+                    f"layer function does not exist: {function_path}"
+                )
             func_to_layer[fn["name"]] = li
             all_funcs[fn["name"]] = fn
 
@@ -322,7 +305,7 @@ def main() -> int:
         layer_functions = layer.get("functions", [])
         is_cycle = bool(layer.get("cycle_resolution", False))
         tag = "cycle" if is_cycle else "extracted"
-        chunks = chunked(layer_functions, args.batch_size)
+        chunks = chunked(layer_functions, batch_size)
         total_functions += len(layer_functions)
 
         for local_idx, fn_batch in enumerate(chunks):
@@ -330,7 +313,7 @@ def main() -> int:
             # On resume, don't ask the LLM to re-spec functions that are already
             # done — but the manifest below still records the full batch.
             prompt_funcs = fn_batch
-            if args.resume:
+            if resume:
                 prompt_funcs = [fn for fn in fn_batch if not is_file_ready(work_dir / fn["file"])]
                 skipped_functions += len(fn_batch) - len(prompt_funcs)
             out_path = output_dir / filename
@@ -341,7 +324,7 @@ def main() -> int:
             # unspecced functions (see _get_pending_batches).
             if prompt_funcs:
                 content = build_prompt(
-                    args.phase,
+                    phase,
                     layer_idx,
                     is_cycle,
                     prompt_funcs,
@@ -370,40 +353,40 @@ def main() -> int:
             batch_index += 1
 
     manifest = {
-        "phase": args.phase,
-        "layers": args.layers,
+        "phase": phase,
+        "layers": layers_spec,
+        "project": project,
         "total_functions": total_functions,
         "total_batches": len(manifest_batches),
         "batches": manifest_batches,
     }
 
-    if args.dry_run:
+    if dry_run:
         print(
-            f"[dry-run] phase={args.phase} layers={args.layers} "
+            f"[dry-run] phase={phase} layers={layers_spec} "
             f"functions={total_functions} batches={len(manifest_batches)}"
-            + (f" skipped={skipped_functions} (already specced)" if args.resume else "")
+            + (f" skipped={skipped_functions} (already specced)" if resume else "")
         )
         for batch in manifest_batches:
             print(
                 f"- {batch['file']}: layer={batch['layer']} "
                 f"count={batch['num_functions']} cycle={batch['is_cycle']}"
             )
-        return 0
+        return manifest
 
     output_dir.mkdir(parents=True, exist_ok=True)
     for out_path, content in write_targets:
-        out_path.write_text(content)
+        out_path.write_text(content, encoding="utf-8")
     for out_path in stale_targets:
         out_path.unlink(missing_ok=True)
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (output_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     print(
-        f"Generated {len(manifest_batches)} batch prompt(s) for phase {args.phase} "
-        f"layers {args.layers} in {output_dir}"
-        + (f" (skipped {skipped_functions} already-specced function(s))" if args.resume else "")
+        f"Generated {len(manifest_batches)} batch prompt(s) for phase {phase} "
+        f"layers {layers_spec} in {output_dir}"
+        + (f" (skipped {skipped_functions} already-specced function(s))" if resume else "")
     )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    return manifest

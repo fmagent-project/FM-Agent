@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import main
-from src.generate_batch_prompts import build_prompt, callee_expectation
+from src.spec_generation.batch_prompts import build_prompt, callee_expectation
+from src.spec_generation import runner
 from src.spec_storage import metadata_paths, write_info, write_spec
 
 
@@ -179,10 +179,10 @@ class BatchIntegrityTests(unittest.TestCase):
             return SimpleNamespace(returncode=0)
 
         with (
-            patch.object(main, "is_cli_backend_enabled", return_value=False),
-            patch.object(main, "run_opencode_traced", side_effect=fake_run),
+            patch.object(runner, "is_cli_backend_enabled", return_value=False),
+            patch.object(runner, "run_opencode_traced", side_effect=fake_run),
         ):
-            return_code = main._run_spec_generation_batch(
+            return_code = runner._run_spec_generation_batch(
                 str(self.project),
                 str(self.work_dir),
                 1,
@@ -206,10 +206,10 @@ class BatchIntegrityTests(unittest.TestCase):
             return SimpleNamespace(returncode=0)
 
         with (
-            patch.object(main, "is_cli_backend_enabled", return_value=False),
-            patch.object(main, "run_opencode_traced", side_effect=fake_run),
+            patch.object(runner, "is_cli_backend_enabled", return_value=False),
+            patch.object(runner, "run_opencode_traced", side_effect=fake_run),
         ):
-            return_code = main._run_spec_generation_batch(
+            return_code = runner._run_spec_generation_batch(
                 str(self.project),
                 str(self.work_dir),
                 1,

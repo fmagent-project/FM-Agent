@@ -5,7 +5,7 @@ import re
 try:
     from src.spec_storage import is_function_ready, is_metadata_file
 except ImportError:
-    # This module is copied beside generate_batch_prompts.py for standalone use.
+    # Allow direct execution contexts used by a few repository utilities.
     from spec_storage import is_function_ready, is_metadata_file
 
 
