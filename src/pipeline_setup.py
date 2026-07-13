@@ -17,7 +17,6 @@ import subprocess
 from config import (
     OPENCODE_MAX_RETRIES,
     OPENCODE_SETUP_MODEL,
-    OPENCODE_MODEL_PROVIDER,
 )
 from .file_utils import (
     _is_test_file,
@@ -26,7 +25,7 @@ from .file_utils import (
     _is_under_submodules,
 )
 from .opencode_trace import run_opencode_traced
-from .cli_backend import build_agent_command, is_cli_backend_enabled
+from .llm_client import build_llm_cli_command
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -202,15 +201,11 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_SETUP_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-        )
-    else:
-        command = ["opencode", "run", "--model",
-                   f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}", "--", prompt]
+    command = build_llm_cli_command(
+        model=OPENCODE_SETUP_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+    )
 
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         try:
@@ -545,15 +540,11 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_SETUP_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-        )
-    else:
-        command = ["opencode", "run", "--model",
-                   f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}", "--", prompt]
+    command = build_llm_cli_command(
+        model=OPENCODE_SETUP_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+    )
 
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         try:
@@ -869,16 +860,12 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
         prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md")
-        if is_cli_backend_enabled():
-            command = build_agent_command(
-                model=OPENCODE_SETUP_MODEL,
-                prompt=prompt,
-                cwd=proj_dir,
-                files=[prompt_file],
-            )
-        else:
-            command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
-                       "--file", prompt_file, "--", prompt]
+        command = build_llm_cli_command(
+            model=OPENCODE_SETUP_MODEL,
+            prompt=prompt,
+            cwd=proj_dir,
+            files=[prompt_file],
+        )
         try:
             run_opencode_traced(
                 proj_dir=proj_dir,

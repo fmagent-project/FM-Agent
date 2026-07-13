@@ -12,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 
 from config import (
-    OPENCODE_MODEL_PROVIDER,
     OPENCODE_SETUP_MODEL,
     OPENCODE_MAX_RETRIES,
     MAX_WORKERS,
@@ -46,9 +45,7 @@ from .generate_batch_prompts import (
     extract_spec_block,
 )
 from .opencode_trace import run_opencode_traced
-from .llm_client import _llm_provider_client, _llm_call
-from .cli_backend import build_agent_command, is_cli_backend_enabled
-from .prompts import _load_spec_check_json
+from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import try_codegraph_init
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
@@ -821,19 +818,12 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
     os.replace(tmp_path, prompt_path)
 
     prompt = "Follow the instructions in the attached file."
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_SETUP_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-            files=[prompt_path],
-        )
-    else:
-        command = [
-            "opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
-            "--file", prompt_path,
-            "--", prompt,
-        ]
+    command = build_llm_cli_command(
+        model=OPENCODE_SETUP_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+        files=[prompt_path],
+    )
 
     produced = False
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
@@ -879,42 +869,92 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
         return None
 
 
-def _llm_select_json(work_dir, prompt_content, stage, trace_meta=None):
-    """
-    Run a single direct LLM call that returns a JSON value, and return the parsed JSON.
+def _validate_module_selection(data):
+    """Validate the direct LLM response used to select relevant modules."""
+    if not isinstance(data, list):
+        raise ValueError("module-selection JSON must be an array")
+    validated = []
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"module-selection item {index} must be an object")
+        phase = item.get("phase")
+        name = item.get("name")
+        if isinstance(phase, bool) or not isinstance(phase, int):
+            raise ValueError(f"module-selection item {index} requires integer field: phase")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"module-selection item {index} requires non-empty string field: name")
+        validated.append({"phase": phase, "name": name.strip()})
+    return validated
 
-    The direct-call counterpart to _opencode_select_json: rather than spawning opencode to
-    read and write project files, this sends prompt_content to the LLM (via src/llm_client)
-    and asks it to emit its answer as JSON wrapped between [JSON] and [JSON] markers, which
-    _llm_call extracts (retrying on a malformed wrapper). It is therefore suitable ONLY for
-    self-contained prompts whose entire context is inlined and which need no repository file
-    access. The exchange is traced under work_dir/trace like the reasoner's LLM calls.
 
-    Returns the parsed JSON value, or None when the call produced no usable [JSON] block or
-    the payload could not be parsed.
+def _validate_spec_update(data):
+    """Validate a direct LLM decision about a function's [SPEC]/[INFO] blocks."""
+    if not isinstance(data, dict):
+        raise ValueError("spec-update JSON must be an object")
+    required = ("spec_updated", "new_spec", "info_updated", "new_info", "updated_callees")
+    missing = [field for field in required if field not in data]
+    if missing:
+        raise ValueError("spec-update JSON missing required field(s): " + ", ".join(missing))
+    if not isinstance(data["spec_updated"], bool) or not isinstance(data["info_updated"], bool):
+        raise ValueError("spec-update JSON fields spec_updated and info_updated must be booleans")
+    if not isinstance(data["new_spec"], str) or not isinstance(data["new_info"], str):
+        raise ValueError("spec-update JSON fields new_spec and new_info must be strings")
+    if not isinstance(data["updated_callees"], list) or not all(
+        isinstance(name, str) and name.strip() for name in data["updated_callees"]
+    ):
+        raise ValueError("spec-update JSON field updated_callees must be an array of non-empty strings")
+    if data["spec_updated"] and not data["new_spec"].strip():
+        raise ValueError("spec-update JSON requires non-empty new_spec when spec_updated is true")
+    if data["info_updated"] and not data["new_info"].strip():
+        raise ValueError("spec-update JSON requires non-empty new_info when info_updated is true")
+    return {
+        "spec_updated": data["spec_updated"],
+        "new_spec": data["new_spec"].strip(),
+        "info_updated": data["info_updated"],
+        "new_info": data["new_info"].strip(),
+        "updated_callees": [name.strip() for name in data["updated_callees"]],
+    }
+
+
+def _validate_caller_info_update(data):
+    """Validate a direct LLM decision about one caller's [INFO] block."""
+    if not isinstance(data, dict):
+        raise ValueError("caller-info JSON must be an object")
+    required = ("info_updated", "new_info")
+    missing = [field for field in required if field not in data]
+    if missing:
+        raise ValueError("caller-info JSON missing required field(s): " + ", ".join(missing))
+    if not isinstance(data["info_updated"], bool):
+        raise ValueError("caller-info JSON field info_updated must be a boolean")
+    if not isinstance(data["new_info"], str):
+        raise ValueError("caller-info JSON field new_info must be a string")
+    if data["info_updated"] and not data["new_info"].strip():
+        raise ValueError("caller-info JSON requires non-empty new_info when info_updated is true")
+    return {"info_updated": data["info_updated"], "new_info": data["new_info"].strip()}
+
+def _llm_select_json(work_dir, prompt_content, stage, validator, schema_description,
+                     trace_meta=None):
+    """Run a direct LLM call and return validated structured JSON.
+
+    This is for self-contained prompts whose context is already inlined. The
+    shared JSON caller records the raw exchange, accepts exactly one JSON
+    object or array (including a fenced or prose-wrapped one), validates the
+    required fields, and retries on protocol failures.
     """
     messages = [{"role": "user", "content": prompt_content}]
     meta = {"stage": stage, "summary": f"LLM {stage}", **(trace_meta or {})}
-    raw = _llm_call(
+    result = _llm_json_call(
         _llm_provider_client,
         LLM_MODEL,
         messages,
-        "JSON",
-        "JSON",
+        validator,
+        schema_description,
         trace_dir=os.path.join(work_dir, "trace"),
         trace_meta=meta,
     )
-    if raw is None:
-        logging.error("%s: LLM produced no parsable [JSON] block.", stage)
-        return None
-
-    # Tolerate strict, fenced, or prose-wrapped JSON inside the [JSON] markers.
-    try:
-        return _load_spec_check_json(raw)
-    except (ValueError, TypeError) as exc:
-        logging.error("%s: could not parse LLM JSON output: %s", stage, exc)
-        return None
-
+    if result is None:
+        logging.error("%s: LLM produced no valid JSON response after retries.", stage)
+    return result
 
 def _domain_knowledge_prompt_section(work_dir):
     text = load_staged_domain_knowledge_text(work_dir)
@@ -991,11 +1031,14 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
         "Return ONLY a JSON array of objects, each "
         '`{"phase": <phase number>, "name": "<module name>"}`, naming exactly the modules you '
         "judged relevant (reuse the same `phase` and `name` values from the list above). Use "
-        "`[]` if no module is relevant. Wrap the JSON array between `[JSON]` and `[JSON]` "
-        "markers.\n"
+        "`[]` if no module is relevant. Do not include Markdown, tags, or prose outside the JSON array.\n"
     )
     selection = _llm_select_json(
-        work_dir, module_prompt, stage="select_relevant_modules",
+        work_dir,
+        module_prompt,
+        stage="select_relevant_modules",
+        validator=_validate_module_selection,
+        schema_description='[{"phase": integer, "name": "non-empty string"}]',
     )
     if selection is None:
         selection = []
@@ -1274,11 +1317,18 @@ def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefi
         '   - "info_updated": boolean — true when you produced a new/replacement [INFO] block.\n'
         '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
         '   - "updated_callees": array of callee name strings whose expected spec you added or changed, or [].\n'
-        "   Wrap the JSON object between `[JSON]` and `[JSON]` markers.\n"
+        "   Do not include Markdown, tags, or prose outside the JSON object.\n"
     )
 
     return _llm_select_json(
-        work_dir, prompt_content, stage="update_function_spec",
+        work_dir,
+        prompt_content,
+        stage="update_function_spec",
+        validator=_validate_spec_update,
+        schema_description=(
+            '{"spec_updated": boolean, "new_spec": string, "info_updated": boolean, '
+            '"new_info": string, "updated_callees": [string]}'
+        ),
         trace_meta={"fqn": fqn, "idx": idx},
     )
 
@@ -1328,11 +1378,15 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
         "3. Return ONLY a JSON object with keys:\n"
         '   - "info_updated": boolean.\n'
         '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
-        "   Wrap the JSON object between `[JSON]` and `[JSON]` markers.\n"
+        "   Do not include Markdown, tags, or prose outside the JSON object.\n"
     )
 
     return _llm_select_json(
-        work_dir, prompt_content, stage="update_caller_info",
+        work_dir,
+        prompt_content,
+        stage="update_caller_info",
+        validator=_validate_caller_info_update,
+        schema_description='{"info_updated": boolean, "new_info": string}',
         trace_meta={"caller_fqn": caller_fqn, "callee_name": callee_name, "idx": idx},
     )
 

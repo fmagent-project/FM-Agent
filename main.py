@@ -2,7 +2,6 @@ from config import (
     MAX_WORKERS,
     OPENCODE_MAX_RETRIES,
     OPENCODE_SPEC_MODEL,
-    OPENCODE_MODEL_PROVIDER,
 )
 from src.entry_reasoning_pipeline import run_entry_pipeline
 from src.file_utils import (
@@ -23,7 +22,7 @@ from src.opencode_trace import (
     function_id_from_extracted_path,
     run_opencode_traced,
 )
-from src.cli_backend import build_agent_command, is_cli_backend_enabled
+from src.llm_client import build_llm_cli_command
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -143,20 +142,12 @@ def _run_spec_generation_batch(
             f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
         )
     prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_SPEC_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-            files=[prompt_file],
-        )
-    else:
-        command = [
-            "opencode", "run",
-            "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
-            "--file", prompt_file,
-            "--", prompt,
-        ]
+    command = build_llm_cli_command(
+        model=OPENCODE_SPEC_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+        files=[prompt_file],
+    )
     try:
         result = run_opencode_traced(
             proj_dir=proj_dir,
