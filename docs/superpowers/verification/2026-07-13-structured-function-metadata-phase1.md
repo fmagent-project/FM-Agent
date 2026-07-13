@@ -14,14 +14,60 @@ Branch: `feat/structured-function-metadata-phase1`
 
 All Python and `uv` commands above were run inside WSL from `/mnt/d/fmagent/FM-Agent`.
 
-## External acceptance gate status
+## Live acceptance gate
 
-The live full, resume/recovery, incremental, and entry-mode smoke commands were not started because their required OpenCode executable is absent in WSL. The prerequisite check was:
+OpenCode 1.17.18 was resolved from `/home/joy/.opencode/bin/opencode` by running the commands through the user's interactive WSL Bash environment. The earlier negative check used non-interactive `/bin/sh`, which did not load that PATH.
 
-```text
-$ type opencode
-opencode: not found
-exit status 1
+The representative project was `/mnt/d/tmp/fm-agent-structured-smoke`, containing `caller(value)` and `callee(value)`, with caller invoking callee.
+
+### Full mode
+
+```bash
+uv run python main.py /mnt/d/tmp/fm-agent-structured-smoke
 ```
 
-This blocks Tasks 7.5 through 7.7. Phase 2 must not begin until OpenCode is installed/configured and all four live smoke modes pass against the representative project with implementation hashes unchanged.
+- Generated two implementation-only `.py` files, two `.spec.json` files, and two `.info.json` files.
+- Both metadata pairs passed the production `read_spec()` and `read_info()` validators.
+- The leaf callee used `"callees": []`.
+- Produced exactly two verification verdict JSON files and no verdict for a metadata file.
+- No persisted marker occurred in either implementation.
+
+### Resume and corrupted-metadata recovery
+
+```bash
+uv run python main.py /mnt/d/tmp/fm-agent-structured-smoke --resume
+```
+
+- With valid metadata, extraction skipped both unchanged implementations and both spec batches skipped their completed function.
+- After corrupting only `callee.spec.json`, the same command skipped both implementations, skipped the completed caller batch, regenerated and verified only callee, and restored valid metadata.
+- Caller spec/info hashes were unchanged. Both implementation hashes remained unchanged:
+  - `callee.py`: `1f401f1b2221a93f97f8a684155979feb4ab540c49001f64990edb3fc4e10f69`
+  - `caller.py`: `3a7c4a95cec94b47e01646171912233510188756627c76ecbabf7d382b40b69b`
+
+### Incremental mode
+
+The callee implementation was changed from multiplying by two to multiplying by three, then:
+
+```bash
+uv run python main.py /mnt/d/tmp/fm-agent-structured-smoke \
+  --incremental /mnt/d/tmp/fm-agent-structured-smoke/intent.md
+```
+
+- Detected one modified function.
+- Force re-extraction refreshed implementations while preserving metadata sidecars for update planning.
+- Updated two affected functions' metadata, including downward propagation and caller-info reconciliation.
+- Re-verified both functions with zero MISMATCH results.
+- Only the expected callee implementation hash changed; caller remained unchanged.
+
+### Entry mode
+
+```bash
+uv run python main.py /mnt/d/tmp/fm-agent-structured-smoke \
+  --entry-func module-py::caller
+```
+
+- Selected two of two reachable functions.
+- Generated and copied back the three-file layout for both functions.
+- Final production-schema validation passed, exactly two verdicts existed, and implementation hashes matched the post-incremental source baseline.
+
+The live Phase 1 acceptance gate passed. The optional `oh-my-openagent` check warned that it was unavailable, and codegraph initialization fell back to regex because `/usr/bin/env node` was not executable; neither warning interrupted or invalidated the smoke results.
