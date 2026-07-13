@@ -215,6 +215,7 @@ testcase/
 
 .public-exclude
 docs/superpowers/
+.worktrees/
 
 .opencode/
 .codegraph/
