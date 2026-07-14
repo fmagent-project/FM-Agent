@@ -507,13 +507,26 @@ def _signature_continues(line, paren_depth=0):
     return False
 
 
-def _next_code_line_starts_with(lines, start_idx, words):
-    """Return True if the next nonblank/comment line starts with one of words."""
+def _next_code_line_starts_with(lines, start_idx, tokens):
+    """Return True if the next nonblank line starts with one of tokens.
+
+    ``lines`` must already be comment-masked (:func:`strip_chisel_comments`);
+    both callers guarantee it, so comment-only lines arrive blank and are
+    skipped, and comment content can neither hide code sharing its line nor
+    fake a match. Blank lines are skipped, which per SLS 1.2 is slightly
+    over-permissive for the ``(`` token (a completely blank line yields two
+    ``nl`` tokens where the parameter-clause grammar allows one) --
+    accepted, since over-inclusion is the safe direction here and the case
+    only arises for top-level expressions in ``.sc`` scripts.
+    """
     for i in range(start_idx + 1, len(lines)):
-        stripped = _strip_trailing_comment(lines[i]).strip()
-        if not stripped or stripped.startswith(('//', '/*', '*')):
+        stripped = lines[i].strip()
+        if not stripped:
             continue
-        return any(re.match(r'^' + word + r'\b', stripped) for word in words)
+        return any(
+            re.match(r'^' + re.escape(token) + (r'\b' if token[-1].isalnum() else ''), stripped)
+            for token in tokens
+        )
     return False
 
 
@@ -526,29 +539,180 @@ def _package_block_line(line):
     )
 
 
-def _unit_end(lines, start_idx):
+def _unit_end(lines, start_idx, masked_lines=None):
     """Return the last line index of the declaration starting at ``start_idx``.
 
     If the declaration has a ``{ ... }`` body, returns the line of the matching
     closing brace.  Otherwise (a braceless ``def``/``class``, e.g.
     ``def double(x: UInt) = x + 1.U`` or ``abstract class Foo``) returns the last
     line of the (possibly multi-line) signature/expression.
+
+    The walk operates on the comment-masked counterpart of ``lines`` (the
+    same nested-comment/triple-string-aware :func:`strip_chisel_comments`
+    the extractor uses everywhere else), so a multi-line or nested block
+    comment anywhere in the signature -- including one whose ``*/`` closing
+    line carries a curried parameter clause -- cannot derail the per-line
+    state. Callers iterating over one file's declarations must mask once
+    and pass ``masked_lines`` -- re-masking per declaration is O(n^2) and
+    turns a generated ISA-definition-style file (thousands of top-level
+    declarations) from milliseconds into tens of seconds. Computed on
+    demand when omitted (single-declaration texts, tests).
     """
-    n = len(lines)
+    if masked_lines is None:
+        masked_lines = strip_chisel_comments("\n".join(lines)).splitlines()
+    n = len(masked_lines)
     i = start_idx
     paren_depth = 0
     while i < n:
-        brace_col, paren_depth = _body_brace_and_paren(lines[i], paren_depth)
+        brace_col, paren_depth = _body_brace_and_paren(masked_lines[i], paren_depth)
         if brace_col >= 0:
-            return _find_block_end(lines, i)
-        if _signature_continues(lines[i], paren_depth):
+            return _find_block_end(masked_lines, i)
+        if _signature_continues(masked_lines[i], paren_depth):
             i += 1
             continue
-        if _next_code_line_starts_with(lines, i, ("extends", "with")):
+        # `extends`/`with` may open the next line; so may a further curried
+        # parameter clause -- Scala 2 allows a single newline before each
+        # clause (``ClassParamClause ::= [nl] '(' ...``), the standard
+        # rocket-chip-ecosystem shape for trailing ``(implicit p: ...)``.
+        if _next_code_line_starts_with(masked_lines, i, ("extends", "with", "(")):
             i += 1
             continue
         return i
     return n - 1
+
+
+def _signature_text(lines, start_idx):
+    """Join the declaration signature's lines starting at ``start_idx``.
+
+    Mirrors ``_unit_end``'s walk over continuation lines, but returns the
+    assembled signature text (up to, not including, any body ``{``) instead
+    of a line index. This is what lets an ``extends`` clause be found even
+    when it falls on a line after the declaration keyword, e.g. behind a
+    multi-line constructor parameter list.
+    """
+    n = len(lines)
+    i = start_idx
+    paren_depth = 0
+    parts = []
+    while i < n:
+        brace_col, paren_depth = _body_brace_and_paren(lines[i], paren_depth)
+        if brace_col >= 0:
+            parts.append(lines[i][:brace_col])
+            return "\n".join(parts)
+        parts.append(lines[i])
+        if _signature_continues(lines[i], paren_depth):
+            i += 1
+            continue
+        # Same continuation set as _unit_end: a next line opening with `(`
+        # is a further curried parameter clause (SLS: ClassParamClause ::=
+        # [nl] '(' ...), commonly a trailing `(implicit p: Parameters)`.
+        if _next_code_line_starts_with(lines, i, ("extends", "with", "(")):
+            i += 1
+            continue
+        return "\n".join(parts)
+    return "\n".join(parts)
+
+
+_EXTENDS_CLAUSE_RE = re.compile(r'\bextends\b')
+_WITH_CLAUSE_RE = re.compile(r'\bwith\b')
+
+
+def _extract_extends_expr(sig_text):
+    """Return the raw ``extends`` clause expression from assembled signature
+    text (stopping before any ``with`` mixin), or None if there is no clause.
+    """
+    m = _EXTENDS_CLAUSE_RE.search(sig_text)
+    if not m:
+        return None
+    rest = sig_text[m.end():]
+    wm = _WITH_CLAUSE_RE.search(rest)
+    if wm:
+        rest = rest[:wm.start()]
+    rest = rest.strip()
+    return rest or None
+
+
+def _strip_trailing_group(expr):
+    """Strip one trailing balanced ``(...)``/``[...]`` group from ``expr``.
+
+    Returns the shortened expression, or None if ``expr`` doesn't end with a
+    closing bracket or the brackets aren't balanced.
+    """
+    expr = expr.rstrip()
+    if not expr or expr[-1] not in ')]':
+        return None
+    close = expr[-1]
+    open_ch = '(' if close == ')' else '['
+    depth = 0
+    i = len(expr) - 1
+    while i >= 0:
+        if expr[i] == close:
+            depth += 1
+        elif expr[i] == open_ch:
+            depth -= 1
+            if depth == 0:
+                return expr[:i].rstrip()
+        i -= 1
+    return None
+
+
+def _normalize_parent_name(expr):
+    """Normalize an ``extends`` clause expression to ``(parent, prefix)``.
+
+    Repeatedly strips trailing constructor-argument/type-argument groups
+    (handling nesting, e.g. ``Foo[Vec[UInt]](x)``), then splits off the last
+    ``.``-qualified segment as ``parent``. ``prefix`` is everything before
+    that last segment (e.g. ``"chisel3"``, ``"_root_.chisel3"``, or a
+    project's own package like ``"mypkg"``), or None for a bare name.
+
+    Exposing the actual prefix -- not just a "was qualified" bool -- matters:
+    ``chisel3.Data`` and a project's own ``mypkg.Data`` both normalize to the
+    same bare ``parent="Data"``, but only the former is chisel3's own Data.
+    Callers must check ``prefix`` to tell them apart rather than treating any
+    qualified name ending in ``.Data`` as chisel3's.
+    """
+    expr = expr.strip()
+    if not expr:
+        return None, None
+    while True:
+        stripped = _strip_trailing_group(expr)
+        if stripped is None:
+            break
+        expr = stripped
+        if not expr:
+            return None, None
+    if '.' in expr:
+        prefix, _, name = expr.rpartition('.')
+        return (name or None), (prefix or None)
+    return (expr or None), None
+
+
+def chisel_decl_info(text):
+    """Single source of truth for ``(kind, name, parent, parent_prefix)``
+    of the first top-level Chisel/Scala declaration in an extracted unit.
+
+    Extends ``chisel_declared_name``'s declaration lookup with the parent
+    class/trait named in an ``extends`` clause, assembling the full
+    (possibly multi-line) signature first so an ``extends`` clause that
+    falls after the declaration keyword line is still found. ``parent`` is
+    the normalized bare name (trailing argument/type groups and package
+    qualification stripped), or None when there is no ``extends`` clause.
+    ``parent_prefix`` is the qualifying package portion of a qualified
+    ``extends`` clause (e.g. ``"chisel3"`` for ``chisel3.Module``), or None
+    for a bare name or when there is no ``extends`` clause. Returns
+    ``(None, None, None, None)`` when no declaration is found.
+    """
+    lines = strip_chisel_comments(text).splitlines()
+    for i, raw in enumerate(lines):
+        m = _CHISEL_DECL_RE.match(raw.strip())
+        if m:
+            extends_expr = _extract_extends_expr(_signature_text(lines, i))
+            if extends_expr:
+                parent, parent_prefix = _normalize_parent_name(extends_expr)
+            else:
+                parent, parent_prefix = None, None
+            return m.group("kind"), m.group("name"), parent, parent_prefix
+    return None, None, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +733,9 @@ def extract_chisel_functions(lines, lang_key, lang_cfg):
     single extracted module re-parses to exactly one unit.
     """
     depth_start, clean_start = _scan_line_states(lines)
+    # Masked once for the whole file and shared by every _unit_end call --
+    # per-declaration re-masking is O(n^2) over the file (see _unit_end).
+    masked_lines = strip_chisel_comments("\n".join(lines)).splitlines()
     units = []
     i = 0
     n = len(lines)
@@ -604,7 +771,7 @@ def extract_chisel_functions(lines, lang_key, lang_cfg):
             continue
 
         name = m.group('name')
-        end = _unit_end(lines, i)
+        end = _unit_end(lines, i, masked_lines)
         units.append((name, i, end))
         i = end + 1
 

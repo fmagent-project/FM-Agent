@@ -708,8 +708,151 @@ def _has_scala_source(proj_dir):
     return False
 
 
+def _scan_chisel_module_classification(work_dir, valid_phase_numbers=None):
+    """Aggregate is_module/module_classification_reason across ALL phases'
+    topdown layer JSON.
+
+    Returns ``(classification, excluded)`` where ``classification`` maps
+    fqn -> ``(is_module, reason)`` and ``excluded`` lists ``(fqn, reason)``
+    for every ``is_module=False`` entry. generate_topdown_layers stamps both
+    fields on every Chisel entry unconditionally, so either field missing
+    here means a corrupted or foreign topdown layer JSON, not an
+    unclassified unit -- raised loudly rather than silently defaulted.
+
+    ``valid_phase_numbers``, when given, restricts the scan to those phase
+    numbers -- callers with a live ``phases.json`` should always pass the
+    CURRENT phase numbers. Without it, an orphaned ``phase_NN_topdown_
+    layers.json`` surviving on disk from a prior run whose phases.json no
+    longer lists phase NN (a removed subsystem, or a phase whose source
+    files vanished between runs without the manifest being reset) could
+    smuggle a stale real module's classification into the result, letting
+    the zero-post-filter-modules guard silently miss that the CURRENT
+    phases have zero real modules.
+    """
+    spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
+    if not os.path.isdir(spec_prompts_dir):
+        return {}, []
+    layer_files = [
+        fname for fname in sorted(os.listdir(spec_prompts_dir))
+        if re.match(r"phase_\d+_topdown_layers\.json$", fname)
+    ]
+    if valid_phase_numbers is not None:
+        layer_files = [
+            fname for fname in layer_files
+            if int(re.match(r"phase_(\d+)_topdown_layers\.json$", fname).group(1))
+            in valid_phase_numbers
+        ]
+    classification = {}
+    excluded = []
+    for fname in layer_files:
+        layers_data = _load_json_file(os.path.join(spec_prompts_dir, fname), fname)
+        for layer in layers_data.get("layers", []):
+            for fn in layer.get("functions", []):
+                fqn = fn.get("name", "<unknown>")
+                if "is_module" not in fn or "module_classification_reason" not in fn:
+                    raise RuntimeError(
+                        f"Chisel unit {fqn!r} in {fname} is missing 'is_module' or "
+                        f"'module_classification_reason' -- generate_topdown_layers "
+                        f"stamps both fields on every Chisel unit unconditionally; a "
+                        f"missing field means a corrupted or foreign topdown layer JSON."
+                    )
+                is_module = fn["is_module"]
+                reason = fn["module_classification_reason"]
+                if not isinstance(is_module, bool) or not isinstance(reason, str) or not reason:
+                    raise RuntimeError(
+                        f"Chisel unit {fqn!r} in {fname} has 'is_module'/"
+                        f"'module_classification_reason' of the wrong type "
+                        f"(is_module={is_module!r}, reason={reason!r}) -- "
+                        f"generate_topdown_layers always stamps is_module as a "
+                        f"bool and reason as a non-empty string; this means a "
+                        f"corrupted or foreign topdown layer JSON."
+                    )
+                classification[fqn] = (is_module, reason)
+                if not is_module:
+                    excluded.append((fqn, reason))
+    return classification, excluded
+
+
+def _log_would_be_excluded_chisel_units(excluded):
+    """Print the one-time 'if --chisel-modules-only were on, these units
+    would be excluded' advisory. No-op when nothing would be excluded."""
+    if not excluded:
+        return
+    print(f"[Chisel] --chisel-modules-only is off; if it were set, "
+          f"{len(excluded)} unit(s) would be excluded from spec generation:")
+    for fqn, reason in sorted(excluded):
+        print(f"[Chisel]   {fqn} ({reason})")
+
+
+def _fail_if_chisel_modules_only_excludes_everything(classification, excluded, chisel_modules_only):
+    """Exit loudly if --chisel-modules-only would leave zero real modules
+    despite Chisel units existing, aggregated across ALL phases.
+
+    No-op when the flag is off, when there are no Chisel units at all (a
+    different, pre-existing guard already handles that), or when at least
+    one unit classifies True in ANY phase.
+    """
+    if not chisel_modules_only or not classification:
+        return
+    if any(is_module for is_module, _reason in classification.values()):
+        return
+    print(f"[Chisel] ERROR: --chisel-modules-only excludes ALL {len(classification)} "
+          f"Chisel unit(s) found across all phases; nothing would be generated. "
+          f"Excluded units:")
+    for fqn, reason in sorted(excluded):
+        print(f"[Chisel]   {fqn} ({reason})")
+    sys.exit(1)
+
+
+def _warn_stale_specs_for_excluded_units(work_dir, excluded, valid_phase_numbers=None):
+    """One-time warning (never deletion) when an ``is_module=False`` unit
+    --chisel-modules-only would now exclude still has a ``_spec.md``/
+    ``_info.md`` from a prior unfiltered run on the same workspace (e.g.
+    a normal run followed by ``--resume --chisel-modules-only``).
+
+    Path Boundaries explicitly forbid deleting these -- they are accepted
+    clutter, matching this repo's existing precedent for orphaned
+    extraction artifacts (FUT-4). But leaving the run fully silent gives a
+    false impression that all non-hardware output was actually filtered
+    out; this makes the otherwise-invisible leftover visible instead.
+    """
+    if not excluded:
+        return
+    excluded_reasons = dict(excluded)
+    spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
+    if not os.path.isdir(spec_prompts_dir):
+        return
+    layer_files = [
+        fname for fname in sorted(os.listdir(spec_prompts_dir))
+        if re.match(r"phase_\d+_topdown_layers\.json$", fname)
+    ]
+    if valid_phase_numbers is not None:
+        layer_files = [
+            fname for fname in layer_files
+            if int(re.match(r"phase_(\d+)_topdown_layers\.json$", fname).group(1))
+            in valid_phase_numbers
+        ]
+    stale = []
+    for fname in layer_files:
+        layers_data = _load_json_file(os.path.join(spec_prompts_dir, fname), fname)
+        for layer in layers_data.get("layers", []):
+            for fn in layer.get("functions", []):
+                fqn = fn.get("name")
+                if fqn not in excluded_reasons:
+                    continue
+                filepath = os.path.join(work_dir, fn["file"])
+                if os.path.exists(chisel_spec_path(filepath)) or os.path.exists(chisel_info_path(filepath)):
+                    stale.append((fqn, excluded_reasons[fqn]))
+    if stale:
+        print(f"[Chisel] WARNING: {len(stale)} unit(s) excluded by --chisel-modules-only "
+              f"still have spec/info file(s) from a prior run (not deleted, see FUT-4):")
+        for fqn, reason in sorted(stale):
+            print(f"[Chisel]   {fqn} ({reason})")
+
+
 def _report_undocumented_submodules(work_dir, info_path_fn, label,
-                                    strip_dedup_suffix=True):
+                                    strip_dedup_suffix=True, filter_non_modules=False,
+                                    valid_phase_numbers=None):
     """Advisory (report only): list modules whose call graph shows submodules
     but whose info document lacks a parseable ``# Submodule:`` entry for them.
 
@@ -720,6 +863,19 @@ def _report_undocumented_submodules(work_dir, info_path_fn, label,
     to the declared name the info headings use; pass False for Verilog, where
     ``_<digits>`` endings are genuine module names (``fifo_64``) and stripping
     them would hide real gaps. Returns ``[(module_fqn, [missing...]), ...]``.
+
+    ``filter_non_modules`` excludes ``is_module=False`` callees from the
+    expected-documentation set — Chisel-only, passed True only when
+    ``--chisel-modules-only`` is set. Verilog entries never carry an
+    ``is_module`` field, so this MUST stay an explicit opt-in rather than a
+    ``fn.get("is_module")`` truthiness check: ``None`` is falsy too, and an
+    unconditional check would silently empty the Verilog advisory.
+
+    ``valid_phase_numbers``, when given, limits both advisory passes to layer
+    files generated for those phases. Chisel passes the phases actually
+    written during the current run so orphaned layer files cannot overwrite
+    current classification metadata; Verilog leaves this unset to preserve
+    its existing behavior.
     """
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
     if not os.path.isdir(spec_prompts_dir):
@@ -728,23 +884,43 @@ def _report_undocumented_submodules(work_dir, info_path_fn, label,
         fname for fname in sorted(os.listdir(spec_prompts_dir))
         if re.match(r"phase_\d+_topdown_layers\.json$", fname)
     ]
+    if valid_phase_numbers is not None:
+        layer_files = [
+            fname for fname in layer_files
+            if int(re.match(r"phase_(\d+)_topdown_layers\.json$", fname).group(1))
+            in valid_phase_numbers
+        ]
     # First pass: fqn -> declared name, stamped by generate_topdown_layers
     # with the extractor's own declaration regex. Maps dedup aliases
     # (Control_1) back to the name info headings use (Control); a genuine
     # module named Stage_1 declares its own stem, so its gap is never hidden.
+    # is_module is collected in this SAME cross-phase pass so a callee's
+    # cross-phase FQN reference resolves correctly too.
     declared_names = {}
+    is_module_index = {}
     for fname in layer_files:
         layers_data = _load_json_file(os.path.join(spec_prompts_dir, fname), fname)
         for layer in layers_data.get("layers", []):
             for fn in layer.get("functions", []):
                 if fn.get("declared_name"):
                     declared_names[fn["name"]] = fn["declared_name"]
+                if filter_non_modules and "is_module" in fn:
+                    is_module_index[fn["name"]] = fn["is_module"]
     gaps = []
     for fname in layer_files:
         layers_data = _load_json_file(os.path.join(spec_prompts_dir, fname), fname)
         for layer in layers_data.get("layers", []):
             for fn in layer.get("functions", []):
+                if filter_non_modules and is_module_index.get(fn["name"]) is False:
+                    # This unit was never sent to the LLM for spec/info
+                    # generation under the filtered flow (batch generation
+                    # excludes it) -- its info file, if any, is either
+                    # absent or stale from a prior unfiltered run, so it
+                    # cannot fairly be held to a documentation standard.
+                    continue
                 callees = fn.get("all_callees") or []
+                if filter_non_modules:
+                    callees = [c for c in callees if is_module_index.get(c, True)]
                 if not callees:
                     continue
                 info_path = info_path_fn(os.path.join(work_dir, fn["file"]))
@@ -773,7 +949,7 @@ def _report_undocumented_submodules(work_dir, info_path_fn, label,
     return gaps
 
 
-def run_chisel_spec_generation(proj_dir, resume=False):
+def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False):
     """Generate verification-oriented specs for a Chisel (Scala) design.
 
     Mirrors :func:`main.run_pipeline` but is Chisel-specific and spec-only: it
@@ -784,6 +960,9 @@ def run_chisel_spec_generation(proj_dir, resume=False):
     ``groups.json`` already exists, and Stage 5 only generates specs for modules
     that do not yet have valid spec/info files (via :func:`chisel_spec_ready`).
     This lets an interrupted run continue without regenerating completed specs.
+
+    ``chisel_modules_only`` restricts spec generation to Chisel classes that
+    transitively extend Module/RawModule/ExtModule/BlackBox/MultiIOModule.
     """
     if not os.path.isdir(proj_dir):
         print(f"[Chisel] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -954,7 +1133,7 @@ def run_chisel_spec_generation(proj_dir, resume=False):
         except OSError:
             pass
         _reset_derived_state(work_dir)
-        return run_chisel_spec_generation(proj_dir, resume=True)
+        return run_chisel_spec_generation(proj_dir, resume=True, chisel_modules_only=chisel_modules_only)
 
     if not any(
         _get_phase_files(phases_data, phase["phase"], input_dir)
@@ -965,7 +1144,31 @@ def run_chisel_spec_generation(proj_dir, resume=False):
 
     # --- Stage 3: Generate topdown layers ---
     print("[Chisel] Stage 3/4: Generating topdown layers...")
-    generate_topdown_layers(work_dir)
+    _written_topdown_files = generate_topdown_layers(work_dir)
+
+    # Aggregated across ALL phases ACTUALLY (re)written THIS run, before
+    # Stage 4's per-layer loop begins. Scoping to phases.json's declared
+    # phase numbers is not enough: a phase still listed there whose source
+    # extracted to nothing this run (vanished/emptied without the manifest
+    # being reset) is SKIPPED by generate_topdown_layers, leaving its OLD
+    # topdown JSON -- and any real module it once had -- untouched on disk.
+    # Scoping to generate_topdown_layers' own return value excludes that
+    # phase entirely, matching what Stage 4 will actually attempt this run.
+    # Validates is_module/module_classification_reason stamping; with the
+    # flag on, fails loudly if filtering would leave zero real modules,
+    # otherwise shows what filtering WOULD exclude (zero effect on generation).
+    _current_phase_numbers = {
+        int(re.match(r"phase_(\d+)_topdown_layers\.json$", os.path.basename(p)).group(1))
+        for p in _written_topdown_files
+    }
+    _classification, _excluded = _scan_chisel_module_classification(
+        work_dir, valid_phase_numbers=_current_phase_numbers)
+    if chisel_modules_only:
+        _fail_if_chisel_modules_only_excludes_everything(
+            _classification, _excluded, chisel_modules_only)
+        _warn_stale_specs_for_excluded_units(work_dir, _excluded, _current_phase_numbers)
+    else:
+        _log_would_be_excluded_chisel_units(_excluded)
 
     # --- Stage 4: Execute spec generation (per phase, per layer) ---
     print("[Chisel] Stage 4/4: Generating Chisel module specs...")
@@ -1013,11 +1216,13 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                   f"Layer {layer_idx}/{total_layers - 1}")
 
             # Generate batch prompts for this layer
-            subprocess.run(
-                ["python3", "fm_agent/spec_prompts/generate_batch_prompts.py",
-                 "--phase", str(phase_num), "--layers", str(layer_idx)],
-                cwd=proj_dir, check=True,
-            )
+            batch_prompts_argv = [
+                "python3", "fm_agent/spec_prompts/generate_batch_prompts.py",
+                "--phase", str(phase_num), "--layers", str(layer_idx),
+            ]
+            if chisel_modules_only:
+                batch_prompts_argv.append("--chisel-modules-only")
+            subprocess.run(batch_prompts_argv, cwd=proj_dir, check=True)
 
             # Read manifest
             manifest_path = os.path.join(batch_dir, "manifest.json")
@@ -1228,5 +1433,9 @@ def run_chisel_spec_generation(proj_dir, resume=False):
                 )
                 sys.exit(1)
 
-    _report_undocumented_submodules(work_dir, chisel_info_path, "Chisel")
+    _report_undocumented_submodules(
+        work_dir, chisel_info_path, "Chisel",
+        filter_non_modules=chisel_modules_only,
+        valid_phase_numbers=_current_phase_numbers,
+    )
     print("[Chisel] Done. Generated Chisel module spec/info files only; skipped reasoning and bug validation.")

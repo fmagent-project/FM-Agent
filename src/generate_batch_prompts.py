@@ -46,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=1, help="Functions per prompt file")
     parser.add_argument("--output-dir", default=None, help="Output directory for batch prompt files")
     parser.add_argument("--dry-run", action="store_true", help="Show plan without writing files")
+    parser.add_argument(
+        "--chisel-modules-only", action="store_true",
+        help="Only include is_module=True Chisel functions in batch generation "
+        "(all_funcs/func_to_layer stay unfiltered for caller/callee lookups).",
+    )
     return parser.parse_args()
 
 
@@ -213,6 +218,44 @@ def chunked(items: List[dict], size: int) -> List[List[dict]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+def _require_module_classification_fields(layer_functions: List[dict]) -> None:
+    """Raise loudly if any function entry is missing ``is_module``/
+    ``module_classification_reason``, or either has the wrong type.
+
+    generate_topdown_layers stamps ``is_module`` as a bool and
+    ``module_classification_reason`` as a non-empty string on every Chisel
+    unit unconditionally, so a missing field, or one of the wrong type,
+    means a corrupted or foreign topdown layer JSON, not an unclassified
+    unit. Checking this explicitly, before filtering, avoids the
+    truthiness trap of ``fn.get("is_module")``: not just a missing field
+    (``None`` is falsy), but also e.g. the STRING ``"false"`` (truthy in
+    Python) being silently treated as a real module, or ``0``/``None``
+    being silently treated as non-module without ever being flagged as
+    invalid. Mirrors the same validation in chisel_spec_generator.py's
+    ``_scan_chisel_module_classification``.
+    """
+    for fn in layer_functions:
+        if "is_module" not in fn or "module_classification_reason" not in fn:
+            name = fn.get("name", "<unknown>")
+            raise RuntimeError(
+                f"Chisel unit {name!r} is missing 'is_module' or "
+                f"'module_classification_reason' -- generate_topdown_layers "
+                f"stamps both fields on every Chisel unit unconditionally; a "
+                f"missing field means a corrupted or foreign topdown layer JSON."
+            )
+        is_module = fn["is_module"]
+        reason = fn["module_classification_reason"]
+        if not isinstance(is_module, bool) or not isinstance(reason, str) or not reason:
+            name = fn.get("name", "<unknown>")
+            raise RuntimeError(
+                f"Chisel unit {name!r} has 'is_module'/'module_classification_reason' "
+                f"of the wrong type (is_module={is_module!r}, reason={reason!r}) -- "
+                f"generate_topdown_layers always stamps is_module as a bool and "
+                f"reason as a non-empty string; this means a corrupted or foreign "
+                f"topdown layer JSON."
+            )
+
+
 def read_json(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"missing required file: {path}")
@@ -272,6 +315,7 @@ def build_prompt(
     work_dir: Path,
     fm_agent_prefix: str,
     ext_to_lang: Dict[str, str],
+    chisel_modules_only: bool = False,
 ) -> str:
     lines: List[str] = []
     sample_lang = "unknown"
@@ -329,6 +373,11 @@ def build_prompt(
                 continue
             caller_meta = all_funcs.get(caller_name)
             if not caller_meta:
+                continue
+            if chisel_modules_only and caller_meta.get("is_module") is False:
+                # Batch-generation-time filtering already excludes this
+                # caller from spec generation entirely; keep it out of the
+                # display-only name lists too, without touching all_funcs.
                 continue
             caller_file = work_dir / caller_meta["file"]
             if is_hw:
@@ -409,6 +458,11 @@ def build_prompt(
         caller_key = phase_callers_key(fn, phase)
         callers = fn.get(caller_key, [])
         earlier = [c for c in callers if func_to_layer.get(c, 10**9) < layer_idx]
+        if chisel_modules_only:
+            # Keep this structured name list consistent with the caller
+            # spec/expectation sections above: a name excluded there but
+            # still listed here would be a dangling reference.
+            earlier = [c for c in earlier if all_funcs.get(c, {}).get("is_module") is not False]
         module_file = Path(fn["file"])
         spec_file = module_file.with_name(module_file.stem + "_spec.md")
         info_file = module_file.with_name(module_file.stem + "_info.md")
@@ -523,6 +577,10 @@ def main() -> int:
     if start_layer < 0 or end_layer >= total_layers:
         raise ValueError(f"layer range {args.layers} out of bounds [0, {total_layers - 1}]")
 
+    if args.chisel_modules_only:
+        for layer in layers:
+            _require_module_classification_fields(layer.get("functions", []))
+
     output_dir = Path(args.output_dir) if args.output_dir else (
         work_dir / "spec_prompts" / f"batch_prompts_{project}_phase{args.phase:02d}"
     )
@@ -547,6 +605,8 @@ def main() -> int:
     for layer_idx in range(start_layer, end_layer + 1):
         layer = layers[layer_idx]
         layer_functions = layer.get("functions", [])
+        if args.chisel_modules_only:
+            layer_functions = [fn for fn in layer_functions if fn.get("is_module")]
         is_cycle = bool(layer.get("cycle_resolution", False))
         tag = "cycle" if is_cycle else "extracted"
         chunks = chunked(layer_functions, args.batch_size)
@@ -564,6 +624,7 @@ def main() -> int:
                 work_dir,
                 fm_agent_prefix,
                 ext_to_lang,
+                chisel_modules_only=args.chisel_modules_only,
             )
             out_path = output_dir / filename
             write_targets.append((out_path, content))

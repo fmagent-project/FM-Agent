@@ -7,14 +7,14 @@ from collections import defaultdict
 
 try:
     from src.extract import EXT_TO_LANG, LANG_CONFIG, load_units_manifest
-    from src.chisel_support import chisel_declared_name, find_chisel_call_sites, strip_chisel_comments
+    from src.chisel_support import chisel_decl_info, chisel_declared_name, find_chisel_call_sites, strip_chisel_comments
     from src.verilog_support import find_verilog_call_sites, verilog_declared_name
 except ModuleNotFoundError:
     # Allow standalone execution as `python3 src/generate_topdown_layers.py`.
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src.extract import EXT_TO_LANG, LANG_CONFIG, load_units_manifest
-    from src.chisel_support import chisel_declared_name, find_chisel_call_sites, strip_chisel_comments
+    from src.chisel_support import chisel_decl_info, chisel_declared_name, find_chisel_call_sites, strip_chisel_comments
     from src.verilog_support import find_verilog_call_sites, verilog_declared_name
 
 
@@ -306,12 +306,6 @@ def _find_call_sites(text, lang_key, known_stems, keywords):
     return found
 
 
-_CHISEL_DECL_RE = re.compile(
-    r"^\s*(?:(?:(?:private|protected)(?:\[[\w.]+\])?|final|sealed|abstract|implicit|lazy|override|case)\s+)*"
-    r"(?P<kind>class|object|trait|def)\s+(?P<name>[A-Za-z_$][\w$]*)",
-    re.MULTILINE,
-)
-
 _CHISEL_REF_RE = re.compile(
     r"\b(?P<ctor>new)\s+(?P<ctor_name>[A-Za-z_$][\w$]*)"
     r"|\b(?P<inherit>extends|with)\s+(?P<inherit_name>[A-Za-z_$][\w$]*)"
@@ -325,15 +319,6 @@ def _read_file_text(filepath):
             return f.read()
     except OSError:
         return None
-
-
-def _chisel_decl_info(text):
-    """Return (kind, source_name) for an extracted Chisel declaration."""
-    cleaned = strip_chisel_comments(text)
-    m = _CHISEL_DECL_RE.search(cleaned)
-    if not m:
-        return None, None
-    return m.group("kind"), m.group("name")
 
 
 def _build_chisel_aliases(file_map):
@@ -354,12 +339,256 @@ def _build_chisel_aliases(file_map):
         text = _read_file_text(filepath)
         if text is None:
             continue
-        kind, source_name = _chisel_decl_info(text)
+        kind, source_name, _parent, _parent_prefix = chisel_decl_info(text)
         if not kind or not source_name:
             continue
         aliases[source_name][kind].add(fqn)
 
     return aliases
+
+
+# Root Chisel/Scala base classes that mark a declaration as elaboratable
+# hardware, and library base classes known to never be hardware (IO
+# Bundles, records, plain data payloads) -- both matched by bare name or by
+# the last segment of a package-qualified name.
+_MODULE_ROOT_NAMES = {"Module", "RawModule", "ExtModule", "BlackBox", "MultiIOModule"}
+_KNOWN_NON_MODULE_NAMES = {"Bundle", "Record", "Data"}
+
+
+def _build_chisel_decl_map(file_map):
+    """fqn -> (kind, name, parent, parent_qualified) for every Chisel unit.
+
+    Single-pass, project-wide input to the module-ness classifier -- built
+    once from the same ``chisel_decl_info`` used everywhere else, so the
+    classifier never re-derives declaration parsing on its own.
+    """
+    decl_map = {}
+    for fqn, filepath in file_map.items():
+        lang_key = _detect_lang_from_ext(filepath)
+        if LANG_CONFIG.get(lang_key, {}).get("body") != "chisel":
+            continue
+        text = _read_file_text(filepath)
+        if text is None:
+            continue
+        decl_map[fqn] = chisel_decl_info(text)
+    return decl_map
+
+
+def _classify_chisel_modules(decl_map):
+    """Compute ``(is_module, reason)`` for every FQN in ``decl_map``.
+
+    FQN-indexed, kind-aware, cycle-safe inheritance closure. For a given
+    unit's parent reference, resolves in this exact priority order:
+
+    1. A parent qualified with chisel3's own package (``chisel3.Module``,
+       ``_root_.chisel3.Module``, first-segment matched so
+       ``chisel3.util.*``/``chisel3.experimental.*`` qualify too) that
+       matches a root name -> ``extends_module_direct``, definitive.
+    2. Same, but matching a known-non-module name -> ``known_non_module_parent``,
+       definitive.
+    3. A project-local class/trait declaration matching the parent's bare
+       simple name -> resolved via THAT declaration's own (recursively
+       computed) classification. This applies to a genuinely bare
+       reference AND to a reference qualified with some OTHER (non-chisel3)
+       package -- e.g. a project's own ``mypkg.Data`` normalizes to the
+       same bare ``"Data"`` as chisel3.Data, but is NOT chisel3's Data, so
+       it must resolve via ITS real extends chain, never via the fixed
+       known-non-module/root sets below (steps 4-5). For the QUALIFIED
+       variant, a local result is trusted only when it is True: the
+       qualifying prefix cannot be verified against the local candidate's
+       package (extraction discards package declarations), and a
+       misdirected local False silently drops a real module, so False
+       falls back to ``unresolved_parent`` conservative-True instead.
+       Bare references trust False too -- that is what keeps local Bundle
+       chains filterable -- EXCEPT when the bare name is itself a root
+       name (``Module``/``RawModule``/``ExtModule``/``BlackBox``/
+       ``MultiIOModule``) and that local resolution is False: an
+       unrelated, non-hardware declaration sharing a root class's bare
+       name must never silently shadow a real ``extends Module``-style
+       reference into False
+       (``root_name_shadowed_conservative_true``). This asymmetry is safe
+       for the known-non-module set (Bundle/Record/Data) in either shadow
+       direction, but not for root names.
+    4. Only for a genuinely bare (unqualified) reference with no
+       project-local declaration match: bare root name.
+    5. Only for a genuinely bare (unqualified) reference with no
+       project-local declaration match: bare known-non-module name.
+    6. Otherwise: ``unresolved_parent``, conservative-True. A
+       non-chisel3-qualified reference with no project-local match lands
+       here directly too (steps 4-5 never apply to it -- see step 3).
+
+    KNOWN LIMITATION: step 3's project-local lookup has no package/import
+    scoping (extraction discards import info), so for a BARE reference an
+    unrelated, differently-scoped project-local declaration can still
+    coincidentally share a bare name with something the reference actually
+    meant to name externally (not just the 5 root names, which step 3
+    specifically guards against; qualified references no longer trust a
+    local False at all). Closing this fully would require a real Scala
+    import/package resolver, explicitly out of scope for this heuristic,
+    plain-text classifier -- see ``_resolve_local_candidates`` for the
+    full rationale.
+
+    Ambiguous same-``(kind, name)`` candidates that disagree, and cycles
+    detected during traversal, both classify conservative-True too --
+    false negatives (silently excluding a real module) are strictly worse
+    than false positives here.
+    """
+    local_index = defaultdict(set)
+    for fqn, (kind, name, _parent, _parent_prefix) in decl_map.items():
+        if kind in ("class", "trait") and name:
+            local_index[(kind, name)].add(fqn)
+
+    cache = {}
+    visiting = set()
+    for fqn in decl_map:
+        try:
+            _classify_one_chisel_module(fqn, decl_map, local_index, cache, visiting)
+        except RecursionError:
+            # An inheritance chain deep enough to exhaust Python's call
+            # stack (hundreds of levels -- unusual for real hardware
+            # designs, but not impossible). This runs unconditionally
+            # regardless of --chisel-modules-only, so a hard crash here
+            # would break the existing, always-on Chisel flow too. Every
+            # try/finally along the (now unwound) recursive chain already
+            # cleared its own entry from `visiting`; clearing it again here
+            # is just defensive. Conservative-True, same tier as the
+            # cycle/ambiguity guards -- never let "couldn't resolve
+            # cleanly" become "crashed" instead of "kept".
+            visiting.clear()
+            cache[fqn] = (True, "recursion_limit_conservative_true")
+    return cache
+
+
+def _classify_one_chisel_module(fqn, decl_map, local_index, cache, visiting):
+    if fqn in cache:
+        return cache[fqn]
+    if fqn in visiting:
+        # Mid-traversal cycle: this is a transient probe result for the
+        # frame that re-entered fqn, not fqn's own final answer -- the
+        # frame that owns fqn's computation (below) decides what goes in
+        # the cache.
+        return True, "cycle_detected_conservative_true"
+    visiting.add(fqn)
+    try:
+        result = _resolve_chisel_module_classification(fqn, decl_map, local_index, cache, visiting)
+    finally:
+        visiting.discard(fqn)
+    cache[fqn] = result
+    return result
+
+
+def _is_chisel3_prefix(prefix):
+    """True when a qualifying prefix is chisel3's own package, optionally
+    rooted via ``_root_.`` (e.g. ``"chisel3"``, ``"_root_.chisel3.experimental"``).
+
+    First-segment matching (not exact-string matching) so ``chisel3.util.*``/
+    ``chisel3.experimental.*`` qualify too, not just the bare ``chisel3.``
+    forms.
+    """
+    if prefix.startswith("_root_."):
+        prefix = prefix[len("_root_."):]
+    return prefix.split(".", 1)[0] == "chisel3"
+
+
+def _resolve_local_candidates(parent, decl_map, local_index, cache, visiting):
+    """Resolve a bare simple name against project-local class/trait
+    declarations sharing it, or None if there are no candidates.
+
+    Ambiguous (disagreeing) candidates and cycles both classify
+    conservative-True. A single candidate resolving False is trusted UNLESS
+    ``parent`` also happens to be a fixed Chisel root name -- an unrelated,
+    non-hardware project-local declaration coincidentally sharing a root
+    class's bare name must not silently shadow a real module (this is the
+    one direction where shadowing is actually dangerous; for the
+    known-non-module set either shadow outcome is safe by construction).
+
+    KNOWN LIMITATION: this has zero package/import scoping (extraction
+    discards import info entirely), so an unrelated project-local
+    declaration sharing ANY bare name -- not just a root name -- can still
+    misresolve a reference that was meant to name a different, externally
+    imported class of the same simple name. Fully closing this requires a
+    real Scala import/package resolver, explicitly out of scope for this
+    heuristic, plain-text classifier. The reason this isn't blanket-flipped
+    to conservative-True: a class extending a local non-hardware base, or
+    transitively through a local Bundle-rooted chain (e.g. ``class BarIO
+    extends FooIO`` where ``FooIO extends Bundle``), is a common and
+    legitimate pattern this classifier must keep recognizing as
+    non-hardware -- that's the real value step 3 provides, and a blanket
+    conservative-True override here would discard it entirely. Same tier as
+    the already-accepted import-alias limitation (a DIFFERENT limitation:
+    the with-mixin gap is about which clauses get scanned at all, not this
+    one, and isn't independent evidence for keeping this specific
+    trade-off).
+    """
+    candidates = set()
+    for local_kind in ("class", "trait"):
+        candidates |= local_index.get((local_kind, parent), set())
+    if not candidates:
+        return None
+
+    results = [
+        _classify_one_chisel_module(cand_fqn, decl_map, local_index, cache, visiting)
+        for cand_fqn in candidates
+    ]
+    if any(reason == "cycle_detected_conservative_true" for _, reason in results):
+        return True, "cycle_detected_conservative_true"
+    is_mods = {is_mod for is_mod, _reason in results}
+    if len(is_mods) > 1:
+        return True, "ambiguous_conservative_true"
+    is_mod = is_mods.pop()
+    if is_mod:
+        return True, "extends_module_transitive"
+    if parent in _MODULE_ROOT_NAMES:
+        return True, "root_name_shadowed_conservative_true"
+    return False, "non_module_parent"
+
+
+def _resolve_chisel_module_classification(fqn, decl_map, local_index, cache, visiting):
+    kind, _name, parent, parent_prefix = decl_map[fqn]
+
+    if kind in ("object", "def"):
+        return False, "non_module_decl_kind"
+    if parent is None:
+        return False, "no_extends_clause"
+
+    if parent_prefix is not None:
+        if _is_chisel3_prefix(parent_prefix):
+            # chisel3's own namespace -- definitive, no project-local
+            # declaration could ever be what this actually refers to.
+            if parent in _MODULE_ROOT_NAMES:
+                return True, "extends_module_direct"
+            if parent in _KNOWN_NON_MODULE_NAMES:
+                return False, "known_non_module_parent"
+            return True, "unresolved_parent"
+        # Qualified with some OTHER package -- e.g. a project's own
+        # `mypkg.Data` is NOT chisel3.Data, even though both normalize to
+        # the same bare "Data". Falling through to the bare-name fixed-set
+        # checks below would reintroduce exactly that bug via a different
+        # path, so resolve via project-local declarations only -- but trust
+        # a local result ONLY when it is True: extraction discards package
+        # declarations, so the qualifying prefix cannot be verified against
+        # the local candidate's own package. A local True is safe either
+        # way (keeps mypkg.Data's transitive precision; the ambiguity/cycle
+        # guards already return True). A local FALSE would silently drop a
+        # real module whenever the prefix actually names a different,
+        # external package (`vendor.hardware.ExternalBase` vs an unrelated
+        # local `ExternalBase extends Bundle`), so it falls back to
+        # unresolved_parent instead. Bare references (below) still trust
+        # False -- that is what keeps local Bundle chains filterable.
+        local_result = _resolve_local_candidates(parent, decl_map, local_index, cache, visiting)
+        if local_result is not None and local_result[0]:
+            return local_result
+        return True, "unresolved_parent"
+
+    local_result = _resolve_local_candidates(parent, decl_map, local_index, cache, visiting)
+    if local_result is not None:
+        return local_result
+
+    if parent in _MODULE_ROOT_NAMES:
+        return True, "extends_module_direct"
+    if parent in _KNOWN_NON_MODULE_NAMES:
+        return False, "known_non_module_parent"
+    return True, "unresolved_parent"
 
 
 def _resolve_chisel_refs(text, chisel_aliases, known_stems, keywords):
@@ -666,6 +895,9 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
             global_stem_to_fqns[stem].add(fqn)
             global_file_map[fqn] = filepath
 
+    global_chisel_decl_map = _build_chisel_decl_map(global_file_map)
+    global_module_classification = _classify_chisel_modules(global_chisel_decl_map)
+
     output_files = []
 
     for phase_info in phases_data["phases"]:
@@ -717,7 +949,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
                 phase_callees = sorted(callees_map.get(fqn, set()) & phase_fqns)
                 all_callees = sorted(all_callees_map.get(fqn, set()))
 
-                func_entries.append({
+                entry = {
                     "name": fqn,
                     "file": rel_path,
                     "unit": unit,
@@ -725,7 +957,12 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
                     phase_callers_key: phase_callers,
                     phase_callees_key: phase_callees,
                     "all_callees": all_callees,
-                })
+                }
+                if fqn in global_module_classification:
+                    is_module, reason = global_module_classification[fqn]
+                    entry["is_module"] = is_module
+                    entry["module_classification_reason"] = reason
+                func_entries.append(entry)
 
             layer_dict["functions"] = func_entries
             output_layers.append(layer_dict)
