@@ -12,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 
 from config import (
-    OPENCODE_MODEL_PROVIDER,
     OPENCODE_SETUP_MODEL,
     OPENCODE_MAX_RETRIES,
     MAX_WORKERS,
@@ -46,9 +45,7 @@ from .generate_batch_prompts import (
     extract_spec_block,
 )
 from .opencode_trace import run_opencode_traced
-from .llm_client import _llm_provider_client, _llm_call
-from .cli_backend import build_agent_command, is_cli_backend_enabled
-from .prompts import _load_spec_check_json
+from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import try_codegraph_init
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
@@ -406,6 +403,7 @@ def run_incremental_pipeline(
     old_commit_id,
     domain_knowledge_files=None,
     submodules=None,
+    one_phase=False,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -455,6 +453,7 @@ def run_incremental_pipeline(
             proj_dir,
             domain_knowledge_files=domain_knowledge_files,
             submodules=submodules,
+            one_phase=one_phase,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -509,6 +508,7 @@ def run_incremental_pipeline(
     _run_setup_extract(
         proj_dir, work_dir, script_dir,
         is_incremental=True, submodules=submodules,
+        one_phase=one_phase,
     )
     logging.info("  -> phases.json regenerated.")
 
@@ -642,20 +642,12 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
     os.replace(tmp_path, prompt_path)
 
     prompt = "Follow the instructions in the attached file."
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_SETUP_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-            files=[prompt_path],
-        )
-    else:
-        command = [
-            "opencode", "run", "--model",
-            f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
-            "--file", prompt_path,
-            "--", prompt,
-        ]
+    command = build_llm_cli_command(
+        model=OPENCODE_SETUP_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+        files=[prompt_path],
+    )
 
     produced = False
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
@@ -719,37 +711,8 @@ def _validate_module_selection(data):
     return validated
 
 
-def _normalize_spec_dict(spec):
-    """Keep only fields supported by a .spec.json sidecar."""
-    return {
-        "unit": spec.get("unit", ""),
-        "signature": spec.get("signature", ""),
-        "pre_condition": spec.get("pre_condition", ""),
-        "post_condition": spec.get("post_condition", ""),
-    }
-
-
-def _normalize_info_dict(info):
-    """Keep only fields supported by a .info.json sidecar."""
-    callees = info.get("callees", [])
-    if not isinstance(callees, list):
-        raise ValueError("info JSON field callees must be an array")
-    return {
-        "callees": [
-            {
-                "name": callee.get("name", ""),
-                "signature": callee.get("signature", ""),
-                "pre_condition": callee.get("pre_condition", ""),
-                "post_condition": callee.get("post_condition", ""),
-            }
-            for callee in callees
-            if isinstance(callee, dict)
-        ]
-    }
-
-
 def _validate_spec_update(data):
-    """Validate a direct LLM decision about function metadata sidecars."""
+    """Validate a direct LLM decision about a function's [SPEC]/[INFO] blocks."""
     if not isinstance(data, dict):
         raise ValueError("spec-update JSON must be an object")
     required = ("spec_updated", "new_spec", "info_updated", "new_info", "updated_callees")
@@ -758,25 +721,27 @@ def _validate_spec_update(data):
         raise ValueError("spec-update JSON missing required field(s): " + ", ".join(missing))
     if not isinstance(data["spec_updated"], bool) or not isinstance(data["info_updated"], bool):
         raise ValueError("spec-update JSON fields spec_updated and info_updated must be booleans")
+    if not isinstance(data["new_spec"], str) or not isinstance(data["new_info"], str):
+        raise ValueError("spec-update JSON fields new_spec and new_info must be strings")
     if not isinstance(data["updated_callees"], list) or not all(
         isinstance(name, str) and name.strip() for name in data["updated_callees"]
     ):
         raise ValueError("spec-update JSON field updated_callees must be an array of non-empty strings")
-    if data["spec_updated"] and not isinstance(data["new_spec"], dict):
-        raise ValueError("spec-update JSON requires object new_spec when spec_updated is true")
-    if data["info_updated"] and not isinstance(data["new_info"], dict):
-        raise ValueError("spec-update JSON requires object new_info when info_updated is true")
+    if data["spec_updated"] and not data["new_spec"].strip():
+        raise ValueError("spec-update JSON requires non-empty new_spec when spec_updated is true")
+    if data["info_updated"] and not data["new_info"].strip():
+        raise ValueError("spec-update JSON requires non-empty new_info when info_updated is true")
     return {
         "spec_updated": data["spec_updated"],
-        "new_spec": _normalize_spec_dict(data["new_spec"]) if data["spec_updated"] else None,
+        "new_spec": data["new_spec"].strip(),
         "info_updated": data["info_updated"],
-        "new_info": _normalize_info_dict(data["new_info"]) if data["info_updated"] else None,
+        "new_info": data["new_info"].strip(),
         "updated_callees": [name.strip() for name in data["updated_callees"]],
     }
 
 
 def _validate_caller_info_update(data):
-    """Validate a direct LLM decision about one caller's info sidecar."""
+    """Validate a direct LLM decision about one caller's [INFO] block."""
     if not isinstance(data, dict):
         raise ValueError("caller-info JSON must be an object")
     required = ("info_updated", "new_info")
@@ -785,35 +750,35 @@ def _validate_caller_info_update(data):
         raise ValueError("caller-info JSON missing required field(s): " + ", ".join(missing))
     if not isinstance(data["info_updated"], bool):
         raise ValueError("caller-info JSON field info_updated must be a boolean")
-    if data["info_updated"] and not isinstance(data["new_info"], dict):
-        raise ValueError("caller-info JSON requires object new_info when info_updated is true")
-    return {
-        "info_updated": data["info_updated"],
-        "new_info": _normalize_info_dict(data["new_info"]) if data["info_updated"] else None,
-    }
+    if not isinstance(data["new_info"], str):
+        raise ValueError("caller-info JSON field new_info must be a string")
+    if data["info_updated"] and not data["new_info"].strip():
+        raise ValueError("caller-info JSON requires non-empty new_info when info_updated is true")
+    return {"info_updated": data["info_updated"], "new_info": data["new_info"].strip()}
 
 def _llm_select_json(work_dir, prompt_content, stage, validator, schema_description,
                      trace_meta=None):
-    """Run the existing tag-based direct LLM call, then validate its JSON value."""
+    """Run a direct LLM call and return validated structured JSON.
+
+    This is for self-contained prompts whose context is already inlined. The
+    shared JSON caller records the raw exchange, accepts exactly one JSON
+    object or array (including a fenced or prose-wrapped one), validates the
+    required fields, and retries on protocol failures.
+    """
     messages = [{"role": "user", "content": prompt_content}]
     meta = {"stage": stage, "summary": f"LLM {stage}", **(trace_meta or {})}
-    response = _llm_call(
+    result = _llm_json_call(
         _llm_provider_client,
         LLM_MODEL,
         messages,
-        "JSON",
-        "JSON",
+        validator,
+        schema_description,
         trace_dir=os.path.join(work_dir, "trace"),
         trace_meta=meta,
     )
-    if response is None:
+    if result is None:
         logging.error("%s: LLM produced no valid JSON response after retries.", stage)
-        return None
-    try:
-        return validator(_load_spec_check_json(response))
-    except (ValueError, json.JSONDecodeError) as exc:
-        logging.error("%s: invalid JSON result: %s", stage, exc)
-        return None
+    return result
 
 def _domain_knowledge_prompt_section(work_dir):
     text = load_staged_domain_knowledge_text(work_dir)
@@ -1146,49 +1111,55 @@ def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefi
         "below. Decide whether this function's behavioral specification must change to "
         "reflect that intent.\n\n"
         f"- Function fully-qualified name: `{fqn}` (language: `{lang_key}`).\n"
+        f"- Comment prefix for this language: `{comment_prefix}`.\n"
         f"- Known callees of this function: {callee_hint}.\n\n"
         "## Developer intent\n\n"
         f"{developer_intent}\n\n"
         f"{knowledge_section}"
         "## Current function source\n\n"
         f"```{lang_key}\n{source.strip()}\n```\n\n"
-        "## Current .spec.json (this function's own behavioral specification)\n\n"
-        f"```json\n{json.dumps(spec_block, indent=2, ensure_ascii=False)}\n```\n\n"
+        "## Current [SPEC] block (this function's own behavioral specification)\n\n"
+        f"{spec_block}\n\n"
         f"{info_section}"
         "## Steps\n\n"
-        "1. Decide whether .spec.json still correctly and completely describes the "
+        "1. Decide whether the [SPEC] block still correctly and completely describes the "
         "function's behavior after the intended modification. If it remains correct, no "
         "update is needed.\n"
-        "2. If it must change, produce the COMPLETE replacement .spec.json object, "
-        "with exactly unit, signature, pre_condition, and post_condition, and NO source code.\n"
-        "3. ONLY if you updated .spec.json AND this function has callees: bring "
-        f".info.json into line with this function's CURRENT callees ({callee_hint}). That "
+        "2. If it must change, produce the COMPLETE replacement [SPEC] block — the "
+        "`[SPEC]` ... `[SPEC]` block only, markers included, every line prefixed with "
+        f"`{comment_prefix}`, and NO source code.\n"
+        "3. ONLY if you updated the [SPEC] block AND this function has callees: bring the "
+        f"[INFO] block into line with this function's CURRENT callees ({callee_hint}). That "
         "means: (a) keep entries whose recorded expectation still matches the callee's role, "
         "(b) ADD an entry for any current callee not yet recorded (e.g. one the modification "
         "introduced), (c) DROP entries for callees this function no longer calls, and (d) "
-        "revise any entry whose expected spec must change as a consequence of the new spec. "
-        "If any of (a)-(d) changes the object, produce the COMPLETE replacement .info.json "
-        "object with exactly the callees field and list the names of the callees whose expected "
-        "spec you added or changed.\n"
+        "revise any entry whose expected spec must change as a consequence of the new [SPEC]. "
+        "If any of (a)-(d) changes the block, produce the COMPLETE replacement [INFO] block "
+        f"(the `[INFO]` ... `[INFO]` block only, markers included, lines prefixed with "
+        f"`{comment_prefix}`) and list the names of the callees whose expected spec you added "
+        "or changed.\n"
         "4. Return ONLY a JSON object with keys:\n"
         '   - "spec_updated": boolean.\n'
-        '   - "new_spec": object — the full replacement .spec.json object, or null if not updated.\n'
-        '   - "info_updated": boolean — true when you produced a new/replacement .info.json object.\n'
-        '   - "new_info": object — the full replacement .info.json object, or null if not updated.\n'
+        '   - "new_spec": string — the full replacement [SPEC] block, or "" if not updated.\n'
+        '   - "info_updated": boolean — true when you produced a new/replacement [INFO] block.\n'
+        '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
         '   - "updated_callees": array of callee name strings whose expected spec you added or changed, or [].\n'
         "   Do not include Markdown, tags, or prose outside the JSON object.\n"
     )
+
     return _llm_select_json(
         work_dir,
         prompt_content,
         stage="update_function_spec",
         validator=_validate_spec_update,
         schema_description=(
-            '{"spec_updated": boolean, "new_spec": object|null, "info_updated": boolean, '
-            '"new_info": object|null, "updated_callees": [string]}'
+            '{"spec_updated": boolean, "new_spec": string, "info_updated": boolean, '
+            '"new_info": string, "updated_callees": [string]}'
         ),
         trace_meta={"fqn": fqn, "idx": idx},
     )
+
+
 def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_name,
                                   lang_key, comment_prefix, callee_new_spec,
                                   caller_info_block, caller_source):
@@ -1209,29 +1180,31 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
     knowledge_section = _domain_knowledge_prompt_section(work_dir)
 
     prompt_content = (
-        "# Reconcile a Caller's .info.json with a Changed Callee\n\n"
+        "# Reconcile a Caller's [INFO] Block with a Changed Callee\n\n"
         f"The callee `{callee_name}`'s behavioral specification was just updated. The caller "
         f"`{caller_fqn}` (language `{lang_key}`) records the expected specs of the callees it "
-        "depends on in its .info.json. Update that object so its entry for the callee is "
+        "depends on in its [INFO] block. Update that block so its entry for the callee is "
         "CONSISTENT with the callee's new spec — it need NOT be identical, it only must not "
         "conflict (no contradictory pre/post-conditions). Leave the entries for every other "
         "callee unchanged.\n\n"
+        f"Comment prefix for this language: `{comment_prefix}`.\n\n"
         f"{knowledge_section}"
-        "## Callee's updated .spec.json\n\n"
-        f"```json\n{json.dumps(callee_new_spec, indent=2, ensure_ascii=False)}\n```\n\n"
+        "## Callee's updated [SPEC] block\n\n"
+        f"{callee_new_spec}\n\n"
         "## Caller's current source\n\n"
         f"```{lang_key}\n{caller_source.strip()}\n```\n\n"
-        "## Caller's current .info.json (the expected specs of its callees)\n\n"
-        f"```json\n{json.dumps(caller_info_block, indent=2, ensure_ascii=False)}\n```\n\n"
+        "## Caller's current [INFO] block (the expected specs of its callees)\n\n"
+        f"{caller_info_block}\n\n"
         "## Steps\n\n"
-        f"1. Decide whether the caller's .info.json entry for `{callee_name}` already is consistent "
+        f"1. Decide whether the caller's [INFO] entry for `{callee_name}` already is consistent "
         "with the callee's new spec. If it is, no update is needed.\n"
-        f"2. If it conflicts, produce the COMPLETE replacement .info.json object, "
+        f"2. If it conflicts, produce the COMPLETE replacement [INFO] block (the `[INFO]` ... "
+        f"`[INFO]` block only, markers included, every line prefixed with `{comment_prefix}`), "
         f"adjusting only the `{callee_name}` entry to be consistent and leaving the other "
         "entries as-is.\n"
         "3. Return ONLY a JSON object with keys:\n"
         '   - "info_updated": boolean.\n'
-        '   - "new_info": object — the full replacement .info.json object, or null if not updated.\n'
+        '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
         "   Do not include Markdown, tags, or prose outside the JSON object.\n"
     )
 
@@ -1240,7 +1213,7 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
         prompt_content,
         stage="update_caller_info",
         validator=_validate_caller_info_update,
-        schema_description='{"info_updated": boolean, "new_info": object|null}',
+        schema_description='{"info_updated": boolean, "new_info": string}',
         trace_meta={"caller_fqn": caller_fqn, "callee_name": callee_name, "idx": idx},
     )
 
