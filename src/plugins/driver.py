@@ -36,15 +36,111 @@ from src.plugins.base import (
     AbstractionRequest,
     AnalysisPlugin,
     CallSite,
+    Diagnostic,
     DriverContext,
+    Evidence,
     FactEnvelope,
     FunctionId,
     FunctionUnit,
     ProgramIndex,
     ResolvedCall,
+    SourceSpan,
     Verdict,
 )
 from src.plugins import callgraph
+
+
+# --- facts checkpointing (crash/rate-limit resume) ---------------------------
+# Stage 3 (per-function LLM abstraction) is the long, failure-prone phase: an
+# unstable relay or rate limit can kill the process after hundreds of calls,
+# losing ALL in-memory facts because results are only written in Stage 4. We
+# persist each function's POST-compose FactEnvelope to <work_dir>/facts_cache/
+# as it is produced, and reload it on restart, so a resumed run only re-derives
+# the functions still missing. The cache is plugin-agnostic: the core serializes
+# only envelope-level fields; `payload` is the plugin's own JSON (guaranteed
+# JSON-serializable by the SPI contract).
+
+_FACTS_CACHE_SUBDIR = "facts_cache"
+
+
+def _facts_cache_path(cache_dir: str, unit: FunctionUnit) -> str:
+    return os.path.join(cache_dir, os.path.splitext(unit.id.rel)[0] + ".json")
+
+
+def _span_to_json(span: Optional[SourceSpan]):
+    if span is None:
+        return None
+    return {"path": span.path, "start_line": span.start_line, "end_line": span.end_line}
+
+
+def _span_from_json(d):
+    if not d:
+        return None
+    return SourceSpan(path=d.get("path", ""), start_line=d.get("start_line", 0),
+                      end_line=d.get("end_line", 0))
+
+
+def _serialize_facts(facts: FactEnvelope) -> Dict[str, Any]:
+    fid = facts.function
+    return {
+        "plugin_name": facts.plugin_name,
+        "schema_version": facts.schema_version,
+        "function": {"rel": fid.rel, "name": fid.name,
+                     "base_name": fid.base_name, "language": fid.language},
+        "status": facts.status,
+        "payload": facts.payload,
+        "confidence": facts.confidence,
+        "evidence": [{"kind": e.kind, "message": e.message,
+                      "span": _span_to_json(e.span), "data": e.data}
+                     for e in facts.evidence],
+        "diagnostics": [{"level": d.level, "message": d.message, "data": d.data}
+                        for d in facts.diagnostics],
+        "trace_ids": list(facts.trace_ids),
+    }
+
+
+def _deserialize_facts(d: Dict[str, Any]) -> FactEnvelope:
+    f = d.get("function") or {}
+    fid = FunctionId(rel=f.get("rel", ""), name=f.get("name", ""),
+                     base_name=f.get("base_name", ""), language=f.get("language", ""))
+    return FactEnvelope(
+        plugin_name=d.get("plugin_name", ""),
+        schema_version=d.get("schema_version", ""),
+        function=fid,
+        status=d.get("status", "error"),
+        payload=d.get("payload"),
+        confidence=d.get("confidence", 1.0),
+        evidence=[Evidence(kind=e.get("kind", ""), message=e.get("message", ""),
+                           span=_span_from_json(e.get("span")), data=e.get("data") or {})
+                  for e in (d.get("evidence") or [])],
+        diagnostics=[Diagnostic(level=x.get("level", "info"), message=x.get("message", ""),
+                                data=x.get("data") or {})
+                     for x in (d.get("diagnostics") or [])],
+        trace_ids=list(d.get("trace_ids") or []),
+    )
+
+
+def _write_facts_checkpoint(cache_dir: str, unit: FunctionUnit, facts: FactEnvelope) -> None:
+    """Atomically persist one function's facts so a resumed run can skip it."""
+    path = _facts_cache_path(cache_dir, unit)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fp:
+        json.dump(_serialize_facts(facts), fp, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _load_facts_checkpoint(cache_dir: str, unit: FunctionUnit) -> Optional[FactEnvelope]:
+    """Load a previously-checkpointed FactEnvelope for `unit`, or None if absent
+    or unreadable (a corrupt/partial file is ignored so the unit is re-derived)."""
+    path = _facts_cache_path(cache_dir, unit)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as fp:
+            return _deserialize_facts(json.load(fp))
+    except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError):
+        return None
 
 
 def _model_for(plugin: AnalysisPlugin) -> str:
@@ -224,7 +320,9 @@ def run_plugin(plugin: AnalysisPlugin, proj_dir: str, work_subdir: Optional[str]
     work_dir = os.path.join(proj_dir, work_subdir)
     results_dir = os.path.join(work_dir, results_subdir)
     trace_dir = os.path.join(work_dir, "trace")
+    cache_dir = os.path.join(work_dir, _FACTS_CACHE_SUBDIR)
     os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(cache_dir, exist_ok=True)
 
     if verbose:
         print(f"[{name}] Stage 1/4: scan + extract...")
@@ -243,19 +341,36 @@ def run_plugin(plugin: AnalysisPlugin, proj_dir: str, work_subdir: Optional[str]
     if verbose:
         print(f"[{name}] Stage 3/4: derive + compose (bottom-up)...")
     facts_by_fn: Dict[FunctionId, FactEnvelope] = {}
+    resumed = 0
+    derived = 0
     for unit in ordered:
         ctx = _make_context(program, unit, entrypoints)
-        callee_ctx = _referenced_callee_context(plugin, unit, facts_by_fn, program)
-        request = AbstractionRequest(
-            function=unit, context=ctx, callee_context=callee_ctx,
-            trace_dir=trace_dir,
-            trace_meta={"function_id": unit.id.rel, "language": unit.id.language},
-        )
-        facts = _call_llm_with_retries(plugin, request, model, max_iter)
+        # Checkpoint stores ONLY the pre-compose abstraction (the sole expensive,
+        # rate-limit-prone LLM step). Composition is deterministic and cheap, so
+        # it is ALWAYS re-run below over the current facts_by_fn — this keeps the
+        # cache independent of call-graph/compose changes and lets a resumed run
+        # rebuild composition consistently from callees that may also be cached.
+        facts = _load_facts_checkpoint(cache_dir, unit)
+        if facts is not None:
+            resumed += 1
+        else:
+            callee_ctx = _referenced_callee_context(plugin, unit, facts_by_fn, program)
+            request = AbstractionRequest(
+                function=unit, context=ctx, callee_context=callee_ctx,
+                trace_dir=trace_dir,
+                trace_meta={"function_id": unit.id.rel, "language": unit.id.language},
+            )
+            facts = _call_llm_with_retries(plugin, request, model, max_iter)
+            # Persist the raw abstraction immediately, BEFORE compose, so a crash
+            # or rate-limit after this point never loses the LLM work.
+            _write_facts_checkpoint(cache_dir, unit, facts)
+            derived += 1
         resolved = _resolved_calls(unit, facts_by_fn, program)
         if resolved:
             facts = plugin.compose_calls(facts, resolved, ctx)
         facts_by_fn[unit.id] = facts
+    if verbose and resumed:
+        print(f"[{name}]   resumed {resumed} cached, derived {derived} new")
 
     propagated: Dict[FunctionId, Sequence[Any]] = {}
     if plugin.metadata.requires_top_down_context:
