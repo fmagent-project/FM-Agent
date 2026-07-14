@@ -6,6 +6,7 @@ from pathlib import Path
 from collections import defaultdict
 
 from src.extract import EXT_TO_LANG, LANG_CONFIG
+from src.file_utils import _is_metadata_sidecar
 from src.languages.registry import call_edges_all
 
 
@@ -50,7 +51,7 @@ def _collect_phase_files(proj_dir, phase_data):
 
             for fname in os.listdir(func_dir):
                 fpath = os.path.join(func_dir, fname)
-                if os.path.isfile(fpath):
+                if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
                     results.append((fpath, module_name))
 
     return results
