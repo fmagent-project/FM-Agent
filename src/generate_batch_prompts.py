@@ -2,8 +2,9 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
 try:
@@ -137,10 +138,12 @@ def extract_info_block(filepath: Path) -> Optional[dict]:
 
 
 def extract_callee_spec_from_info(
-    info_dict: dict, callee_fqn: str
+    info_dict: dict,
+    callee_fqn: str,
+    aliases: Optional[Sequence[str]] = None,
 ) -> Optional[dict]:
-    """Return the callee object matching the requested function name."""
-    callee_stem = callee_fqn.split("::")[-1]
+    """Return the callee object matching the requested FQN or edge aliases."""
+    names = _callee_match_names(callee_fqn, aliases or ())
     callees = info_dict.get("callees", [])
     if not isinstance(callees, list):
         return None
@@ -151,9 +154,28 @@ def extract_callee_spec_from_info(
         name = callee.get("name", "")
         if not isinstance(name, str):
             continue
-        if callee_fqn in name or callee_stem == name:
+        if any(_info_line_mentions_name(name, candidate) for candidate in names):
             return callee
     return None
+
+
+def _callee_match_names(callee_fqn: str, aliases: Sequence[str]) -> List[str]:
+    names = [callee_fqn, callee_fqn.split("::")[-1]]
+    for alias in aliases:
+        if not alias:
+            continue
+        names.append(alias)
+        if "::" in alias:
+            names.append(alias.rsplit("::", 1)[-1])
+    return list(dict.fromkeys(names))
+
+
+def _info_line_mentions_name(first_line: str, name: str) -> bool:
+    if not name:
+        return False
+    if "::" in name:
+        return name in first_line
+    return bool(re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?:\s*\(|\b)", first_line))
 
 
 def chunked(items: List[dict], size: int) -> List[List[dict]]:
@@ -174,6 +196,16 @@ def phase_callers_key(func: dict, phase: int) -> str:
         if key.endswith("_callers") and key.startswith("phase"):
             return key
     return target
+
+
+def phase_callee_info_names_key(func: dict, phase: int) -> Optional[str]:
+    target = f"phase{phase}_callee_info_names_by_caller"
+    if target in func:
+        return target
+    for key in func.keys():
+        if key.endswith("_callee_info_names_by_caller") and key.startswith("phase"):
+            return key
+    return None
 
 
 def detect_lang_and_comment(file_rel: str, ext_to_lang: Dict[str, str]) -> Tuple[str, str]:
@@ -230,6 +262,8 @@ def build_prompt(
     for fn in functions:
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
+        info_names_key = phase_callee_info_names_key(fn, phase)
+        info_names_by_caller = fn.get(info_names_key, {}) if info_names_key else {}
         callers = fn.get(caller_key, [])
         for caller_name in callers:
             caller_layer = func_to_layer.get(caller_name)
@@ -245,7 +279,9 @@ def build_prompt(
             info_dict = extract_info_block(caller_file)
             if not info_dict:
                 continue
-            entry = extract_callee_spec_from_info(info_dict, fn_name)
+            entry = extract_callee_spec_from_info(
+                info_dict, fn_name, info_names_by_caller.get(caller_name, [])
+            )
             if entry:
                 entry_text = (
                     f"{entry.get('signature', '')}\n"
