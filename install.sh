@@ -145,12 +145,46 @@ else
     bunx oh-my-openagent install --no-tui --claude=no --gemini=no --copilot=no
 fi
 
-# ---------- codegraph ----------
-if command -v codegraph &>/dev/null; then
-    echo "[ok] codegraph found: $(codegraph --version 2>/dev/null || echo 'unknown version')"
+# ---------- codegraph (pinned to fmagent fork) ----------
+# Pin to our maintenance fork's fixed build: the latest upstream release still
+# has a C extraction bug (a macro attribute + typedef'd return type on a no-arg
+# function is indexed under its parameter list `(VOID)` instead of its name), so
+# tracking upstream `latest` silently drops functions. The fork ships a
+# self-contained prebuilt bundle (no Node/build). Change CODEGRAPH_VERSION to switch.
+CODEGRAPH_REPO="fmagent-project/codegraph"
+CODEGRAPH_VERSION="v1.3.0-fmagent.1"                 # <- switch: bump this one line
+codegraph_want="${CODEGRAPH_VERSION#v}"
+if codegraph --version 2>/dev/null | grep -qx "$codegraph_want"; then
+    echo "[ok] codegraph $codegraph_want already installed"
 else
-    echo "[..] installing codegraph"
-    bun install -g @colbymchenry/codegraph
+    echo "[..] installing codegraph $CODEGRAPH_VERSION from $CODEGRAPH_REPO"
+    curl -fsSL "https://raw.githubusercontent.com/$CODEGRAPH_REPO/main/install.sh" \
+      | CODEGRAPH_VERSION="$CODEGRAPH_VERSION" sh
+    command -v codegraph &>/dev/null || { echo "[!!] codegraph install failed"; exit 1; }
+    # If a different codegraph still wins on PATH, tell the user exactly how to
+    # remove it. We never uninstall global software ourselves.
+    if ! codegraph --version 2>/dev/null | grep -qx "$codegraph_want"; then
+        codegraph_now="$(command -v codegraph 2>/dev/null || true)"
+        codegraph_ver="$(codegraph --version 2>/dev/null || echo none)"
+        echo ""
+        echo "=================================================================="
+        echo "  [!!] ACTION REQUIRED - a different codegraph is shadowing ours"
+        echo ""
+        echo "    want : $codegraph_want  (fmagent fork, fixes C name loss)"
+        echo "    found: $codegraph_ver  ->  ${codegraph_now:-<not found>}"
+        echo ""
+        echo "    FM-Agent will silently lose functions until you remove it."
+        echo "    Run the matching command, then re-run ./install.sh :"
+        if command -v bun &>/dev/null && bun pm ls -g 2>/dev/null | grep -q '@colbymchenry/codegraph'; then
+            echo "      bun rm -g @colbymchenry/codegraph"
+        elif command -v npm &>/dev/null && npm ls -g @colbymchenry/codegraph >/dev/null 2>&1; then
+            echo "      npm rm -g @colbymchenry/codegraph"
+        elif [ -n "$codegraph_now" ]; then
+            echo "      rm -f \"$codegraph_now\"     # remove the shadowing launcher"
+        fi
+        echo "=================================================================="
+        echo ""
+    fi
 fi
 
 version_ge() {
