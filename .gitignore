@@ -240,3 +240,6 @@ docs/superpowers/
 .codegraph/
 CLAUDE.md
 AGENTS.md
+
+# Nested independent benchmark repo (has its own remote; not part of this repo)
+SecureBench/
