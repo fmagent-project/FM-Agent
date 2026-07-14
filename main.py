@@ -4,6 +4,7 @@ from config import (
     OPENCODE_SPEC_MODEL,
 )
 from src.entry_reasoning_pipeline import run_entry_pipeline
+from src.call_graph_edges import load_call_edges
 from src.file_utils import (
     collect_file_names,
     is_file_ready,
@@ -182,6 +183,7 @@ def run_pipeline(
     domain_knowledge_files=None,
     submodules=None,
     one_phase=False,
+    extra_call_edges_path=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -196,6 +198,7 @@ def run_pipeline(
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    extra_call_edges = load_call_edges(extra_call_edges_path)
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -277,7 +280,7 @@ def run_pipeline(
 
     # --- Stage 3: Generate topdown layers ---
     print("[Pipeline] Stage 3/4: Generating topdown layers...")
-    generate_topdown_layers(work_dir)
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
 
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
     print("[Pipeline] Stage 4/4: Generating specs & verification...")
@@ -303,7 +306,7 @@ def run_pipeline(
             spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
         )
         if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num])
+            generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
         total_layers = layers_data.get("total_layers", 1)
@@ -472,7 +475,7 @@ if __name__ == "__main__":
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
-              "[--end-func PATH ...]",
+              "[--end-func PATH ...] [--extra-edge FILE]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -533,10 +536,21 @@ if __name__ == "__main__":
         help="one or more function paths at which to stop (space-separated list); "
         "if omitted, the whole call graph reachable from --entry-func is analyzed.",
     )
+    parser.add_argument(
+        "--extra-edge",
+        dest="extra_edge",
+        metavar="FILE",
+        default=None,
+        help="optional JSON file, or directory of JSON files, containing "
+        "supplemental caller->callee edges.",
+    )
     args = parser.parse_args()
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
+    extra_call_edges_path = args.extra_edge
+    if extra_call_edges_path:
+        extra_call_edges_path = os.path.abspath(extra_call_edges_path)
     try:
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
@@ -573,6 +587,7 @@ if __name__ == "__main__":
             resume=resume,
             domain_knowledge_files=domain_knowledge_files,
             one_phase=args.one_phase,
+            extra_call_edges_path=extra_call_edges_path,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -630,6 +645,7 @@ if __name__ == "__main__":
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
                     one_phase=args.one_phase,
+                    extra_call_edges_path=extra_call_edges_path,
                 )
             else:
                 run_pipeline(
@@ -638,6 +654,7 @@ if __name__ == "__main__":
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
                     one_phase=args.one_phase,
+                    extra_call_edges_path=extra_call_edges_path,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
