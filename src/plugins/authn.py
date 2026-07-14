@@ -156,6 +156,26 @@ class AuthnPlugin(AnalysisPlugin):
         merged = tuple(dict_from_frozen(x) for x in (incoming + established))
         return tuple(_freeze(c) for c in merged) if merged else None
 
+    def merge_contexts(self, old, new):
+        """Join top-down contexts as a SINGLE unioned atom-set.
+
+        The verdict only depends on the UNION of distinct auth-context atoms
+        reaching a function (check() flattens+unions them). The base default
+        dedups whole path-tuples by repr, so on a dense graph a node accumulates
+        combinatorially many distinct ordered tuples and the worklist never
+        reaches a fixpoint (a 9.5h hang was observed for the sibling authz
+        plugin at 272 entrypoints). Collapsing to one set of atoms bounds each
+        node by the finite universe of auth atoms, so the fixpoint is reached
+        quickly — and is verdict-identical.
+        """
+        atoms = set()
+        for entry in list(old) + list(new):
+            for atom in entry:  # entry is a tuple of frozen atom-tuples
+                atoms.add(atom)
+        # Sort by repr: atom values may be None, so a direct sort would raise
+        # TypeError comparing None to str. repr is deterministic + None-safe.
+        return [tuple(sorted(atoms, key=repr))] if atoms else []
+
     # -- checker ---------------------------------------------------------------
 
     def check(
