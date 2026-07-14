@@ -40,6 +40,7 @@ def canonicalize(func_name):
             return func_name.translate(_SAFE_REPLACE)
     return func_name
 
+
 def _qualified_parts(name: str, qualified_name: str) -> list:
     """Split codegraph's ``qualified_name`` into ``[*scope_parts, name]``.
 
