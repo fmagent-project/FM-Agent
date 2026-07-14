@@ -162,7 +162,7 @@ def extract_callee_spec_from_info(
                 break
 
     split_tag = f"{prefix} [SPLIT]" if prefix else "[SPLIT]"
-    exact_names = [callee_fqn, *(aliases or ())]
+    exact_names = {callee_fqn, *(aliases or ())}
     callee_stem = callee_fqn.split("::")[-1]
     for entry in info_block.split(split_tag):
         entry = entry.strip()
@@ -172,9 +172,14 @@ def extract_callee_spec_from_info(
         # Strip the comment prefix to get the actual content
         if prefix and first_line.startswith(prefix):
             first_line = first_line[len(prefix):].strip()
-        if any(_info_line_mentions_name(first_line, name) for name in exact_names):
+        match = re.match(r"^(?P<label>[^\s(]+)\s*\(", first_line)
+        if not match:
+            continue
+        called_label = match.group("label")
+        if called_label in exact_names:
             return entry
-        if not re.match(rf"^{re.escape(callee_stem)}\s*\(", first_line):
+        called_stem = re.split(r"::|->|\.", called_label)[-1]
+        if called_stem != callee_stem:
             continue
         if candidate_callee_fqns is not None:
             same_stem = {
@@ -185,17 +190,6 @@ def extract_callee_spec_from_info(
                 continue
         return entry
     return None
-
-
-def _info_line_mentions_name(first_line: str, name: str) -> bool:
-    if not name:
-        return False
-    return bool(
-        re.search(
-            rf"(?<![A-Za-z0-9_:]){re.escape(name)}\s*\(",
-            first_line,
-        )
-    )
 
 
 def chunked(items: List[dict], size: int) -> List[List[dict]]:

@@ -18,8 +18,12 @@ from src.file_utils import (
 )
 from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
-from src.generate_topdown_layers import generate_topdown_layers
-from src.generate_batch_prompts import load_global_call_graph
+from src.generate_topdown_layers import generate_topdown_layers, _tarjan_scc
+from src.generate_batch_prompts import (
+    extract_info_block,
+    extract_spec_block,
+    load_global_call_graph,
+)
 from src.opencode_trace import (
     function_id_from_extracted_path,
     run_opencode_traced,
@@ -52,6 +56,9 @@ import logging
 import contextlib
 import concurrent.futures
 from pathlib import Path
+
+
+_CONTRACT_RECONCILIATION_MAX_ROUNDS = 3
 
 
 def _clean_previous_run(work_dir):
@@ -129,60 +136,175 @@ def _contract_reconciliation_targets(global_graph):
     return targets
 
 
-def _run_contract_reconciliation(proj_dir, work_dir, targets):
-    """Regenerate deferred specs after every caller contract is available."""
-    for (phase_num, layer_idx), function_fqns in sorted(targets.items()):
-        output_dir = os.path.join(
-            work_dir,
-            "spec_prompts",
-            f"reconciliation_phase{phase_num:02d}_layer{layer_idx}",
+def _contract_reconciliation_schedule(global_graph, targets):
+    """Return affected SCCs in caller-before-callee order."""
+    affected = {
+        fqn
+        for function_fqns in targets.values()
+        for fqn in function_fqns
+    }
+    pending = list(affected)
+    while pending:
+        caller_fqn = pending.pop()
+        for callee_fqn in global_graph["callees"][caller_fqn]:
+            if callee_fqn not in affected:
+                affected.add(callee_fqn)
+                pending.append(callee_fqn)
+
+    edges = {
+        fqn: set(global_graph["callees"][fqn]) & affected
+        for fqn in affected
+    }
+    components = _tarjan_scc(affected, edges)
+    component_by_fqn = {
+        fqn: idx
+        for idx, component in enumerate(components)
+        for fqn in component
+    }
+    successors = {idx: set() for idx in range(len(components))}
+    indegree = {idx: 0 for idx in range(len(components))}
+    for caller_fqn, callee_fqns in edges.items():
+        caller_idx = component_by_fqn[caller_fqn]
+        for callee_fqn in callee_fqns:
+            callee_idx = component_by_fqn[callee_fqn]
+            if caller_idx == callee_idx or callee_idx in successors[caller_idx]:
+                continue
+            successors[caller_idx].add(callee_idx)
+            indegree[callee_idx] += 1
+
+    component_key = lambda idx: tuple(sorted(components[idx]))
+    ready = sorted(
+        (idx for idx, degree in indegree.items() if degree == 0),
+        key=component_key,
+    )
+    schedule = []
+    while ready:
+        wave = ready
+        grouped = {}
+        wave_entries = []
+        for idx in wave:
+            component = tuple(sorted(components[idx]))
+            is_cycle = len(component) > 1 or any(
+                fqn in edges[fqn] for fqn in component
+            )
+            if is_cycle:
+                wave_entries.append((component, True))
+                continue
+            meta = global_graph["functions"][component[0]]
+            key = (meta["phase"], meta["layer"])
+            grouped.setdefault(key, []).extend(component)
+        wave_entries.extend(
+            (tuple(sorted(function_fqns)), False)
+            for function_fqns in grouped.values()
         )
-        command = [
-            "python3",
-            "fm_agent/spec_prompts/generate_batch_prompts.py",
-            "--phase", str(phase_num),
-            "--layers", str(layer_idx),
-            "--output-dir", output_dir,
-            "--require-all-callers",
-            "--functions", *sorted(function_fqns),
-        ]
-        subprocess.run(command, cwd=proj_dir, check=True)
+        schedule.extend(sorted(wave_entries, key=lambda item: item[0]))
 
-        manifest_path = os.path.join(output_dir, "manifest.json")
-        with open(manifest_path, "r") as f:
-            pending_batches = json.load(f).get("batches", [])
-        batch_rel_dir = os.path.relpath(output_dir, proj_dir)
+        ready = []
+        for idx in wave:
+            for successor in successors[idx]:
+                indegree[successor] -= 1
+                if indegree[successor] == 0:
+                    ready.append(successor)
+        ready.sort(key=component_key)
+    return schedule
 
-        for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
-            failed_batches = []
-            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                futures = {
-                    executor.submit(
-                        _run_spec_generation_batch,
-                        proj_dir,
-                        work_dir,
-                        attempt,
-                        phase_num,
-                        layer_idx,
-                        batch_rel_dir,
-                        batch_info,
-                        True,
-                    ): batch_info
-                    for batch_info in pending_batches
-                }
-                for future, batch_info in futures.items():
-                    try:
-                        if future.result() != 0:
-                            failed_batches.append(batch_info)
-                    except Exception as exc:
-                        logging.error(f"Contract reconciliation task failed: {exc}")
+
+def _run_contract_reconciliation_group(
+    proj_dir, work_dir, global_graph, function_fqns
+):
+    """Regenerate independent specs from one phase and layer."""
+    function_fqns = tuple(sorted(function_fqns))
+    meta = global_graph["functions"][function_fqns[0]]
+    phase_num = meta["phase"]
+    layer_idx = meta["layer"]
+    output_dir = os.path.join(
+        work_dir,
+        "spec_prompts",
+        f"reconciliation_phase{phase_num:02d}_layer{layer_idx}",
+    )
+    command = [
+        "python3",
+        "fm_agent/spec_prompts/generate_batch_prompts.py",
+        "--phase", str(phase_num),
+        "--layers", str(layer_idx),
+        "--output-dir", output_dir,
+        "--require-all-callers",
+        "--functions", *function_fqns,
+    ]
+    subprocess.run(command, cwd=proj_dir, check=True)
+
+    manifest_path = os.path.join(output_dir, "manifest.json")
+    with open(manifest_path, "r") as f:
+        pending_batches = json.load(f).get("batches", [])
+    batch_rel_dir = os.path.relpath(output_dir, proj_dir)
+
+    for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
+        failed_batches = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(
+                    _run_spec_generation_batch,
+                    proj_dir,
+                    work_dir,
+                    attempt,
+                    phase_num,
+                    layer_idx,
+                    batch_rel_dir,
+                    batch_info,
+                    True,
+                ): batch_info
+                for batch_info in pending_batches
+            }
+            for future, batch_info in futures.items():
+                try:
+                    if future.result() != 0:
                         failed_batches.append(batch_info)
-            if not failed_batches:
+                except Exception as exc:
+                    logging.error(f"Contract reconciliation task failed: {exc}")
+                    failed_batches.append(batch_info)
+        if not failed_batches:
+            return
+        pending_batches = failed_batches
+    raise RuntimeError(
+        f"Contract reconciliation failed for phase {phase_num}, layer {layer_idx}"
+    )
+
+
+def _contract_snapshot(work_dir, global_graph, function_fqns):
+    snapshot = {}
+    for fqn in function_fqns:
+        path = Path(work_dir) / global_graph["functions"][fqn]["file"]
+        snapshot[fqn] = (
+            extract_spec_block(path),
+            extract_info_block(path),
+        )
+    return snapshot
+
+
+def _run_contract_reconciliation(proj_dir, work_dir, global_graph, schedule):
+    """Regenerate affected specs in caller-first order, converging cycles."""
+    for function_fqns, is_cycle in schedule:
+        rounds = _CONTRACT_RECONCILIATION_MAX_ROUNDS if is_cycle else 1
+        for _round in range(rounds):
+            before = _contract_snapshot(work_dir, global_graph, function_fqns)
+            if is_cycle:
+                for fqn in function_fqns:
+                    _run_contract_reconciliation_group(
+                        proj_dir, work_dir, global_graph, (fqn,)
+                    )
+            else:
+                _run_contract_reconciliation_group(
+                    proj_dir, work_dir, global_graph, function_fqns
+                )
+            if not is_cycle:
                 break
-            pending_batches = failed_batches
+            after = _contract_snapshot(work_dir, global_graph, function_fqns)
+            if after == before:
+                break
         else:
+            names = ", ".join(function_fqns)
             raise RuntimeError(
-                f"Contract reconciliation failed for phase {phase_num}, layer {layer_idx}"
+                f"Contract reconciliation did not converge for cycle: {names}"
             )
 
 
@@ -371,9 +493,12 @@ def run_pipeline(
     generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
     global_call_graph = load_global_call_graph(Path(work_dir))
     reconciliation_targets = _contract_reconciliation_targets(global_call_graph)
+    reconciliation_schedule = _contract_reconciliation_schedule(
+        global_call_graph, reconciliation_targets
+    )
     deferred_verification_files = {
         os.path.abspath(os.path.join(work_dir, global_call_graph["functions"][fqn]["file"]))
-        for function_fqns in reconciliation_targets.values()
+        for function_fqns, _is_cycle in reconciliation_schedule
         for fqn in function_fqns
     }
 
@@ -563,14 +688,14 @@ def run_pipeline(
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
 
-    if reconciliation_targets:
-        target_count = sum(len(fqns) for fqns in reconciliation_targets.values())
+    if reconciliation_schedule:
+        target_count = sum(len(fqns) for fqns, _is_cycle in reconciliation_schedule)
         print(
             f"[Pipeline] Reconciling {target_count} function spec(s) "
             "with deferred caller contracts..."
         )
         _run_contract_reconciliation(
-            proj_dir, work_dir, reconciliation_targets
+            proj_dir, work_dir, global_call_graph, reconciliation_schedule
         )
         deferred_rel_files = sorted(
             os.path.relpath(path, input_dir)
