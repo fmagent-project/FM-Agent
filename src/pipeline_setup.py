@@ -585,20 +585,14 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
     )
 
 
-def _setup_outputs_complete(work_dir):
-    """Return True only if the setup stages produced ALL their output files.
+def _phase_plan_complete(work_dir):
+    """Return True only if phases.json exists and is valid JSON."""
+    phases_path = os.path.join(work_dir, "phases.json")
+    return _json_file_is_valid(phases_path)
 
-    Stage 1 (generate phase.json) is responsible for writing phases.json.
-    Stage 2 (generate domain context) is responsible for writing, per
-    md/workflow_generate_domain_context.md:
-      1. spec_prompts/domain_context/engine_overview.txt
-      2. spec_prompts/domain_context/phase_NN_types.txt — one per phase
 
-    An interrupted run can leave phases.json behind without the domain-context
-    files, which are later read by the spec-generation batch prompts. Resuming
-    must only skip setup when every one of these exists, otherwise the missing
-    files have to be regenerated.
-    """
+def _domain_context_complete(work_dir):
+    """Return True only if all domain context files exist and match the phases in phases.json."""
     phases_path = os.path.join(work_dir, "phases.json")
     if not _json_file_is_valid(phases_path):
         return False
@@ -622,6 +616,11 @@ def _setup_outputs_complete(work_dir):
             return False
 
     return True
+
+
+def _setup_outputs_complete(work_dir):
+    """Return True when both phase plan and domain context are complete."""
+    return _phase_plan_complete(work_dir) and _domain_context_complete(work_dir)
 
 
 def _collect_project_source_files(proj_dir, submodules=None):
@@ -768,7 +767,7 @@ def _ensure_source_files_in_phases(phases_json, required_source_files):
     }
 
 
-def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
+def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
     """Copy a workflow markdown into ``work_dir`` and rewrite the
     ``source_files`` instruction so it points at the concrete project root,
     telling the agent to record paths relative to it (and not prefixed with the
@@ -811,11 +810,11 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
     phases_json = os.path.join(work_dir, "phases.json")
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
 
-    _resume_skip = resume and _json_file_is_valid(phases_json)
+    _resume_skip = resume and _phase_plan_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
-    _prepare_setup_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
+    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -951,11 +950,11 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
     """Stage 2: generate domain context — input phases.json, output domain context
     files for each phase.
     """
-    _resume_skip = resume and _setup_outputs_complete(work_dir)
+    _resume_skip = resume and _domain_context_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 2/6: RESUME — domain context files found, skipping domain context generation.")
 
-    _prepare_setup_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
+    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -1008,7 +1007,7 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        if _setup_outputs_complete(work_dir):
+        if _domain_context_complete(work_dir):
             break
 
         if attempt < OPENCODE_MAX_RETRIES:
