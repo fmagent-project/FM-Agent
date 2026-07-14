@@ -176,21 +176,17 @@ def _has_terminating_statement(block, language):
     return re.search(pattern, block) is not None
 
 
-def _parse_spec_conditions(spec):
-    pre_match = re.search(r'Pre-condition:\s*\n(.*?)(?=\nPost-condition:|\Z)', spec, re.DOTALL)
-    post_match = re.search(r'Post-condition:\s*\n(.*)', spec, re.DOTALL)
-    pre = pre_match.group(1).strip() if pre_match else None
-    post = post_match.group(1).strip() if post_match else None
-    return pre, post
+def _condition_text(conditions):
+    """Render a validated condition array deterministically for LLM prompts."""
+    return "\n".join(f"- {condition}" for condition in conditions) or "- (none)"
 
 
 def reasoner(func, spec, info, language, trace_context=None):
     trace_context = trace_context or {}
     trace_dir = trace_context.get("trace_dir")
-    # Step 1: Parse pre-condition and post-condition directly from spec
-    pre_condition, spec_post_condition = _parse_spec_conditions(spec)
-    if not pre_condition or not spec_post_condition:
-        return "Failed to parse pre/post conditions from the spec."
+    # Step 1: Render validated structured conditions at the prompt boundary.
+    pre_condition = _condition_text(spec["preconditions"])
+    spec_post_condition = _condition_text(spec["postconditions"])
 
     # Step 2: Split function into code blocks (each >= GRANULARITY lines)
     blocks = _split_into_blocks_braced(func, language)

@@ -96,9 +96,24 @@ def _parse_spec_check_json(response):
     return False, None, None, data
 
 
+def _knowledge_text(knowledge):
+    """Serialize structured callee/domain context deterministically for prompts."""
+    if not knowledge:
+        return ""
+    if not knowledge.get("callees") and not knowledge.get("domain_knowledge"):
+        return ""
+    return json.dumps(
+        knowledge,
+        indent=2,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
 def _generate_block_post_condition(block, pre_condition, knowledge, language,
                                    trace_dir=None, trace_meta=None):
-    info_str = f"\nAdditional context:\n{knowledge}" if knowledge else ""
+    knowledge_text = _knowledge_text(knowledge)
+    info_str = f"\nAdditional context:\n{knowledge_text}" if knowledge_text else ""
     messages = [
         {"role": "system", "content": (
             f"You are an expert in formal verification of {language} programs. "
@@ -249,7 +264,8 @@ _LANGUAGE_EXPERTISE = {
 
 def _check_post_implies_spec(block, post_condition, spec_post_condition, knowledge, language,
                              trace_dir=None, trace_meta=None):
-    info_str = f"\nAdditional context:\n{knowledge}" if knowledge else ""
+    knowledge_text = _knowledge_text(knowledge)
+    info_str = f"\nAdditional context:\n{knowledge_text}" if knowledge_text else ""
     lang_expertise = _LANGUAGE_EXPERTISE.get(language.lower(), f"You are an expert in logic, formal verification, and {language} programming. ")
     messages = [
         {"role": "system", "content": (
