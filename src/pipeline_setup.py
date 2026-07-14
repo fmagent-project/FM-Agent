@@ -1,8 +1,8 @@
-"""Stage 1 of the pipeline: understand the codebase and produce the phase plan.
+"""Stage 1 & 2 of the pipeline: generate the phase plan and domain context.
 
-This module owns everything that runs the setup_context agent and post-processes
-its output — building `phases.json`, deduplicating source files across phases,
-and keeping the generated `spec_prompts/domain_context/` files in sync with it.
+This module owns everything that runs the generate-phases and generate-domain-context
+agents and post-processes their output — building `phases.json`, deduplicating source
+files across phases, and generating the `spec_prompts/domain_context/` files.
 It is imported by `main.py` (the full pipeline) and by `src/incremental_reasoner`.
 """
 
@@ -586,13 +586,13 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
 
 
 def _setup_outputs_complete(work_dir):
-    """Return True only if the setup_context stage produced ALL its output files.
+    """Return True only if the setup stages produced ALL their output files.
 
-    The setup stage (Stage 1) is responsible for writing, per
-    md/workflow_setup_extract.md:
-      1. phases.json
-      2. spec_prompts/domain_context/engine_overview.txt
-      3. spec_prompts/domain_context/phase_NN_types.txt — one per phase
+    Stage 1 (generate phase.json) is responsible for writing phases.json.
+    Stage 2 (generate domain context) is responsible for writing, per
+    md/workflow_generate_domain_context.md:
+      1. spec_prompts/domain_context/engine_overview.txt
+      2. spec_prompts/domain_context/phase_NN_types.txt — one per phase
 
     An interrupted run can leave phases.json behind without the domain-context
     files, which are later read by the spec-generation batch prompts. Resuming
@@ -616,9 +616,6 @@ def _setup_outputs_complete(work_dir):
     for phase in phases_data.get("phases", []):
         phase_num = phase.get("phase")
         if phase_num is None:
-            # Malformed phases.json — can't verify this phase's types file, and
-            # downstream stages require p["phase"]. Re-run setup rather than
-            # claim completeness.
             return False
         types_path = os.path.join(domain_dir, f"phase_{phase_num:02d}_types.txt")
         if not os.path.exists(types_path):
@@ -700,7 +697,7 @@ def _filter_phases_to_submodules(phases_json, submodules):
 def _ensure_source_files_in_phases(phases_json, required_source_files):
     """Force-list ``required_source_files`` in phases.json if the agent omitted them.
 
-    The Stage 1 setup agent decides which source files go into phases.json and may
+    The Stage 1 (generate phase.json) agent decides which source files go into phases.json and may
     leave out files that look like tests. When a caller (e.g. the entry pipeline)
     must have a specific file processed regardless, this appends any missing ones
     to the first module of the earliest phase and records them in that module's
@@ -771,14 +768,14 @@ def _ensure_source_files_in_phases(phases_json, required_source_files):
     }
 
 
-def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir):
-    """Copy the setup workflow markdown into ``work_dir`` and rewrite the
+def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
+    """Copy a workflow markdown into ``work_dir`` and rewrite the
     ``source_files`` instruction so it points at the concrete project root,
     telling the agent to record paths relative to it (and not prefixed with the
     project directory name).
     """
-    workflow_src = os.path.join(script_dir, "md", "workflow_setup_extract.md")
-    workflow_dst = os.path.join(work_dir, "workflow_setup_extract.md")
+    workflow_src = os.path.join(script_dir, "md", workflow_filename)
+    workflow_dst = os.path.join(work_dir, workflow_filename)
     shutil.copy2(workflow_src, workflow_dst)
     proj_dir_abs = os.path.abspath(proj_dir)
     proj_dir_name = os.path.basename(proj_dir_abs)
@@ -808,24 +805,17 @@ def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir):
         _f.write(md)
 
 
-def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
-                       resume=False, required_source_files=None,
-                       submodules=None):
-    """Stage 1: prepare the setup workflow file and run opencode (with retries) to produce phases.json.
+def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
+                         resume=False, submodules=None):
+    """Stage 1: generate phase.json — input target code, output phases.json."""
+    phases_json = os.path.join(work_dir, "phases.json")
+    prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
 
-    ``required_source_files`` are paths the caller must have processed regardless
-    of the agent's choices; any the agent omitted are force-listed into phases.json
-    once the plan is otherwise finalized (see ``_ensure_source_files_in_phases``).
-    ``submodules`` optionally limits the full pipeline to selected project-relative
-    subdirectories.
-    """
-    # On resume, reuse the existing phase plan instead of paying for the
-    # setup_context LLM call again.
-    _resume_skip_setup = resume and _setup_outputs_complete(work_dir)
-    if _resume_skip_setup:
-        print("[Pipeline] Stage 1/4: RESUME — all setup outputs found, skipping setup_context (reusing phase plan).")
+    _resume_skip = resume and _json_file_is_valid(phases_json)
+    if _resume_skip:
+        print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
-    _prepare_setup_workflow_file(proj_dir, work_dir, script_dir)
+    _prepare_setup_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -846,29 +836,20 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
             "subdirectories in phases.json."
         )
 
-    phases_json = os.path.join(work_dir, "phases.json")
-    prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
-
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
-        if _resume_skip_setup:
+        if _resume_skip:
             break
         if attempt == 1 and not resume:
             prompt = f"Follow the instructions in the attached file. {fm_reminder} {submodule_reminder}"
         else:
-            # Either resuming a previously interrupted run or retrying after a
-            # failed attempt — in both cases some setup outputs may already
-            # exist (e.g. phases.json or part of the domain-context files). Have
-            # the agent inspect what's there and only fill the gaps instead of
-            # regenerating everything and overwriting valid work.
-            prompt = ("A previous setup attempt was interrupted and may have already produced some of the "
+            prompt = ("A previous attempt was interrupted and may have already produced some of the "
                       "required output files. Follow the instructions in the attached file, but FIRST "
-                      "check the current progress in fm_agent/ (e.g. phases.json and the "
-                      "spec_prompts/domain_context/ files). Keep any existing valid output as-is and only "
-                      "generate the files that are missing or incomplete — do NOT regenerate or overwrite "
-                      f"work that is already done. {fm_reminder} {submodule_reminder}")
+                      "check the current progress in fm_agent/ (e.g. phases.json). Keep any existing valid "
+                      "output as-is and only generate the files that are missing or incomplete — do NOT "
+                      f"regenerate or overwrite work that is already done. {fm_reminder} {submodule_reminder}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
-        prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md")
+        prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_generate_phases.md")
         if is_cli_backend_enabled():
             command = build_agent_command(
                 model=OPENCODE_SETUP_MODEL,
@@ -884,26 +865,20 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                 proj_dir=proj_dir,
                 work_dir=work_dir,
                 command=command,
-                stage="setup_context",
+                stage="generate_phases_json",
                 input_files=[
-                    "fm_agent/workflow_setup_extract.md",
+                    "fm_agent/workflow_generate_phases.md",
                     *list_staged_domain_knowledge_relpaths(work_dir),
                 ],
                 output_files=[
                     "fm_agent/phases.json",
-                    "fm_agent/spec_prompts/domain_context/engine_overview.txt",
                 ],
-                summary=f"OpenCode setup context attempt {attempt}",
+                summary=f"OpenCode generate phases.json attempt {attempt}",
                 metadata={"attempt": attempt},
             )
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 1 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        # Validate that the agent produced the complete setup output set. In
-        # incremental mode phases.json already exists; it may legitimately remain
-        # byte-for-byte unchanged for same-file edits, so accept it when it still
-        # covers the current source files, but only if the domain-context files
-        # required by later spec prompts are present too.
         if os.path.exists(phases_json):
             if submodules:
                 phase_plan_ready = _phases_cover_current_sources(
@@ -915,15 +890,15 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                     or _phases_cover_current_sources(phases_json, proj_dir)
                 )
             else:
-                phase_plan_ready = True
-            if phase_plan_ready and _setup_outputs_complete(work_dir):
+                phase_plan_ready = _json_file_is_valid(phases_json)
+            if phase_plan_ready:
                 break
 
         failure = "update phases.json" if is_incremental else "produce phases.json"
         missing = (
-            "phases.json/domain-context outputs were not updated"
+            "phases.json was not updated"
             if is_incremental
-            else "phases.json/domain-context outputs missing"
+            else "phases.json missing or invalid"
         )
         if attempt < OPENCODE_MAX_RETRIES:
             delay = 10
@@ -941,61 +916,133 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
             )
             sys.exit(1)
 
-    # The setup agent may have omitted required files (e.g. an entry point that
-    # looks like a test) from phases.json. Force them into the earliest phase's
-    # first module FIRST, so the dedup pass sees them and the domain-context sync
-    # regenerates that phase's types file from its final file set. Running it last
-    # (after the sync) would leave the phase_NN_types.txt file the sync just
-    # regenerated missing those types.
+
+def _post_process_phases(proj_dir, work_dir, required_source_files=None,
+                          submodules=None):
+    """Post-process phases.json: ensure required files, filter submodules,
+    deduplicate, update descriptions, and clean empty phases before domain
+    context generation.
+    """
+    phases_json = os.path.join(work_dir, "phases.json")
+
     ensure_changes = _ensure_source_files_in_phases(phases_json, required_source_files)
-    forced = ensure_changes["forced"]
+    forced = ensure_changes.get("forced", [])
     if forced:
         print(f"[Pipeline] Forced {len(forced)} required source file(s) into phases.json: {', '.join(forced)}")
 
     filter_changes = _filter_phases_to_submodules(phases_json, submodules)
     if submodules:
         print(f"[Pipeline] Submodule scope: {', '.join(submodules)}")
-        removed = filter_changes["removed"]
+        removed = filter_changes.get("removed", 0)
         if removed:
             print(f"[Pipeline] Removed {removed} out-of-scope source file(s) from phases.json.")
 
-    # Deduplicate source files across phases. This only strips duplicate files (no
-    # phase is renumbered or dropped), so the domain-context sync only needs to
-    # regenerate the types file of any phase whose file set changed here or in the
-    # ensure step above.
     dedup_changes = _deduplicate_phases(work_dir)
 
-    # Modules whose source-file list changed — files force-added by the ensure step
-    # above, or duplicates removed by dedup — may have descriptions that no longer
-    # match the files they own. Refresh those descriptions before the domain-context
-    # sync (which reads phases.json) runs.
     changed_modules = _collect_changed_modules(
         ensure_changes, filter_changes, dedup_changes
     )
     _update_module_description(proj_dir, work_dir, changed_modules)
 
-    changed_phases = _collect_changed_phases(
-        ensure_changes, filter_changes, dedup_changes
-    )
+    _clean_empty_phase_module(work_dir)
 
-    # Drop any modules/phases left empty by the steps above (e.g. a phase whose
-    # only files were deduplicated away), renumber the survivors, and keep the
-    # per-phase domain-context files in sync with the new numbering. Run semantic
-    # domain-context regeneration after this so prompts see final phase numbers.
-    phase_cleanup = _clean_empty_phase_module(work_dir)
-    final_changed_phases = {
-        phase_cleanup["renumbered"][phase_num]
-        for phase_num in changed_phases
-        if phase_num in phase_cleanup["renumbered"]
-    }
 
-    _sync_domain_context(
-        proj_dir, work_dir, final_changed_phases, phase_cleanup=phase_cleanup
-    )
+def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
+    """Stage 2: generate domain context — input phases.json, output domain context
+    files for each phase.
+    """
+    _resume_skip = resume and _setup_outputs_complete(work_dir)
+    if _resume_skip:
+        print("[Pipeline] Stage 2/6: RESUME — domain context files found, skipping domain context generation.")
+
+    _prepare_setup_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
+
+    fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
+                    "It is a workspace for storing your output files only. "
+                    "Do NOT modify any existing project files.")
+
+    for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
+        if _resume_skip:
+            break
+        if attempt == 1 and not resume:
+            prompt = (
+                "Read fm_agent/phases.json first. "
+                "Then follow the instructions in the attached file. "
+                + fm_reminder
+            )
+        else:
+            prompt = ("A previous domain-context generation attempt was interrupted and may have already "
+                      "produced some of the required output files. Read fm_agent/phases.json first. "
+                      "Then follow the instructions in the attached file, but FIRST "
+                      "check the current progress in fm_agent/spec_prompts/domain_context/. "
+                      "Keep any existing valid output as-is and only generate the files that are missing or "
+                      f"incomplete — do NOT regenerate or overwrite work that is already done. {fm_reminder}")
+        prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_generate_domain_context.md")
+        if is_cli_backend_enabled():
+            command = build_agent_command(
+                model=OPENCODE_SETUP_MODEL,
+                prompt=prompt,
+                cwd=proj_dir,
+                files=[prompt_file],
+            )
+        else:
+            command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
+                       "--file", prompt_file, "--", prompt]
+        try:
+            run_opencode_traced(
+                proj_dir=proj_dir,
+                work_dir=work_dir,
+                command=command,
+                stage="generate_domain_context",
+                input_files=[
+                    "fm_agent/workflow_generate_domain_context.md",
+                    "fm_agent/phases.json",
+                    *list_staged_domain_knowledge_relpaths(work_dir),
+                ],
+                output_files=[
+                    "fm_agent/spec_prompts/domain_context/engine_overview.txt",
+                ],
+                summary=f"OpenCode generate domain context attempt {attempt}",
+                metadata={"attempt": attempt},
+            )
+        except subprocess.CalledProcessError as e:
+            logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
+
+        if _setup_outputs_complete(work_dir):
+            break
+
+        if attempt < OPENCODE_MAX_RETRIES:
+            delay = 10
+            print(
+                f"[Pipeline] Stage 2 failed to produce domain context "
+                f"(attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
+                f"Retrying in {delay}s..."
+            )
+            logging.warning(f"Stage 2 attempt {attempt} failed: domain context outputs missing. Retrying in {delay}s.")
+            time.sleep(delay)
+        else:
+            print(
+                f"[Pipeline] ERROR: Stage 2 failed after {OPENCODE_MAX_RETRIES} attempts. "
+                f"Domain context outputs missing. "
+                f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
+            )
+            sys.exit(1)
+
+
+def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
+                       resume=False, required_source_files=None,
+                       submodules=None):
+    """Run generate-phases, post-process, and generate-domain-context stages.
+
+    Backward-compatible wrapper that calls the three sub-stages in sequence.
+    """
+    _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental, resume, submodules)
+    _post_process_phases(proj_dir, work_dir, required_source_files, submodules)
+    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume)
 
     if not _setup_outputs_complete(work_dir):
         print(
-            "[Pipeline] ERROR: Stage 1 setup outputs are incomplete after "
+            "[Pipeline] ERROR: Stage 1/2 outputs are incomplete after "
             "post-processing. Expected fm_agent/phases.json, "
             "fm_agent/spec_prompts/domain_context/engine_overview.txt, and one "
             "phase_NN_types.txt per phase."
