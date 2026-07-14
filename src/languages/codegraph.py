@@ -243,7 +243,7 @@ class CodeGraphExtractor:
                 # different parameters), which would otherwise overwrite each other
                 # ("LocalStorage::Flush", "LocalStorage::Flush_1"). funcs are
                 # line-ordered (SQL ORDER BY start_line), so the suffix is
-                # deterministic. run_extraction turns the "::" into subdirectories.
+                # deterministic. run_extraction keeps the "::" in the flat filename.
                 count = ident_counts.get(ident, 0)
                 ident_counts[ident] = count + 1
                 deduped = ident if count == 0 else f"{ident}_{count}"

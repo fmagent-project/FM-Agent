@@ -740,16 +740,16 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         os.makedirs(out_dir, exist_ok=True)
 
         for func_name, func_source in funcs:
-            # A class-qualified identifier ("LocalStorage::Flush") is laid out as
-            # nested directories ("LocalStorage/Flush.ext") so its FQN — rebuilt
-            # from the path by generate_topdown_layers._file_to_fqn — comes out as
-            # "...-cpp::LocalStorage::Flush", matching the call-edge FQNs. A bare
-            # name (free function, or the regex fallback which cannot know classes)
-            # has no "::" and lands directly in out_dir as before.
-            ident_parts = func_name.split("::")
-            func_out_dir = os.path.join(out_dir, *ident_parts[:-1])
-            os.makedirs(func_out_dir, exist_ok=True)
-            out_file = os.path.join(func_out_dir, f"{ident_parts[-1]}.{ext}")
+            # A class-qualified identifier ("LocalStorage::Flush") is written as a
+            # single flat file that keeps the "::" in its name
+            # ("LocalStorage::Flush.ext"). generate_topdown_layers._file_to_fqn
+            # rebuilds the FQN by joining the path components with "::", so the "::"
+            # already inside the filename yields "...-cpp::LocalStorage::Flush",
+            # matching the call-edge FQNs. A bare name (free function, or the regex
+            # fallback which cannot know classes) has no "::" and is written the same
+            # way. ":" is a legal filename character on Linux/macOS (this pipeline
+            # does not target Windows extraction).
+            out_file = os.path.join(out_dir, f"{func_name}.{ext}")
 
             # Skip only when the file already has both [SPEC] and [INFO] blocks
             if not force and os.path.exists(out_file) and is_file_ready(out_file):

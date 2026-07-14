@@ -133,9 +133,10 @@ def _get_phase_files(phases_data, phase_num, input_dir):
                 subdir = base
             extracted_dir = os.path.join(input_dir, dir_part, subdir)
             if os.path.isdir(extracted_dir):
-                # Walk recursively: member functions live one level deeper under a
-                # class directory (<file>-cpp/LocalStorage/Flush.cpp), free
-                # functions sit directly in extracted_dir.
+                # Every extracted function is a flat file directly in
+                # extracted_dir, member functions keeping the class qualifier in
+                # the name (<file>-cpp/LocalStorage::Flush.cpp). os.walk stays
+                # robust to any legacy nested file.
                 for root, _dirs, fnames in os.walk(extracted_dir):
                     for fname in sorted(fnames):
                         fpath = os.path.join(root, fname)

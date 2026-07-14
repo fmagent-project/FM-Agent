@@ -87,11 +87,11 @@ def _extracted_file_to_source_rel(extracted_rel):
     Inverse of the extraction layout: ``src/engine/loader-cpp/loadData.cpp``
     (a function file) -> ``src/engine/loader.cpp`` (the source file). Extraction
     builds the function directory by replacing the source filename's last dot
-    with a hyphen (``loader.cpp`` -> ``loader-cpp``). Member functions add a class
-    subdirectory below that (``.../loader-cpp/MyClass/method.cpp``), so we locate
-    the ``<base>-<ext>`` directory itself — scanning from the right so a class
-    dir (which never ends in ``-<known extension>``) is skipped — rather than
-    assuming it is the function file's immediate parent.
+    with a hyphen (``loader.cpp`` -> ``loader-cpp``). Member functions keep the
+    class qualifier in the flat filename (``.../loader-cpp/MyClass::method.cpp``),
+    so the ``<base>-<ext>`` directory is the function file's immediate parent; we
+    still locate it by scanning the path components from the right (matching a
+    component that ends in ``-<known extension>``) so the mapping is robust.
     """
     parts = extracted_rel.split(os.sep)
     for i in range(len(parts) - 2, -1, -1):          # skip the trailing func file
@@ -117,7 +117,7 @@ def _fqn_to_ident(fqn):
         src::storage-cpp::LocalStorage::Flush -> LocalStorage::Flush
         src::checkpoint-cpp::RunCheckpoint     -> RunCheckpoint
 
-    This is exactly the name run_extraction wrote (via the class subdirectory)
+    This is exactly the name run_extraction wrote (as the flat filename stem)
     and _function_spans reports, so trim keeps/removes the right same-name method
     instead of collapsing LocalStorage::Flush and WriteAheadLog::Flush together.
     """
