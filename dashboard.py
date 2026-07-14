@@ -9,7 +9,7 @@ Usage:
 Reads:
     <workdir>/trace/events.jsonl          (FM-Agent native events)
     <workdir>/trace/opencode/*.jsonl      (lucentia opencode-trace records)
-    <workdir>/bug_validation/*.result.json (bug validation verdicts)
+    authoritative current validation state (current targets plus bound verdicts)
 
 Standalone — run in a second terminal while main.py is going.
 """
@@ -38,6 +38,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.progress_bar import ProgressBar
 from rich.align import Align
+from src.verification import load_current_validation_state
 
 
 STAGES = ["init", "setup_context", "spec_generation", "verification", "bug_validation"]
@@ -227,7 +228,8 @@ class State:
         # Bug validation
         self.bugs_confirmed = 0
         self.bugs_not_confirmed = 0
-        self.bugs_pending = 0     # opencode call done but no result.json yet
+        self.bugs_error = 0
+        self.bugs_pending = 0
 
     # ---------- events.jsonl tail ----------
     def tail_events(self):
@@ -468,29 +470,18 @@ class State:
         if total_in > 0:
             self.cache_window.append((cr, total_in))
 
-    # ---------- bug_validation/*.result.json ----------
+    # ---------- authoritative bug validation state ----------
     def scan_bugs(self):
-        self.bugs_confirmed = 0
-        self.bugs_not_confirmed = 0
-        if not self.bug_dir.exists():
-            return
-        for path in self.bug_dir.glob("*.result.json"):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    d = json.load(f)
-            except Exception:
-                continue
-            status = (d.get("confirmation_status") or "").lower()
-            if "not" in status:
-                self.bugs_not_confirmed += 1
-            elif "confirm" in status:
-                self.bugs_confirmed += 1
-            else:
-                self.bugs_not_confirmed += 1  # treat unknown as not confirmed
-        # pending = bug_validation opencode_calls with success status, minus results files
-        bv = self.stage_counts.get("bug_validation", {})
-        bv_done = sum(bv.values())
-        self.bugs_pending = max(0, bv_done - (self.bugs_confirmed + self.bugs_not_confirmed))
+        workdir = os.fspath(self.workdir)
+        validation_state = load_current_validation_state(
+            workdir,
+            workspace_aliases={"fm_agent": workdir},
+        )
+        summary = validation_state["summary"]
+        self.bugs_confirmed = summary["total_confirmed"]
+        self.bugs_not_confirmed = summary["total_not_confirmed"]
+        self.bugs_error = summary["total_error"]
+        self.bugs_pending = summary["total_pending"]
 
     # ---------- derived ----------
     def cache_hit_rate(self):
@@ -678,10 +669,16 @@ def render_llm_status(state):
 
 
 def render_bugs(state):
-    total = state.bugs_confirmed + state.bugs_not_confirmed + state.bugs_pending
+    total = (
+        state.bugs_confirmed
+        + state.bugs_not_confirmed
+        + state.bugs_error
+        + state.bugs_pending
+    )
     text = Text.from_markup(
         f"[green]✓ confirmed[/]      {state.bugs_confirmed}\n"
         f"[yellow]✗ not_confirmed[/]  {state.bugs_not_confirmed}\n"
+        f"[red]! error[/]             {state.bugs_error}\n"
         f"[dim]… pending[/]         {state.bugs_pending}\n"
         f"[bold]total[/]             [bold]{total}[/]"
     )
