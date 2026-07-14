@@ -34,6 +34,9 @@ from src.git import (
 from src.languages.codegraph import try_codegraph_init
 from src.pipeline_setup import (
     _run_setup_extract,
+    _run_generate_phases,
+    _post_process_phases,
+    _run_generate_domain_context,
 )
 from src.domain_knowledge import (
     collect_domain_knowledge_paths,
@@ -222,19 +225,26 @@ def run_pipeline(
             f"{len(domain_knowledge_relpaths)} markdown file(s)."
         )
 
-    # Copy workflow_setup_extract.md to proj_dir and run opencode against it.
-    # _run_setup_extract also force-lists any required_source_files the agent
-    # omitted from phases.json before extraction runs below.
-    print("[Pipeline] Stage 1/4: Understanding codebase and extracting functions ...")
-    _run_setup_extract(
+    # Stage 1: generate phase.json (input: target code → phases.json)
+    # Stage 2: generate domain context (input: phases.json → domain context files)
+    print("[Pipeline] Stage 1/6: Generating phase plan...")
+    _run_generate_phases(
         proj_dir, work_dir, script_dir, resume=resume,
+        submodules=submodules,
+    )
+
+    _post_process_phases(
+        proj_dir, work_dir,
         required_source_files=required_source_files,
         submodules=submodules,
         one_phase=one_phase,
     )
 
+    print("[Pipeline] Stage 2/6: Generating domain context...")
+    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=resume)
+
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
-    # run_extraction (Stage 2) and generate_topdown_layers (Stage 3) read from it.
+    # run_extraction (Stage 3) and generate_topdown_layers (Stage 5) read from it.
     # force=not resume mirrors run_extraction below: a fresh run rebuilds so the
     # index matches the current tree, while a resume reuses the existing index
     # (same tree as the interrupted run — rebuilding would just be wasted work).
@@ -243,7 +253,7 @@ def run_pipeline(
     # Run function extraction using extract.py
     # force=False on resume preserves already-specced extracted files; on a fresh
     # run fm_agent/ was just wiped so it is equivalent to force=True.
-    print("[Pipeline] Extracting functions from source files...")
+    print("[Pipeline] Stage 3/6: Extracting functions from source files...")
     run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
 
     # Copy system_prompt.md to spec_prompts/system_prompt.md
@@ -267,7 +277,7 @@ def run_pipeline(
     with open(phases_path, "r") as f:
         phases_data = json.load(f)
 
-    print("[Pipeline] Stage 2/4: Collecting file list...")
+    print("[Pipeline] Stage 4/6: Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
     file_list = collect_file_names(input_dir, file_list_path)
     if submodules:
@@ -279,15 +289,15 @@ def run_pipeline(
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
         return
 
-    # --- Stage 3: Generate topdown layers ---
-    print("[Pipeline] Stage 3/4: Generating topdown layers...")
+    # --- Stage 5: Generate topdown layers ---
+    print("[Pipeline] Stage 5/6: Generating topdown layers...")
     generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
 
-    # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
+    # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
     if only_spec:
-        print("[Pipeline] Stage 4/4: Generating specs (reasoning & bug validation disabled)...")
+        print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
     else:
-        print("[Pipeline] Stage 4/4: Generating specs & verification...")
+        print("[Pipeline] Stage 6/6: Generating specs & verification...")
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
     batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
     shutil.copy2(batch_md_src, batch_md_dst)
@@ -321,7 +331,7 @@ def run_pipeline(
         )
 
         for layer_idx in range(total_layers):
-            print(f"[Pipeline] Stage 4/4: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
+            print(f"[Pipeline] Stage 6/6: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
 
             # Generate batch prompts for this layer. On resume, skip functions
             # that were already specced in a previous run.
@@ -444,18 +454,18 @@ def run_pipeline(
                 if attempt < OPENCODE_MAX_RETRIES:
                     delay = 10
                     print(
-                        f"[Pipeline] Stage 4 Phase {phase_num} Layer {layer_idx} produced no specs "
+                        f"[Pipeline] Stage 6 Phase {phase_num} Layer {layer_idx} produced no specs "
                         f"(attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
                         f"Retrying in {delay}s..."
                     )
                     logging.warning(
-                        f"Stage 4 Phase {phase_num} Layer {layer_idx} attempt {attempt} failed: "
+                        f"Stage 6 Phase {phase_num} Layer {layer_idx} attempt {attempt} failed: "
                         f"no specs generated. Retrying in {delay}s."
                     )
                     time.sleep(delay)
                 else:
                     print(
-                        f"[Pipeline] ERROR: Stage 4 Phase {phase_num} Layer {layer_idx} failed "
+                        f"[Pipeline] ERROR: Stage 6 Phase {phase_num} Layer {layer_idx} failed "
                         f"after {OPENCODE_MAX_RETRIES} attempts. "
                         f"No specs were generated. "
                         f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
