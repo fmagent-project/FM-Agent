@@ -40,7 +40,6 @@ def canonicalize(func_name):
             return func_name.translate(_SAFE_REPLACE)
     return func_name
 
-
 def _qualified_parts(name: str, qualified_name: str) -> list:
     """Split codegraph's ``qualified_name`` into ``[*scope_parts, name]``.
 
@@ -70,15 +69,58 @@ def _qualified_parts(name: str, qualified_name: str) -> list:
 def _extraction_ident(name: str, qualified_name: str) -> str:
     """Return the class-qualified, filesystem-safe identifier for a function.
 
-    Each component is passed through :func:`canonicalize` (so a class-scoped
-    operator like ``Store::operator/`` stays path/FQN-safe), then joined with
-    ``::``. This single string is used both as a function's FQN tail and — with
-    ``::`` turned into path separators — as its extracted-file location, so the
-    call edges (via :func:`_node_fqn_map`) and the extracted files (via
-    ``run_extraction`` + ``_file_to_fqn``) always agree. Examples:
-    ``main`` -> ``"main"``; ``LocalStorage::Flush`` -> ``"LocalStorage::Flush"``.
+    Each component is first stripped of any tree-sitter decoration by
+    :func:`_bare_function_name` (codegraph occasionally stores a whole signature
+    or template body in the name column — see issue #82, which would otherwise
+    blow past the filesystem's filename limit), then passed through
+    :func:`canonicalize` (so a class-scoped operator like ``Store::operator/``
+    stays path/FQN-safe), then joined with ``::``. This single string is used both
+    as a function's FQN tail and — with ``::`` turned into path separators — as its
+    extracted-file location, so the call edges (via :func:`_node_fqn_map`) and the
+    extracted files (via ``run_extraction`` + ``_file_to_fqn``) always agree.
+    Examples: ``main`` -> ``"main"``; ``LocalStorage::Flush`` ->
+    ``"LocalStorage::Flush"``.
     """
-    return "::".join(canonicalize(p) for p in _qualified_parts(name, qualified_name))
+    return "::".join(
+        canonicalize(_bare_function_name(p))
+        for p in _qualified_parts(name, qualified_name)
+    )
+
+
+def _bare_function_name(name: str) -> str:
+    """Extract the bare function identifier from a potentially decorated name.
+
+    Tree-sitter sometimes stores a full function signature in the name column
+    for macro-generated C/C++ declarations (e.g. ``(*func)(type *param)``
+    instead of ``func``).  Strips decorations so the result can be used as a
+    filename stem and call-edge key.
+
+    Handled patterns (language-agnostic):
+    - Simple identifier: ``"my_func"`` -> ``"my_func"``
+    - Qualified name: ``"ns::Cls::method"`` -> ``"method"``
+    - Go pointer receiver: ``"(*T).Method"`` -> ``"Method"``
+    - Function-pointer: ``"(*func)(type *param)"`` -> ``"func"``
+    - Pointer return: ``"*func_name(...)"`` -> ``"func_name"``
+    - this-dot: ``"this.onClick"`` -> ``"onClick"``
+    - Empty: ``""`` -> ``""`` (caller falls back to ``_function``)
+    """
+    name = name.strip()
+    if not name:
+        return ""
+
+    m = re.search(r'(?:[:\.)])(\w+)$', name)
+    if m:
+        return m.group(1)
+    m = re.match(r'\(\s*\*\s*(\w+)\s*\)', name)
+    if m:
+        return m.group(1)
+    m = re.match(r'\*\s*(\w+)', name)
+    if m:
+        return m.group(1)
+    m = re.match(r'^(\w+)', name)
+    if m:
+        return m.group(1)
+    return name
 
 
 # Maps FM-Agent lang_key → the language string stored in codegraph's SQLite
