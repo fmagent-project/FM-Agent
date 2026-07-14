@@ -711,8 +711,37 @@ def _validate_module_selection(data):
     return validated
 
 
+def _normalize_spec_dict(spec):
+    """Keep only fields supported by a .spec.json sidecar."""
+    return {
+        "unit": spec.get("unit", ""),
+        "signature": spec.get("signature", ""),
+        "pre_condition": spec.get("pre_condition", ""),
+        "post_condition": spec.get("post_condition", ""),
+    }
+
+
+def _normalize_info_dict(info):
+    """Keep only fields supported by a .info.json sidecar."""
+    callees = info.get("callees", [])
+    if not isinstance(callees, list):
+        raise ValueError("info JSON field callees must be an array")
+    return {
+        "callees": [
+            {
+                "name": callee.get("name", ""),
+                "signature": callee.get("signature", ""),
+                "pre_condition": callee.get("pre_condition", ""),
+                "post_condition": callee.get("post_condition", ""),
+            }
+            for callee in callees
+            if isinstance(callee, dict)
+        ]
+    }
+
+
 def _validate_spec_update(data):
-    """Validate a direct LLM decision about a function's [SPEC]/[INFO] blocks."""
+    """Validate a direct LLM decision about function metadata sidecars."""
     if not isinstance(data, dict):
         raise ValueError("spec-update JSON must be an object")
     required = ("spec_updated", "new_spec", "info_updated", "new_info", "updated_callees")
@@ -721,27 +750,25 @@ def _validate_spec_update(data):
         raise ValueError("spec-update JSON missing required field(s): " + ", ".join(missing))
     if not isinstance(data["spec_updated"], bool) or not isinstance(data["info_updated"], bool):
         raise ValueError("spec-update JSON fields spec_updated and info_updated must be booleans")
-    if not isinstance(data["new_spec"], str) or not isinstance(data["new_info"], str):
-        raise ValueError("spec-update JSON fields new_spec and new_info must be strings")
     if not isinstance(data["updated_callees"], list) or not all(
         isinstance(name, str) and name.strip() for name in data["updated_callees"]
     ):
         raise ValueError("spec-update JSON field updated_callees must be an array of non-empty strings")
-    if data["spec_updated"] and not data["new_spec"].strip():
-        raise ValueError("spec-update JSON requires non-empty new_spec when spec_updated is true")
-    if data["info_updated"] and not data["new_info"].strip():
-        raise ValueError("spec-update JSON requires non-empty new_info when info_updated is true")
+    if data["spec_updated"] and not isinstance(data["new_spec"], dict):
+        raise ValueError("spec-update JSON requires object new_spec when spec_updated is true")
+    if data["info_updated"] and not isinstance(data["new_info"], dict):
+        raise ValueError("spec-update JSON requires object new_info when info_updated is true")
     return {
         "spec_updated": data["spec_updated"],
-        "new_spec": data["new_spec"].strip(),
+        "new_spec": _normalize_spec_dict(data["new_spec"]) if data["spec_updated"] else None,
         "info_updated": data["info_updated"],
-        "new_info": data["new_info"].strip(),
+        "new_info": _normalize_info_dict(data["new_info"]) if data["info_updated"] else None,
         "updated_callees": [name.strip() for name in data["updated_callees"]],
     }
 
 
 def _validate_caller_info_update(data):
-    """Validate a direct LLM decision about one caller's [INFO] block."""
+    """Validate a direct LLM decision about one caller's info sidecar."""
     if not isinstance(data, dict):
         raise ValueError("caller-info JSON must be an object")
     required = ("info_updated", "new_info")
@@ -750,11 +777,12 @@ def _validate_caller_info_update(data):
         raise ValueError("caller-info JSON missing required field(s): " + ", ".join(missing))
     if not isinstance(data["info_updated"], bool):
         raise ValueError("caller-info JSON field info_updated must be a boolean")
-    if not isinstance(data["new_info"], str):
-        raise ValueError("caller-info JSON field new_info must be a string")
-    if data["info_updated"] and not data["new_info"].strip():
-        raise ValueError("caller-info JSON requires non-empty new_info when info_updated is true")
-    return {"info_updated": data["info_updated"], "new_info": data["new_info"].strip()}
+    if data["info_updated"] and not isinstance(data["new_info"], dict):
+        raise ValueError("caller-info JSON requires object new_info when info_updated is true")
+    return {
+        "info_updated": data["info_updated"],
+        "new_info": _normalize_info_dict(data["new_info"]) if data["info_updated"] else None,
+    }
 
 def _llm_select_json(work_dir, prompt_content, stage, validator, schema_description,
                      trace_meta=None):
@@ -1049,10 +1077,10 @@ def _project_call_graph(work_dir):
 
 def _resolve_callee_fqns(caller_fqn, callee_names, callees_map):
     """
-    Map callee names reported by opencode (the [INFO] entries whose expected spec changed)
+    Map callee names reported by opencode (the .info.json entries whose expected spec changed)
     back to the FQNs of caller_fqn's callees.
 
-    A callee is identified in the [INFO] block by its name; this matches that name against
+    A callee is identified in .info.json by its name; this matches that name against
     the final component (stem) of each of caller_fqn's callee FQNs, case-insensitively, and
     returns every matching callee FQN (a name shared by callees in several files resolves to
     all of them).
@@ -1070,16 +1098,16 @@ def _resolve_callee_fqns(caller_fqn, callee_names, callees_map):
 def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
                            developer_intent, spec_block, info_block, callee_names, source):
     """
-    Ask the LLM whether a function's [SPEC] (and, if so, its [INFO]) block must change to
+    Ask the LLM whether a function's .spec.json (and, if so, its .info.json) must change to
     reflect developer_intent, and return the parsed decision.
 
-    The prompt inlines the entire function source, its current [SPEC]/[INFO] blocks, and the
+    The prompt inlines the entire function source, its current metadata sidecars, and the
     developer intent, so it needs no repository file access and is issued as a direct LLM
     call (via _llm_select_json) rather than an opencode run. idx is used only to label the
     traced exchange.
 
-    Returns the parsed result dict — keys: "spec_updated" (bool), "new_spec" (str),
-    "info_updated" (bool), "new_info" (str), "updated_callees" (list[str]) — or None when
+    Returns the parsed result dict — keys: "spec_updated" (bool), "new_spec" (dict),
+    "info_updated" (bool), "new_info" (dict), "updated_callees" (list[str]) — or None when
     the LLM produced nothing usable.
     """
     callee_hint = ", ".join(sorted(callee_names)) if callee_names else "(none)"
@@ -1111,38 +1139,35 @@ def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefi
         "below. Decide whether this function's behavioral specification must change to "
         "reflect that intent.\n\n"
         f"- Function fully-qualified name: `{fqn}` (language: `{lang_key}`).\n"
-        f"- Comment prefix for this language: `{comment_prefix}`.\n"
         f"- Known callees of this function: {callee_hint}.\n\n"
         "## Developer intent\n\n"
         f"{developer_intent}\n\n"
         f"{knowledge_section}"
         "## Current function source\n\n"
         f"```{lang_key}\n{source.strip()}\n```\n\n"
-        "## Current [SPEC] block (this function's own behavioral specification)\n\n"
-        f"{spec_block}\n\n"
+        "## Current .spec.json (this function's own behavioral specification)\n\n"
+        f"```json\n{json.dumps(spec_block, indent=2, ensure_ascii=False)}\n```\n\n"
         f"{info_section}"
         "## Steps\n\n"
-        "1. Decide whether the [SPEC] block still correctly and completely describes the "
+        "1. Decide whether .spec.json still correctly and completely describes the "
         "function's behavior after the intended modification. If it remains correct, no "
         "update is needed.\n"
-        "2. If it must change, produce the COMPLETE replacement [SPEC] block — the "
-        "`[SPEC]` ... `[SPEC]` block only, markers included, every line prefixed with "
-        f"`{comment_prefix}`, and NO source code.\n"
-        "3. ONLY if you updated the [SPEC] block AND this function has callees: bring the "
-        f"[INFO] block into line with this function's CURRENT callees ({callee_hint}). That "
+        "2. If it must change, produce the COMPLETE replacement .spec.json object, with "
+        "exactly unit, signature, pre_condition, and post_condition, and NO source code.\n"
+        "3. ONLY if you updated .spec.json AND this function has callees: bring "
+        f".info.json into line with this function's CURRENT callees ({callee_hint}). That "
         "means: (a) keep entries whose recorded expectation still matches the callee's role, "
         "(b) ADD an entry for any current callee not yet recorded (e.g. one the modification "
         "introduced), (c) DROP entries for callees this function no longer calls, and (d) "
-        "revise any entry whose expected spec must change as a consequence of the new [SPEC]. "
-        "If any of (a)-(d) changes the block, produce the COMPLETE replacement [INFO] block "
-        f"(the `[INFO]` ... `[INFO]` block only, markers included, lines prefixed with "
-        f"`{comment_prefix}`) and list the names of the callees whose expected spec you added "
-        "or changed.\n"
+        "revise any entry whose expected spec must change as a consequence of the new spec. "
+        "If any of (a)-(d) changes the object, produce the COMPLETE replacement .info.json "
+        "object with exactly the callees field and list the names of the callees whose expected "
+        "spec you added or changed.\n"
         "4. Return ONLY a JSON object with keys:\n"
         '   - "spec_updated": boolean.\n'
-        '   - "new_spec": string — the full replacement [SPEC] block, or "" if not updated.\n'
-        '   - "info_updated": boolean — true when you produced a new/replacement [INFO] block.\n'
-        '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
+        '   - "new_spec": object — the full replacement .spec.json object, or null if not updated.\n'
+        '   - "info_updated": boolean — true when you produced a new/replacement .info.json object.\n'
+        '   - "new_info": object — the full replacement .info.json object, or null if not updated.\n'
         '   - "updated_callees": array of callee name strings whose expected spec you added or changed, or [].\n'
         "   Do not include Markdown, tags, or prose outside the JSON object.\n"
     )
@@ -1153,8 +1178,8 @@ def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefi
         stage="update_function_spec",
         validator=_validate_spec_update,
         schema_description=(
-            '{"spec_updated": boolean, "new_spec": string, "info_updated": boolean, '
-            '"new_info": string, "updated_callees": [string]}'
+            '{"spec_updated": boolean, "new_spec": object|null, "info_updated": boolean, '
+            '"new_info": object|null, "updated_callees": [string]}'
         ),
         trace_meta={"fqn": fqn, "idx": idx},
     )
@@ -1164,47 +1189,45 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
                                   lang_key, comment_prefix, callee_new_spec,
                                   caller_info_block, caller_source):
     """
-    Ask the LLM whether a caller's [INFO] block must change to stay consistent with a callee
-    whose [SPEC] block was just updated.
+    Ask whether a caller's .info.json must change to stay consistent with a callee whose
+    .spec.json was just updated.
 
-    The caller's [INFO] block records the expected specs of the callees it depends on. This
+    The caller's .info.json records the expected specs of the callees it depends on. This
     asks the model to reconcile only the entry for callee_name with the callee's new spec —
     consistency, not equality: the entry must merely not conflict with the new spec, and the
     entries for other callees are left untouched. The prompt inlines the callee's new spec
-    and the caller's source/[INFO], so it is issued as a direct LLM call (via
+    and the caller's source/info sidecar, so it is issued as a direct LLM call (via
     _llm_select_json) rather than an opencode run; idx only labels the traced exchange.
 
-    Returns the parsed result dict — keys "info_updated" (bool) and "new_info" (str) — or
+    Returns the parsed result dict — keys "info_updated" (bool) and "new_info" (dict) — or
     None when the LLM produced nothing usable.
     """
     knowledge_section = _domain_knowledge_prompt_section(work_dir)
 
     prompt_content = (
-        "# Reconcile a Caller's [INFO] Block with a Changed Callee\n\n"
+        "# Reconcile a Caller's .info.json with a Changed Callee\n\n"
         f"The callee `{callee_name}`'s behavioral specification was just updated. The caller "
         f"`{caller_fqn}` (language `{lang_key}`) records the expected specs of the callees it "
-        "depends on in its [INFO] block. Update that block so its entry for the callee is "
+        "depends on in its .info.json. Update that object so its entry for the callee is "
         "CONSISTENT with the callee's new spec — it need NOT be identical, it only must not "
         "conflict (no contradictory pre/post-conditions). Leave the entries for every other "
         "callee unchanged.\n\n"
-        f"Comment prefix for this language: `{comment_prefix}`.\n\n"
         f"{knowledge_section}"
-        "## Callee's updated [SPEC] block\n\n"
-        f"{callee_new_spec}\n\n"
+        "## Callee's updated .spec.json\n\n"
+        f"```json\n{json.dumps(callee_new_spec, indent=2, ensure_ascii=False)}\n```\n\n"
         "## Caller's current source\n\n"
         f"```{lang_key}\n{caller_source.strip()}\n```\n\n"
-        "## Caller's current [INFO] block (the expected specs of its callees)\n\n"
-        f"{caller_info_block}\n\n"
+        "## Caller's current .info.json (the expected specs of its callees)\n\n"
+        f"```json\n{json.dumps(caller_info_block, indent=2, ensure_ascii=False)}\n```\n\n"
         "## Steps\n\n"
-        f"1. Decide whether the caller's [INFO] entry for `{callee_name}` already is consistent "
+        f"1. Decide whether the caller's .info.json entry for `{callee_name}` already is consistent "
         "with the callee's new spec. If it is, no update is needed.\n"
-        f"2. If it conflicts, produce the COMPLETE replacement [INFO] block (the `[INFO]` ... "
-        f"`[INFO]` block only, markers included, every line prefixed with `{comment_prefix}`), "
+        "2. If it conflicts, produce the COMPLETE replacement .info.json object, "
         f"adjusting only the `{callee_name}` entry to be consistent and leaving the other "
         "entries as-is.\n"
         "3. Return ONLY a JSON object with keys:\n"
         '   - "info_updated": boolean.\n'
-        '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
+        '   - "new_info": object — the full replacement .info.json object, or null if not updated.\n'
         "   Do not include Markdown, tags, or prose outside the JSON object.\n"
     )
 
@@ -1213,7 +1236,7 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
         prompt_content,
         stage="update_caller_info",
         validator=_validate_caller_info_update,
-        schema_description='{"info_updated": boolean, "new_info": string}',
+        schema_description='{"info_updated": boolean, "new_info": object|null}',
         trace_meta={"caller_fqn": caller_fqn, "callee_name": callee_name, "idx": idx},
     )
 
@@ -1221,8 +1244,8 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
 def _collect_caller_context(fqn, callers_map, file_map):
     """
     Gather the context an existing caller provides about fqn, mirroring the caller context
-    run_pipeline feeds into spec generation: each caller's own [SPEC] block and the entry in
-    its [INFO] block that records what the caller expects from fqn (as one of its callees).
+    run_pipeline feeds into spec generation: each caller's own .spec.json and the entry in
+    its .info.json that records what the caller expects from fqn (as one of its callees).
 
     Returns a list of (caller_fqn, caller_spec, callee_expectation) tuples — caller_spec and
     callee_expectation are None when the caller has no such block — for every caller of fqn
@@ -1256,26 +1279,26 @@ def _collect_caller_context(fqn, callers_map, file_map):
 def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
                             developer_intent, callee_names, source, caller_context):
     """
-    Ask opencode to generate a brand-new [SPEC] (and, when the function has callees, [INFO])
-    block from scratch for a function that has no existing specification — e.g. a function
+    Ask opencode to generate brand-new .spec.json and .info.json objects from scratch for a
+    function that has no existing metadata sidecars — e.g. a function
     freshly added by the modification.
 
     Mirrors the full run's spec generation (run_pipeline Stage 5) but for a single function:
     opencode reads the project's spec format rules (fm_agent/spec_prompts/system_prompt.md),
-    is given the same caller context the full run provides (each caller's [SPEC] block and what
-    that caller's [INFO] block expects from this function, in caller_context as returned by
-    _collect_caller_context), and produces the block(s) directly. Returns the parsed decision
+    is given the same caller context the full run provides (each caller's .spec.json and what
+    that caller's .info.json expects from this function, in caller_context as returned by
+    _collect_caller_context), and produces the objects directly. Returns the parsed decision
     in the SAME shape as _opencode_check_spec_update so the caller can splice and propagate it
     identically.
 
-    Returns the parsed result dict — keys: "spec_updated" (bool, true when a [SPEC] block was
-    produced), "new_spec" (str), "info_updated" (bool), "new_info" (str), "updated_callees"
+    Returns the parsed result dict — keys: "spec_updated" (bool, true when .spec.json was
+    produced), "new_spec" (dict), "info_updated" (bool), "new_info" (dict), "updated_callees"
     (list[str]) — or None when opencode produced nothing usable.
     """
     result_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.json")
     prompt_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.md")
 
-    # Caller context (callers' own specs + what each caller's [INFO] expects from this
+    # Caller context (callers' own specs + what each caller's .info.json expects from this
     # function), mirroring run_pipeline's "EARLIER-LAYER CALLER SPECS" / "CALLEE EXPECTATIONS
     # FROM CALLERS" sections so the generated spec satisfies what callers depend on.
     caller_specs = [
@@ -1369,26 +1392,26 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
 
 def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_functions, relevant_rel_files):
     """
-    re-generate the [SPEC] (and dependent [INFO]) blocks of every function that is
+    Re-generate the .spec.json (and dependent .info.json) sidecars of every function that is
     either changed or relevant to the developer intent, propagating to callees.
 
     Seeds from the changed functions (added/modified) and the relevant extracted-function
     files returned by collect_relevent_function_scope, then processes functions in top-down
-    order (callers before callees). For each function, opencode reads its current [SPEC]
+    order (callers before callees). For each function, opencode reads its current .spec.json
     block and decides whether it must change to reflect developer_intent. A function with no
-    existing [SPEC] block (e.g. one freshly added by the modification) instead has a spec
+    existing .spec.json (e.g. one freshly added by the modification) instead has a spec
     generated from scratch the way the full run does. If a spec is written or generated, the
-    new [SPEC] is written back (source untouched), and then:
+    new .spec.json is written back (source untouched), and then:
 
-      - Downward: opencode decides whether the function's own [INFO] block (the expected
+      - Downward: opencode decides whether the function's own .info.json (the expected
         specs of its callees) must change too, and any callee whose expected spec changed is
         queued to have its own spec file re-checked.
-      - Upward: every caller's [INFO] block (which records this function as one of its
-        callees) is reconciled with the function's new [SPEC] so the two do not conflict
+      - Upward: every caller's .info.json (which records this function as one of its
+        callees) is reconciled with the function's new .spec.json so the two do not conflict
         (they need not be identical).
 
     Returns the sorted list of extracted-function files (paths relative to the
-    extracted_functions dir) whose [SPEC]/[INFO] block was changed.
+    extracted_functions dir) whose metadata sidecar was changed.
     """
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
@@ -1422,7 +1445,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
 
     def _plan_spec_update(fqn, idx):
         """
-        Decide fqn's new [SPEC]/[INFO] and return an apply-plan, or None to skip.
+        Decide fqn's new metadata sidecars and return an apply-plan, or None to skip.
 
         Makes the opencode LLM call (the slow part) but performs NO file writes, so a batch of
         mutually independent functions can run this concurrently. The returned plan carries the
@@ -1470,15 +1493,15 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
             return None
 
         if old_info is None:
-            # Freshly generated: take the [INFO] block opencode produced (if any). Treat it as
+            # Freshly generated: take the .info.json object opencode produced. Treat it as
             # "updated" so its recorded callee expectations propagate downward below.
             new_info = result.get("new_info")
             if not isinstance(new_info, dict):
                 new_info = {"callees": []}
             info_updated = True
         else:
-            # Keep the existing [INFO] block unless opencode rewrote it. A modified function may
-            # now call a different set of callees, so a fresh [INFO] block can legitimately be
+            # Keep the existing .info.json unless opencode rewrote it. A modified function may
+            # now call a different set of callees, so a fresh .info.json can legitimately be
             # created even when the function previously had none (old_info is None) — gate on
             # whether opencode produced a block, not on a prior block existing.
             info_updated = bool(result.get("info_updated"))
@@ -1497,7 +1520,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
 
     def _reconcile_caller(caller_fqn, updates, base_idx):
         """
-        Reconcile caller_fqn's [INFO] block against a sequence of changed callees.
+        Reconcile caller_fqn's .info.json against a sequence of changed callees.
 
         updates is a list of (callee_name, callee_new_spec). The entries are applied
         sequentially, re-reading the caller file between each, because they all edit the same
@@ -1604,8 +1627,8 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
             round_num, len(applied), queued_callees,
         )
 
-        # Stage 3 (concurrent): upward reconciliation. Each function whose [SPEC] changed needs
-        # every caller's [INFO] entry for it reconciled. Group the work by caller file so edits
+        # Stage 3 (concurrent): upward reconciliation. Each function whose .spec.json changed
+        # needs every caller's .info.json entry reconciled. Group by caller file so edits
         # to one file are serialized while different caller files reconcile in parallel. Callers
         # sit above the batch in top-down order and are never themselves in the batch, so their
         # files don't collide with the Stage 2 writes.
@@ -1632,7 +1655,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
                     try:
                         cpath = future.result()
                     except Exception:
-                        logging.exception("Caller [INFO] reconciliation failed for %s", caller_fqn)
+                        logging.exception("Caller .info.json reconciliation failed for %s", caller_fqn)
                         continue
                     if cpath:
                         changed_spec_files.add(os.path.relpath(cpath, extracted_dir))
@@ -1649,13 +1672,13 @@ def _verify_incremental_functions(
 
     A function is verified when it satisfies at least one of:
       1) it was changed in the working tree (added or modified), or
-      2) its own [SPEC] or [INFO] block was updated in step 9.
+      2) its own .spec.json or .info.json sidecar was updated in step 9.
 
-    Note on callees: a function whose callee's [SPEC] changed needs re-verification ONLY if
-    that change forced its own [INFO] block (the callee contract it reasons against) to be
-    updated. Step 9's upward reconciliation already rewrites exactly those callers' [INFO]
+    Note on callees: a function whose callee's .spec.json changed needs re-verification ONLY
+    if that change forced its own .info.json (the callee contract it reasons against) to be
+    updated. Step 9's upward reconciliation already rewrites exactly those callers' .info.json
     blocks and includes them in updated_spec_files, so condition (2) covers them — a caller
-    whose [INFO] did not need to change is left alone and is correctly NOT re-verified.
+    whose .info.json did not need to change is left alone and is correctly NOT re-verified.
 
     Each target is verified by invoking the reasoner (src/reasoner.py, via the per-file
     wrapper verification._verify_single_file, which calls reasoner() and writes the result
@@ -1681,14 +1704,14 @@ def _verify_incremental_functions(
         ).values()
     )
 
-    # (2) Functions whose [SPEC] or [INFO] block was updated in step 9 (updated_spec_files
-    #     already includes both functions whose own spec changed and callers whose [INFO]
+    # (2) Functions whose .spec.json or .info.json was updated in step 9 (updated_spec_files
+    #     already includes both functions whose own spec changed and callers whose .info.json
     #     was reconciled against an updated callee).
     for rel in updated_spec_files:
         verify_targets.add(os.path.join(extracted_dir, rel))
 
     # Keep only functions that still exist on disk; the reasoner reads these extracted files
-    # directly and skips any without a [SPEC] block.
+    # directly and skips any without valid metadata sidecars.
     file_list = sorted({
         os.path.relpath(path, extracted_dir)
         for path in verify_targets
