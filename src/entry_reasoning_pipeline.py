@@ -227,6 +227,7 @@ def run_entry_pipeline(
     end_funcs=None,
     resume=False,
     domain_knowledge_files=None,
+    one_phase=False,
     all_bugs=False,
 ):
     """Run the entry-point-scoped reasoning pipeline.
@@ -260,6 +261,8 @@ def run_entry_pipeline(
             restriction is applied and the whole call graph reachable from
             ``entry_func`` is selected.
         resume: forwarded directly to the standard pipeline.
+        one_phase: forwarded directly to the standard pipeline.
+        all_bugs: forwarded directly to the standard pipeline.
     """
     if entry_func is None:
         raise ValueError("entry_func is required to run the entry pipeline")
@@ -284,6 +287,7 @@ def run_entry_pipeline(
             end_funcs,
             resume,
             domain_knowledge_files=domain_knowledge_files,
+            one_phase=one_phase,
             all_bugs=all_bugs,
         )
     finally:
@@ -421,6 +425,7 @@ def _run_entry_pipeline_inner(
     end_funcs,
     resume,
     domain_knowledge_files=None,
+    one_phase=False,
     all_bugs=False,
 ):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
@@ -464,12 +469,17 @@ def _run_entry_pipeline_inner(
         # Force the entry point's source file into phases.json even if the setup
         # agent omits it (e.g. because it looks like a test), so run_pipeline
         # always extracts and reasons about the entry function.
+        pipeline_kwargs = {
+            "resume": resume,
+            "required_source_files": [_entry_func_source_rel(entry_func)],
+            "domain_knowledge_files": domain_knowledge_files,
+            "all_bugs": all_bugs,
+        }
+        if one_phase:
+            pipeline_kwargs["one_phase"] = True
         run_pipeline(
             run_dir,
-            resume=resume,
-            required_source_files=[_entry_func_source_rel(entry_func)],
-            domain_knowledge_files=domain_knowledge_files,
-            all_bugs=all_bugs,
+            **pipeline_kwargs,
         )
     finally:
         # 4. Copy the generated fm_agent/ back into proj_dir, then discard the

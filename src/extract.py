@@ -173,6 +173,19 @@ EXT_TO_LANG = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _safe_filename(name: str, ext: str) -> str:
+    """Return a safe filename from a function name and extension.
+
+    Replaces "/" (directory separator) with "_" and falls back to
+    "_function" for empty names.  Does *not* strip leading or trailing
+    underscores so that names like __init__ and _private stay consistent
+    with codegraph call-edge keys and FQN resolution.
+    """
+    safe = name.replace('/', '_')
+    if not safe:
+        safe = "_function"
+    return f"{safe}.{ext}"
+
 
 def _strip_angle_brackets(text):
     """Remove balanced <...> segments from text (for template parameters)."""
@@ -740,7 +753,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         os.makedirs(out_dir, exist_ok=True)
 
         for func_name, func_source in funcs:
-            out_file = os.path.join(out_dir, f"{func_name}.{ext}")
+            out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
 
             # Skip only when the file already has both [SPEC] and [INFO] blocks
             if not force and os.path.exists(out_file) and is_file_ready(out_file):
