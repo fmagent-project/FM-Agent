@@ -1,0 +1,36 @@
+{
+  "edges": [
+    {
+      "caller": {
+        "fqn": "third_party::musl::porting::liteos_a::user::src::exit::exit-c::exit",
+        "callsite_names": [
+          "exit"
+        ]
+      },
+      "callee": {
+        "fqn": "kernel::liteos_a::syscall::process_syscall-c::SysThreadExit",
+        "info_names": [
+          "__NR_exit",
+          "SYS_exit",
+          "exit"
+        ]
+      }
+    },
+    {
+      "caller": {
+        "fqn": "third_party::musl::src::conf::sysconf-c::sysconf",
+        "callsite_names": [
+          "sysconf"
+        ]
+      },
+      "callee": {
+        "fqn": "kernel::liteos_a::syscall::misc_syscall-c::SysSysconf",
+        "info_names": [
+          "__NR_sysconf",
+          "SYS_sysconf",
+          "sysconf"
+        ]
+      }
+    }
+  ]
+}

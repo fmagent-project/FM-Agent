@@ -30,6 +30,7 @@ from .generate_topdown_layers import (
     _load_phases,
     generate_topdown_layers,
 )
+from .call_graph_edges import load_call_edges
 from .file_utils import (
     is_file_ready,
     collect_file_names,
@@ -377,7 +378,7 @@ def _topdown_ordered_fqns(work_dir):
     Regenerates the per-phase topdown-layer JSON files under work_dir/spec_prompts/ as
     a side effect (mirroring run_pipeline's generate_topdown_layers(work_dir) call).
     """
-    generate_topdown_layers(work_dir)
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
     phases_data = _load_phases(work_dir)
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
 
@@ -404,6 +405,7 @@ def run_incremental_pipeline(
     domain_knowledge_files=None,
     submodules=None,
     one_phase=False,
+    extra_call_edges_path=None,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -422,6 +424,7 @@ def run_incremental_pipeline(
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
+    extra_call_edges = load_call_edges(extra_call_edges_path)
 
     _setup_incremental_logging(work_dir)
     staged_knowledge = stage_domain_knowledge_files(
@@ -454,6 +457,7 @@ def run_incremental_pipeline(
             domain_knowledge_files=domain_knowledge_files,
             submodules=submodules,
             one_phase=one_phase,
+            extra_call_edges_path=extra_call_edges_path,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -559,7 +563,7 @@ def run_incremental_pipeline(
     logging.info("[Stage 7/10] Generating topdown layers...")
     with open(os.path.join(work_dir, "phases.json"), "r") as f:
         phases_data = json.load(f)
-    generate_topdown_layers(work_dir)
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
     logging.info("  -> topdown layers generated for %d phase(s).", len(phases_data.get("phases", [])))
 
     # 8. Collect the scope of functions relevant to the developer intent (the intent file defines the goal of modification).
@@ -570,7 +574,12 @@ def run_incremental_pipeline(
     # 9. Re-generate the spec of functions if it satisfies one of the following conditions: 1) the function is changed; 2) the function is relevant to the developer intent.
     logging.info("[Stage 9/10] Updating specs for changed and relevant functions...")
     updated_spec_files = _update_specs_for_intent(
-        proj_dir, work_dir, developer_intent, changed_functions, spec_files
+        proj_dir,
+        work_dir,
+        developer_intent,
+        changed_functions,
+        spec_files,
+        extra_call_edges=extra_call_edges,
     )
     record_path = os.path.join(work_dir, "incremental_updated_specs.json")
     with open(record_path, "w") as f:
@@ -1052,15 +1061,16 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     return ordered
 
 
-def _project_call_graph(work_dir):
+def _project_call_graph(work_dir, extra_call_edges=None):
     """
     Build the project-wide call graph (keyed by FQN) over every extracted function.
 
     Treats all extracted functions across every phase in phases.json as one graph, so
     callee/caller edges span the whole project. Returns (callees_map, callers_map,
-    file_map): callees_map maps each FQN to the set of FQNs it calls directly, callers_map
-    the inverse (each FQN to the FQNs that call it directly), and file_map maps each FQN to
-    the absolute path of its extracted-function file.
+    file_map, edge_aliases_map): callees_map maps each FQN to the set of FQNs it calls
+    directly, callers_map the inverse (each FQN to the FQNs that call it directly),
+    file_map maps each FQN to the absolute path of its extracted-function file, and
+    edge_aliases_map maps callee -> caller -> supplemental edge labels.
     """
     phases = _load_phases(work_dir)
     all_files = []
@@ -1071,11 +1081,22 @@ def _project_call_graph(work_dir):
                 seen.add(fpath)
                 all_files.append((fpath, module_name))
 
-    callees_map, callers_map, _all_callees, file_map, _modmap = _build_call_graph(all_files, work_dir)
-    return callees_map, callers_map, file_map
+    (
+        callees_map,
+        callers_map,
+        _all_callees,
+        file_map,
+        _modmap,
+        edge_aliases_map,
+    ) = _build_call_graph(
+        all_files,
+        work_dir,
+        extra_call_edges=extra_call_edges,
+    )
+    return callees_map, callers_map, file_map, edge_aliases_map
 
 
-def _resolve_callee_fqns(caller_fqn, callee_names, callees_map):
+def _resolve_callee_fqns(caller_fqn, callee_names, callees_map, edge_aliases_map=None):
     """
     Map callee names reported by opencode (the .info.json entries whose expected spec changed)
     back to the FQNs of caller_fqn's callees.
@@ -1090,7 +1111,11 @@ def _resolve_callee_fqns(caller_fqn, callee_names, callees_map):
     resolved = set()
     for callee_fqn in callees_map.get(caller_fqn, ()):
         stem = callee_fqn.split("::")[-1]
-        if stem in wanted or stem.lower() in wanted_lower:
+        aliases = set()
+        if edge_aliases_map:
+            aliases.update(edge_aliases_map.get(callee_fqn, {}).get(caller_fqn, ()))
+        alias_lower = {alias.lower() for alias in aliases}
+        if stem in wanted or stem.lower() in wanted_lower or aliases & wanted or alias_lower & wanted_lower:
             resolved.add(callee_fqn)
     return resolved
 
@@ -1241,7 +1266,7 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
     )
 
 
-def _collect_caller_context(fqn, callers_map, file_map):
+def _collect_caller_context(fqn, callers_map, file_map, edge_aliases_map=None):
     """
     Gather the context an existing caller provides about fqn, mirroring the caller context
     run_pipeline feeds into spec generation: each caller's own .spec.json and the entry in
@@ -1390,7 +1415,14 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
     return _validate_spec_update(result) if result is not None else None
 
 
-def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_functions, relevant_rel_files):
+def _update_specs_for_intent(
+    proj_dir,
+    work_dir,
+    developer_intent,
+    changed_functions,
+    relevant_rel_files,
+    extra_call_edges=None,
+):
     """
     Re-generate the .spec.json (and dependent .info.json) sidecars of every function that is
     either changed or relevant to the developer intent, propagating to callees.
@@ -1415,7 +1447,10 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
     """
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
-    callees_map, callers_map, file_map = _project_call_graph(work_dir)
+    callees_map, callers_map, file_map, edge_aliases_map = _project_call_graph(
+        work_dir,
+        extra_call_edges=extra_call_edges,
+    )
 
     # Seed: functions changed in the working tree (added/modified — removed ones no longer
     # exist on disk) plus functions relevant to the developer intent.
@@ -1437,7 +1472,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
 
     # Top-down order (callers before the callees they depend on); FQNs absent from the layer
     # graph sort last, by name.
-    topdown = _topdown_ordered_fqns(work_dir)
+    topdown = _topdown_ordered_fqns(work_dir, extra_call_edges=extra_call_edges)
     order_index = {fqn: i for i, fqn in enumerate(topdown)}
 
     def _order_key(fqn):
@@ -1464,7 +1499,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
             source = f.read()
         callee_names = sorted({c.split("::")[-1] for c in callees_map.get(fqn, ())})
 
-        try:
+        try:https://github.com/fmagent-project/FM-Agent/pull/115/conflict?name=src%252Fincremental_reasoner.py&ancestor_oid=8ff298ac1ad878d7ce2b8feefa0fa6e55f334ce4&base_oid=1a5d24decc63a7015d73118128b1e6621d06d8ed&head_oid=e8a48f7b85ae20b37679b7e06fdac536eed403cf
             with open(f"{fpath}.spec.json", "r", encoding="utf-8") as f:
                 old_spec = json.load(f)
             with open(f"{fpath}.info.json", "r", encoding="utf-8") as f:
@@ -1617,7 +1652,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
             changed_spec_files.add(os.path.relpath(plan["fpath"], extracted_dir))
             if plan["info_updated"]:
                 for callee_fqn in _resolve_callee_fqns(
-                    plan["fqn"], plan["updated_callees"], callees_map
+                    plan["fqn"], plan["updated_callees"], callees_map, edge_aliases_map
                 ):
                     if callee_fqn not in checked:
                         to_check.add(callee_fqn)

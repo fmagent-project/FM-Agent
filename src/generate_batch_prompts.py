@@ -2,8 +2,9 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
 try:
@@ -156,6 +157,25 @@ def extract_callee_spec_from_info(
     return None
 
 
+def _callee_match_names(callee_fqn: str, aliases: Sequence[str]) -> List[str]:
+    names = [callee_fqn, callee_fqn.split("::")[-1]]
+    for alias in aliases:
+        if not alias:
+            continue
+        names.append(alias)
+        if "::" in alias:
+            names.append(alias.rsplit("::", 1)[-1])
+    return list(dict.fromkeys(names))
+
+
+def _info_line_mentions_name(first_line: str, name: str) -> bool:
+    if not name:
+        return False
+    if "::" in name:
+        return name in first_line
+    return bool(re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?:\s*\(|\b)", first_line))
+
+
 def chunked(items: List[dict], size: int) -> List[List[dict]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
@@ -174,6 +194,16 @@ def phase_callers_key(func: dict, phase: int) -> str:
         if key.endswith("_callers") and key.startswith("phase"):
             return key
     return target
+
+
+def phase_callee_info_names_key(func: dict, phase: int) -> Optional[str]:
+    target = f"phase{phase}_callee_info_names_by_caller"
+    if target in func:
+        return target
+    for key in func.keys():
+        if key.endswith("_callee_info_names_by_caller") and key.startswith("phase"):
+            return key
+    return None
 
 
 def detect_lang_and_comment(file_rel: str, ext_to_lang: Dict[str, str]) -> Tuple[str, str]:
@@ -230,6 +260,8 @@ def build_prompt(
     for fn in functions:
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
+        info_names_key = phase_callee_info_names_key(fn, phase)
+        info_names_by_caller = fn.get(info_names_key, {}) if info_names_key else {}
         callers = fn.get(caller_key, [])
         for caller_name in callers:
             caller_layer = func_to_layer.get(caller_name)

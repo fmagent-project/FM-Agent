@@ -195,6 +195,7 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--sub
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
+| `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 
 `proj_dir` must be a git repository.
 
@@ -216,6 +217,33 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 `--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`, but not with `--entry-func`.
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
+
+Use `--extra-edge FILE` when the static parser cannot see an important call relationship, such as indirect syscall dispatch. Supplemental edges are applied to full, entry-point-scoped, and incremental runs. The JSON shape is:
+
+```json
+{
+  "edges": [
+    {
+      "caller": {
+        "fqn": "third_party::musl::src::time::nanosleep-c::nanosleep",
+        "callsite_names": ["nanosleep"]
+      },
+      "callee": {
+        "fqn": "kernel::liteos_a::syscall::time_syscall-c::SysNanoSleep",
+        "info_names": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+      }
+    }
+  ]
+}
+```
+
+Extra-edge field rules:
+
+- `caller.fqn`: exact FQN for a single caller, adding one edge to `callee.fqn`. It may be empty.
+- `caller.callsite_names`: source callsite function names. Any function containing these callsites becomes a caller and gets an edge to `callee.fqn`. It may be empty.
+  - At least one of `caller.fqn` and `caller.callsite_names` must be non-empty.
+- `callee.fqn`: exact FQN for a single callee.
+- `callee.info_names`: optional names used to match generated `[INFO]` entries for this callee. They are only used for `[INFO]` matching and passing caller expectations.
 
 ### Incremental Mode
 
