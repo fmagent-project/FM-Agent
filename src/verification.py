@@ -1,10 +1,10 @@
 import config
-from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL
+from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL, OPENCODE_MODEL_PROVIDER
 from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
 from .file_utils import is_file_ready
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
-from .llm_client import build_llm_cli_command
+from .cli_backend import build_agent_command, is_cli_backend_enabled
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -212,7 +212,7 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                             # No function got a spec at all – this is an error
                             logging.warning(
                                 f"Spec generation process(es) exited (codes {exit_codes}) "
-                                f"but no files received [SPEC]/[INFO] markers."
+                                f"but no .spec.json/.info.json sidecar pairs were created."
                             )
                         else:
                             # Some functions are missing specs; leave them pending for retry.
@@ -383,12 +383,17 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     os.replace(tmp_path, prompt_path)
 
     prompt = "Follow the instructions in the attached file"
-    command = build_llm_cli_command(
-        model=OPENCODE_BUG_VALIDATION_MODEL,
-        prompt=prompt,
-        cwd=proj_dir,
-        files=[prompt_path],
-    )
+    if is_cli_backend_enabled():
+        command = build_agent_command(
+            model=OPENCODE_BUG_VALIDATION_MODEL,
+            prompt=prompt,
+            cwd=proj_dir,
+            files=[prompt_path],
+        )
+    else:
+        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_BUG_VALIDATION_MODEL}",
+                   "--file", prompt_path,
+                   "--", prompt]
     result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
     result_path = os.path.join(proj_dir, result_relpath)
     # Resume idempotency: if resuming and this bug was already validated, don't pay for it again.

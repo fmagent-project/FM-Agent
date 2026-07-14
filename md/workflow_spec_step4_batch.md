@@ -12,44 +12,45 @@ You are given a single batch prompt file path in the prompt. Your ONLY job is to
 4. For EACH function listed in the batch prompt:
    a. Read the extracted function file
    b. If layer > 0, read earlier-layer caller specs mentioned in the batch prompt
-   c. Generate a behavioral spec following the `[SPEC]` format
-   d. Generate callee expectations in `[INFO]` format
-   e. Write the COMPLETE file — prepend `[SPEC]` and `[INFO]` blocks, followed by the **UNCHANGED** original source code
-   f. Save the file back to the **SAME path** (overwriting the original)
+   c. Generate a behavioral spec and write it to `<function-file>.spec.json` in the same directory
+   d. Generate callee expectations and write them to `<function-file>.info.json` in the same directory
+   e. Do NOT modify the original function source file
 
 ---
 
 ## Spec Format
 
-Replace `<comment>` with the single-line comment prefix for the source language (`//` for C++/Java/Go/Rust/JavaScript/TypeScript, `#` for Python/Ruby/Shell, etc.):
+For each extracted function file (for example, `calculate_average.py`), write TWO
+separate JSON files in the SAME directory. Do NOT modify the original function
+source file.
 
-```
-<comment> [SPEC]
-<comment> Unit: <file path relative to repo root>
-<comment>
-<comment> <FunctionName>(<params>) -> <ReturnType>
-<comment>
-<comment> Pre-condition:
-<comment>   - ...
-<comment>
-<comment> Post-condition:
-<comment>   - ...
-<comment> [SPEC]
+**`<function-file>.spec.json`** — the function's own behavioral specification:
 
-<comment> [INFO]
-<comment> <callee_name>(<params>) -> <ReturnType>
-<comment>   Pre-condition: ...
-<comment>   Post-condition: ...
-<comment> [SPLIT]
-<comment> <another_callee>(<params>) -> <ReturnType>
-<comment>   Pre-condition: ...
-<comment>   Post-condition: ...
-<comment> [INFO]
-
-<original source code unchanged>
+```json
+{
+  "unit": "<file path relative to repo root>",
+  "signature": "<FunctionName>(<params>) -> <ReturnType>",
+  "pre_condition": "<what must hold before the call>",
+  "post_condition": "<what the function guarantees after return>"
+}
 ```
 
-If the function has no callees: `<comment> (no callees)` between the `<comment> [INFO]` markers.
+**`<function-file>.info.json`** — the expected specs of the function's callees:
+
+```json
+{
+  "callees": [
+    {
+      "name": "<callee_name>",
+      "signature": "<callee_name>(<params>) -> <ReturnType>",
+      "pre_condition": "<what the caller guarantees before calling>",
+      "post_condition": "<what the caller expects after the call>"
+    }
+  ]
+}
+```
+
+If a function has no callees, write `{"callees": []}` to the `.info.json` file.
 
 ---
 
@@ -64,7 +65,7 @@ If the function has no callees: `<comment> (no callees)` between the `<comment> 
 | Describe the governing invariant across all code paths | Name specific set members "as examples" |
 
 ```
-MUST NOT modify source code — only prepend [SPEC] and [INFO] blocks
+MUST NOT modify source code — write spec and info to separate JSON files
 MUST follow system_prompt.md rules: behavioral specs, not implementation descriptions
 MUST process ALL functions in the batch — do not stop early
 ```

@@ -3,6 +3,28 @@ import json
 import re
 
 
+_METADATA_SIDECAR_SUFFIXES = (".spec.json", ".info.json")
+
+_SPEC_FIELDS = {
+    "unit",
+    "signature",
+    "pre_condition",
+    "post_condition",
+}
+
+_CALLEE_FIELDS = {
+    "name",
+    "signature",
+    "pre_condition",
+    "post_condition",
+}
+
+
+def _is_metadata_sidecar(file_path):
+    """Return whether file_path is a function metadata sidecar."""
+    return str(file_path).endswith(_METADATA_SIDECAR_SUFFIXES)
+
+
 def _write_file_names(file_names, output_path):
     """Write sorted, de-duplicated file names to output_path."""
     file_names = sorted(dict.fromkeys(file_names))
@@ -21,31 +43,58 @@ def collect_file_names(input_dir, output_path="file_list.json"):
     file_names = []
     for root, _, files in os.walk(input_dir):
         for fname in files:
+            if _is_metadata_sidecar(fname):
+                continue
             full_path = os.path.join(root, fname)
             rel_path = os.path.relpath(full_path, input_dir)
             file_names.append(rel_path)
     return _write_file_names(file_names, output_path)
 
 
-def is_file_ready(file_path):
-    """Check if a file has [SPEC] ... [SPEC] and [INFO] ... [INFO] headers."""
-    try:
-        with open(file_path, 'r') as f:
-            content = f.read()
-    except (OSError, UnicodeDecodeError):
+def _is_valid_spec_json(data):
+    """Check that .spec.json contains exactly the supported fields."""
+    if not isinstance(data, dict):
+        return False
+    if set(data) != _SPEC_FIELDS:
+        return False
+    return all(isinstance(data[field], str) for field in _SPEC_FIELDS)
+
+
+def _is_valid_info_json(data):
+    """Check that .info.json contains exactly the supported fields."""
+    if not isinstance(data, dict) or set(data) != {"callees"}:
         return False
 
-    lines = content.splitlines()
-    spec_count = 0
-    info_count = 0
+    callees = data["callees"]
+    if not isinstance(callees, list):
+        return False
 
-    for line in lines:
-        if '[SPEC]' in line:
-            spec_count += 1
-        if '[INFO]' in line:
-            info_count += 1
+    for callee in callees:
+        if not isinstance(callee, dict) or set(callee) != _CALLEE_FIELDS:
+            return False
+        if not all(isinstance(callee[field], str) for field in _CALLEE_FIELDS):
+            return False
 
-    return spec_count >= 2 and info_count >= 2
+    return True
+
+
+def is_file_ready(file_path):
+    """Return whether both metadata sidecars contain valid new-format JSON."""
+    spec_path = f"{file_path}.spec.json"
+    info_path = f"{file_path}.info.json"
+
+    if not os.path.isfile(spec_path) or not os.path.isfile(info_path):
+        return False
+
+    try:
+        with open(spec_path, "r", encoding="utf-8") as file:
+            spec = json.load(file)
+        with open(info_path, "r", encoding="utf-8") as file:
+            info = json.load(file)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+
+    return _is_valid_spec_json(spec) and _is_valid_info_json(info)
 
 
 # Directories that typically contain test code

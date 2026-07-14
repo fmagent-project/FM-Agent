@@ -1,11 +1,6 @@
 from config import *
 import json
-from .llm_client import (
-    _llm_provider_client,
-    _retry_create,
-    _llm_json_call,
-    _parse_json_response,
-)
+from .llm_client import _llm_provider_client, _retry_create, _llm_call
 from .trace_writer import (
     new_event_id,
     record_llm_exchange,
@@ -14,20 +9,39 @@ from .trace_writer import (
 
 
 def _load_spec_check_json(response):
-    """Load a single JSON object from a specification-check response.
-
-    The shared parser handles direct, fenced, and prose-wrapped structured
-    responses.  This adapter retains the spec-checker's object-only contract
-    and its ``JSONDecodeError`` failure type.
-    """
-    text = response.strip() if isinstance(response, str) else ""
+    """Load the first JSON object from strict, fenced, or prose-wrapped output."""
+    text = (response or "").strip()
     try:
-        data = _parse_json_response(response)
-    except ValueError as exc:
-        raise json.JSONDecodeError(str(exc), text, 0) from exc
-    if not isinstance(data, dict):
-        raise json.JSONDecodeError("spec-check response must contain a JSON object", text, 0)
-    return data
+        return json.loads(text)
+    except json.JSONDecodeError as direct_exc:
+        fence_variants = (
+            ("```json", "```"),
+            ("```JSON", "```"),
+            ("```", "```"),
+            ("json```", "```"),
+            ("JSON```", "```"),
+        )
+        for prefix, suffix in fence_variants:
+            if text.startswith(prefix) and text.endswith(suffix):
+                fenced_text = text[len(prefix):-len(suffix)].strip()
+                try:
+                    return json.loads(fenced_text)
+                except json.JSONDecodeError:
+                    pass
+
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                data, _ = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                return data
+
+        raise direct_exc
+
 
 def _parse_spec_check_json(response):
     """Parse and validate the spec-check model structured JSON verdict."""
@@ -39,11 +53,6 @@ def _parse_spec_check_json(response):
     if not isinstance(data, dict):
         raise ValueError("spec-check JSON must be an object")
 
-    required = ("verdict", "counterexample", "offending_statements", "reason")
-    missing = [field for field in required if field not in data]
-    if missing:
-        raise ValueError("spec-check JSON missing required field(s): " + ", ".join(missing))
-
     verdict = data.get("verdict")
     if isinstance(verdict, str):
         verdict = verdict.upper()
@@ -53,13 +62,6 @@ def _parse_spec_check_json(response):
     counterexample = data.get("counterexample")
     offending_statements = data.get("offending_statements")
     reason = data.get("reason")
-
-    if counterexample is not None and not isinstance(counterexample, str):
-        raise ValueError("spec-check JSON field counterexample must be a string or null")
-    if offending_statements is not None and not isinstance(offending_statements, str):
-        raise ValueError("spec-check JSON field offending_statements must be a string or null")
-    if not isinstance(reason, str):
-        raise ValueError("spec-check JSON field reason must be a string")
 
     def _nonempty_string(value):
         return isinstance(value, str) and bool(value.strip())
@@ -90,18 +92,9 @@ def _parse_spec_check_json(response):
         )
     data["counterexample"] = None
     data["offending_statements"] = None
-    data["reason"] = reason.strip()
+    data["reason"] = reason.strip() if isinstance(reason, str) else ""
     return False, None, None, data
 
-
-def _parse_post_condition_json(data):
-    """Validate the structured response used to generate one block's post-condition."""
-    if not isinstance(data, dict):
-        raise ValueError("post-condition JSON must be an object")
-    post_condition = data.get("post_condition")
-    if not isinstance(post_condition, str) or not post_condition.strip():
-        raise ValueError("post-condition JSON requires a non-empty string field: post_condition")
-    return post_condition.strip()
 
 def _generate_block_post_condition(block, pre_condition, knowledge, language,
                                    trace_dir=None, trace_meta=None):
@@ -120,9 +113,7 @@ def _generate_block_post_condition(block, pre_condition, knowledge, language,
             f"Pre-condition:\n{pre_condition}\n\n"
             f"Code block:\n```{language.lower()}\n{block}\n```\n"
             f"{info_str}\n"
-            "Generate the post-condition. Return only a valid JSON object with this "
-            "required field: {\"post_condition\": \"...\"}. Do not include Markdown, "
-            "tags, or prose outside the JSON object."
+            "Generate the post-condition. Wrap it within [POST_START] and [POST_END]."
         )}
     ]
     meta = {
@@ -130,12 +121,12 @@ def _generate_block_post_condition(block, pre_condition, knowledge, language,
         "summary": "Generated post-condition for code block",
         **(trace_meta or {}),
     }
-    return _llm_json_call(
+    return _llm_call(
         _llm_provider_client,
         REASONER_POST_CONDITION_MODEL,
         messages,
-        _parse_post_condition_json,
-        '{"post_condition": "non-empty string"}',
+        "POST_START",
+        "POST_END",
         trace_dir=trace_dir,
         trace_meta=meta,
     )

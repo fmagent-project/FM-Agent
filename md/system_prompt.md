@@ -61,35 +61,37 @@ Do not name specific members of a set — not even as examples. Describe the gov
 
 ### Spec Format
 
-Use the comment syntax native to the source language (e.g., `//` for C/C++/Java/Go/Rust, `#` for Python/Ruby/Shell, `--` for Lua/Haskell/SQL, `%` for Erlang/MATLAB, `<!-- -->` for HTML/XML). Denote the comment prefix as `<C>` below.
+For each extracted function file (for example, `calculate_average.py`), write TWO
+separate JSON files in the SAME directory. Do NOT modify the original function
+source file.
 
-```
-<C> [SPEC]
-<C> Unit: <file path relative to repo root>
-<C>
-<C> <FunctionName>(<params>) -> <ReturnType>
-<C>
-<C> Pre-condition:
-<C>   - ...
-<C>
-<C> Post-condition:
-<C>   - ...
-<C> [SPEC]
+**`<function-file>.spec.json`** — the function's own behavioral specification:
 
-<C> [INFO]
-<C> <callee_name>(<params>) -> <ReturnType>
-<C>   Pre-condition: ...
-<C>   Post-condition: ...
-<C> [SPLIT]
-<C> <another_callee>(<params>) -> <ReturnType>
-<C>   Pre-condition: ...
-<C>   Post-condition: ...
-<C> [INFO]
-
-<original source code — UNCHANGED>
+```json
+{
+  "unit": "<file path relative to repo root>",
+  "signature": "<FunctionName>(<params>) -> <ReturnType>",
+  "pre_condition": "<what must hold before the call>",
+  "post_condition": "<what the function guarantees after return>"
+}
 ```
 
-If a function has no callees relevant to the spec, write `<C> (no callees)` between the `<C> [INFO]` markers.
+**`<function-file>.info.json`** — the expected specs of the function's callees:
+
+```json
+{
+  "callees": [
+    {
+      "name": "<callee_name>",
+      "signature": "<callee_name>(<params>) -> <ReturnType>",
+      "pre_condition": "<what the caller guarantees before calling>",
+      "post_condition": "<what the caller expects after the call>"
+    }
+  ]
+}
+```
+
+If a function has no callees relevant to the spec, write `{"callees": []}` to the `.info.json` file.
 
 Adapt the signature notation to the conventions of the source language:
 - For languages without explicit return types (e.g., Python, Ruby, JavaScript), omit `-> <ReturnType>` or use it informally to document the expected return.

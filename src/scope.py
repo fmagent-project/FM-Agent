@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import ast
 from difflib import SequenceMatcher
+import json
 import logging
 import re
 import time
@@ -65,7 +66,6 @@ from .extract import (
     LANG_CONFIG,
     _function_spans,
 )
-from .llm_client import _parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -529,7 +529,6 @@ def _llm_rerank(funcs_info: list[dict],
         {"role": "user", "content": user_msg},
     ]
     for attempt in range(3):
-        text = ""
         try:
             response = llm_client.chat.completions.create(
                 model=model,
@@ -538,22 +537,14 @@ def _llm_rerank(funcs_info: list[dict],
                 temperature=0.0,
             )
             text = response.choices[0].message.content.strip()
-            names = _parse_json_response(text)
-            if not isinstance(names, list) or not all(
-                isinstance(name, str) and name.strip() for name in names
-            ):
-                raise ValueError("LLM rerank response must be a JSON array of non-empty function names")
-            return [name.strip() for name in names]
+            m = re.search(r'\[.*?\]', text, re.DOTALL)
+            if m:
+                names = json.loads(m.group())
+                if isinstance(names, list):
+                    return [str(n) for n in names]
         except Exception as exc:
             logger.warning("LLM rerank attempt %d failed: %s", attempt + 1, exc)
             if attempt < 2:
-                messages = messages + [
-                    {"role": "assistant", "content": text},
-                    {"role": "user", "content": (
-                        "Return only valid JSON: an array of non-empty function-name strings. "
-                        "Do not include Markdown, tags, or prose."
-                    )},
-                ]
                 time.sleep(5 * (attempt + 1))
     return None
 

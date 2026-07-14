@@ -7,7 +7,6 @@ It is imported by `main.py` (the full pipeline) and by `src/incremental_reasoner
 """
 
 import os
-import glob
 import sys
 import json
 import time
@@ -18,6 +17,7 @@ import subprocess
 from config import (
     OPENCODE_MAX_RETRIES,
     OPENCODE_SETUP_MODEL,
+    OPENCODE_MODEL_PROVIDER,
 )
 from .file_utils import (
     _is_test_file,
@@ -26,7 +26,7 @@ from .file_utils import (
     _is_under_submodules,
 )
 from .opencode_trace import run_opencode_traced
-from .llm_client import build_llm_cli_command
+from .cli_backend import build_agent_command, is_cli_backend_enabled
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -202,11 +202,15 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
-    command = build_llm_cli_command(
-        model=OPENCODE_SETUP_MODEL,
-        prompt=prompt,
-        cwd=proj_dir,
-    )
+    if is_cli_backend_enabled():
+        command = build_agent_command(
+            model=OPENCODE_SETUP_MODEL,
+            prompt=prompt,
+            cwd=proj_dir,
+        )
+    else:
+        command = ["opencode", "run", "--model",
+                   f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}", "--", prompt]
 
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         try:
@@ -410,49 +414,6 @@ def _clean_domain_context_files(work_dir, removed_phase_nums, renumbered):
         logging.info("Renamed domain-context file to %s", os.path.basename(final_path))
 
 
-def _collapse_phases_to_one(work_dir):
-    """Merge every planned module and its type context into phase 1."""
-    phases_path = os.path.join(work_dir, "phases.json")
-    with open(phases_path) as f:
-        data = json.load(f)
-    phases = sorted(data.get("phases", []), key=lambda phase: phase.get("phase", 0))
-    if not phases:
-        return
-
-    merged_description = "\n\n".join(
-        f"Phase {phase['phase']} ({phase['name']}): {phase_description}"
-        for phase in phases
-        if (phase_description := (phase.get("description") or "").strip())
-    )
-    first = phases[0]
-    first["name"] = "Unified Analysis Phase"
-    first["description"] = merged_description
-    first["modules"] = [
-        module
-        for phase in phases
-        for module in phase.get("modules", [])
-    ]
-    first["depends_on_phases"] = []
-    data["phases"] = [first]
-    with open(phases_path, "w") as f:
-        json.dump(data, f, indent=2)
-
-    domain_dir = os.path.join(work_dir, "spec_prompts", "domain_context")
-    merged_types_path = os.path.join(domain_dir, "phase_01_types.txt")
-    type_context = []
-    for phase in phases:
-        types_path = os.path.join(domain_dir, f"phase_{phase['phase']:02d}_types.txt")
-        if os.path.isfile(types_path):
-            with open(types_path) as f:
-                type_context.append(f.read().strip())
-    if type_context:
-        with open(merged_types_path, "w") as f:
-            f.write("\n\n".join(type_context) + "\n")
-        for types_path in glob.glob(os.path.join(domain_dir, "phase_*_types.txt")):
-            if types_path != merged_types_path:
-                os.remove(types_path)
-
-
 def _collect_changed_modules(ensure_changes, *change_sets):
     """Collect the modules whose source-file list changed during post-processing.
 
@@ -584,11 +545,15 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
-    command = build_llm_cli_command(
-        model=OPENCODE_SETUP_MODEL,
-        prompt=prompt,
-        cwd=proj_dir,
-    )
+    if is_cli_backend_enabled():
+        command = build_agent_command(
+            model=OPENCODE_SETUP_MODEL,
+            prompt=prompt,
+            cwd=proj_dir,
+        )
+    else:
+        command = ["opencode", "run", "--model",
+                   f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}", "--", prompt]
 
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         try:
@@ -845,7 +810,7 @@ def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir):
 
 def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                        resume=False, required_source_files=None,
-                       submodules=None, one_phase=False):
+                       submodules=None):
     """Stage 1: prepare the setup workflow file and run opencode (with retries) to produce phases.json.
 
     ``required_source_files`` are paths the caller must have processed regardless
@@ -853,7 +818,6 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
     once the plan is otherwise finalized (see ``_ensure_source_files_in_phases``).
     ``submodules`` optionally limits the full pipeline to selected project-relative
     subdirectories.
-    ``one_phase`` merges the finalized plan before downstream stages consume it.
     """
     # On resume, reuse the existing phase plan instead of paying for the
     # setup_context LLM call again.
@@ -905,12 +869,16 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
         prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md")
-        command = build_llm_cli_command(
-            model=OPENCODE_SETUP_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-            files=[prompt_file],
-        )
+        if is_cli_backend_enabled():
+            command = build_agent_command(
+                model=OPENCODE_SETUP_MODEL,
+                prompt=prompt,
+                cwd=proj_dir,
+                files=[prompt_file],
+            )
+        else:
+            command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
+                       "--file", prompt_file, "--", prompt]
         try:
             run_opencode_traced(
                 proj_dir=proj_dir,
@@ -1033,6 +1001,3 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
             "phase_NN_types.txt per phase."
         )
         sys.exit(1)
-
-    if one_phase:
-        _collapse_phases_to_one(work_dir)

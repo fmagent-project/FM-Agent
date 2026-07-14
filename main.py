@@ -2,6 +2,7 @@ from config import (
     MAX_WORKERS,
     OPENCODE_MAX_RETRIES,
     OPENCODE_SPEC_MODEL,
+    OPENCODE_MODEL_PROVIDER,
 )
 from src.entry_reasoning_pipeline import run_entry_pipeline
 from src.file_utils import (
@@ -22,7 +23,7 @@ from src.opencode_trace import (
     function_id_from_extracted_path,
     run_opencode_traced,
 )
-from src.llm_client import build_llm_cli_command
+from src.cli_backend import build_agent_command, is_cli_backend_enabled
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -131,23 +132,32 @@ def _run_spec_generation_batch(
             f"Process the batch prompt file at {batch_prompt_rel}. "
             f"Read it and fm_agent/spec_prompts/system_prompt.md, "
             f"generate behavioral specs for each function listed, "
-            f"and write the complete specced files directly. {fm_reminder}"
+            f"and write the .spec.json and .info.json files for each function. "
+            f"Do not modify the function source files. {fm_reminder}"
         )
     else:
         prompt = (
             f"Continue processing the batch prompt file at {batch_prompt_rel}. "
             f"Some functions may already have specs from a previous attempt. "
             f"Check each function file — only generate specs for those "
-            f"that don't have [SPEC] blocks yet. "
+            f"that do not have both .spec.json and .info.json files yet. "
             f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
         )
     prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
-    command = build_llm_cli_command(
-        model=OPENCODE_SPEC_MODEL,
-        prompt=prompt,
-        cwd=proj_dir,
-        files=[prompt_file],
-    )
+    if is_cli_backend_enabled():
+        command = build_agent_command(
+            model=OPENCODE_SPEC_MODEL,
+            prompt=prompt,
+            cwd=proj_dir,
+            files=[prompt_file],
+        )
+    else:
+        command = [
+            "opencode", "run",
+            "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
+            "--file", prompt_file,
+            "--", prompt,
+        ]
     try:
         result = run_opencode_traced(
             proj_dir=proj_dir,
@@ -161,7 +171,13 @@ def _run_spec_generation_batch(
                 "fm_agent/spec_prompts/system_prompt.md",
                 *list_staged_domain_knowledge_relpaths(work_dir),
             ],
-            output_files=function_files,
+            output_files=[
+                f"{function_file}.spec.json"
+                for function_file in function_files
+            ] + [
+                f"{function_file}.info.json"
+                for function_file in function_files
+            ],
             summary=f"OpenCode spec generation for {batch_file}",
             metadata={
                 "attempt": attempt,
@@ -181,7 +197,6 @@ def run_pipeline(
     required_source_files=None,
     domain_knowledge_files=None,
     submodules=None,
-    one_phase=False,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -226,7 +241,6 @@ def run_pipeline(
         proj_dir, work_dir, script_dir, resume=resume,
         required_source_files=required_source_files,
         submodules=submodules,
-        one_phase=one_phase,
     )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
@@ -470,7 +484,7 @@ def run_pipeline(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
+              "[--domain-knowledge FILE ...] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
               "[--end-func PATH ...]",
         description="Run the FM agent pipeline on a project directory.",
@@ -494,11 +508,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the pipeline against an isolated git worktree snapshot of "
         "the project instead of the project directory itself.",
-    )
-    parser.add_argument(
-        "--one-phase",
-        action="store_true",
-        help="Put all planned source files into a single analysis phase.",
     )
     parser.add_argument(
         "--domain-knowledge",
@@ -572,7 +581,6 @@ if __name__ == "__main__":
             end_funcs=args.end_func,
             resume=resume,
             domain_knowledge_files=domain_knowledge_files,
-            one_phase=args.one_phase,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -629,7 +637,6 @@ if __name__ == "__main__":
                     old_commit,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
-                    one_phase=args.one_phase,
                 )
             else:
                 run_pipeline(
@@ -637,7 +644,6 @@ if __name__ == "__main__":
                     resume=resume,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
-                    one_phase=args.one_phase,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
