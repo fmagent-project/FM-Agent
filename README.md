@@ -198,6 +198,8 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
 | `--entry-func PATH`         | Analyze only the call graph reachable from the named entry function. |
 | `--end-func PATH [PATH ...]` | Stop entry-mode analysis at one or more named functions. |
+| `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
+| `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 
 `proj_dir` must be a git repository.
 
@@ -229,6 +231,39 @@ uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 The option is off by default, preserving the existing one-mismatch-per-function behavior and output. When enabled, reasoning continues across later checkpoints and each candidate is validated independently; incremental mode still returns a sorted unique list of functions with at least one confirmed candidate. In the v1 reasoning model, a single implication check reports at most one mismatch, even though later checkpoints continue to be analyzed.
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
+
+Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces the `[SPEC]` blocks for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
+
+```bash
+uv run python main.py <proj_dir> --only-spec
+```
+
+Use `--extra-edge FILE` when the static parser cannot see an important call relationship, such as indirect syscall dispatch. Supplemental edges are applied to full, entry-point-scoped, and incremental runs. The JSON shape is:
+
+```json
+{
+  "edges": [
+    {
+      "caller": {
+        "fqn": "third_party::musl::src::time::nanosleep-c::nanosleep",
+        "callsite_names": ["nanosleep"]
+      },
+      "callee": {
+        "fqn": "kernel::liteos_a::syscall::time_syscall-c::SysNanoSleep",
+        "info_names": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+      }
+    }
+  ]
+}
+```
+
+Extra-edge field rules:
+
+- `caller.fqn`: exact FQN for a single caller, adding one edge to `callee.fqn`. It may be empty.
+- `caller.callsite_names`: source callsite function names. Any function containing these callsites becomes a caller and gets an edge to `callee.fqn`. It may be empty.
+  - At least one of `caller.fqn` and `caller.callsite_names` must be non-empty.
+- `callee.fqn`: exact FQN for a single callee.
+- `callee.info_names`: optional names used to match generated `[INFO]` entries for this callee. They are only used for `[INFO]` matching and passing caller expectations.
 
 ### Incremental Mode
 

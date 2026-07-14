@@ -177,6 +177,8 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
 | `--entry-func PATH` | 仅分析从指定入口函数可达的调用图。 |
 | `--end-func PATH [PATH ...]` | 在一个或多个指定函数处停止入口模式分析。 |
+| `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
+| `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 
 `proj_dir` 必须是一个 git 仓库。
 
@@ -208,6 +210,40 @@ uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 该选项默认关闭，因此原有的“每个函数至多报告一个不匹配”行为和输出保持不变。启用后，推理会继续检查后续检查点，并对每个候选 Bug 分别执行验证；增量模式仍返回至少有一个候选被确认的函数所组成的排序去重列表。v1 推理模型中，单次蕴含检查仍至多返回一个不匹配，但后续检查点会继续执行。
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
+
+使用 `--only-spec` 可以在生成行为规约后即停止，跳过推理与 Bug 验证阶段。它会为每个函数生成 `[SPEC]` 块，而不在验证上花费时间，适用于只需要规约、或希望先审阅规约再运行完整分析的场景。该参数不能与 `--incremental` 一起使用，因为增量模式本质上是一个推理/Bug 验证流程。
+
+```bash
+uv run python main.py <proj_dir> --only-spec
+```
+
+当静态解析无法看到关键调用关系时（例如间接 syscall 分发），可使用 `--extra-edge FILE`。补充边会同时作用于完整运行、入口函数范围运行和增量运行。JSON 格式如下：
+
+```json
+{
+  "edges": [
+    {
+      "caller": {
+        "fqn": "third_party::musl::src::time::nanosleep-c::nanosleep",
+        "callsite_names": ["nanosleep"]
+      },
+      "callee": {
+        "fqn": "kernel::liteos_a::syscall::time_syscall-c::SysNanoSleep",
+        "info_names": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+      }
+    }
+  ]
+}
+```
+
+Extra-edge 字段规则：
+
+- `caller.fqn`：单个 caller 的精确 caller FQN，补一条到 `callee.fqn` 的边。可以为空。
+- `caller.callsite_names`：源码 callsite 函数名。源码中包含这些 callsite 的函数都会作为 caller，补一条到 `callee.fqn` 的边。可以为空。
+  - `caller.fqn` 和 `caller.callsite_names` 至少有一个非空。
+- `callee.fqn`：单个 callee 的精确 FQN。
+- `callee.info_names`：可选，用于匹配生成的 `[INFO]` 块里指代该 callee 的名字。它只用于 `[INFO]` 匹配和传递调用者期望。
+
 
 ### 增量模式
 

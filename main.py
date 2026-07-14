@@ -4,6 +4,7 @@ from config import (
     OPENCODE_SPEC_MODEL,
 )
 from src.entry_reasoning_pipeline import run_entry_pipeline
+from src.call_graph_edges import load_call_edges
 from src.file_utils import (
     collect_file_names,
     is_file_ready,
@@ -187,6 +188,8 @@ def run_pipeline(
     domain_knowledge_files=None,
     submodules=None,
     one_phase=False,
+    extra_call_edges_path=None,
+    only_spec=False,
     all_bugs=False,
 ):
     if not os.path.isdir(proj_dir):
@@ -203,6 +206,7 @@ def run_pipeline(
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     _guard_verification_results_dir(output_dir, work_dir)
+    extra_call_edges = load_call_edges(extra_call_edges_path)
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -291,10 +295,13 @@ def run_pipeline(
 
     # --- Stage 3: Generate topdown layers ---
     print("[Pipeline] Stage 3/4: Generating topdown layers...")
-    generate_topdown_layers(work_dir)
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
 
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
-    print("[Pipeline] Stage 4/4: Generating specs & verification...")
+    if only_spec:
+        print("[Pipeline] Stage 4/4: Generating specs (reasoning & bug validation disabled)...")
+    else:
+        print("[Pipeline] Stage 4/4: Generating specs & verification...")
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
     batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
     shutil.copy2(batch_md_src, batch_md_dst)
@@ -317,7 +324,7 @@ def run_pipeline(
             spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
         )
         if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num])
+            generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
         total_layers = layers_data.get("total_layers", 1)
@@ -363,29 +370,32 @@ def run_pipeline(
                 # Find batches with unspecced functions
                 pending_batches = _get_pending_batches(all_batches, proj_dir)
                 if not pending_batches:
-                    validation_state = _collect_current_validation_state(work_dir)
-                    incomplete_verification = _get_incomplete_verification_files(
-                        layer_files,
-                        input_dir,
-                        output_dir,
-                        work_dir,
-                        status_by_target=validation_state["status_by_target"],
-                        all_bugs=all_bugs,
-                    )
-                    if incomplete_verification:
-                        logging.info(
-                            f"Phase {phase_num} Layer {layer_idx}: "
-                            f"{len(incomplete_verification)} ready file(s) still need verification or validation"
-                        )
-                        newly_processed = streaming_reasoner(
-                            input_dir, output_dir, file_list=layer_files,
-                            proj_dir=proj_dir, work_dir=work_dir,
-                            spec_procs=None,
-                            already_processed=all_processed | layer_processed,
-                            resume=resume,
+                    # All functions in this layer are specced. In only-spec mode
+                    # we stop here without running the reasoner/bug validation.
+                    if not only_spec:
+                        validation_state = _collect_current_validation_state(work_dir)
+                        incomplete_verification = _get_incomplete_verification_files(
+                            layer_files,
+                            input_dir,
+                            output_dir,
+                            work_dir,
+                            status_by_target=validation_state["status_by_target"],
                             all_bugs=all_bugs,
                         )
-                        layer_processed.update(newly_processed)
+                        if incomplete_verification:
+                            logging.info(
+                                f"Phase {phase_num} Layer {layer_idx}: "
+                                f"{len(incomplete_verification)} ready file(s) still need verification or validation"
+                            )
+                            newly_processed = streaming_reasoner(
+                                input_dir, output_dir, file_list=layer_files,
+                                proj_dir=proj_dir, work_dir=work_dir,
+                                spec_procs=None,
+                                already_processed=all_processed | layer_processed,
+                                resume=resume,
+                                all_bugs=all_bugs,
+                            )
+                            layer_processed.update(newly_processed)
                     break
 
                 # Submit all pending spec batches through a bounded executor so
@@ -420,7 +430,7 @@ def run_pipeline(
                         f"submitted {len(spec_futures)} spec-generation batch tasks "
                         f"(max_workers={MAX_WORKERS}, total_pending_batches={len(pending_batches)})"
                     )
-                    if spec_futures:
+                    if spec_futures and not only_spec:
                         newly_processed = streaming_reasoner(
                             input_dir, output_dir, file_list=layer_files,
                             proj_dir=proj_dir, work_dir=work_dir,
@@ -478,13 +488,19 @@ def run_pipeline(
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
 
-    validation_dir = os.path.join(work_dir, "bug_validation")
-    if all_bugs or os.path.lexists(validation_dir):
-        validation_state = _generate_validation_summary(work_dir)
-        confirmed = validation_state["summary"]["total_confirmed"]
-        print(f"[Pipeline] Confirmed bugs: {confirmed}")
+    # Print confirmed bug count (skipped in only-spec mode, which runs no
+    # reasoning or bug validation).
+    if not only_spec:
+        validation_dir = os.path.join(work_dir, "bug_validation")
+        if all_bugs or os.path.lexists(validation_dir):
+            validation_state = _generate_validation_summary(work_dir)
+            confirmed = validation_state["summary"]["total_confirmed"]
+            print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
-    print("[Pipeline] Done.")
+    if only_spec:
+        print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
+    else:
+        print("[Pipeline] Done.")
 
 
 def main(argv=None):
@@ -493,7 +509,7 @@ def main(argv=None):
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--all-bugs] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
-              "[--end-func PATH ...]",
+              "[--end-func PATH ...] [--extra-edge FILE] [--only-spec]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -525,6 +541,12 @@ def main(argv=None):
         "--all-bugs",
         action="store_true",
         help="continue reasoning after mismatches and validate every reported candidate.",
+    )
+    parser.add_argument(
+        "--only-spec",
+        action="store_true",
+        help="Only generate behavioral specs; skip the reasoning and bug "
+        "validation stages.",
     )
     parser.add_argument(
         "--domain-knowledge",
@@ -559,10 +581,21 @@ def main(argv=None):
         help="one or more function paths at which to stop (space-separated list); "
         "if omitted, the whole call graph reachable from --entry-func is analyzed.",
     )
+    parser.add_argument(
+        "--extra-edge",
+        dest="extra_edge",
+        metavar="FILE",
+        default=None,
+        help="optional JSON file, or directory of JSON files, containing "
+        "supplemental caller->callee edges.",
+    )
     args = parser.parse_args(argv)
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
+    extra_call_edges_path = args.extra_edge
+    if extra_call_edges_path:
+        extra_call_edges_path = os.path.abspath(extra_call_edges_path)
     try:
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
@@ -579,6 +612,12 @@ def main(argv=None):
 
     if submodules and args.entry_func is not None:
         parser.error("--submodule cannot be combined with --entry-func.")
+
+    if args.only_spec and args.incremental:
+        parser.error(
+            "--only-spec cannot be combined with --incremental "
+            "(incremental mode is inherently a reasoning/bug-validation flow)."
+        )
 
     # ---- pre-flight environment check (shared by all pipeline modes) ----
     import config
@@ -601,6 +640,10 @@ def main(argv=None):
         }
         if args.one_phase:
             entry_kwargs["one_phase"] = True
+        if extra_call_edges_path:
+            entry_kwargs["extra_call_edges_path"] = extra_call_edges_path
+        if args.only_spec:
+            entry_kwargs["only_spec"] = True
         run_entry_pipeline(
             proj_dir,
             **entry_kwargs,
@@ -661,6 +704,8 @@ def main(argv=None):
                 }
                 if args.one_phase:
                     incremental_kwargs["one_phase"] = True
+                if extra_call_edges_path:
+                    incremental_kwargs["extra_call_edges_path"] = extra_call_edges_path
                 run_incremental_pipeline(
                     run_dir,
                     intent_path,
@@ -676,6 +721,10 @@ def main(argv=None):
                 }
                 if args.one_phase:
                     pipeline_kwargs["one_phase"] = True
+                if extra_call_edges_path:
+                    pipeline_kwargs["extra_call_edges_path"] = extra_call_edges_path
+                if args.only_spec:
+                    pipeline_kwargs["only_spec"] = True
                 run_pipeline(
                     run_dir,
                     **pipeline_kwargs,
