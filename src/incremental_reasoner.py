@@ -51,7 +51,16 @@ from .cli_backend import build_agent_command, is_cli_backend_enabled
 from .prompts import _load_spec_check_json
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import try_codegraph_init
-from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
+from .verification import (
+    AllBugsArtifactError,
+    EXT_TO_LANG as _VERIFY_EXT_TO_LANG,
+    _generate_validation_summary,
+    _guard_verification_results_dir,
+    _get_validation_target_paths,
+    _secure_unlink_artifact,
+    _validate_single_bug,
+    _verify_single_file,
+)
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -578,14 +587,17 @@ def run_incremental_pipeline(
     old_commit_id,
     domain_knowledge_files=None,
     submodules=None,
+    all_bugs=False,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
 
-    Returns the sorted list of verified files (paths relative to the extracted_functions
-    dir) for which the reasoner reported a spec violation (MISMATCH) that bug validation
-    then confirmed. The set of functions whose specs were updated is recorded to
-    fm_agent/incremental_updated_specs.json as a side effect.
+    In all_bugs mode, Stage 10 also validates candidates recorded by valid partial ERROR
+    summaries, so completed reasoning is not required to preserve discovered candidates.
+    Its internal all-bugs return is ``(confirmed_functions, confirmed_bug_count)``; this
+    public function unpacks that tuple and always returns the sorted, unique list of
+    confirmed extracted-function paths. The set of functions whose specs were updated is
+    recorded to fm_agent/incremental_updated_specs.json as a side effect.
     """
 
     # run_pipeline and _run_setup_extract live in the top-level entry module (main.py);
@@ -596,6 +608,7 @@ def run_incremental_pipeline(
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
+    _guard_verification_results_dir(output_dir, work_dir)
 
     _setup_incremental_logging(work_dir)
     staged_knowledge = stage_domain_knowledge_files(
@@ -627,8 +640,9 @@ def run_incremental_pipeline(
             proj_dir,
             domain_knowledge_files=domain_knowledge_files,
             submodules=submodules,
+            all_bugs=all_bugs,
         )
-        return
+        return []
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
 
     # 2. Check whether the intent file is valid; if not, fail since we don't know what to analyze incrementally.
@@ -636,13 +650,13 @@ def run_incremental_pipeline(
     developer_intent = ""
     if not os.path.isfile(intent_file_path):
         logging.error("Intent file %s does not exist; cannot run incremental pipeline.", intent_file_path)
-        return
+        return []
     else:
         with open(intent_file_path, "r") as f:
             developer_intent = f.read().strip()
         if not developer_intent:
             logging.error("Intent file %s is empty; cannot run incremental pipeline.", intent_file_path)
-            return
+            return []
     logging.info("  -> intent loaded (%d chars).", len(developer_intent))
 
     # Wipe the previous run's verification artifacts. The prior full run wrote a verdict for
@@ -764,12 +778,23 @@ def run_incremental_pipeline(
     buggy_files = _verify_incremental_functions(
         proj_dir, work_dir, changed_functions, updated_spec_files,
         submodules=submodules,
+        all_bugs=all_bugs,
     )
+    confirmed_bug_count = len(buggy_files)
+    if all_bugs:
+        buggy_files, confirmed_bug_count = buggy_files
     logging.info("=" * 70)
-    logging.info(
-        "INCREMENTAL PIPELINE DONE: bug validation confirmed bugs in %d function(s).",
-        len(buggy_files),
-    )
+    if all_bugs:
+        logging.info(
+            "INCREMENTAL PIPELINE DONE: bug validation confirmed %d bug(s) in %d function(s).",
+            confirmed_bug_count,
+            len(buggy_files),
+        )
+    else:
+        logging.info(
+            "INCREMENTAL PIPELINE DONE: bug validation confirmed bugs in %d function(s).",
+            len(buggy_files),
+        )
     for bf in buggy_files:
         logging.info("  - %s", bf)
     logging.info("=" * 70)
@@ -1763,7 +1788,8 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
 
 
 def _verify_incremental_functions(
-    proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None
+    proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None,
+    all_bugs=False,
 ):
     """
     Step 10: re-run the verification stage (reasoner + bug validation) on only the functions
@@ -1788,11 +1814,15 @@ def _verify_incremental_functions(
     A reasoner MISMATCH is only a candidate bug; each one is then handed to bug validation
     (verification._validate_single_bug, an opencode pass) which confirms or rejects it.
 
-    Returns the sorted list of extracted-function files (paths relative to the
-    extracted_functions dir) whose reasoner MISMATCH was confirmed a bug by bug validation.
+    In all-bugs mode, valid complete MISMATCH summaries and valid partial ERROR summaries
+    both enumerate their candidate artifacts for validation. That mode returns
+    ``(sorted_unique_confirmed_functions, confirmed_bug_count)`` so its caller can report
+    candidate-level confirmations. Default mode preserves the legacy public behavior and
+    returns only the sorted, unique list of confirmed MISMATCH function paths.
     """
     extracted_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
+    _guard_verification_results_dir(output_dir, work_dir)
 
     verify_targets = set()  # absolute extracted-function paths
 
@@ -1823,41 +1853,110 @@ def _verify_incremental_functions(
         ]
     if not file_list:
         logging.info("    [verify] no functions require re-verification.")
-        return []
+        _generate_validation_summary(work_dir)
+        return ([], 0) if all_bugs else []
     logging.info("    [verify] running reasoner on %d function(s)...", len(file_list))
 
     # Drop stale verification results so the reasoner re-runs rather than reusing the cached
     # verdict from the previous full run.
     for rel in file_list:
         stale = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
-        if os.path.exists(stale):
-            os.remove(stale)
+        _secure_unlink_artifact(
+            stale,
+            work_dir,
+            missing_ok=True,
+        )
 
     # Verify every target by invoking the reasoner (via _verify_single_file). The reasoner
     # makes LLM calls, so run the targets concurrently like the full run does, bounded by
     # MAX_WORKERS. _verify_single_file writes each verdict to output_dir and returns it.
     mismatches = []
+    verification_results = []
 
     def _verify(rel):
         fpath = os.path.join(extracted_dir, rel)
         language = _VERIFY_EXT_TO_LANG.get(os.path.splitext(fpath)[1], "C")
-        _, verdict = _verify_single_file(fpath, extracted_dir, output_dir, language, work_dir=work_dir)
+        _, verdict = _verify_single_file(
+            fpath,
+            extracted_dir,
+            output_dir,
+            language,
+            work_dir=work_dir,
+            all_bugs=all_bugs,
+        )
         return rel, verdict
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(_verify, rel): rel for rel in file_list}
         for future in concurrent.futures.as_completed(futures):
             rel = futures[future]
-            try:
-                _, verdict = future.result()
-            except Exception:
-                logging.exception("Verification failed for %s", rel)
-                continue
+            _, verdict = future.result()
+            verification_results.append((rel, verdict))
             if verdict == "MISMATCH":
                 mismatches.append(rel)
 
+    if all_bugs:
+        validation_targets = []
+        for rel, verdict in verification_results:
+            if verdict not in {"MISMATCH", "ERROR"}:
+                continue
+            primary_result_rel = os.path.join(
+                os.path.relpath(output_dir, proj_dir),
+                os.path.splitext(rel)[0] + ".json",
+            )
+            try:
+                targets = _get_validation_target_paths(
+                    primary_result_rel,
+                    proj_dir,
+                    allow_partial=True,
+                )
+            except AllBugsArtifactError:
+                raise
+            except Exception:
+                logging.exception("Candidate enumeration failed for %s", rel)
+                continue
+            validation_targets.extend((rel, target) for target in targets)
+
+        logging.info(
+            "    [verify] validating %d candidate bug(s) with opencode...",
+            len(validation_targets),
+        )
+
+        def _validate_target(function_rel, target_rel):
+            _validate_single_bug(target_rel, proj_dir, work_dir)
+            return function_rel, target_rel
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(_validate_target, function_rel, target_rel): (
+                    function_rel,
+                    target_rel,
+                )
+                for function_rel, target_rel in validation_targets
+            }
+            for future in concurrent.futures.as_completed(futures):
+                function_rel, target_rel = futures[future]
+                try:
+                    future.result()
+                except AllBugsArtifactError:
+                    raise
+                except Exception:
+                    logging.exception("Bug validation failed for %s", target_rel)
+
+        validation_state = _generate_validation_summary(work_dir)
+        status_by_target = validation_state["status_by_target"]
+        confirmed_functions = set()
+        confirmed_bug_count = 0
+        for function_rel, target_rel in validation_targets:
+            target_path = target_rel.replace("\\", "/")
+            if status_by_target.get(target_path) == "confirmed":
+                confirmed_bug_count += 1
+                confirmed_functions.add(function_rel)
+        return sorted(confirmed_functions), confirmed_bug_count
+
     logging.info("    [verify] reasoner reported %d MISMATCH(es) (candidate bugs).", len(mismatches))
     if not mismatches:
+        _generate_validation_summary(work_dir)
         return []
 
     # Bug validation: the reasoner's MISMATCH is only a candidate bug, so validate each one
@@ -1879,27 +1978,20 @@ def _verify_incremental_functions(
             rel = futures[future]
             try:
                 future.result()
+            except AllBugsArtifactError:
+                raise
             except Exception:
                 logging.exception("Bug validation failed for %s", rel)
 
-    # Summarize all validation results into work_dir/bug_validation/summary.json, like run_pipeline.
-    _generate_validation_summary(work_dir)
-
-    # Collect the MISMATCHes that bug validation confirmed as real bugs. bug_id is the
-    # result-relative path with separators replaced by "--".
-    bug_validation_dir = os.path.join(work_dir, "bug_validation")
-    confirmed = []
+    validation_state = _generate_validation_summary(work_dir)
+    status_by_target = validation_state["status_by_target"]
+    confirmed = set()
     for rel in mismatches:
-        bug_id = os.path.splitext(rel)[0].replace(os.sep, "--").replace("/", "--")
-        result_path = os.path.join(bug_validation_dir, f"{bug_id}.result.json")
-        if not os.path.exists(result_path):
-            continue
-        try:
-            with open(result_path) as rf:
-                data = json.load(rf)
-        except (ValueError, OSError):
-            continue
-        if data.get("confirmation_status") == "confirmed":
-            confirmed.append(rel)
+        target_rel = os.path.join(
+            os.path.relpath(output_dir, proj_dir),
+            os.path.splitext(rel)[0] + ".json",
+        ).replace("\\", "/")
+        if status_by_target.get(target_rel) == "confirmed":
+            confirmed.add(rel)
 
     return sorted(confirmed)

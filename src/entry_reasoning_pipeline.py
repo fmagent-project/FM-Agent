@@ -11,11 +11,17 @@ from src.generate_topdown_layers import (
 )
 from src.extract import EXT_TO_LANG, _function_spans, run_extraction
 from src.languages.codegraph import try_codegraph_init
+from src.all_bugs_schema import (
+    ALL_BUGS_RESULT_PREFIX,
+    all_bugs_summary_is_complete,
+)
 from src.file_utils import (
     _is_test_file,
     add_test_file_exemption,
     clear_test_file_exemptions,
 )
+from src.secure_fs import SecureFilesystemError, load_json as secure_load_json
+from src.verification_schema import legacy_result_has_valid_schema
 import config
 
 
@@ -183,21 +189,23 @@ def _trim_project_in_place(proj_dir, all_by_source, keep_by_source):
 # Run-directory copy
 #
 # The entry pipeline never mutates proj_dir. Instead it copies proj_dir's
-# sources (everything except .git) into a separate run directory, trims and runs
-# the pipeline there, and finally copies the generated fm_agent/ workspace back
+# sources (excluding repository metadata and generated indexes) into a separate
+# run directory, trims and runs the pipeline there, and finally copies the
+# generated fm_agent/ workspace back
 # into proj_dir. This isolates both the trim and any stray edits run_pipeline()'s
 # LLM agents make from the original repo. An existing fm_agent/ is copied along
 # too, so a resumed run picks up where the prior one left off.
 # ---------------------------------------------------------------------------
 
-_SKIP_DIRS = (".git",)
+_SKIP_DIRS = (".git", ".codegraph")
 
 
 def _make_run_copy(proj_dir, run_dir):
-    """Copy proj_dir (everything except .git) into a fresh ``run_dir``.
+    """Copy project inputs into a fresh ``run_dir``.
 
     Includes an existing ``fm_agent/`` workspace so a resumed pipeline finds the
-    prior run's state. Any leftover run directory from an interrupted run is
+    prior run's state, but excludes repository metadata and stale generated
+    codegraph indexes. Any leftover run directory from an interrupted run is
     discarded first: the pristine sources always live in proj_dir, so the copy
     can be remade cleanly.
     """
@@ -219,6 +227,7 @@ def run_entry_pipeline(
     end_funcs=None,
     resume=False,
     domain_knowledge_files=None,
+    all_bugs=False,
 ):
     """Run the entry-point-scoped reasoning pipeline.
 
@@ -257,7 +266,9 @@ def run_entry_pipeline(
 
     proj_dir = os.path.abspath(proj_dir)
     work_dir = os.path.join(proj_dir, "fm_agent")
-    config.BUG_VALIDATION_MAX_RETRIES = 0
+    config.BUG_VALIDATION_MAX_RETRIES = (
+        max(1, config.BUG_VALIDATION_MAX_RETRIES) if all_bugs else 0
+    )
 
     # The entry_func's source file may match the test-file heuristics (a test
     # directory or test-like name). Exempt it so neither the selection extraction
@@ -273,6 +284,7 @@ def run_entry_pipeline(
             end_funcs,
             resume,
             domain_knowledge_files=domain_knowledge_files,
+            all_bugs=all_bugs,
         )
     finally:
         clear_test_file_exemptions()
@@ -409,8 +421,16 @@ def _run_entry_pipeline_inner(
     end_funcs,
     resume,
     domain_knowledge_files=None,
+    all_bugs=False,
 ):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
+    from src.verification import _guard_verification_results_dir
+
+    _guard_verification_results_dir(
+        os.path.join(work_dir, "logic_verification_results"),
+        work_dir,
+    )
+
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
     all_by_source, keep_by_source = _select_functions_by_source(
         proj_dir, entry_func, end_funcs
@@ -449,6 +469,7 @@ def _run_entry_pipeline_inner(
             resume=resume,
             required_source_files=[_entry_func_source_rel(entry_func)],
             domain_knowledge_files=domain_knowledge_files,
+            all_bugs=all_bugs,
         )
     finally:
         # 4. Copy the generated fm_agent/ back into proj_dir, then discard the
@@ -460,9 +481,19 @@ def _run_entry_pipeline_inner(
             print(f"[EntryPipeline] Copied generated fm_agent/ to {work_dir}.")
         shutil.rmtree(run_dir, ignore_errors=True)
 
-    # Report the bug count: the number of MISMATCH verdicts the reasoner wrote
-    # into fm_agent/logic_verification_results/.
-    mismatches = _count_mismatches(os.path.join(work_dir, "logic_verification_results"))
+    # Default mode retains the legacy raw-mismatch count. All-bugs mode reports
+    # confirmations from freshly collected authoritative validation state, which
+    # includes valid candidates retained by partial ERROR summaries.
+    if all_bugs:
+        from src.verification import load_current_validation_state
+
+        mismatches = load_current_validation_state(work_dir)["summary"][
+            "total_confirmed"
+        ]
+    else:
+        mismatches = _count_mismatches(
+            os.path.join(work_dir, "logic_verification_results")
+        )
     print(f"[EntryPipeline] Bugs (mismatches): {mismatches}")
 
     print(f"[EntryPipeline] Done. Results in {work_dir}.")
@@ -471,19 +502,42 @@ def _run_entry_pipeline_inner(
 def _count_mismatches(results_dir):
     """Count MISMATCH verdicts in a logic_verification_results/ tree.
 
-    Each function's verdict is a JSON file nested under per-module directories;
-    a ``"verdict"`` of ``"MISMATCH"`` marks a spec violation (a candidate bug).
-    Unreadable or malformed files are skipped.
+    Legacy MISMATCH files count as one. Complete all-bugs function summaries
+    contribute their schema-validated bug_count. Candidate trees and unreadable
+    or malformed files are skipped.
     """
+    if not os.path.isdir(results_dir) or os.path.islink(results_dir):
+        return 0
     count = 0
-    for root, _dirs, files in os.walk(results_dir):
+    for root, dirs, files in os.walk(results_dir):
+        dirs[:] = [directory for directory in dirs if directory != "bug_candidates"]
         for fname in files:
             if not fname.endswith(".json"):
                 continue
             try:
-                with open(os.path.join(root, fname), "r") as f:
-                    if json.load(f).get("verdict") == "MISMATCH":
-                        count += 1
-            except (OSError, ValueError):
+                result_rel = os.path.relpath(
+                    os.path.join(root, fname),
+                    results_dir,
+                )
+                result = secure_load_json(results_dir, result_rel)
+                if not isinstance(result, dict):
+                    continue
+                if (
+                    result.get("result_kind") == "function_summary"
+                    and result.get("all_bugs") is True
+                ):
+                    summary_rel = os.path.relpath(
+                        os.path.join(root, fname),
+                        results_dir,
+                    ).replace(os.sep, "/")
+                    summary_result_file = ALL_BUGS_RESULT_PREFIX + summary_rel
+                    if all_bugs_summary_is_complete(result, summary_result_file):
+                        count += result["bug_count"]
+                elif (
+                    result.get("verdict") == "MISMATCH"
+                    and legacy_result_has_valid_schema(result)
+                ):
+                    count += 1
+            except (OSError, ValueError, UnicodeError, SecureFilesystemError):
                 continue
     return count

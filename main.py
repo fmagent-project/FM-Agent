@@ -16,7 +16,12 @@ from src.file_utils import (
     _get_incomplete_verification_files,
     _is_under_submodules,
 )
-from src.verification import streaming_reasoner
+from src.verification import (
+    _collect_current_validation_state,
+    _generate_validation_summary,
+    _guard_verification_results_dir,
+    streaming_reasoner,
+)
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.opencode_trace import (
@@ -190,6 +195,7 @@ def run_pipeline(
     required_source_files=None,
     domain_knowledge_files=None,
     submodules=None,
+    all_bugs=False,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -204,6 +210,7 @@ def run_pipeline(
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    _guard_verification_results_dir(output_dir, work_dir)
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -280,6 +287,13 @@ def run_pipeline(
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
+        if all_bugs:
+            validation_state = _generate_validation_summary(work_dir)
+            print(
+                "[Pipeline] Confirmed bugs: "
+                f"{validation_state['summary']['total_confirmed']}"
+            )
+            print("[Pipeline] Done.")
         return
 
     # --- Stage 3: Generate topdown layers ---
@@ -356,8 +370,14 @@ def run_pipeline(
                 # Find batches with unspecced functions
                 pending_batches = _get_pending_batches(all_batches, proj_dir)
                 if not pending_batches:
+                    validation_state = _collect_current_validation_state(work_dir)
                     incomplete_verification = _get_incomplete_verification_files(
-                        layer_files, input_dir, output_dir, work_dir
+                        layer_files,
+                        input_dir,
+                        output_dir,
+                        work_dir,
+                        status_by_target=validation_state["status_by_target"],
+                        all_bugs=all_bugs,
                     )
                     if incomplete_verification:
                         logging.info(
@@ -370,6 +390,7 @@ def run_pipeline(
                             spec_procs=None,
                             already_processed=all_processed | layer_processed,
                             resume=resume,
+                            all_bugs=all_bugs,
                         )
                         layer_processed.update(newly_processed)
                     break
@@ -413,6 +434,7 @@ def run_pipeline(
                             spec_procs=spec_futures,
                             already_processed=all_processed | layer_processed,
                             resume=resume,
+                            all_bugs=all_bugs,
                         )
                         layer_processed.update(newly_processed)
 
@@ -463,21 +485,20 @@ def run_pipeline(
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
 
-    # Print confirmed bug count
-    summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-    if os.path.exists(summary_path):
-        with open(summary_path, "r") as f:
-            summary = json.load(f)
-        confirmed = summary.get("total_confirmed", 0)
+    validation_dir = os.path.join(work_dir, "bug_validation")
+    if all_bugs or os.path.lexists(validation_dir):
+        validation_state = _generate_validation_summary(work_dir)
+        confirmed = validation_state["summary"]["total_confirmed"]
         print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
     print("[Pipeline] Done.")
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--isolate] "
+              "[--all-bugs] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
               "[--end-func PATH ...]",
         description="Run the FM agent pipeline on a project directory.",
@@ -501,6 +522,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the pipeline against an isolated git worktree snapshot of "
         "the project instead of the project directory itself.",
+    )
+    parser.add_argument(
+        "--all-bugs",
+        action="store_true",
+        help="continue reasoning after mismatches and validate every reported candidate.",
     )
     parser.add_argument(
         "--domain-knowledge",
@@ -535,7 +561,7 @@ if __name__ == "__main__":
         help="one or more function paths at which to stop (space-separated list); "
         "if omitted, the whole call graph reachable from --entry-func is analyzed.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
@@ -574,6 +600,7 @@ if __name__ == "__main__":
             end_funcs=args.end_func,
             resume=resume,
             domain_knowledge_files=domain_knowledge_files,
+            all_bugs=args.all_bugs,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -630,6 +657,7 @@ if __name__ == "__main__":
                     old_commit,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
+                    all_bugs=args.all_bugs,
                 )
             else:
                 run_pipeline(
@@ -637,6 +665,7 @@ if __name__ == "__main__":
                     resume=resume,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
+                    all_bugs=args.all_bugs,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
@@ -659,3 +688,7 @@ if __name__ == "__main__":
                     print(f"[Pipeline] Copied results back to {dst_fm}")
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")
+
+
+if __name__ == "__main__":
+    main()
