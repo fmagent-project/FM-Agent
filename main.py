@@ -2,9 +2,9 @@ from config import (
     MAX_WORKERS,
     OPENCODE_MAX_RETRIES,
     OPENCODE_SPEC_MODEL,
-    OPENCODE_MODEL_PROVIDER,
 )
 from src.entry_reasoning_pipeline import run_entry_pipeline
+from src.call_graph_edges import load_call_edges
 from src.file_utils import (
     collect_file_names,
     is_file_ready,
@@ -24,7 +24,7 @@ from src.opencode_trace import (
     function_id_from_extracted_path,
     run_opencode_traced,
 )
-from src.cli_backend import build_agent_command, is_cli_backend_enabled
+from src.llm_client import build_llm_cli_command
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -230,20 +230,12 @@ def _run_spec_generation_batch(
             f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
         )
     prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_SPEC_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-            files=[prompt_file],
-        )
-    else:
-        command = [
-            "opencode", "run",
-            "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
-            "--file", prompt_file,
-            "--", prompt,
-        ]
+    command = build_llm_cli_command(
+        model=OPENCODE_SPEC_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+        files=[prompt_file],
+    )
     try:
         result = run_opencode_traced(
             proj_dir=proj_dir,
@@ -277,6 +269,9 @@ def run_pipeline(
     required_source_files=None,
     domain_knowledge_files=None,
     submodules=None,
+    one_phase=False,
+    extra_call_edges_path=None,
+    only_spec=False,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -291,6 +286,7 @@ def run_pipeline(
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    extra_call_edges = load_call_edges(extra_call_edges_path)
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -321,6 +317,7 @@ def run_pipeline(
         proj_dir, work_dir, script_dir, resume=resume,
         required_source_files=required_source_files,
         submodules=submodules,
+        one_phase=one_phase,
     )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
@@ -371,7 +368,7 @@ def run_pipeline(
 
     # --- Stage 3: Generate topdown layers ---
     print("[Pipeline] Stage 3/4: Generating topdown layers...")
-    generate_topdown_layers(work_dir)
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
     global_call_graph = load_global_call_graph(Path(work_dir))
     reconciliation_targets = _contract_reconciliation_targets(global_call_graph)
     deferred_verification_files = {
@@ -381,7 +378,10 @@ def run_pipeline(
     }
 
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
-    print("[Pipeline] Stage 4/4: Generating specs & verification...")
+    if only_spec:
+        print("[Pipeline] Stage 4/4: Generating specs (reasoning & bug validation disabled)...")
+    else:
+        print("[Pipeline] Stage 4/4: Generating specs & verification...")
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
     batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
     shutil.copy2(batch_md_src, batch_md_dst)
@@ -404,7 +404,7 @@ def run_pipeline(
             spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
         )
         if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num])
+            generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
         total_layers = layers_data.get("total_layers", 1)
@@ -453,22 +453,25 @@ def run_pipeline(
                 # Find batches with unspecced functions
                 pending_batches = _get_pending_batches(all_batches, proj_dir)
                 if not pending_batches:
-                    incomplete_verification = _get_incomplete_verification_files(
-                        layer_files, input_dir, output_dir, work_dir
-                    )
-                    if incomplete_verification:
-                        logging.info(
-                            f"Phase {phase_num} Layer {layer_idx}: "
-                            f"{len(incomplete_verification)} ready file(s) still need verification or validation"
+                    # All functions in this layer are specced. In only-spec mode
+                    # we stop here without running the reasoner/bug validation.
+                    if not only_spec:
+                        incomplete_verification = _get_incomplete_verification_files(
+                            layer_files, input_dir, output_dir, work_dir
                         )
-                        newly_processed = streaming_reasoner(
-                            input_dir, output_dir, file_list=layer_files,
-                            proj_dir=proj_dir, work_dir=work_dir,
-                            spec_procs=None,
-                            already_processed=all_processed | layer_processed,
-                            resume=resume,
-                        )
-                        layer_processed.update(newly_processed)
+                        if incomplete_verification:
+                            logging.info(
+                                f"Phase {phase_num} Layer {layer_idx}: "
+                                f"{len(incomplete_verification)} ready file(s) still need verification or validation"
+                            )
+                            newly_processed = streaming_reasoner(
+                                input_dir, output_dir, file_list=layer_files,
+                                proj_dir=proj_dir, work_dir=work_dir,
+                                spec_procs=None,
+                                already_processed=all_processed | layer_processed,
+                                resume=resume,
+                            )
+                            layer_processed.update(newly_processed)
                     break
 
                 # Submit all pending spec batches through a bounded executor so
@@ -503,7 +506,7 @@ def run_pipeline(
                         f"submitted {len(spec_futures)} spec-generation batch tasks "
                         f"(max_workers={MAX_WORKERS}, total_pending_batches={len(pending_batches)})"
                     )
-                    if spec_futures:
+                    if spec_futures and not only_spec:
                         newly_processed = streaming_reasoner(
                             input_dir, output_dir, file_list=layer_files,
                             proj_dir=proj_dir, work_dir=work_dir,
@@ -573,33 +576,39 @@ def run_pipeline(
             os.path.relpath(path, input_dir)
             for path in deferred_verification_files
         )
-        streaming_reasoner(
-            input_dir,
-            output_dir,
-            file_list=deferred_rel_files,
-            proj_dir=proj_dir,
-            work_dir=work_dir,
-            already_processed=None,
-            resume=False,
-        )
+        if not only_spec:
+            streaming_reasoner(
+                input_dir,
+                output_dir,
+                file_list=deferred_rel_files,
+                proj_dir=proj_dir,
+                work_dir=work_dir,
+                already_processed=None,
+                resume=False,
+            )
 
-    # Print confirmed bug count
-    summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-    if os.path.exists(summary_path):
-        with open(summary_path, "r") as f:
-            summary = json.load(f)
-        confirmed = summary.get("total_confirmed", 0)
-        print(f"[Pipeline] Confirmed bugs: {confirmed}")
+    # Print confirmed bug count (skipped in only-spec mode, which runs no
+    # reasoning or bug validation).
+    if not only_spec:
+        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
+        if os.path.exists(summary_path):
+            with open(summary_path, "r") as f:
+                summary = json.load(f)
+            confirmed = summary.get("total_confirmed", 0)
+            print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
-    print("[Pipeline] Done.")
+    if only_spec:
+        print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
+    else:
+        print("[Pipeline] Done.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--domain-knowledge FILE ...] [--isolate] "
+              "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
-              "[--end-func PATH ...]",
+              "[--end-func PATH ...] [--extra-edge FILE] [--only-spec]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -621,6 +630,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the pipeline against an isolated git worktree snapshot of "
         "the project instead of the project directory itself.",
+    )
+    parser.add_argument(
+        "--one-phase",
+        action="store_true",
+        help="Put all planned source files into a single analysis phase.",
+    )
+    parser.add_argument(
+        "--only-spec",
+        action="store_true",
+        help="Only generate behavioral specs; skip the reasoning and bug "
+        "validation stages.",
     )
     parser.add_argument(
         "--domain-knowledge",
@@ -655,10 +675,21 @@ if __name__ == "__main__":
         help="one or more function paths at which to stop (space-separated list); "
         "if omitted, the whole call graph reachable from --entry-func is analyzed.",
     )
+    parser.add_argument(
+        "--extra-edge",
+        dest="extra_edge",
+        metavar="FILE",
+        default=None,
+        help="optional JSON file, or directory of JSON files, containing "
+        "supplemental caller->callee edges.",
+    )
     args = parser.parse_args()
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
+    extra_call_edges_path = args.extra_edge
+    if extra_call_edges_path:
+        extra_call_edges_path = os.path.abspath(extra_call_edges_path)
     try:
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
@@ -675,6 +706,12 @@ if __name__ == "__main__":
 
     if submodules and args.entry_func is not None:
         parser.error("--submodule cannot be combined with --entry-func.")
+
+    if args.only_spec and args.incremental:
+        parser.error(
+            "--only-spec cannot be combined with --incremental "
+            "(incremental mode is inherently a reasoning/bug-validation flow)."
+        )
 
     # ---- pre-flight environment check (shared by all pipeline modes) ----
     import config
@@ -694,6 +731,9 @@ if __name__ == "__main__":
             end_funcs=args.end_func,
             resume=resume,
             domain_knowledge_files=domain_knowledge_files,
+            one_phase=args.one_phase,
+            extra_call_edges_path=extra_call_edges_path,
+            only_spec=args.only_spec,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -750,6 +790,8 @@ if __name__ == "__main__":
                     old_commit,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
+                    one_phase=args.one_phase,
+                    extra_call_edges_path=extra_call_edges_path,
                 )
             else:
                 run_pipeline(
@@ -757,6 +799,9 @@ if __name__ == "__main__":
                     resume=resume,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
+                    one_phase=args.one_phase,
+                    extra_call_edges_path=extra_call_edges_path,
+                    only_spec=args.only_spec,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is

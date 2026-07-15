@@ -2,8 +2,9 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
 try:
@@ -137,11 +138,10 @@ def extract_info_block(filepath: Path) -> Optional[str]:
 def extract_callee_spec_from_info(
     info_block: str,
     callee_fqn: str,
-    candidate_callee_fqns=None,
+    aliases: Optional[Sequence[str]] = None,
+    candidate_callee_fqns: Optional[Sequence[str]] = None,
 ) -> Optional[str]:
     """Find the [SPLIT]-separated entry for callee_fqn in an info_block."""
-    import re
-
     # Detect comment prefix from the info_block content itself
     prefix = ""
     for line in info_block.splitlines():
@@ -162,6 +162,7 @@ def extract_callee_spec_from_info(
                 break
 
     split_tag = f"{prefix} [SPLIT]" if prefix else "[SPLIT]"
+    exact_names = [callee_fqn, *(aliases or ())]
     callee_stem = callee_fqn.split("::")[-1]
     for entry in info_block.split(split_tag):
         entry = entry.strip()
@@ -171,7 +172,7 @@ def extract_callee_spec_from_info(
         # Strip the comment prefix to get the actual content
         if prefix and first_line.startswith(prefix):
             first_line = first_line[len(prefix):].strip()
-        if re.match(rf"^{re.escape(callee_fqn)}\s*\(", first_line):
+        if any(_info_line_mentions_name(first_line, name) for name in exact_names):
             return entry
         if not re.match(rf"^{re.escape(callee_stem)}\s*\(", first_line):
             continue
@@ -184,6 +185,17 @@ def extract_callee_spec_from_info(
                 continue
         return entry
     return None
+
+
+def _info_line_mentions_name(first_line: str, name: str) -> bool:
+    if not name:
+        return False
+    return bool(
+        re.search(
+            rf"(?<![A-Za-z0-9_:]){re.escape(name)}\s*\(",
+            first_line,
+        )
+    )
 
 
 def chunked(items: List[dict], size: int) -> List[List[dict]]:
@@ -242,6 +254,26 @@ def load_global_call_graph(work_dir: Path) -> dict:
         for caller_fqn in caller_fqns:
             if callee_fqn not in graph["callees"][caller_fqn]:
                 raise ValueError(f"invalid global call graph {path}: call edges are inconsistent")
+    info_names = graph.get("callee_info_names_by_caller", {})
+    if not isinstance(info_names, dict):
+        raise ValueError(
+            f"invalid global call graph {path}: "
+            "callee_info_names_by_caller must be an object"
+        )
+    for callee_fqn, aliases_by_caller in info_names.items():
+        if callee_fqn not in function_names or not isinstance(aliases_by_caller, dict):
+            raise ValueError(f"invalid global call graph {path}: invalid aliases for {callee_fqn}")
+        for caller_fqn, aliases in aliases_by_caller.items():
+            if (
+                caller_fqn not in graph["callers"][callee_fqn]
+                or not isinstance(aliases, list)
+                or len(aliases) != len(set(aliases))
+                or any(not isinstance(alias, str) or not alias for alias in aliases)
+            ):
+                raise ValueError(
+                    f"invalid global call graph {path}: invalid aliases for "
+                    f"{caller_fqn} -> {callee_fqn}"
+                )
     return graph
 
 
@@ -300,6 +332,7 @@ def build_prompt(
     global_funcs = graph["functions"]
     global_callers = graph["callers"]
     global_callees = graph["callees"]
+    global_info_names = graph.get("callee_info_names_by_caller", {})
     caller_specs = []
     caller_expectations = {}
     available_callers = {}
@@ -339,7 +372,8 @@ def build_prompt(
             entry = extract_callee_spec_from_info(
                 info_block,
                 fn_name,
-                global_callees[caller_name],
+                aliases=global_info_names.get(fn_name, {}).get(caller_name, ()),
+                candidate_callee_fqns=global_callees[caller_name],
             )
             if entry:
                 expectation_key = (fn_name, caller_name, entry.strip())

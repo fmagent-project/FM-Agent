@@ -4,6 +4,7 @@ import shutil
 import logging
 from collections import deque, defaultdict
 
+from src.call_graph_edges import load_call_edges
 from src.generate_topdown_layers import (
     _build_call_graph,
     _collect_phase_files,
@@ -219,6 +220,9 @@ def run_entry_pipeline(
     end_funcs=None,
     resume=False,
     domain_knowledge_files=None,
+    one_phase=False,
+    extra_call_edges_path=None,
+    only_spec=False,
 ):
     """Run the entry-point-scoped reasoning pipeline.
 
@@ -251,6 +255,9 @@ def run_entry_pipeline(
             restriction is applied and the whole call graph reachable from
             ``entry_func`` is selected.
         resume: forwarded directly to the standard pipeline.
+        one_phase: forwarded directly to the standard pipeline.
+        extra_call_edges_path: optional file containing supplemental caller/callee
+            edges used for entry reachability and later top-down layer generation.
     """
     if entry_func is None:
         raise ValueError("entry_func is required to run the entry pipeline")
@@ -273,6 +280,9 @@ def run_entry_pipeline(
             end_funcs,
             resume,
             domain_knowledge_files=domain_knowledge_files,
+            one_phase=one_phase,
+            extra_call_edges_path=extra_call_edges_path,
+            only_spec=only_spec,
         )
     finally:
         clear_test_file_exemptions()
@@ -298,7 +308,7 @@ def _enumerate_source_files(proj_dir):
     return sorted(source_files)
 
 
-def _select_functions_by_source(proj_dir, entry_func, end_funcs):
+def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edges=None):
     """Select the functions reachable from entry_func, grouped by source file.
 
     Extracts a throwaway copy of proj_dir with the very machinery the main
@@ -345,8 +355,17 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs):
         phase_files = _collect_phase_files(work_dir, phase)
         if not phase_files:
             raise ValueError(f"no extractable functions found under {proj_dir!r}")
-        callees_map, _callers, _all_callees, _file_map, _module_map = _build_call_graph(
-            phase_files, work_dir
+        (
+            callees_map,
+            _callers,
+            _all_callees,
+            _file_map,
+            _module_map,
+            _edge_aliases,
+        ) = _build_call_graph(
+            phase_files,
+            work_dir,
+            extra_call_edges=extra_call_edges,
         )
         all_fqns = {_file_to_fqn(fp, work_dir) for fp, _mod in phase_files}
 
@@ -409,11 +428,18 @@ def _run_entry_pipeline_inner(
     end_funcs,
     resume,
     domain_knowledge_files=None,
+    one_phase=False,
+    extra_call_edges_path=None,
+    only_spec=False,
 ):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
+    extra_call_edges = load_call_edges(extra_call_edges_path)
     all_by_source, keep_by_source = _select_functions_by_source(
-        proj_dir, entry_func, end_funcs
+        proj_dir,
+        entry_func,
+        end_funcs,
+        extra_call_edges=extra_call_edges,
     )
 
     # 2. Copy the sources into a separate run directory, then trim that copy.
@@ -449,6 +475,9 @@ def _run_entry_pipeline_inner(
             resume=resume,
             required_source_files=[_entry_func_source_rel(entry_func)],
             domain_knowledge_files=domain_knowledge_files,
+            one_phase=one_phase,
+            extra_call_edges_path=extra_call_edges_path,
+            only_spec=only_spec,
         )
     finally:
         # 4. Copy the generated fm_agent/ back into proj_dir, then discard the

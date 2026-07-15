@@ -4,6 +4,7 @@ import re
 import logging
 from pathlib import Path
 from collections import defaultdict
+from dataclasses import dataclass
 
 from src.extract import EXT_TO_LANG, LANG_CONFIG
 from src.languages.registry import call_edges_all
@@ -249,7 +250,7 @@ def _find_call_sites(text, lang_key, known_stems, keywords):
     return found
 
 
-def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
+def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_call_edges=None):
     """Build callees_map and callers_map for a set of phase files.
 
     Args:
@@ -257,11 +258,17 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
         proj_dir: project root directory
         global_stem_to_fqns: optional global stem->set(fqn) mapping across all phases,
                              used to compute all_callees (cross-phase)
+        extra_call_edges: optional iterable of supplemental CallEdge objects.
+                          caller.fqn is exact; caller.callsite_names are matched
+                          only against explicitly listed source callsite names.
 
     Returns:
-        (callees_map, callers_map, all_callees_map, file_map, module_map) where keys are FQNs.
+        (callees_map, callers_map, all_callees_map, file_map, module_map,
+        edge_aliases_map) where keys are FQNs.
         callees_map/callers_map contain only within-phase edges.
         all_callees_map contains callees from any phase.
+        edge_aliases_map maps callee -> caller -> supplemental callee labels
+        that may appear in a caller's [INFO] block.
     """
     # Build FQN mappings
     fqn_map = {}  # filepath -> fqn
@@ -280,14 +287,24 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
     phase_fqns = set(fqn_map.values())
     # For call-site detection, use global stems if available
     effective_stem_to_fqns = global_stem_to_fqns if global_stem_to_fqns else stem_to_fqns
-    known_stems = set(effective_stem_to_fqns.keys())
     # All extracted FQNs (across phases when a global map is supplied), used to
     # keep only codegraph callees that correspond to an extracted function.
-    known_fqns = set().union(*effective_stem_to_fqns.values()) if effective_stem_to_fqns else set()
+    known_fqns = {
+        fqn
+        for fqns in effective_stem_to_fqns.values()
+        for fqn in fqns
+    }
+    extra_edges_by_caller_fqn, extra_edges_by_callsite = _resolve_extra_call_edges(
+        extra_call_edges,
+        phase_fqns=phase_fqns,
+        known_fqns=known_fqns,
+    )
+    known_stems = set(effective_stem_to_fqns.keys()) | set(extra_edges_by_callsite.keys())
 
     callees_map = defaultdict(set)  # fqn -> set of callee fqns (within phase)
     callers_map = defaultdict(set)  # fqn -> set of caller fqns (within phase)
     all_callees_map = defaultdict(set)  # fqn -> set of callee fqns (any phase)
+    edge_aliases_map = defaultdict(lambda: defaultdict(set))  # callee -> caller -> aliases
 
     phase_langs = {_detect_lang_from_ext(fp) for fp, _ in phase_files if _detect_lang_from_ext(fp)}
     registry_edges, registry_langs = call_edges_all(proj_dir, phase_langs)
@@ -298,12 +315,23 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
         if not lang_key:
             continue
 
+        called_stems = set()
         if lang_key in registry_langs:
             # codegraph: edges are already precise caller_fqn -> callee_fqn (the
             # exact node codegraph resolved). Keep only callees that are extracted
             # functions; drop external/library targets.
             callee_fqns = {c for c in registry_edges.get(fqn, set())
                            if c != fqn and c in known_fqns}
+            if extra_edges_by_callsite:
+                keywords = _get_keywords_for_lang(lang_key)
+                try:
+                    with open(filepath, "r", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    text = ""
+                called_stems = _find_call_sites(
+                    text, lang_key, set(extra_edges_by_callsite.keys()), keywords
+                )
         else:
             # regex fallback: detect bare-name call sites, then resolve each stem
             # to every same-named FQN (an over-approximation — unchanged).
@@ -315,7 +343,7 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
                 continue
             called_stems = _find_call_sites(text, lang_key, known_stems, keywords)
             callee_fqns = {cf for stem in called_stems
-                           for cf in effective_stem_to_fqns[stem] if cf != fqn}
+                           for cf in effective_stem_to_fqns.get(stem, set()) if cf != fqn}
 
         for callee_fqn in callee_fqns:
             all_callees_map[fqn].add(callee_fqn)
@@ -323,7 +351,114 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None):
                 callees_map[fqn].add(callee_fqn)
                 callers_map[callee_fqn].add(fqn)
 
-    return callees_map, callers_map, all_callees_map, file_map, module_map
+        for stem in called_stems:
+            for edge in extra_edges_by_callsite.get(stem, ()):
+                _add_resolved_extra_edge(
+                    fqn,
+                    edge,
+                    phase_fqns,
+                    callees_map,
+                    callers_map,
+                    all_callees_map,
+                    edge_aliases_map,
+                )
+
+        for edge in extra_edges_by_caller_fqn.get(fqn, ()):
+            _add_resolved_extra_edge(
+                fqn,
+                edge,
+                phase_fqns,
+                callees_map,
+                callers_map,
+                all_callees_map,
+                edge_aliases_map,
+            )
+
+    return callees_map, callers_map, all_callees_map, file_map, module_map, edge_aliases_map
+
+
+@dataclass(frozen=True)
+class _ResolvedExtraEdge:
+    callee_fqn: str
+    info_names: tuple[str, ...]
+    source: str
+
+
+def _resolve_extra_call_edges(extra_call_edges, phase_fqns, known_fqns):
+    """Resolve supplemental edges into phase-local caller indexes."""
+    by_caller_fqn = defaultdict(list)
+    by_callsite = defaultdict(list)
+    if not extra_call_edges:
+        return by_caller_fqn, by_callsite
+
+    phase_fqns = set(phase_fqns)
+    known_fqns = set(known_fqns)
+    for edge in extra_call_edges:
+        callee_fqn = edge.callee.fqn
+        if callee_fqn not in known_fqns:
+            logging.warning(
+                "Skipping supplemental edge from %s: callee.fqn %r "
+                "was not found among extracted functions.",
+                edge.source or "edge file",
+                callee_fqn,
+            )
+            continue
+
+        resolved = _ResolvedExtraEdge(
+            callee_fqn=callee_fqn,
+            info_names=tuple(edge.callee.info_names),
+            source=edge.source,
+        )
+
+        if edge.caller.fqn:
+            caller_fqn = edge.caller.fqn
+            if caller_fqn in phase_fqns:
+                by_caller_fqn[caller_fqn].append(resolved)
+            else:
+                logging.debug(
+                    "Skipping supplemental edge from %s in current phase: "
+                    "caller FQN %r is not in phase.",
+                    edge.source or "edge file",
+                    caller_fqn,
+                )
+
+        for callsite in edge.caller.callsite_names:
+            if not re.fullmatch(r"[A-Za-z_]\w*", callsite):
+                logging.warning(
+                    "Skipping supplemental edge callsite selector %r from %s: "
+                    "the current scanner only matches identifier callsites.",
+                    callsite,
+                    edge.source or "edge file",
+                )
+                continue
+            by_callsite[callsite].append(resolved)
+
+    return by_caller_fqn, by_callsite
+
+
+def _add_resolved_extra_edge(
+    caller_fqn,
+    edge: _ResolvedExtraEdge,
+    phase_fqns,
+    callees_map,
+    callers_map,
+    all_callees_map,
+    edge_aliases_map,
+):
+    """Inject one resolved supplemental edge and attach its callee aliases."""
+    callee_fqn = edge.callee_fqn
+    if caller_fqn == callee_fqn:
+        return False
+
+    before = len(all_callees_map[caller_fqn])
+    all_callees_map[caller_fqn].add(callee_fqn)
+    edge_aliases_map[callee_fqn][caller_fqn].update(edge.info_names)
+
+    if callee_fqn in phase_fqns:
+        callees_map[caller_fqn].add(callee_fqn)
+        callers_map[callee_fqn].add(caller_fqn)
+
+    return len(all_callees_map[caller_fqn]) != before
 
 
 # ---------------------------------------------------------------------------
@@ -500,12 +635,13 @@ def _compute_layers(phase_fqns, callees_map, callers_map):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def generate_topdown_layers(proj_dir, phase_numbers=None):
+def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None):
     """Generate topdown layer JSON files for the specified phases (or all phases).
 
     Args:
         proj_dir: project root directory
         phase_numbers: list of phase numbers to process, or None for all
+        extra_call_edges: optional iterable of supplemental caller/callee edges
 
     Returns:
         list of output file paths written
@@ -525,6 +661,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
 
     phase_results = []
     global_callees_map = defaultdict(set)
+    global_edge_aliases_map = defaultdict(lambda: defaultdict(set))
     for phase_info in phases_data["phases"]:
         phase_num = phase_info["phase"]
         phase_name = phase_info["name"]
@@ -536,8 +673,15 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
             continue
 
         # 1.4 Build call graph (also returns file_map and module_map)
-        callees_map, callers_map, all_callees_map, file_map, module_map = _build_call_graph(
-            phase_files, proj_dir, global_stem_to_fqns
+        (
+            callees_map,
+            callers_map,
+            all_callees_map,
+            file_map,
+            module_map,
+            edge_aliases_map,
+        ) = _build_call_graph(
+            phase_files, proj_dir, global_stem_to_fqns, extra_call_edges=extra_call_edges
         )
         phase_fqns = set(file_map.keys())
 
@@ -546,6 +690,9 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
 
         for caller_fqn, callee_fqns in all_callees_map.items():
             global_callees_map[caller_fqn].update(callee_fqns)
+        for callee_fqn, aliases_by_caller in edge_aliases_map.items():
+            for caller_fqn, aliases in aliases_by_caller.items():
+                global_edge_aliases_map[callee_fqn][caller_fqn].update(aliases)
 
         phase_results.append({
             "phase": phase_num,
@@ -554,6 +701,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
             "callers_map": callers_map,
             "file_map": file_map,
             "module_map": module_map,
+            "edge_aliases_map": edge_aliases_map,
             "phase_fqns": phase_fqns,
             "layers": layers,
         })
@@ -589,6 +737,16 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
             fqn: sorted(global_callers_map.get(fqn, set()))
             for fqn in sorted(global_functions)
         },
+        "callee_info_names_by_caller": {
+            fqn: {
+                caller: sorted(aliases)
+                for caller, aliases in sorted(
+                    global_edge_aliases_map.get(fqn, {}).items()
+                )
+                if aliases
+            }
+            for fqn in sorted(global_functions)
+        },
     }
     global_graph_path = os.path.join(output_dir, "global_call_graph.json")
     with open(global_graph_path, "w") as f:
@@ -605,12 +763,14 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
         callers_map = result["callers_map"]
         file_map = result["file_map"]
         module_map = result["module_map"]
+        edge_aliases_map = result["edge_aliases_map"]
         phase_fqns = result["phase_fqns"]
         layers = result["layers"]
 
         # Build phase-specific key names
         phase_callers_key = f"phase{phase_num}_callers"
         phase_callees_key = f"phase{phase_num}_callees"
+        phase_info_names_key = f"phase{phase_num}_callee_info_names_by_caller"
 
         # 1.6 Build output JSON
         total_functions = len(phase_fqns)
@@ -635,7 +795,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
                 all_callers = sorted(global_callers_map.get(fqn, set()))
                 all_callees = sorted(global_callees_map.get(fqn, set()))
 
-                func_entries.append({
+                entry = {
                     "name": fqn,
                     "file": rel_path,
                     "unit": unit,
@@ -643,7 +803,15 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
                     phase_callees_key: phase_callees,
                     "all_callers": all_callers,
                     "all_callees": all_callees,
-                })
+                }
+                info_names_by_caller = {
+                    caller: sorted(info_names)
+                    for caller, info_names in edge_aliases_map.get(fqn, {}).items()
+                    if caller in phase_fqns and info_names
+                }
+                if info_names_by_caller:
+                    entry[phase_info_names_key] = info_names_by_caller
+                func_entries.append(entry)
 
             layer_dict["functions"] = func_entries
             output_layers.append(layer_dict)
