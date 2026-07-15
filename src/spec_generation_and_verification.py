@@ -61,10 +61,13 @@ def _run_spec_generation_batch(
     else:
         prompt = (
             f"Continue processing the batch prompt file at {batch_prompt_rel}. "
-            f"Some functions may already have specs from a previous attempt. "
-            f"Check each function file — only generate specs for those "
-            f"that do not have both .spec.json and .info.json files yet. "
-            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
+            f"Some functions may already have valid specs from a previous attempt. "
+            f"Check each function listed in the batch prompt. Skip it only when both "
+            f"its .spec.json and .info.json files contain valid JSON matching the "
+            f"schemas in fm_agent/spec_prompts/system_prompt.md. If either sidecar "
+            f"is missing, malformed, or schema-invalid, rewrite the complete "
+            f".spec.json and .info.json files for that function. "
+            f"Do not modify the function source files. {fm_reminder}"
         )
     prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
     command = build_llm_cli_command(
