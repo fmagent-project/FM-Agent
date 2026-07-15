@@ -837,26 +837,45 @@ def _all_bugs_candidate_is_valid(
     )
 
 
-def _all_bugs_summary_is_resumable(summary, work_dir, summary_result_file=None):
-    if not all_bugs_summary_is_complete(summary, summary_result_file):
-        return False
+def _all_bugs_summary_resume_snapshot(
+    summary,
+    work_dir,
+    summary_result_file=None,
+    allow_partial=False,
+):
+    """Return validated resume state and candidate identities for a summary.
 
+    Complete summaries can be skipped outright.  A valid partial ERROR summary
+    is not complete, but its candidates can remain in place while reasoning is
+    retried so matching validation records can be reused by content hash.
+    """
     project_dir = _project_dir_from_work_dir(work_dir)
     if resolve_project_relative_path(summary_result_file, project_dir) is None:
-        return False
+        return None
+
+    complete = all_bugs_summary_is_complete(summary, summary_result_file)
+    partial = allow_partial and _partial_all_bugs_summary_is_valid(
+        summary,
+        summary_result_file,
+        project_dir,
+    )
+    if not complete and not partial:
+        return None
     if not all_bugs_summary_paths_are_contained(summary, project_dir):
-        return False
+        return None
+
+    candidates = {}
     for ordinal, bug in enumerate(summary["bugs"], start=1):
         candidate_path = resolve_project_relative_path(bug["result_file"], project_dir)
         if candidate_path is None:
-            return False
+            return None
         try:
             candidate = _load_project_json_safely(
                 bug["result_file"],
                 project_dir,
             )
         except AllBugsArtifactError:
-            return False
+            return None
         if not _all_bugs_candidate_is_valid(
             candidate,
             bug,
@@ -864,8 +883,24 @@ def _all_bugs_summary_is_resumable(summary, work_dir, summary_result_file=None):
             ordinal,
             summary,
         ) or not all_bugs_candidate_paths_are_contained(candidate, project_dir):
-            return False
-    return True
+            return None
+        candidates[bug["bug_id"]] = {
+            "result_file": bug["result_file"],
+            "candidate_sha256": candidate_content_sha256(candidate),
+        }
+    return {
+        "kind": "complete" if complete else "partial",
+        "candidates": candidates,
+    }
+
+
+def _all_bugs_summary_is_resumable(summary, work_dir, summary_result_file=None):
+    snapshot = _all_bugs_summary_resume_snapshot(
+        summary,
+        work_dir,
+        summary_result_file,
+    )
+    return snapshot is not None and snapshot["kind"] == "complete"
 
 
 def _violation_gaps(spec_post, violation):
@@ -919,6 +954,82 @@ def _clear_all_bugs_validation_artifacts(work_dir, function_result):
                 work_dir,
                 missing_ok=True,
             )
+
+
+def _clear_selected_bug_validation_artifacts(work_dir, bug_ids):
+    """Delete validation artifacts for only the supplied trusted bug IDs."""
+    bug_ids = set(bug_ids)
+    if not bug_ids:
+        return
+    if any(not is_safe_bug_id(bug_id) for bug_id in bug_ids):
+        raise AllBugsArtifactError("unsafe bug id during validation cleanup")
+
+    validation_dir = os.path.join(work_dir, "bug_validation")
+    if not os.path.lexists(validation_dir):
+        return
+    if (
+        not path_is_symlink_free_within(validation_dir, work_dir)
+        or not os.path.isdir(validation_dir)
+        or not realpath_is_strictly_within(validation_dir, work_dir)
+    ):
+        raise AllBugsArtifactError("unsafe bug_validation directory")
+
+    for filename in os.listdir(validation_dir):
+        matches_bug = any(
+            filename in {
+                f"{bug_id}.result.json",
+                f"{bug_id}.md",
+                f"bug_validator_{bug_id}.md",
+                f"bug_validator_{bug_id}.md.tmp",
+            }
+            or filename.startswith(f"probe_{bug_id}.")
+            for bug_id in bug_ids
+        )
+        if matches_bug:
+            _secure_unlink_artifact(
+                os.path.join(validation_dir, filename),
+                work_dir,
+                missing_ok=True,
+            )
+
+
+def _reconcile_partial_all_bugs_resume(work_dir, previous, current):
+    """Keep validation only for candidates unchanged by a partial retry."""
+    previous_candidates = previous["candidates"]
+    current_candidates = current["candidates"]
+    invalidated_bug_ids = set()
+    removed_candidate_paths = []
+
+    for bug_id, old_candidate in previous_candidates.items():
+        new_candidate = current_candidates.get(bug_id)
+        if (
+            new_candidate is None
+            or new_candidate["candidate_sha256"]
+            != old_candidate["candidate_sha256"]
+            or new_candidate["result_file"] != old_candidate["result_file"]
+        ):
+            invalidated_bug_ids.add(bug_id)
+        if (
+            new_candidate is None
+            or new_candidate["result_file"] != old_candidate["result_file"]
+        ):
+            removed_candidate_paths.append(old_candidate["result_file"])
+
+    project_dir = _project_dir_from_work_dir(work_dir)
+    for result_file in removed_candidate_paths:
+        candidate_path = resolve_project_relative_path(result_file, project_dir)
+        if candidate_path is None:
+            raise AllBugsArtifactError("unsafe stale candidate path during resume cleanup")
+        _secure_unlink_artifact(
+            candidate_path,
+            work_dir,
+            missing_ok=True,
+        )
+
+    _clear_selected_bug_validation_artifacts(
+        work_dir,
+        invalidated_bug_ids,
+    )
 
 
 def _build_all_bugs_output(result, file_path, rel, output_path, spec_post, work_dir):
@@ -982,31 +1093,44 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     results_work_dir = work_dir or os.path.dirname(os.path.normpath(output_dir))
     _guard_verification_result_path(output_path, output_dir, results_work_dir)
 
-    # Skip if resuming and a valid result already exists.
+    # Skip complete results on resume.  Valid partial all-bugs results are not
+    # complete enough to skip reasoning, but their candidate artifacts can stay
+    # in place so unchanged validation records remain reusable by content hash.
     rejected_resume_primary = False
+    partial_resume_snapshot = None
     if resume and os.path.lexists(output_path):
         try:
             existing = secure_load_json(
                 results_work_dir,
                 _relative_to_secure_root(output_path, results_work_dir),
             )
-            can_skip = (
-                legacy_result_is_resumable(existing, file_path)
-                if not all_bugs
-                else (
-                    work_dir is not None
-                    and _all_bugs_summary_is_resumable(
+            if not all_bugs:
+                can_skip = legacy_result_is_resumable(existing, file_path)
+            else:
+                resume_snapshot = (
+                    _all_bugs_summary_resume_snapshot(
                         existing,
                         work_dir,
                         _project_relative_posix(output_path, work_dir),
+                        allow_partial=True,
                     )
+                    if work_dir is not None
+                    else None
                 )
-            )
+                can_skip = (
+                    resume_snapshot is not None
+                    and resume_snapshot["kind"] == "complete"
+                )
+                if (
+                    resume_snapshot is not None
+                    and resume_snapshot["kind"] == "partial"
+                ):
+                    partial_resume_snapshot = resume_snapshot
             if can_skip:
                 verdict = existing.get("verdict", "ERROR")
                 logging.info(f"Already verified, skipping: {file_path} (verdict={verdict})")
                 return file_path, verdict
-            rejected_resume_primary = True
+            rejected_resume_primary = partial_resume_snapshot is None
         except (OSError, ValueError, UnicodeError, SecureFilesystemError):
             rejected_resume_primary = True
 
@@ -1020,7 +1144,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     _guard_verification_result_path(output_path, output_dir, results_work_dir)
 
     try:
-        if all_bugs:
+        if all_bugs and partial_resume_snapshot is None:
             _clear_all_bugs_validation_artifacts(
                 work_dir,
                 _project_relative_posix(output_path, work_dir),
@@ -1028,6 +1152,17 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
             shutil.rmtree(_all_bugs_candidate_dir(work_dir, rel), ignore_errors=True)
         func, spec, knowledge = parse_input_function(file_path)
         if not spec:
+            if all_bugs and partial_resume_snapshot is not None:
+                _secure_unlink_artifact(
+                    output_path,
+                    results_work_dir,
+                    missing_ok=True,
+                )
+                _clear_all_bugs_validation_artifacts(
+                    work_dir,
+                    _project_relative_posix(output_path, work_dir),
+                )
+                shutil.rmtree(_all_bugs_candidate_dir(work_dir, rel), ignore_errors=True)
             return file_path, "SKIPPED"
 
         _, spec_post = _parse_spec_conditions(spec)
@@ -1119,6 +1254,23 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
         output_dir=output_dir,
         work_dir=results_work_dir,
     )
+
+    if all_bugs and partial_resume_snapshot is not None:
+        current_resume_snapshot = _all_bugs_summary_resume_snapshot(
+            output,
+            work_dir,
+            _project_relative_posix(output_path, work_dir),
+            allow_partial=True,
+        )
+        if current_resume_snapshot is None:
+            raise AllBugsArtifactError(
+                "cannot reconcile invalid all-bugs result after partial resume"
+            )
+        _reconcile_partial_all_bugs_resume(
+            work_dir,
+            partial_resume_snapshot,
+            current_resume_snapshot,
+        )
 
     return file_path, output["verdict"]
 
