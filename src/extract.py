@@ -5,6 +5,8 @@ import sys
 import shutil
 import logging
 
+from src.chisel_backend import batch_extract as batch_extract_chisel
+from src.chisel_support import CHISEL_EXT_TO_LANG, CHISEL_LANG_CONFIG
 from src.file_utils import is_file_ready, _is_test_file
 from src.languages.codegraph import canonicalize
 from src.languages.registry import batch_extract_all, function_spans_for_file
@@ -154,6 +156,7 @@ LANG_CONFIG = {
         "body": "brace",
     },
 }
+LANG_CONFIG.update(CHISEL_LANG_CONFIG)
 
 # Map file extensions to language keys
 EXT_TO_LANG = {
@@ -168,6 +171,7 @@ EXT_TO_LANG = {
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
 }
+EXT_TO_LANG.update(CHISEL_EXT_TO_LANG)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -611,6 +615,9 @@ def extract_functions_from_file(filepath, lang_key):
         raw_funcs = _extract_functions_brace(lines, lang_key, lang_cfg)
     elif lang_cfg["body"] == "indent":
         raw_funcs = _extract_functions_indent(lines, lang_cfg)
+    elif lang_cfg["body"] == "chisel":
+        from src.chisel_support import extract_chisel_functions
+        raw_funcs = extract_chisel_functions(lines, lang_key, lang_cfg)
     else:
         # Semantic-only languages (currently Erlang) are extracted by their
         # registered backend and have no reliable file-local fallback.
@@ -662,6 +669,9 @@ def _function_spans(filepath, lang_key, proj_dir=None):
     if raw_funcs is None:
         if lang_cfg["body"] == "brace":
             raw_funcs = _extract_functions_brace(norm_lines, lang_key, lang_cfg)
+        elif lang_cfg["body"] == "chisel":
+            from src.chisel_support import extract_chisel_functions
+            raw_funcs = extract_chisel_functions(norm_lines, lang_key, lang_cfg)
         else:
             raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
 
@@ -699,6 +709,10 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         os.path.normcase(os.path.normpath(path)): funcs
         for path, funcs in registry_funcs.items()
     }
+    chisel_funcs = {
+        os.path.normcase(os.path.normpath(path)): funcs
+        for path, funcs in batch_extract_chisel(proj_dir).items()
+    }
 
     # Build source file list from phases.json
     source_files = []
@@ -711,8 +725,10 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     written = 0
     skipped = 0
     errors = []
+    manifest_units = {}
 
     for src_rel in source_files:
+        manifest_units.setdefault(src_rel, [])
         # Skip test files
         if _is_test_file(src_rel):
             if verbose:
@@ -742,7 +758,12 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
 
         registry_key = os.path.normcase(os.path.normpath(src_path))
-        if registry_key in registry_funcs:
+        if lang_key == "chisel":
+            # Chisel extraction is intentionally conservative: an empty result
+            # means "no hardware module unit here", not "fall back to generic
+            # Scala regex extraction".
+            funcs = chisel_funcs.get(registry_key, [])
+        elif registry_key in registry_funcs:
             funcs = registry_funcs[registry_key]
         else:
             funcs = extract_functions_from_file(src_path, lang_key)
@@ -754,6 +775,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
 
         for func_name, func_source in funcs:
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
+            manifest_units[src_rel].append(os.path.relpath(out_file, output_base))
 
             # Skip only when the file already has both [SPEC] and [INFO] blocks
             if not force and os.path.exists(out_file) and is_file_ready(out_file):
@@ -767,6 +789,9 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             written += 1
             if verbose:
                 print(f"  WRITE: {os.path.relpath(out_file, proj_dir)}")
+
+    with open(os.path.join(work_dir, "extracted_units.json"), "w") as f:
+        json.dump({"units": {k: sorted(v) for k, v in manifest_units.items()}}, f, indent=2)
 
     print(f"Extraction complete: {written} written, {skipped} skipped.")
 

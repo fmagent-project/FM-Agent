@@ -6,6 +6,8 @@ from pathlib import Path
 from collections import defaultdict
 from dataclasses import dataclass
 
+from src.chisel_backend import call_edges as chisel_call_edges
+from src.chisel_support import chisel_declared_name
 from src.extract import EXT_TO_LANG, LANG_CONFIG
 from src.languages.registry import call_edges_all
 
@@ -250,7 +252,13 @@ def _find_call_sites(text, lang_key, known_stems, keywords):
     return found
 
 
-def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_call_edges=None):
+def _build_call_graph(
+    phase_files,
+    proj_dir,
+    global_stem_to_fqns=None,
+    extra_call_edges=None,
+    global_chisel_edges=None,
+):
     """Build callees_map and callers_map for a set of phase files.
 
     Args:
@@ -261,6 +269,8 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
         extra_call_edges: optional iterable of supplemental CallEdge objects.
                           caller.fqn is exact; caller.callsite_names are matched
                           only against explicitly listed source callsite names.
+        global_chisel_edges: optional authoritative module-instantiation graph
+                             for extracted Chisel units.
 
     Returns:
         (callees_map, callers_map, all_callees_map, file_map, module_map,
@@ -313,6 +323,25 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
         fqn = fqn_map[filepath]
         lang_key = _detect_lang_from_ext(filepath)
         if not lang_key:
+            continue
+        if lang_key == "chisel":
+            for callee_fqn in global_chisel_edges.get(fqn, set()) if global_chisel_edges else ():
+                if callee_fqn == fqn:
+                    continue
+                all_callees_map[fqn].add(callee_fqn)
+                if callee_fqn in phase_fqns:
+                    callees_map[fqn].add(callee_fqn)
+                    callers_map[callee_fqn].add(fqn)
+            for edge in extra_edges_by_caller_fqn.get(fqn, ()):
+                _add_resolved_extra_edge(
+                    fqn,
+                    edge,
+                    phase_fqns,
+                    callees_map,
+                    callers_map,
+                    all_callees_map,
+                    edge_aliases_map,
+                )
             continue
 
         called_stems = set()
@@ -650,6 +679,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
 
     output_dir = os.path.join(proj_dir, "spec_prompts")
     os.makedirs(output_dir, exist_ok=True)
+    global_chisel_edges = chisel_call_edges(proj_dir)
 
     # Build global stem->FQN mapping across ALL phases for all_callees
     global_stem_to_fqns = defaultdict(set)
@@ -683,7 +713,11 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
             module_map,
             edge_aliases_map,
         ) = _build_call_graph(
-            phase_files, proj_dir, global_stem_to_fqns, extra_call_edges=extra_call_edges
+            phase_files,
+            proj_dir,
+            global_stem_to_fqns,
+            extra_call_edges=extra_call_edges,
+            global_chisel_edges=global_chisel_edges,
         )
         phase_fqns = set(file_map.keys())
 
@@ -725,6 +759,18 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
                     phase_callees_key: phase_callees,
                     "all_callees": all_callees,
                 }
+                lang_key = _detect_lang_from_ext(filepath)
+                if lang_key == "chisel":
+                    entry["declared_name"] = chisel_declared_name(Path(filepath).read_text(encoding="utf-8", errors="replace"))
+                    entry["is_module"] = True
+                    entry["module_classification_reason"] = "module_unit"
+                    chisel_callees = sorted(global_chisel_edges.get(fqn, set()))
+                    entry[phase_callees_key] = sorted(set(chisel_callees) & phase_fqns)
+                    entry["all_callees"] = chisel_callees
+                    entry[phase_callers_key] = sorted(
+                        caller for caller, callees in global_chisel_edges.items()
+                        if fqn in callees and caller in phase_fqns
+                    )
                 info_names_by_caller = {
                     caller: sorted(info_names)
                     for caller, info_names in edge_aliases_map.get(fqn, {}).items()
