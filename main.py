@@ -1,132 +1,55 @@
 from config import (
+    MAX_WORKERS,
     OPENCODE_MAX_RETRIES,
-    OPENCODE_SETUP_MODEL,
     OPENCODE_SPEC_MODEL,
-    OPENCODE_MODEL_PROVIDER,
-    LLM_MODEL,
 )
-from src.file_utils import collect_file_names, is_file_ready
+from src.entry_reasoning_pipeline import run_entry_pipeline
+from src.call_graph_edges import load_call_edges
+from src.file_utils import (
+    collect_file_names,
+    is_file_ready,
+    _has_source_code,
+    _get_phase_files,
+    _get_all_phase_files,
+    _write_file_names,
+    _json_file_is_valid,
+    _get_incomplete_verification_files,
+    _is_under_submodules,
+)
 from src.verification import streaming_reasoner
-from src.extract import run_extraction, EXT_TO_LANG, load_units_manifest
+from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.opencode_trace import (
-    finish_opencode_trace,
     function_id_from_extracted_path,
     run_opencode_traced,
-    start_opencode_traced,
+)
+from src.llm_client import build_llm_cli_command
+from src.incremental_reasoner import run_incremental_pipeline
+from src.git import (
+    frozen_worktree,
+    _is_git_repo,
+    _get_head_commit,
+    _record_version,
+)
+from src.languages.codegraph import try_codegraph_init
+from src.pipeline_setup import (
+    _run_setup_extract,
+)
+from src.domain_knowledge import (
+    collect_domain_knowledge_paths,
+    list_staged_domain_knowledge_relpaths,
+    stage_domain_knowledge_files,
 )
 import os
 import sys
+import argparse
 import json
 import time
 import shutil
 import subprocess
 import logging
-import argparse
-
-def _as_phase_id(value):
-    """Phase and dependency ids may arrive as digit strings from LLM-written
-    phases.json; both sides of the renumbering map must normalize through
-    THIS function or a dep on a string-id phase is silently emptied."""
-    return int(value) if isinstance(value, str) and value.isdigit() else value
-
-
-def _deduplicate_phases(phases_dir):
-    """Ensure each source file appears in at most one phase; keep the earliest."""
-    phases_path = os.path.join(phases_dir, "phases.json")
-    with open(phases_path, "r") as f:
-        data = json.load(f)
-
-    for phase in data["phases"]:
-        phase["phase"] = _as_phase_id(phase["phase"])
-
-    seen = set()
-    phases_to_remove = []
-    for phase in sorted(data["phases"], key=lambda p: p["phase"]):
-        for module in phase["modules"]:
-            original = module["source_files"]
-            if isinstance(original, str):
-                # LLM manifests sometimes write a single path as a bare
-                # string; iterating it would dedup CHARACTERS and persist
-                # the corruption for every downstream reader.
-                original = [original]
-            deduped = []
-            for sf in original:
-                if sf not in seen:
-                    seen.add(sf)
-                    deduped.append(sf)
-                else:
-                    logging.info(
-                        "Removed duplicate file '%s' from phase %d module '%s'",
-                        sf, phase["phase"], module["name"],
-                    )
-            module["source_files"] = deduped
-        total_files = sum(len(m["source_files"]) for m in phase["modules"])
-        if total_files == 0:
-            logging.info("Removing phase %d: no source files remain after deduplication", phase["phase"])
-            phases_to_remove.append(phase)
-    for phase in phases_to_remove:
-        data["phases"].remove(phase)
-
-    # Renumber phases sequentially and update depends_on_phases references
-    old_to_new = {}
-    for idx, phase in enumerate(sorted(data["phases"], key=lambda p: p["phase"]), start=1):
-        old_to_new[phase["phase"]] = idx
-        phase["phase"] = idx
-    for phase in data["phases"]:
-        deps = phase.get("depends_on_phases", [])
-        if isinstance(deps, (str, int)):
-            # Same LLM-shape normalization as the groups bridge: a single
-            # dependency may arrive as a bare string or integer.
-            deps = [deps]
-        phase["depends_on_phases"] = [
-            old_to_new[dep] for dep in (_as_phase_id(d) for d in deps)
-            if dep in old_to_new
-        ]
-
-    with open(phases_path, "w") as f:
-        json.dump(data, f, indent=2)
-
-def _get_phase_files(phases_data, phase_num, input_dir):
-    """Return relative paths of extracted function files for a given phase.
-
-    Prefers the extraction round's own manifest (extracted_units.json) — the
-    single source of truth for what the current sources actually produce —
-    so units left behind by previous rounds (deleted/renamed modules,
-    vanished sources) are never consumed. Directory enumeration remains as
-    the fallback for pre-manifest workspaces.
-    """
-    phase = next(p for p in phases_data["phases"] if p["phase"] == phase_num)
-    manifest = load_units_manifest(os.path.dirname(input_dir))
-    phase_files = []
-    for module in phase["modules"]:
-        src_files = module["source_files"]
-        if isinstance(src_files, str):
-            src_files = [src_files]
-        for src_file in src_files:
-            if manifest is not None:
-                for rel in sorted(manifest.get(src_file, [])):
-                    if os.path.isfile(os.path.join(input_dir, rel)):
-                        phase_files.append(rel)
-                continue
-            dir_part = os.path.dirname(src_file)
-            base = os.path.basename(src_file)
-            dot_idx = base.rfind(".")
-            if dot_idx >= 0:
-                subdir = base[:dot_idx] + "-" + base[dot_idx + 1:]
-            else:
-                subdir = base
-            extracted_dir = os.path.join(input_dir, dir_part, subdir)
-            if os.path.isdir(extracted_dir):
-                for fname in sorted(os.listdir(extracted_dir)):
-                    # Generated spec/info documents (preserved by --resume)
-                    # live next to extracted units; they are outputs, not units.
-                    if fname.endswith(("_spec.md", "_info.md")):
-                        continue
-                    fpath = os.path.join(extracted_dir, fname)
-                    if os.path.isfile(fpath):
-                        phase_files.append(os.path.relpath(fpath, input_dir))
-    return phase_files
+import contextlib
+import concurrent.futures
 
 
 def _clean_previous_run(work_dir):
@@ -147,18 +70,41 @@ def _get_pending_batches(batches, proj_dir):
     return pending
 
 
-def _has_source_code(proj_dir):
-    """Check whether proj_dir contains at least one source code file."""
-    source_exts = set(EXT_TO_LANG.keys())
-    for root, dirs, files in os.walk(proj_dir):
-        # Skip hidden dirs and common non-source dirs
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
-                   {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
-        for fname in files:
-            ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
-            if ext in source_exts:
-                return True
-    return False
+def _normalize_submodules(proj_dir, submodules):
+    """Return validated project-relative submodule directories."""
+    if not submodules:
+        return []
+
+    proj_dir = os.path.abspath(proj_dir)
+    normalized = []
+    seen = set()
+    for raw in submodules:
+        value = (raw or "").strip()
+        if not value:
+            continue
+        candidate = value if os.path.isabs(value) else os.path.join(proj_dir, value)
+        candidate = os.path.abspath(candidate)
+        try:
+            inside_project = os.path.commonpath([proj_dir, candidate]) == proj_dir
+        except ValueError:
+            inside_project = False
+        if not inside_project or candidate == proj_dir:
+            raise ValueError(
+                f"--submodule must name subdirectories inside proj_dir, got: {raw}"
+            )
+        if not os.path.isdir(candidate):
+            raise ValueError(f"--submodule path is not a directory: {raw}")
+
+        rel = os.path.relpath(candidate, proj_dir).replace(os.sep, "/")
+        if rel not in seen:
+            normalized.append(rel)
+            seen.add(rel)
+
+    collapsed = []
+    for rel in sorted(normalized, key=lambda path: (path.count("/"), path)):
+        if not collapsed or not _is_under_submodules(rel, collapsed):
+            collapsed.append(rel)
+    return collapsed
 
 
 _HARDWARE_LANGUAGES = {"chisel", "verilog", "systemverilog", "system_verilog"}
@@ -245,119 +191,148 @@ def _reject_hardware_languages(phases_path):
         sys.exit(1)
 
 
-def run_pipeline(proj_dir):
+def _run_spec_generation_batch(
+    proj_dir,
+    work_dir,
+    attempt,
+    phase_num,
+    layer_idx,
+    batch_rel_dir,
+    batch_info,
+):
+    # Run one batch end-to-end so the executor can refill slots as soon as a
+    # batch finishes, instead of waiting for a whole chunk barrier.
+    batch_file = batch_info["file"]
+    batch_prompt_rel = os.path.join(batch_rel_dir, batch_file)
+    function_files = batch_info.get("functions", [])
+    function_ids = [
+        function_id_from_extracted_path(func_rel)
+        for func_rel in function_files
+    ]
+    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
+                    "Do NOT modify any existing project files.")
+    if attempt == 1:
+        prompt = (
+            f"Process the batch prompt file at {batch_prompt_rel}. "
+            f"Read it and fm_agent/spec_prompts/system_prompt.md, "
+            f"generate behavioral specs for each function listed, "
+            f"and write the complete specced files directly. {fm_reminder}"
+        )
+    else:
+        prompt = (
+            f"Continue processing the batch prompt file at {batch_prompt_rel}. "
+            f"Some functions may already have specs from a previous attempt. "
+            f"Check each function file — only generate specs for those "
+            f"that don't have [SPEC] blocks yet. "
+            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
+        )
+    prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
+    command = build_llm_cli_command(
+        model=OPENCODE_SPEC_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+        files=[prompt_file],
+    )
+    try:
+        result = run_opencode_traced(
+            proj_dir=proj_dir,
+            work_dir=work_dir,
+            command=command,
+            stage="spec_generation",
+            function_ids=function_ids,
+            input_files=[
+                "fm_agent/workflow_spec_step4_batch.md",
+                batch_prompt_rel,
+                "fm_agent/spec_prompts/system_prompt.md",
+                *list_staged_domain_knowledge_relpaths(work_dir),
+            ],
+            output_files=function_files,
+            summary=f"OpenCode spec generation for {batch_file}",
+            metadata={
+                "attempt": attempt,
+                "phase": phase_num,
+                "layer": layer_idx,
+                "batch_file": batch_file,
+            },
+        )
+        return result.returncode
+    except subprocess.CalledProcessError as exc:
+        return exc.returncode
+
+
+def run_pipeline(
+    proj_dir,
+    resume=False,
+    required_source_files=None,
+    domain_knowledge_files=None,
+    submodules=None,
+    one_phase=False,
+    extra_call_edges_path=None,
+    only_spec=False,
+):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
-
-    if not _has_source_code(proj_dir):
-        print(f"[Pipeline] ERROR: No source code files found in {proj_dir}. "
+    if not _has_source_code(proj_dir, submodules):
+        scope = f" selected submodule(s): {', '.join(submodules)}" if submodules else f" {proj_dir}"
+        print(f"[Pipeline] ERROR: No source code files found in{scope}. "
               f"Supported extensions: {', '.join(sorted(EXT_TO_LANG.keys()))}")
         sys.exit(1)
 
     work_dir = os.path.join(proj_dir, "fm_agent")
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    extra_call_edges = load_call_edges(extra_call_edges_path)
 
-    # Clean files from the previous run
-    _clean_previous_run(work_dir)
-    os.makedirs(work_dir, exist_ok=True)
-
-    # Initialize opencode in the project directory (skip if AGENTS.md already exists)
-    agent_md = os.path.join(proj_dir, "AGENTS.md")
-    if os.path.exists(agent_md):
-        print("[Pipeline] Stage 1/5: AGENTS.md found, skipping opencode init.")
+    # Clean files from the previous run — unless resuming, where we keep all
+    # prior progress (phases.json, generated specs, verification results) and
+    # only do the remaining work.
+    if resume:
+        if os.path.isdir(work_dir):
+            print(f"[Pipeline] RESUME: keeping existing {os.path.relpath(work_dir, proj_dir)}/ — only remaining work will run.")
+        else:
+            print("[Pipeline] RESUME requested but no previous fm_agent/ found — starting fresh.")
+            resume = False
     else:
-        print("[Pipeline] Stage 1/5: Initializing opencode...")
-        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{LLM_MODEL}", "--command", "init"]
-        run_opencode_traced(
-            proj_dir=proj_dir,
-            work_dir=work_dir,
-            command=command,
-            stage="init",
-            output_files=["AGENTS.md"],
-            summary="Initialized OpenCode project context",
+        _clean_previous_run(work_dir)
+    os.makedirs(work_dir, exist_ok=True)
+    domain_knowledge_relpaths = stage_domain_knowledge_files(
+        proj_dir, work_dir, domain_knowledge_files
+    )
+    if domain_knowledge_relpaths:
+        print(
+            "[Pipeline] User domain knowledge: "
+            f"{len(domain_knowledge_relpaths)} markdown file(s)."
         )
 
-    # Copy workflow_setup_extract.md to proj_dir and run opencode against it
-    print("[Pipeline] Stage 2/5: Understanding codebase and extracting functions ...")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    workflow_src = os.path.join(script_dir, "md", "workflow_setup_extract.md")
-    workflow_dst = os.path.join(work_dir, "workflow_setup_extract.md")
-    shutil.copy2(workflow_src, workflow_dst)
-    _proj_dir_abs = os.path.abspath(proj_dir)
-    _proj_dir_name = os.path.basename(_proj_dir_abs)
-    with open(workflow_dst, "r") as _f:
-        _md = _f.read()
-    _old = ("- `phases[*].modules[*].source_files` — relative paths from repo root of all source files "
-            "that belong to this module.")
-    _new = (f"- `phases[*].modules[*].source_files` — relative paths from the project root "
-            f"`{_proj_dir_abs}` of all source files that belong to this module. "
-            f"For example, a file at `{_proj_dir_abs}/path/to/file.ext` must be recorded as "
-            f"`path/to/file.ext`, NOT as `{_proj_dir_name}/path/to/file.ext`.")
-    _md = _md.replace(_old, _new, 1)
-    with open(workflow_dst, "w") as _f:
-        _f.write(_md)
-    fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
-                    "It is a workspace for storing your output files only. "
-                    "Do NOT include fm_agent/ paths in phases.json. "
-                    "Do NOT modify any existing project files.")
-    for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
-        if attempt == 1:
-            prompt = f"Follow the instructions in the attached file. {fm_reminder}"
-        else:
-            prompt = ("Continue where you left off. The previous run was interrupted by a network error. "
-                      f"Check what has already been done and only complete the remaining steps. {fm_reminder}")
-        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
-                   "--file", os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md"), "--", prompt]
-        try:
-            run_opencode_traced(
-                proj_dir=proj_dir,
-                work_dir=work_dir,
-                command=command,
-                stage="setup_context",
-                input_files=["fm_agent/workflow_setup_extract.md"],
-                output_files=[
-                    "fm_agent/phases.json",
-                    "fm_agent/spec_prompts/domain_context/engine_overview.txt",
-                ],
-                summary=f"OpenCode setup context attempt {attempt}",
-                metadata={"attempt": attempt},
-            )
-        except subprocess.CalledProcessError as e:
-            logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
-
-        # Validate that the agent produced phases.json
-        phases_json = os.path.join(work_dir, "phases.json")
-        if os.path.exists(phases_json):
-            break
-
-        if attempt < OPENCODE_MAX_RETRIES:
-            delay = 10
-            print(
-                f"[Pipeline] Stage 2 failed to produce phases.json (attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
-                f"Retrying in {delay}s..."
-            )
-            logging.warning(f"Stage 2 attempt {attempt} failed: phases.json missing. Retrying in {delay}s.")
-            time.sleep(delay)
-        else:
-            print(
-                f"[Pipeline] ERROR: Stage 2 failed after {OPENCODE_MAX_RETRIES} attempts. "
-                f"phases.json is missing. "
-                f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
-            )
-            sys.exit(1)
+    # Copy workflow_setup_extract.md to proj_dir and run opencode against it.
+    # _run_setup_extract also force-lists any required_source_files the agent
+    # omitted from phases.json before extraction runs below.
+    print("[Pipeline] Stage 1/4: Understanding codebase and extracting functions ...")
+    _run_setup_extract(
+        proj_dir, work_dir, script_dir, resume=resume,
+        required_source_files=required_source_files,
+        submodules=submodules,
+        one_phase=one_phase,
+    )
 
     # Hardware designs must go through --hardware: this pipeline's readiness
     # check cannot complete on standalone hardware spec outputs.
     _reject_hardware_languages(os.path.join(work_dir, "phases.json"))
 
-    # Deduplicate source files across phases
-    _deduplicate_phases(work_dir)
+    # Build (or rebuild) the codegraph index if codegraph is installed. Both
+    # run_extraction (Stage 2) and generate_topdown_layers (Stage 3) read from it.
+    # force=not resume mirrors run_extraction below: a fresh run rebuilds so the
+    # index matches the current tree, while a resume reuses the existing index
+    # (same tree as the interrupted run — rebuilding would just be wasted work).
+    try_codegraph_init(proj_dir, force=not resume)
 
     # Run function extraction using extract.py
+    # force=False on resume preserves already-specced extracted files; on a fresh
+    # run fm_agent/ was just wiped so it is equivalent to force=True.
     print("[Pipeline] Extracting functions from source files...")
-    run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
+    run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
 
     # Copy system_prompt.md to spec_prompts/system_prompt.md
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
@@ -370,21 +345,37 @@ def run_pipeline(proj_dir):
         os.path.join(script_dir, "src", "generate_batch_prompts.py"),
         os.path.join(spec_prompts_dir, "generate_batch_prompts.py"),
     )
+    # generate_batch_prompts.py imports is_file_ready from this module at runtime.
+    shutil.copy2(
+        os.path.join(script_dir, "src", "file_utils.py"),
+        os.path.join(spec_prompts_dir, "file_utils.py"),
+    )
 
-    print("[Pipeline] Stage 3/5: Collecting file list...")
-    file_list = collect_file_names(input_dir, os.path.join(work_dir, "fm_agent_file_list.json"))
+    phases_path = os.path.join(work_dir, "phases.json")
+    with open(phases_path, "r") as f:
+        phases_data = json.load(f)
+
+    print("[Pipeline] Stage 2/4: Collecting file list...")
+    file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
+    file_list = collect_file_names(input_dir, file_list_path)
+    if submodules:
+        file_list = _write_file_names(
+            _get_all_phase_files(phases_data, input_dir), file_list_path
+        )
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
         return
 
-    # --- Stage 4: Generate topdown layers ---
-    print("[Pipeline] Stage 4/5: Generating topdown layers...")
-    phases_data = json.load(open(os.path.join(work_dir, "phases.json")))
-    generate_topdown_layers(work_dir)
+    # --- Stage 3: Generate topdown layers ---
+    print("[Pipeline] Stage 3/4: Generating topdown layers...")
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
 
-    # --- Stage 5: Execute spec generation workflow (per phase, per layer) ---
-    print("[Pipeline] Stage 5/5: Generating specs & verification...")
+    # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
+    if only_spec:
+        print("[Pipeline] Stage 4/4: Generating specs (reasoning & bug validation disabled)...")
+    else:
+        print("[Pipeline] Stage 4/4: Generating specs & verification...")
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
     batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
     shutil.copy2(batch_md_src, batch_md_dst)
@@ -407,7 +398,7 @@ def run_pipeline(proj_dir):
             spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
         )
         if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num])
+            generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
         total_layers = layers_data.get("total_layers", 1)
@@ -418,14 +409,15 @@ def run_pipeline(proj_dir):
         )
 
         for layer_idx in range(total_layers):
-            print(f"[Pipeline] Stage 5/5: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
+            print(f"[Pipeline] Stage 4/4: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
 
-            # Generate batch prompts for this layer
-            subprocess.run(
-                ["python3", "fm_agent/spec_prompts/generate_batch_prompts.py",
-                 "--phase", str(phase_num), "--layers", str(layer_idx)],
-                cwd=proj_dir, check=True,
-            )
+            # Generate batch prompts for this layer. On resume, skip functions
+            # that were already specced in a previous run.
+            batch_cmd = ["python3", "fm_agent/spec_prompts/generate_batch_prompts.py",
+                         "--phase", str(phase_num), "--layers", str(layer_idx)]
+            if resume:
+                batch_cmd.append("--resume")
+            subprocess.run(batch_cmd, cwd=proj_dir, check=True)
 
             # Read manifest
             manifest_path = os.path.join(batch_dir, "manifest.json")
@@ -452,78 +444,74 @@ def run_pipeline(proj_dir):
                 # Find batches with unspecced functions
                 pending_batches = _get_pending_batches(all_batches, proj_dir)
                 if not pending_batches:
+                    # All functions in this layer are specced. In only-spec mode
+                    # we stop here without running the reasoner/bug validation.
+                    if not only_spec:
+                        incomplete_verification = _get_incomplete_verification_files(
+                            layer_files, input_dir, output_dir, work_dir
+                        )
+                        if incomplete_verification:
+                            logging.info(
+                                f"Phase {phase_num} Layer {layer_idx}: "
+                                f"{len(incomplete_verification)} ready file(s) still need verification or validation"
+                            )
+                            newly_processed = streaming_reasoner(
+                                input_dir, output_dir, file_list=layer_files,
+                                proj_dir=proj_dir, work_dir=work_dir,
+                                spec_procs=None,
+                                already_processed=all_processed | layer_processed,
+                                resume=resume,
+                            )
+                            layer_processed.update(newly_processed)
                     break
 
-                # Spawn concurrent opencode processes (one per pending batch)
-                spec_procs = []
-                spec_trace_records = []
-                for batch_info in pending_batches:
-                    batch_file = batch_info["file"]
-                    batch_prompt_rel = os.path.join(batch_rel_dir, batch_file)
-                    batch_prompt_abs = os.path.join(proj_dir, batch_prompt_rel)
-                    function_files = batch_info.get("functions", [])
-                    function_ids = [
-                        function_id_from_extracted_path(func_rel)
-                        for func_rel in function_files
-                    ]
-                    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
-                                    "Do NOT modify any existing project files.")
-                    if attempt == 1:
-                        prompt = (
-                            f"Process the batch prompt file at {batch_prompt_rel}. "
-                            f"Read it and fm_agent/spec_prompts/system_prompt.md, "
-                            f"generate behavioral specs for each function listed, "
-                            f"and write the complete specced files directly. {fm_reminder}"
+                # Submit all pending spec batches through a bounded executor so
+                # finished slots can immediately pick up the next batch.
+                spec_futures = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                    for batch_info in pending_batches:
+                        batch_file = batch_info["file"]
+                        batch_prompt_rel = os.path.join(batch_rel_dir, batch_file)
+                        batch_prompt_abs = os.path.join(proj_dir, batch_prompt_rel)
+                        # On resume a batch whose functions are all already specced
+                        # has no prompt file written and nothing for the agent to do
+                        # — skip it instead of sending an empty batch.
+                        if batch_info.get("num_pending", 1) == 0 or not os.path.exists(batch_prompt_abs):
+                            logging.info(f"Skipping batch with no functions to spec: {batch_file}")
+                            continue
+                        spec_futures.append(
+                            executor.submit(
+                                _run_spec_generation_batch,
+                                proj_dir,
+                                work_dir,
+                                attempt,
+                                phase_num,
+                                layer_idx,
+                                batch_rel_dir,
+                                batch_info,
+                            )
                         )
-                    else:
-                        prompt = (
-                            f"Continue processing the batch prompt file at {batch_prompt_rel}. "
-                            f"Some functions may already have specs from a previous attempt. "
-                            f"Check each function file — only generate specs for those "
-                            f"that don't have [SPEC] blocks yet. "
-                            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
-                        )
-                    command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SPEC_MODEL}",
-                               "--file", os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md"),
-                               "--", prompt]
-                    trace_record = start_opencode_traced(
-                        proj_dir=proj_dir,
-                        work_dir=work_dir,
-                        command=command,
-                        stage="spec_generation",
-                        function_ids=function_ids,
-                        input_files=[
-                            "fm_agent/workflow_spec_step4_batch.md",
-                            batch_prompt_rel,
-                            "fm_agent/spec_prompts/system_prompt.md",
-                        ],
-                        output_files=function_files,
-                        summary=f"OpenCode spec generation for {batch_file}",
-                        metadata={
-                            "attempt": attempt,
-                            "phase": phase_num,
-                            "layer": layer_idx,
-                            "batch_file": batch_file,
-                        },
+
+                    logging.info(
+                        f"Phase {phase_num} Layer {layer_idx} attempt {attempt}: "
+                        f"submitted {len(spec_futures)} spec-generation batch tasks "
+                        f"(max_workers={MAX_WORKERS}, total_pending_batches={len(pending_batches)})"
                     )
-                    spec_trace_records.append(trace_record)
-                    spec_procs.append(trace_record.proc)
+                    if spec_futures and not only_spec:
+                        newly_processed = streaming_reasoner(
+                            input_dir, output_dir, file_list=layer_files,
+                            proj_dir=proj_dir, work_dir=work_dir,
+                            spec_procs=spec_futures,
+                            already_processed=all_processed | layer_processed,
+                            resume=resume,
+                        )
+                        layer_processed.update(newly_processed)
 
-                logging.info(
-                    f"Phase {phase_num} Layer {layer_idx} attempt {attempt}: "
-                    f"spawned {len(spec_procs)} opencode processes for {len(pending_batches)} batches"
-                )
-
-                newly_processed = streaming_reasoner(input_dir, output_dir, file_list=layer_files,
-                                   proj_dir=proj_dir, work_dir=work_dir,
-                                   spec_procs=spec_procs,
-                                   already_processed=all_processed | layer_processed)
-                layer_processed.update(newly_processed)
-
-                for proc in spec_procs:
-                    proc.wait()
-                for trace_record in spec_trace_records:
-                    finish_opencode_trace(trace_record)
+                    for future in spec_futures:
+                        try:
+                            future.result()
+                        except Exception as exc:
+                            logging.error(f"Spec generation task failed unexpectedly: {exc}")
 
                 # Check if any files in this layer received specs
                 specs_generated = sum(
@@ -544,18 +532,18 @@ def run_pipeline(proj_dir):
                 if attempt < OPENCODE_MAX_RETRIES:
                     delay = 10
                     print(
-                        f"[Pipeline] Stage 5 Phase {phase_num} Layer {layer_idx} produced no specs "
+                        f"[Pipeline] Stage 4 Phase {phase_num} Layer {layer_idx} produced no specs "
                         f"(attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
                         f"Retrying in {delay}s..."
                     )
                     logging.warning(
-                        f"Stage 5 Phase {phase_num} Layer {layer_idx} attempt {attempt} failed: "
+                        f"Stage 4 Phase {phase_num} Layer {layer_idx} attempt {attempt} failed: "
                         f"no specs generated. Retrying in {delay}s."
                     )
                     time.sleep(delay)
                 else:
                     print(
-                        f"[Pipeline] ERROR: Stage 5 Phase {phase_num} Layer {layer_idx} failed "
+                        f"[Pipeline] ERROR: Stage 4 Phase {phase_num} Layer {layer_idx} failed "
                         f"after {OPENCODE_MAX_RETRIES} attempts. "
                         f"No specs were generated. "
                         f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
@@ -566,26 +554,109 @@ def run_pipeline(proj_dir):
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
 
-    # Print confirmed bug count
-    summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-    if os.path.exists(summary_path):
-        with open(summary_path, "r") as f:
-            summary = json.load(f)
-        confirmed = summary.get("total_confirmed", 0)
-        print(f"[Pipeline] Confirmed bugs: {confirmed}")
+    # Print confirmed bug count (skipped in only-spec mode, which runs no
+    # reasoning or bug validation).
+    if not only_spec:
+        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
+        if os.path.exists(summary_path):
+            with open(summary_path, "r") as f:
+                summary = json.load(f)
+            confirmed = summary.get("total_confirmed", 0)
+            print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
-    print("[Pipeline] Done.")
+    if only_spec:
+        print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
+    else:
+        print("[Pipeline] Done.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the FM-Agent spec generation and verification pipeline.")
-    parser.add_argument("proj_dir", help="Path to the project directory to analyze.")
+    parser = argparse.ArgumentParser(
+        usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
+              "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
+              "[--submodule PATH [PATH ...]] [--entry-func PATH] "
+              "[--end-func PATH ...] [--extra-edge FILE] [--only-spec] "
+              "[--hardware [--chisel|--verilog] [--chisel-modules-only]]",
+        description="Run the FM agent pipeline on a project directory.",
+    )
+    parser.add_argument("proj_dir", help="path to the project directory")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue a previous run in <proj_dir>/fm_agent instead of wiping it: "
+        "keeps phases.json, generated specs, and existing verification results; "
+        "only does the remaining work.",
+    )
+    parser.add_argument(
+        "--incremental",
+        metavar="INTENT_FILE",
+        help="Run in incremental mode. Value is the path to the intent file "
+        "defining the goal of modification.",
+    )
+    parser.add_argument(
+        "--isolate",
+        action="store_true",
+        help="Run the pipeline against an isolated git worktree snapshot of "
+        "the project instead of the project directory itself.",
+    )
+    parser.add_argument(
+        "--one-phase",
+        action="store_true",
+        help="Put all planned source files into a single analysis phase.",
+    )
+    parser.add_argument(
+        "--only-spec",
+        action="store_true",
+        help="Only generate behavioral specs; skip the reasoning and bug "
+        "validation stages.",
+    )
+    parser.add_argument(
+        "--domain-knowledge",
+        "--knowledge",
+        metavar="FILE",
+        action="append",
+        nargs="+",
+        default=[],
+        help="additional Markdown domain-knowledge file(s) to copy into "
+        "fm_agent/spec_prompts/domain_context/user_knowledge/ and provide to "
+        "setup, spec generation, and validation agents. May be repeated. "
+        "FM_AGENT_DOMAIN_KNOWLEDGE can also provide os.pathsep-separated files.",
+    )
+    parser.add_argument(
+        "--submodule",
+        metavar="PATH",
+        nargs="+",
+        default=None,
+        help="Only process source code under one or more subdirectories of proj_dir.",
+    )
+    parser.add_argument(
+        "--entry-func",
+        metavar="PATH",
+        default=None,
+        help="function path of the entry point to start reasoning from.",
+    )
+    parser.add_argument(
+        "--end-func",
+        metavar="PATH",
+        nargs="+",
+        default=None,
+        help="one or more function paths at which to stop (space-separated list); "
+        "if omitted, the whole call graph reachable from --entry-func is analyzed.",
+    )
+    parser.add_argument(
+        "--extra-edge",
+        dest="extra_edge",
+        metavar="FILE",
+        default=None,
+        help="optional JSON file, or directory of JSON files, containing "
+        "supplemental caller->callee edges.",
+    )
     parser.add_argument(
         "--hardware",
         action="store_true",
         help="Treat the project as a hardware design and generate module specs "
-        "instead of running the default pipeline. The HDL defaults to Chisel; "
-        "combine with --verilog for Verilog/SystemVerilog designs.",
+        "instead of running the default software pipeline. The HDL defaults "
+        "to Chisel; combine with --verilog for Verilog/SystemVerilog designs.",
     )
     hdl = parser.add_mutually_exclusive_group()
     hdl.add_argument(
@@ -601,58 +672,191 @@ if __name__ == "__main__":
         "and generate specs via verilog_spec_generator.",
     )
     parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume a previous --hardware run: reuse groups.json and only "
-        "regenerate missing module specs.",
-    )
-    parser.add_argument(
         "--chisel-modules-only",
         action="store_true",
-        help="With --hardware --chisel: skip spec generation for Chisel classes "
-        "confidently identified as non-hardware (IO Bundles, constant objects, "
-        "and similar), keeping units that transitively extend "
-        "Module/RawModule/ExtModule/BlackBox/MultiIOModule. Classes whose "
-        "module-ness can't be determined heuristically (unresolved external "
-        "bases, ambiguous or cyclic inheritance) are conservatively kept, not "
-        "excluded. This is a text-only heuristic with no real Scala import/"
-        "package resolution, so an unrelated class elsewhere in the project "
-        "sharing a parent's bare name can, in rare cases, still cause a "
-        "misclassification. An import alias that renames a base to "
-        "Module/RawModule/ExtModule/BlackBox/MultiIOModule/Bundle/Record/Data "
-        "(e.g. `import chisel3.{Module => Bundle}`) is treated as if it named "
-        "that class directly, which can deterministically misclassify a real "
-        "module. Extraction itself is unaffected; this only filters spec "
-        "generation.",
+        help="With --hardware --chisel: keep the conservative module-only Chisel "
+        "path enabled. This flow analyzes only Module/RawModule/BlackBox-derived "
+        "units, treats Bundle types as context rather than standalone units, and "
+        "uses the module-instantiation graph. The flag is kept for compatibility "
+        "with earlier revisions and typically has no additional effect now.",
     )
     args = parser.parse_args()
 
     if (args.chisel or args.verilog) and not args.hardware:
-        parser.error("--chisel/--verilog select the HDL for --hardware runs; "
-                     "add the --hardware flag")
-    if args.resume and not args.hardware:
-        # run_pipeline ignores --resume and starts by WIPING fm_agent/ — the
-        # exact workspace --resume promises to preserve.
-        parser.error("--resume only applies to --hardware runs; "
-                     "add --hardware (and --verilog for Verilog designs)")
+        parser.error("--chisel/--verilog select the HDL for --hardware runs; add --hardware.")
     if args.chisel_modules_only and not args.hardware:
-        parser.error("--chisel-modules-only only applies to --hardware Chisel runs; "
-                     "add --hardware")
+        parser.error("--chisel-modules-only only applies to --hardware Chisel runs.")
     if args.chisel_modules_only and args.verilog:
-        parser.error("--chisel-modules-only is Chisel-only and cannot be combined "
-                     "with --verilog")
+        parser.error("--chisel-modules-only is Chisel-only and cannot be combined with --verilog.")
+
+    resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
+    proj_dir = os.path.abspath(args.proj_dir)
+    extra_call_edges_path = args.extra_edge
+    if extra_call_edges_path:
+        extra_call_edges_path = os.path.abspath(extra_call_edges_path)
+    try:
+        submodules = _normalize_submodules(proj_dir, args.submodule)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    try:
+        domain_knowledge_files = collect_domain_knowledge_paths(
+            args.domain_knowledge,
+            base_dir=proj_dir,
+            fallback_base_dir=os.getcwd(),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if submodules and args.entry_func is not None:
+        parser.error("--submodule cannot be combined with --entry-func.")
+
+    if args.only_spec and args.incremental:
+        parser.error(
+            "--only-spec cannot be combined with --incremental "
+            "(incremental mode is inherently a reasoning/bug-validation flow)."
+        )
+
+    # ---- pre-flight environment check (shared by all pipeline modes) ----
+    import config
+    from src.env_check import run as env_check_run
+    if not env_check_run(proj_dir, config):
+        sys.exit(0)
 
     start_time = time.time()
-    if args.hardware and args.verilog:
-        from src.verilog_spec_generator import run_verilog_spec_generation
 
-        run_verilog_spec_generation(os.path.abspath(args.proj_dir), resume=args.resume)
-    elif args.hardware:
-        from src.chisel_spec_generator import run_chisel_spec_generation
+    if args.hardware:
+        if args.incremental:
+            parser.error("--incremental is not supported with --hardware.")
+        if args.isolate:
+            parser.error("--isolate is not supported with --hardware.")
+        if args.submodule:
+            parser.error("--submodule is not supported with --hardware.")
+        if args.entry_func is not None or args.end_func:
+            parser.error("--entry-func/--end-func are not supported with --hardware.")
+        if args.extra_edge is not None:
+            parser.error("--extra-edge is not supported with --hardware.")
+        if args.only_spec:
+            parser.error("--only-spec is redundant with --hardware and is not supported there.")
+        if domain_knowledge_files:
+            parser.error("--domain-knowledge is not supported with --hardware.")
 
-        run_chisel_spec_generation(os.path.abspath(args.proj_dir), resume=args.resume,
-                                    chisel_modules_only=args.chisel_modules_only)
-    else:
-        run_pipeline(os.path.abspath(args.proj_dir))
+        if args.verilog:
+            from src.verilog_spec_generator import run_verilog_spec_generation
+
+            run_verilog_spec_generation(proj_dir, resume=resume)
+        else:
+            from src.chisel_spec_generator import run_chisel_spec_generation
+
+            run_chisel_spec_generation(
+                proj_dir,
+                resume=resume,
+                chisel_modules_only=args.chisel_modules_only,
+            )
+        end_time = time.time()
+        logging.info(f"Total time: {end_time - start_time:.2f} seconds")
+        sys.exit(0)
+
+    # Entry-point mode: reason only about the call graph reachable from a specific
+    # entry function. Runs directly against the project directory (no worktree
+    # isolation or incremental diffing).
+    if args.entry_func is not None:
+        run_entry_pipeline(
+            proj_dir,
+            entry_func=args.entry_func,
+            end_funcs=args.end_func,
+            resume=resume,
+            domain_knowledge_files=domain_knowledge_files,
+            one_phase=args.one_phase,
+            extra_call_edges_path=extra_call_edges_path,
+            only_spec=args.only_spec,
+        )
+        end_time = time.time()
+        logging.info(f"Total time: {end_time - start_time:.2f} seconds")
+        sys.exit(0)
+
+    # Incremental mode diffs against the commit recorded by a previous run, and
+    # --isolate snapshots the repo via a git worktree, so both require a git repo.
+    # A non-git project can only run the full pipeline against the project directory
+    # itself.
+    if not _is_git_repo(proj_dir):
+        parser.error(
+            f"FM-Agent requires a git repository, but {proj_dir} is not."
+        )
+
+    # Resolve the intent path before snapshotting, since cwd-relative paths must
+    # resolve against the real project, not the frozen worktree copy.
+    intent_path = os.path.abspath(args.incremental) if args.incremental else None
+
+    # In incremental mode the commit to diff against is the most recent one recorded
+    # in version.log (the last line, since each run appends its commit). Read it from
+    # the real project before snapshotting.
+    old_commit = None
+    if args.incremental:
+        version_path = os.path.join(proj_dir, "fm_agent", "version.log")
+        if os.path.exists(version_path):
+            with open(version_path, "r") as f:
+                commits = [line.strip() for line in f if line.strip()]
+            old_commit = commits[-1] if commits else None
+
+    # Capture the project's latest commit id before running. With --isolate the
+    # pipeline runs against a throwaway worktree snapshot whose HEAD is a synthetic
+    # snapshot commit, so the version to record must come from the real project.
+    new_commit = _get_head_commit(proj_dir)
+
+    # With --isolate, the pipeline runs against the snapshot's fm_agent/. Resuming
+    # needs the previous run's fm_agent/ (phases.json, specs, verification results)
+    # to be present in the snapshot, so copy the excluded workspace in for resume
+    # too — not just incremental mode.
+    run_ctx = (
+        frozen_worktree(
+            proj_dir, copy_excluded=bool(args.incremental) or resume
+        )
+        if args.isolate
+        else contextlib.nullcontext(proj_dir)
+    )
+    with run_ctx as run_dir:
+        try:
+            # Incremental mode requires a recorded commit to diff against; without a
+            # version.log from a previous run, fall back to the full pipeline.
+            if args.incremental and old_commit:
+                run_incremental_pipeline(
+                    run_dir,
+                    intent_path,
+                    old_commit,
+                    domain_knowledge_files=domain_knowledge_files,
+                    submodules=submodules,
+                    one_phase=args.one_phase,
+                    extra_call_edges_path=extra_call_edges_path,
+                )
+            else:
+                run_pipeline(
+                    run_dir,
+                    resume=resume,
+                    domain_knowledge_files=domain_knowledge_files,
+                    submodules=submodules,
+                    one_phase=args.one_phase,
+                    extra_call_edges_path=extra_call_edges_path,
+                    only_spec=args.only_spec,
+                )
+            # Record the commit that was processed. Written after the pipeline since
+            # it recreates fm_agent/; with --isolate it lives in the snapshot and is
+            # copied back to the real project below. Only recorded on success so a
+            # partial run does not advance the version baseline.
+            _record_version(new_commit, os.path.join(run_dir, "fm_agent"))
+        finally:
+            # With --isolate the pipeline ran against a throwaway snapshot, so its
+            # fm_agent/ results live in the snapshot. Copy them back into the real
+            # project so they are not lost when the snapshot is discarded — this runs
+            # even when the pipeline crashes or is interrupted mid-run, so partial
+            # progress survives and can be resumed with --resume.
+            if args.isolate:
+                src_fm = os.path.join(run_dir, "fm_agent")
+                dst_fm = os.path.join(proj_dir, "fm_agent")
+                if os.path.isdir(src_fm):
+                    if os.path.isdir(dst_fm):
+                        shutil.rmtree(dst_fm)
+                    shutil.copytree(src_fm, dst_fm, symlinks=True)
+                    print(f"[Pipeline] Copied results back to {dst_fm}")
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")

@@ -21,25 +21,31 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 
 ## Table of Contents
 
-- [File Structure](#file-structure)
-- [Environment Setup](#environment-setup)
-  - [Requirements](#requirements)
-  - [Install Dependencies](#install-dependencies)
-- [Configuration](#configuration)
-- [Quick Start](#quick-start)
-- [Important Notes](#important-notes)
-- [Citation](#citation)
-- [Contact](#contact)
+  - [Table of Contents](#table-of-contents)
+  - [File Structure](#file-structure)
+  - [Environment Setup](#environment-setup)
+    - [Requirements](#requirements)
+      - [Tested macOS Environment](#tested-macos-environment)
+    - [Install Dependencies](#install-dependencies)
+  - [Configuration](#configuration)
+  - [Quick Start](#quick-start)
+  - [Important Notes](#important-notes)
+  - [Citation](#citation)
+  - [Contact](#contact)
 
 
 ## File Structure
 
 ```
-|-- main.py                # Entry point
-|-- config.py              # Configuration (model, granularity, concurrency)
-|-- install.sh             # Dependency installation script
-|-- src/                   # Core source modules (extraction, reasoning, LLM interaction, etc.)
-|-- md/                    # Workflow of FM-Agent to guide LLMs
+|-- main.py                       # Entry point — orchestrates the full pipeline
+|-- dashboard.py                  # Standalone real-time TUI dashboard for a run
+|-- config.py                     # Configuration (models, granularity, concurrency, timeouts)
+|-- install.sh                    # Dependency installation script
+|-- pyproject.toml / uv.lock      # Python project metadata and pinned dependencies (uv)
+|-- .env.example                  # Template for the .env runtime config
+|-- src/                          # Core source modules (extraction, reasoning, LLM interaction, etc.)
+|-- md/                           # Workflow instructions that guide the agent
+|-- docs/                         # Additional documentation (e.g. OpenCode/LLM provider setup)
 ```
 
 ## Environment Setup
@@ -55,13 +61,46 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 - [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) plugin (installed via `bunx`)
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) plugin — captures raw OpenCode LLM request/response traces (see [Structured Trace](#structured-trace))
 - An LLM API key for your provider (the examples use [OpenRouter](https://openrouter.ai/))
+- [Erlang Language Platform (ELP)](https://whatsapp.github.io/erlang-language-platform/docs/get-started/) — optional; required only when analyzing Erlang projects
+  - The Erlang integration has been tested on Ubuntu with Erlang/OTP 26 or newer; select an ELP release binary built for a compatible OTP version.
+  - rebar3 3.24.0 or newer is required for ELP to auto-discover projects containing `rebar.config`.
+  - The macOS Erlang toolchain has not been tested as part of this integration; `./install.sh --with-erlang` installs the current Homebrew formula versions.
+
+#### Tested macOS Environment
+
+The following macOS environment has been tested with the install script:
+
+- macOS 14.5 (Build 23F79), arm64
+- Darwin 23.5.0
+- Python 3.11.7
+- pip 23.3.1
+- uv 0.7.9
+- OpenCode 1.17.9
+- Bun/bunx 1.3.14
+- Homebrew 6.0.3
+- UnZip 6.00
 
 ### Install Dependencies
 
 Set the LLM API key used by both FM-Agent and OpenCode. We recommend [OpenRouter](https://openrouter.ai/): FM-Agent invokes LLMs concurrently, and OpenRouter is generous on RPM (requests per minute) and TPM (tokens per minute) — but any compatible provider works.
 
+Create a `.env` file in the project root (FM-Agent loads it automatically via python-dotenv). Copy the template and fill in your key:
+
 ```bash
-export LLM_API_KEY="your-api-key-here"
+cp .env.example .env
+# then edit .env and set LLM_API_KEY
+```
+
+```bash
+# .env
+LLM_API_KEY=your-api-key-here
+LLM_API_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=anthropic/claude-sonnet-4.6
+LLM_EFFORT=
+FM_AGENT_MODEL_BACKEND=opencode
+OPENCODE_MODEL_PROVIDER=openrouter
+# Optional: os.pathsep-separated Markdown files with project/domain knowledge
+FM_AGENT_DOMAIN_KNOWLEDGE=
 ```
 
 See [docs/config_llm.md](docs/config_llm.md) for OpenCode provider configuration and optional prompt-cache setup.
@@ -71,6 +110,14 @@ Then, all of the above dependencies (except Ubuntu and Python) can be installed 
 ```bash
 ./install.sh
 ```
+
+Erlang support is optional because its toolchain is not needed for other languages. To install or verify Erlang/OTP 26+, rebar3 3.24.0+, and a compatible ELP release automatically, run:
+
+```bash
+./install.sh --with-erlang
+```
+
+The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
 
 (Optional) If needed, you can manually set the default LLM model and API key of OpenCode in its configuration file.
 
@@ -91,6 +138,16 @@ Key parameters can be adjusted in [config.py](config.py).
 | `OPENCODE_MODEL_PROVIDER`       | `openrouter`                   | OpenCode provider prefix used when invoking `opencode run --model <prefix>/<model>` |
 | `LLM_API_KEY`                   | (env)                          | LLM API key for FM-Agent's direct calls |
 | `LLM_API_BASE_URL`              | `https://openrouter.ai/api/v1` | LLM API base URL for FM-Agent's direct calls |
+| `LLM_EFFORT`                    | unset                          | Optional reasoning effort passed to `codex exec` or `claude -p`; leave empty to omit the effort flag |
+| `FM_AGENT_MODEL_BACKEND`        | `opencode`                     | Model backend. Use `auto`, `codex-cli`, or `claude-cli` to bypass OpenCode and use local CLI authentication |
+| `FM_AGENT_DOMAIN_KNOWLEDGE`     | unset                          | Optional `os.pathsep`-separated Markdown files with user-provided domain knowledge |
+| `GRANULARITY`                   | `40`                           | Minimum number of lines per code block when splitting a function for block-by-block reasoning |
+| `MAX_WORKERS`                   | `10`                           | Maximum number of concurrent worker threads for reasoning and bug validation |
+| `MAX_SPC_ITER`                  | `5`                            | Maximum number of retries/iterations for FM-Agent's direct LLM verification calls (post-condition and spec checks) |
+| `OPENCODE_MAX_RETRIES`          | `5`                            | Maximum retry attempts for a failed OpenCode pipeline stage |
+| `OPENCODE_TIMEOUT_SECONDS`      | `1800`                         | Hard timeout (in seconds) for a single `opencode run` subprocess; on expiry the child is killed and the call is retried |
+| `ELP_COMMAND`                    | `elp`                          | ELP executable or command used for Erlang function and call-graph analysis |
+| `ELP_TIMEOUT_SECONDS`            | `180`                          | Timeout for ELP initialization, indexing, and individual LSP requests |
 
 (Optional) FM-Agent uses oh-my-openagent plugin to enhance OpenCode. The comment-checker hook built into this plugin should be disabled, otherwise it may intercept every comment block that FM-Agent writes, which are specifications of functions. It may force the agent to waste tokens justifying or removing them.
 You can open your oh-my-openagent config file (typically ~/.config/opencode/oh-my-openagent.json) and add disabled_hooks:
@@ -127,19 +184,108 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-uv run python main.py <proj_dir>
+uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--submodule PATH [PATH ...]]
 ```
 
-| Argument     | Description                                              |
-| ------------ | -------------------------------------------------------- |
-| `proj_dir`   | Directory of codebase that you want to check correctness |
-| `--hardware` | Treat `proj_dir` as a hardware design and generate module specs only (see below). The HDL defaults to Chisel |
-| `--chisel`   | With `--hardware`: treat the design as Chisel (Scala). This is the default HDL, so `--hardware` alone is equivalent to `--hardware --chisel` |
-| `--verilog`  | With `--hardware`: treat the design as Verilog/SystemVerilog (`.v`/`.sv`/`.svh`) |
-| `--resume`   | Resume an interrupted `--hardware` run: reuse `groups.json` and only regenerate missing module specs |
-| `--chisel-modules-only` | With `--hardware --chisel`: skip spec generation for Chisel classes confidently identified as non-hardware (IO Bundles, constant objects, and similar), keeping units that transitively extend `Module`/`RawModule`/`ExtModule`/`BlackBox`/`MultiIOModule`. Classes whose module-ness can't be determined heuristically (unresolved external bases, ambiguous or cyclic inheritance) are conservatively kept, not excluded. This is a text-only heuristic with no real Scala import/package resolution, so an unrelated class elsewhere in the project sharing a parent's bare name can, in rare cases, still cause a misclassification. An import alias that renames a base to `Module`/`RawModule`/`ExtModule`/`BlackBox`/`MultiIOModule`/`Bundle`/`Record`/`Data` (e.g. `import chisel3.{Module => Bundle}`) is treated as if it named that class directly, which can deterministically misclassify a real module. Extraction is unaffected; this only filters spec generation. |
+| Argument                    | Description                                                                                     |
+| --------------------------- | ----------------------------------------------------------------------------------------------- |
+| `proj_dir`                  | Directory of codebase that you want to check correctness                                        |
+| `--resume`                  | Continue a previous, interrupted run instead of starting over                                   |
+| `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
+| `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
+| `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
+| `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
+| `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
+| `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
+
+`proj_dir` must be a git repository.
+
+To provide project-specific domain knowledge without editing FM-Agent's built-in prompts, pass one or more Markdown files:
+
+```bash
+uv run python main.py <proj_dir> --domain-knowledge docs/invariants.md docs/protocol.md
+```
+
+FM-Agent stages these files under `fm_agent/spec_prompts/domain_context/user_knowledge/` for the current run. You can also set `FM_AGENT_DOMAIN_KNOWLEDGE` to an `os.pathsep`-separated list of Markdown files.
+
+Use `--submodule` to limit a full or incremental run to selected project subdirectories:
+
+```bash
+uv run python main.py <proj_dir> --submodule src/core src/runtime
+uv run python main.py <proj_dir> --incremental intent.md --submodule src/core src/runtime
+```
+
+`--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`, but not with `--entry-func`.
+
+By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
+
+Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces the `[SPEC]` blocks for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
+
+```bash
+uv run python main.py <proj_dir> --only-spec
+```
+
+Use `--extra-edge FILE` when the static parser cannot see an important call relationship, such as indirect syscall dispatch. Supplemental edges are applied to full, entry-point-scoped, and incremental runs. The JSON shape is:
+
+```json
+{
+  "edges": [
+    {
+      "caller": {
+        "fqn": "third_party::musl::src::time::nanosleep-c::nanosleep",
+        "callsite_names": ["nanosleep"]
+      },
+      "callee": {
+        "fqn": "kernel::liteos_a::syscall::time_syscall-c::SysNanoSleep",
+        "info_names": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
+      }
+    }
+  ]
+}
+```
+
+Extra-edge field rules:
+
+- `caller.fqn`: exact FQN for a single caller, adding one edge to `callee.fqn`. It may be empty.
+- `caller.callsite_names`: source callsite function names. Any function containing these callsites becomes a caller and gets an edge to `callee.fqn`. It may be empty.
+  - At least one of `caller.fqn` and `caller.callsite_names` must be non-empty.
+- `callee.fqn`: exact FQN for a single callee.
+- `callee.info_names`: optional names used to match generated `[INFO]` entries for this callee. They are only used for `[INFO]` matching and passing caller expectations.
+
+### Incremental Mode
+
+In incremental mode, FM-Agent reuses the results of a previous run and only re-checks what changed. It diffs the current code against the commit recorded by the previous run in `fm_agent/version.log`. Each run records the processed commit id to that file, so a subsequent `--incremental` run automatically picks it up:
+
+```bash
+python3 main.py <proj_dir> --incremental <intent_file>
+```
+
+If `fm_agent/version.log` does not exist (no previous run to compare against), FM-Agent falls back to a full run.
+
+### Live Dashboard
+
+FM-Agent ships a standalone real-time TUI dashboard ([dashboard.py](dashboard.py)) that visualizes a run as it progresses: per-stage progress, token usage and cost, prompt-cache hit rate, and bug-validation verdicts. It reads the trace files FM-Agent writes under `fm_agent/`, so run it in a second terminal while `main.py` is going:
+
+```bash
+uv run python dashboard.py <proj_dir>
+```
+
+| Argument    | Description                                                  |
+| ----------- | ----------------------------------------------------------- |
+| `proj_dir`  | Same codebase directory passed to `main.py` (monitors `<proj_dir>/fm_agent/`). You can also point it directly at any workspace directory containing a `trace/` subdir, e.g. an archived run |
+
+Press `Ctrl-C` to exit the dashboard; it does not affect the running pipeline.
 
 ### Generating Specs for Hardware Designs (`--hardware`)
+
+FM-Agent also supports a **spec-only** hardware flow for Chisel and Verilog/SystemVerilog:
+
+| Argument | Description |
+| -------- | ----------- |
+| `--hardware` | Treat `proj_dir` as a hardware design and generate module specs only. The HDL defaults to Chisel. |
+| `--chisel` | With `--hardware`: treat the design as Chisel (Scala). This is the default HDL, so `--hardware` alone is equivalent to `--hardware --chisel`. |
+| `--verilog` | With `--hardware`: treat the design as Verilog/SystemVerilog (`.v`/`.sv`/`.svh`). |
+| `--chisel-modules-only` | With `--hardware --chisel`: keep the conservative module-only Chisel path enabled. This flow analyzes only `Module`/`RawModule`/`BlackBox`-derived units, treats `Bundle` types as context rather than standalone units, and uses the module-instantiation graph. The flag is retained for compatibility with earlier revisions and typically has no additional effect now. |
 
 For Chisel (Scala) hardware designs:
 
@@ -147,7 +293,7 @@ For Chisel (Scala) hardware designs:
 uv run python main.py <proj_dir> --hardware
 ```
 
-To skip spec generation for non-hardware Chisel units (IO Bundles, constant objects, `Main` entry points):
+Compatibility invocation for the conservative module-only Chisel path:
 
 ```bash
 uv run python main.py <proj_dir> --hardware --chisel-modules-only
@@ -159,18 +305,23 @@ For Verilog/SystemVerilog hardware designs:
 uv run python main.py <proj_dir> --hardware --verilog
 ```
 
-In this mode FM-Agent runs a **spec-only** pipeline tailored to hardware: it understands the design, splits it into subsystems, and generates verification-oriented module specifications. It does **not** run the code reasoner or bug validation — only spec generation.
+In this mode FM-Agent understands the design, splits it into subsystems, and generates verification-oriented module specifications. It does **not** run the code reasoner or bug validation.
 
 The `proj_dir` must contain Scala (`.scala`) source files for Chisel, or Verilog (`.v`/`.sv`/`.svh`) source files for Verilog. For each extracted module, FM-Agent writes spec Markdown files next to the extracted module under `fm_agent/`:
 
-Chisel support is scoped to official Chisel syntax, corresponding to Scala 2 (2.12/2.13), consistent with the Scala version used by current Chisel releases. Scala 2's deprecated early-initializer syntax and Scala 3 are not within the supported scope.
-
-| Output                  | Content                                                              |
-| ----------------------- | ------------------------------------------------------------------- |
-| `<ModuleName>_spec.md`  | Verification-oriented specification of the module's behavior         |
-| `<ModuleName>_info.md`  | Expected specifications of each submodule the module instantiates    |
+| Output | Content |
+| ------ | ------- |
+| `<ModuleName>_spec.md` | Verification-oriented specification of the module's behavior |
+| `<ModuleName>_info.md` | Expected specifications of each submodule the module instantiates |
 
 Generated specs are validated against a quality checklist; specs that fail are automatically deleted and regenerated within the run. If a run is interrupted, rerun with `--resume` to keep completed specs and only regenerate the missing ones.
+
+Chisel support is scoped to official Chisel syntax, corresponding to Scala 2 (2.12/2.13), consistent with the Scala version used by current Chisel releases. Scala 2's deprecated early-initializer syntax and Scala 3 are not within the supported scope.
+
+For the conservative Chisel flow, FM-Agent extracts only `Module`/`RawModule`/`BlackBox`-derived units. `Bundle` types remain domain context only and are not emitted as standalone analysis units. If you have a CIRCT-based elaboration step, you can make the emitted module set authoritative by either:
+
+- setting `FM_AGENT_CHISEL_CIRCT_VERILOG_DIR` to an existing directory containing emitted `.v`/`.sv`/`.svh`, or
+- setting `FM_AGENT_CHISEL_CIRCT_COMMAND` to a shell command FM-Agent should run in `proj_dir`; it receives `FM_AGENT_CHISEL_CIRCT_OUT_DIR` and must write emitted Verilog there.
 
 **Verilog requires [Verible](https://github.com/chipsalliance/verible)**: `verible-verilog-syntax` must be on `PATH` for accurate module extraction and instantiation-edge detection. Without it the Verilog flow refuses to start (set `FM_AGENT_NO_VERIBLE=1` to force a less accurate pure-Python fallback).
 
@@ -197,8 +348,8 @@ A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results w
 ## Important Notes
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
-2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Customizing them for your specific project can improve accuracy and help uncover more bugs. For example, you can include project documentation to give the agent deeper understanding of your codebase, or if you are reasoning about a compiler, modify `md/bug_validator.md` to instruct the agent to compare outputs against a reference implementation (e.g., GCC).
-3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS. Hardware designs (Chisel, Verilog/SystemVerilog) are supported in spec-only mode via `--hardware`.
+2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For reusable framework behavior, customize the built-in prompts; for example, if you are reasoning about a compiler, modify `md/bug_validator.md` to instruct the agent to compare outputs against a reference implementation (e.g., GCC).
+3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. Hardware designs (Chisel, Verilog/SystemVerilog) are supported in spec-only mode via `--hardware`. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
 
 ## Citation
 
@@ -216,4 +367,3 @@ Eprint = {arXiv:2604.11556},
 ## Contact
 
 If you have any questions, please submit an issue or send [email](mailto:nhaorand@gmail.com).
-

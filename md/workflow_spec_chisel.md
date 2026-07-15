@@ -5,7 +5,7 @@ You are given a single batch prompt file path in the prompt. Your ONLY job is to
 For each Chisel module, produce two standalone Markdown files in the same directory as the extracted module file:
 
 - `<ModuleName>_spec.md`: specification in the form defined by `system_prompt.md`.
-- `<ModuleName>_info.md`: the expected specification of each submodule that `<ModuleName>` instantiates or directly depends on, one entry per submodule, each in the same section structure as a `_spec.md` document.
+- `<ModuleName>_info.md`: the expected specification of each submodule that `<ModuleName>` instantiates, one entry per submodule, each in the same section structure as a `_spec.md` document.
 
 Do NOT modify the original `.scala` source code.
 
@@ -55,12 +55,12 @@ Keep headings even when content is unavailable. Use `None`, `TBD`, or `N/A` for 
 
 ## Info File Format
 
-Write each info file as a standalone Markdown document containing the EXPECTED specification of each submodule the module instantiates or directly depends on. Each entry is caller-driven (what the module needs from the submodule, based on how it drives and consumes it) and uses the same section structure as a `_spec.md` document:
+Write each info file as a standalone Markdown document containing the EXPECTED specification of each submodule the module instantiates. Each entry is caller-driven (what the module needs from the submodule, based on how it drives and consumes it) and uses the same section structure as a `_spec.md` document:
 
 ```markdown
 # <ModuleName> Submodule Expected Specifications
 
-> This document records the specification that `<ModuleName>` expects from each submodule it instantiates or directly depends on.
+> This document records the specification that `<ModuleName>` expects from each submodule it instantiates.
 
 # Submodule: <SubmoduleName>
 

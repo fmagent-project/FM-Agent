@@ -5,7 +5,7 @@ You are writing two standalone Markdown documents for each Chisel hardware modul
 For each module, write both files next to the extracted module file:
 
 - `<ModuleName>_spec.md`: the verification-oriented specification, using the section form defined under "Mandatory Output Files" below.
-- `<ModuleName>_info.md`: the EXPECTED specification of each submodule that `<ModuleName>` instantiates or directly depends on, one entry per submodule, each entry using the SAME section structure as `<ModuleName>_spec.md`. This is the standalone counterpart of the `[INFO]` callee-expectation block used for software codebases: it records what `<ModuleName>` needs each submodule to guarantee, derived from how `<ModuleName>` drives and consumes it.
+- `<ModuleName>_info.md`: the EXPECTED specification of each submodule that `<ModuleName>` instantiates, one entry per submodule, each entry using the SAME section structure as `<ModuleName>_spec.md`. This is the standalone counterpart of the `[INFO]` callee-expectation block used for software codebases: it records what `<ModuleName>` needs each submodule to guarantee, derived from how `<ModuleName>` drives and consumes it.
 
 Read these rules carefully before writing either file.
 
@@ -160,12 +160,12 @@ Every function point MUST list at least one check point (also called a test bin)
 
 ### `<ModuleName>_info.md`
 
-Write the expected submodule specifications as a separate Markdown document. A "submodule" is a hardware unit `<ModuleName>` instantiates (e.g. `Module(new Sub)`), inherits from, or directly depends on (e.g. a Bundle type it exchanges on its interfaces). Each submodule entry is CALLER-DRIVEN: describe what `<ModuleName>` requires the submodule to guarantee, derived from how `<ModuleName>` instantiates, drives, and consumes it — not from the submodule's own implementation. Use the SAME section structure as `<ModuleName>_spec.md` for every entry; write `TBD` for items `<ModuleName>`'s usage does not constrain.
+Write the expected submodule specifications as a separate Markdown document. A "submodule" is a hardware unit `<ModuleName>` instantiates (for example `Module(new Sub)`). Each submodule entry is CALLER-DRIVEN: describe what `<ModuleName>` requires the submodule to guarantee, derived from how `<ModuleName>` instantiates, drives, and consumes it — not from the submodule's own implementation. Use the SAME section structure as `<ModuleName>_spec.md` for every entry; write `TBD` for items `<ModuleName>`'s usage does not constrain.
 
 ```markdown
 # <ModuleName> Submodule Expected Specifications
 
-> This document records the specification that `<ModuleName>` expects from each submodule it instantiates or directly depends on. It does not describe `<ModuleName>` itself. Each entry uses the same section structure as a `_spec.md` document.
+> This document records the specification that `<ModuleName>` expects from each submodule it instantiates. It does not describe `<ModuleName>` itself. Each entry uses the same section structure as a `_spec.md` document.
 
 # Submodule: <SubmoduleName>
 

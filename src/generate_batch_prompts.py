@@ -4,7 +4,31 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
+
+# file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
+try:
+    # When imported as part of the src package (e.g. incremental_reasoner).
+    from .file_utils import is_file_ready
+    from .domain_knowledge import list_staged_domain_knowledge_relpaths
+except ImportError:
+    # When run standalone after being copied into fm_agent/spec_prompts/,
+    # where file_utils.py sits beside this script.
+    from file_utils import is_file_ready
+
+    def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
+        knowledge_dir = Path(work_dir) / "spec_prompts" / "domain_context" / "user_knowledge"
+        if not knowledge_dir.is_dir():
+            return []
+        relpaths = []
+        for path in knowledge_dir.rglob("*"):
+            if not path.is_file() or path.name == "manifest.json":
+                continue
+            if path.suffix.lower() not in {".md", ".markdown"}:
+                continue
+            rel_to_work = path.relative_to(work_dir).as_posix()
+            relpaths.append(f"{prefix.rstrip('/')}/{rel_to_work}")
+        return sorted(relpaths)
 
 
 COMMENT_PREFIX_BY_LANG = {
@@ -43,11 +67,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate spec batch prompts for one phase/layer range.")
     parser.add_argument("--phase", type=int, required=True, help="Phase number, e.g. 3")
     parser.add_argument("--layers", required=True, help="Layer index or inclusive range, e.g. 0 or 0-5")
-    parser.add_argument("--batch-size", type=int, default=1, help="Functions per prompt file")
+    parser.add_argument("--batch-size", type=int, default=2, help="Functions per prompt file")
     parser.add_argument("--output-dir", default=None, help="Output directory for batch prompt files")
     parser.add_argument("--dry-run", action="store_true", help="Show plan without writing files")
     parser.add_argument(
-        "--chisel-modules-only", action="store_true",
+        "--resume",
+        action="store_true",
+        help="Skip functions already specced (file_utils.is_file_ready) when building batches",
+    )
+    parser.add_argument(
+        "--chisel-modules-only",
+        action="store_true",
         help="Only include is_module=True Chisel functions in batch generation "
         "(all_funcs/func_to_layer stay unfiltered for caller/callee lookups).",
     )
@@ -176,10 +206,12 @@ def extract_info_block(filepath: Path) -> Optional[str]:
     return content[start + len(tag) + 1 : end].strip()
 
 
-def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[str]:
+def extract_callee_spec_from_info(
+    info_block: str,
+    callee_fqn: str,
+    aliases: Optional[Sequence[str]] = None,
+) -> Optional[str]:
     """Find the [SPLIT]-separated entry for callee_fqn in an info_block."""
-    import re
-
     # Detect comment prefix from the info_block content itself
     prefix = ""
     for line in info_block.splitlines():
@@ -200,7 +232,7 @@ def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[
                 break
 
     split_tag = f"{prefix} [SPLIT]" if prefix else "[SPLIT]"
-    callee_stem = callee_fqn.split("::")[-1]
+    names = _callee_match_names(callee_fqn, aliases or ())
     for entry in info_block.split(split_tag):
         entry = entry.strip()
         if not entry or "(no callees)" in entry:
@@ -209,9 +241,28 @@ def extract_callee_spec_from_info(info_block: str, callee_fqn: str) -> Optional[
         # Strip the comment prefix to get the actual content
         if prefix and first_line.startswith(prefix):
             first_line = first_line[len(prefix):].strip()
-        if callee_fqn in first_line or (callee_stem + "(") in first_line:
+        if any(_info_line_mentions_name(first_line, name) for name in names):
             return entry
     return None
+
+
+def _callee_match_names(callee_fqn: str, aliases: Sequence[str]) -> List[str]:
+    names = [callee_fqn, callee_fqn.split("::")[-1]]
+    for alias in aliases:
+        if not alias:
+            continue
+        names.append(alias)
+        if "::" in alias:
+            names.append(alias.rsplit("::", 1)[-1])
+    return list(dict.fromkeys(names))
+
+
+def _info_line_mentions_name(first_line: str, name: str) -> bool:
+    if not name:
+        return False
+    if "::" in name:
+        return name in first_line
+    return bool(re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?:\s*\(|\b)", first_line))
 
 
 def chunked(items: List[dict], size: int) -> List[List[dict]]:
@@ -270,6 +321,16 @@ def phase_callers_key(func: dict, phase: int) -> str:
         if key.endswith("_callers") and key.startswith("phase"):
             return key
     return target
+
+
+def phase_callee_info_names_key(func: dict, phase: int) -> Optional[str]:
+    target = f"phase{phase}_callee_info_names_by_caller"
+    if target in func:
+        return target
+    for key in func.keys():
+        if key.endswith("_callee_info_names_by_caller") and key.startswith("phase"):
+            return key
+    return None
 
 
 def detect_lang_and_comment(file_rel: str, ext_to_lang: Dict[str, str]) -> Tuple[str, str]:
@@ -344,6 +405,14 @@ def build_prompt(
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/engine_overview.txt")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/phase_{phase:02d}_types.txt")
+    user_knowledge_paths = list_staged_domain_knowledge_relpaths(
+        work_dir,
+        prefix=fm_agent_prefix.rstrip("/"),
+    )
+    if user_knowledge_paths:
+        lines.append("Read these user-provided domain knowledge Markdown files:")
+        for path in user_knowledge_paths:
+            lines.append(f"- {path}")
     lines.append("")
     lines.append("## KEY RULES")
     if is_hw:
@@ -351,7 +420,7 @@ def build_prompt(
         lines.append("- Focus on public parameters, IO ports, ready-valid/Valid protocols, reset behavior, ordering, arbitration, and observable state/data invariants")
         lines.append("- Do NOT name private wires, local registers, helper methods, or implementation assignment order unless they are part of the public verification boundary")
         lines.append("- Specs describe INTENDED CORRECT hardware behavior per the domain files")
-        lines.append("- In `<ModuleName>_info.md`, write the EXPECTED spec of each submodule this module instantiates or directly depends on, one `# Submodule: <Name>` entry per submodule, same section structure as the spec")
+        lines.append("- In `<ModuleName>_info.md`, write the EXPECTED spec of each submodule this module instantiates, one `# Submodule: <Name>` entry per submodule, same section structure as the spec")
         lines.append("- Write all output files entirely in English - translate any non-English domain context or source comments; never copy non-English text into outputs")
         lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each module file")
     else:
@@ -366,6 +435,8 @@ def build_prompt(
     for fn in functions:
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
+        info_names_key = phase_callee_info_names_key(fn, phase)
+        info_names_by_caller = fn.get(info_names_key, {}) if info_names_key else {}
         callers = fn.get(caller_key, [])
         for caller_name in callers:
             caller_layer = func_to_layer.get(caller_name)
@@ -398,7 +469,9 @@ def build_prompt(
             info_block = extract_info_block(caller_file)
             if not info_block:
                 continue
-            entry = extract_callee_spec_from_info(info_block, fn_name)
+            entry = extract_callee_spec_from_info(
+                info_block, fn_name, info_names_by_caller.get(caller_name, [])
+            )
             if entry:
                 caller_expectations.setdefault(fn_name, []).append((caller_name, entry.strip()))
 
@@ -428,7 +501,7 @@ def build_prompt(
         lines.append("## CYCLE LAYER GUIDANCE")
         if is_hw:
             if sample_lang == "chisel":
-                lines.append("These modules reference each other through instantiation, inheritance, companion objects, or member access.")
+                lines.append("These modules reference each other through instantiation.")
             else:
                 lines.append("These modules reference each other through instantiation.")
             lines.append(
@@ -500,7 +573,7 @@ def build_prompt(
         lines.append("")
         lines.append("### <ModuleName>_info.md")
         lines.append("# <ModuleName> Submodule Expected Specifications")
-        lines.append("One entry per submodule the module instantiates or directly depends on, caller-driven,")
+        lines.append("One entry per submodule the module instantiates, caller-driven,")
         lines.append(f"each entry starting with '# Submodule: <SubmoduleName>' (exact declared {'Scala' if sample_lang == 'chisel' else 'module'} name)")
         lines.append("followed by the SAME section structure as <ModuleName>_spec.md above.")
         lines.append("If the module has no submodules, write '(no submodules)'.")
@@ -599,8 +672,10 @@ def main() -> int:
 
     manifest_batches = []
     total_functions = 0
+    skipped_functions = 0
     batch_index = 0
     write_targets: List[Tuple[Path, str]] = []
+    stale_targets: List[Path] = []
 
     for layer_idx in range(start_layer, end_layer + 1):
         layer = layers[layer_idx]
@@ -614,20 +689,36 @@ def main() -> int:
 
         for local_idx, fn_batch in enumerate(chunks):
             filename = f"batch_{batch_index:03d}_layer{layer_idx}_{tag}_b{local_idx}.txt"
-            content = build_prompt(
-                args.phase,
-                layer_idx,
-                is_cycle,
-                fn_batch,
-                func_to_layer,
-                all_funcs,
-                work_dir,
-                fm_agent_prefix,
-                ext_to_lang,
-                chisel_modules_only=args.chisel_modules_only,
-            )
+            # On resume, don't ask the LLM to re-spec functions that are already
+            # done — but the manifest below still records the full batch.
+            prompt_funcs = fn_batch
+            if args.resume:
+                prompt_funcs = [fn for fn in fn_batch if not is_file_ready(work_dir / fn["file"])]
+                skipped_functions += len(fn_batch) - len(prompt_funcs)
             out_path = output_dir / filename
-            write_targets.append((out_path, content))
+            # On resume, a batch whose functions are all already specced has no
+            # work left for the agent — don't write an empty prompt file. The
+            # manifest still records the full batch so later verification covers
+            # these functions; run_pipeline only spawns batches that still have
+            # unspecced functions (see _get_pending_batches).
+            if prompt_funcs:
+                content = build_prompt(
+                    args.phase,
+                    layer_idx,
+                    is_cycle,
+                    prompt_funcs,
+                    func_to_layer,
+                    all_funcs,
+                    work_dir,
+                    fm_agent_prefix,
+                    ext_to_lang,
+                    chisel_modules_only=args.chisel_modules_only,
+                )
+                write_targets.append((out_path, content))
+            else:
+                # Nothing to spec — drop any stale prompt file left by a
+                # previous run so the batch dir doesn't keep an empty batch.
+                stale_targets.append(out_path)
             manifest_batches.append(
                 {
                     "index": batch_index,
@@ -635,6 +726,7 @@ def main() -> int:
                     "layer": layer_idx,
                     "is_cycle": is_cycle,
                     "num_functions": len(fn_batch),
+                    "num_pending": len(prompt_funcs),
                     "functions": [f"{fm_agent_prefix}{fn['file']}" for fn in fn_batch],
                 }
             )
@@ -652,6 +744,7 @@ def main() -> int:
         print(
             f"[dry-run] phase={args.phase} layers={args.layers} "
             f"functions={total_functions} batches={len(manifest_batches)}"
+            + (f" skipped={skipped_functions} (already specced)" if args.resume else "")
         )
         for batch in manifest_batches:
             print(
@@ -663,11 +756,14 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     for out_path, content in write_targets:
         out_path.write_text(content)
+    for out_path in stale_targets:
+        out_path.unlink(missing_ok=True)
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
     print(
         f"Generated {len(manifest_batches)} batch prompt(s) for phase {args.phase} "
         f"layers {args.layers} in {output_dir}"
+        + (f" (skipped {skipped_functions} already-specced function(s))" if args.resume else "")
     )
     return 0
 

@@ -39,7 +39,7 @@ from config import (
     OPENCODE_SPEC_MODEL,
     OPENCODE_MODEL_PROVIDER,
 )
-from src.file_utils import collect_file_names
+from src.file_utils import collect_file_names, _get_phase_files
 from src.chisel_support import (
     _SUBMODULE_HEADING_RE,
     _chisel_info_ready,
@@ -48,6 +48,8 @@ from src.chisel_support import (
     chisel_spec_path,
     chisel_spec_ready,
 )
+from src.pipeline_setup import _deduplicate_phases
+from src.chisel_circt import build_circt_module_graph
 from src.extract import run_extraction
 from src.generate_topdown_layers import generate_topdown_layers
 from src.opencode_trace import (
@@ -57,12 +59,8 @@ from src.opencode_trace import (
     start_opencode_traced,
 )
 
-# Reuse the pipeline helpers from main.py rather than duplicating them.
-from main import (
-    _clean_previous_run,
-    _deduplicate_phases,
-    _get_phase_files,
-)
+# Reuse the remaining pipeline helper from main.py rather than duplicating it.
+from main import _clean_previous_run
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +178,7 @@ def validate_chisel_spec(spec_path):
     return (not errors), errors
 
 
-def _remove_incomplete_chisel_outputs(module_path, expects_submodules=False):
+def _remove_incomplete_chisel_outputs(module_path, expected_submodules=frozenset()):
     """Delete spec/info outputs that exist but are incomplete (e.g. truncated).
 
     The retry prompt tells the agent to only generate outputs for modules that
@@ -189,7 +187,11 @@ def _remove_incomplete_chisel_outputs(module_path, expects_submodules=False):
     legal ``(no submodules)`` info document for actual leaf modules) are kept.
     """
     def _info_ready(path):
-        return _chisel_info_ready(path, allow_no_submodules=not expects_submodules)
+        return _chisel_info_ready(
+            path,
+            allow_no_submodules=not expected_submodules,
+            expected_submodules=expected_submodules,
+        )
 
     checks = (
         (chisel_spec_path(module_path), _chisel_markdown_ready),
@@ -206,7 +208,7 @@ def _remove_incomplete_chisel_outputs(module_path, expects_submodules=False):
                 logging.warning("Could not remove incomplete output %s: %s", path, exc)
 
 
-def _get_pending_batches_chisel(batches, proj_dir, expects_submodules=frozenset()):
+def _get_pending_batches_chisel(batches, proj_dir, expected_submodules=None):
     """Return batches that still have at least one module without a complete,
     valid spec/info output.
 
@@ -221,11 +223,11 @@ def _get_pending_batches_chisel(batches, proj_dir, expects_submodules=frozenset(
     and specs that fail validation are deleted so the retry loop regenerates
     them instead of skipping modules whose output files merely exist.
 
-    ``expects_submodules`` lists the function rel-paths whose call graph shows
-    submodules: for those, a ``(no submodules)`` info stub is rejected (and
-    removed) instead of accepted, so the children do not lose their caller
-    expectations downstream.
+    ``expected_submodules`` maps each function rel-path to the exact set of
+    instantiated module names that must appear as ``# Submodule:`` entries in
+    its info document.
     """
+    expected_submodules = expected_submodules or {}
     pending = []
     for batch in batches:
         batch_pending = False
@@ -233,24 +235,26 @@ def _get_pending_batches_chisel(batches, proj_dir, expects_submodules=frozenset(
         feedback = dict(feedback) if isinstance(feedback, dict) else {}
         for func_rel in batch.get("functions", []):
             module_path = os.path.join(proj_dir, func_rel)
-            expects = func_rel in expects_submodules
+            expected_names = expected_submodules.get(func_rel, frozenset())
             module_errors = []
-            if not chisel_spec_ready(module_path, expects_submodules=expects):
+            if not chisel_spec_ready(module_path, expected_submodules=expected_names):
                 info_path = chisel_info_path(module_path)
                 spec_ok = _chisel_markdown_ready(chisel_spec_path(module_path))
-                if expects and os.path.exists(info_path):
+                if expected_names and os.path.exists(info_path):
                     try:
                         with open(info_path, "r", errors="replace") as f:
                             info_text = f.read()
                     except OSError:
                         info_text = ""
-                    if ("(no submodules)" in info_text
-                            or _SUBMODULE_HEADING_RE.search(info_text) is None):
+                    headings = set(_SUBMODULE_HEADING_RE.findall(info_text))
+                    missing = sorted(expected_names - headings)
+                    if "(no submodules)" in info_text or missing:
                         module_errors.append(
                             f"{os.path.basename(info_path)}: this module instantiates "
                             f"other extracted modules — the info file must contain one "
                             f"'# Submodule: <name>' entry per instantiated submodule "
                             f"and must not claim '(no submodules)'"
+                            + (f"; missing: {', '.join(missing)}" if missing else "")
                         )
                 if not module_errors and spec_ok:
                     # chisel_spec_ready is False but the spec itself is fine
@@ -269,7 +273,7 @@ def _get_pending_batches_chisel(batches, proj_dir, expects_submodules=frozenset(
                             f"— regenerate it"
                         )
                 _remove_incomplete_chisel_outputs(
-                    module_path, expects_submodules=expects
+                    module_path, expected_submodules=expected_names
                 )
                 batch_pending = True
                 if module_errors:
@@ -961,8 +965,9 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
     that do not yet have valid spec/info files (via :func:`chisel_spec_ready`).
     This lets an interrupted run continue without regenerating completed specs.
 
-    ``chisel_modules_only`` restricts spec generation to Chisel classes that
-    transitively extend Module/RawModule/ExtModule/BlackBox/MultiIOModule.
+    ``chisel_modules_only`` is retained for CLI compatibility. The current
+    conservative Chisel flow already analyzes only Module/RawModule/BlackBox
+    units, so the flag is effectively a no-op.
     """
     if not os.path.isdir(proj_dir):
         print(f"[Chisel] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -971,6 +976,8 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
     if not _has_scala_source(proj_dir):
         print(f"[Chisel] ERROR: No Scala (.scala/.sc) source files found in {proj_dir}.")
         sys.exit(1)
+    if chisel_modules_only:
+        print("[Chisel] --chisel-modules-only: the conservative module-only path is already active.")
 
     work_dir = os.path.join(proj_dir, "fm_agent")
     input_dir = os.path.join(work_dir, "extracted_functions")
@@ -1085,6 +1092,18 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
     _deduplicate_phases(work_dir)
     _normalize_chisel_domain_context(work_dir)
 
+    try:
+        circt_graph = build_circt_module_graph(proj_dir, work_dir)
+    except Exception as exc:
+        logging.warning("CIRCT graph build failed; falling back to source-only Chisel module discovery: %s", exc)
+        print("[Chisel] WARNING: CIRCT graph unavailable; falling back to source-only module discovery.")
+        circt_graph = None
+    if circt_graph:
+        print(
+            f"[Chisel] CIRCT module graph: {len(circt_graph.get('modules', []))} "
+            f"module(s), source={circt_graph.get('source', 'unknown')}"
+        )
+
     # Run module extraction (Chisel/Scala support is registered in extract.py)
     print("[Chisel] Extracting modules from source files...")
     run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
@@ -1099,6 +1118,10 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
     shutil.copy2(
         os.path.join(src_dir, "generate_batch_prompts.py"),
         os.path.join(spec_prompts_dir, "generate_batch_prompts.py"),
+    )
+    shutil.copy2(
+        os.path.join(src_dir, "file_utils.py"),
+        os.path.join(spec_prompts_dir, "file_utils.py"),
     )
 
     # Re-alias domain context in case extraction recreated spec_prompts layout
@@ -1197,14 +1220,24 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
         layers_data = _load_json_file(layers_json_path, f"topdown layers for subsystem {phase_num}")
         total_layers = layers_data.get("total_layers", 1)
 
-        # Unlike Verilog (whose edges are precise instantiations), Chisel
-        # all_callees include companion-object and member-access noise —
-        # enforcing the non-leaf info rule on them deadlocks genuine leaf
-        # modules (their truthful '(no submodules)' info is deleted on every
-        # retry). Chisel therefore does NOT gate readiness on the graph; the
-        # end-of-run advisory report surfaces undocumented submodules instead.
-        expects_submodules = frozenset()
-        expects_rel = frozenset()
+        # Chisel topdown layers use the conservative module-instantiation
+        # graph produced by the Chisel backend (source-filtered, then
+        # CIRCT-authoritative when available). Modules with instantiated
+        # submodules must document every such module name in *_info.md.
+        _with_subs = {
+            fn["file"]: {c.split("::")[-1] for c in fn["all_callees"]}
+            for layer in layers_data.get("layers", [])
+            for fn in layer.get("functions", [])
+            if fn.get("all_callees")
+        }
+        expected_submodules = {
+            os.path.relpath(os.path.join(work_dir, f), proj_dir): names
+            for f, names in _with_subs.items()
+        }
+        expected_rel = {
+            os.path.relpath(os.path.join(work_dir, f), input_dir): names
+            for f, names in _with_subs.items()
+        }
 
         batch_dir = os.path.join(
             spec_prompts_dir,
@@ -1248,14 +1281,21 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
             layer_complete = False
             for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
                 # Find batches with unspecced modules
-                pending_batches = _get_pending_batches_chisel(all_batches, proj_dir, expects_submodules=expects_submodules)
+                pending_batches = _get_pending_batches_chisel(
+                    all_batches,
+                    proj_dir,
+                    expected_submodules=expected_submodules,
+                )
                 if not pending_batches:
                     layer_complete = True
                     break
 
                 ready_before = sum(
                     1 for rel in layer_files
-                    if chisel_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
+                    if chisel_spec_ready(
+                        os.path.join(input_dir, rel),
+                        expected_submodules=expected_rel.get(rel, frozenset()),
+                    )
                 )
 
                 # Launch one opencode process per pending batch, but cap how many
@@ -1384,9 +1424,16 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
                 # Check if any modules in this layer received standalone spec/info outputs
                 ready_after = sum(
                     1 for rel in layer_files
-                    if chisel_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
+                    if chisel_spec_ready(
+                        os.path.join(input_dir, rel),
+                        expected_submodules=expected_rel.get(rel, frozenset()),
+                    )
                 )
-                if not _get_pending_batches_chisel(all_batches, proj_dir, expects_submodules=expects_submodules):
+                if not _get_pending_batches_chisel(
+                    all_batches,
+                    proj_dir,
+                    expected_submodules=expected_submodules,
+                ):
                     layer_complete = True
                     break
 
@@ -1421,10 +1468,17 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
                     )
                     sys.exit(1)
 
-            if not layer_complete and _get_pending_batches_chisel(all_batches, proj_dir, expects_submodules=expects_submodules):
+            if not layer_complete and _get_pending_batches_chisel(
+                all_batches,
+                proj_dir,
+                expected_submodules=expected_submodules,
+            ):
                 ready_count = sum(
                     1 for rel in layer_files
-                    if chisel_spec_ready(os.path.join(input_dir, rel), expects_submodules=(rel in expects_rel))
+                    if chisel_spec_ready(
+                        os.path.join(input_dir, rel),
+                        expected_submodules=expected_rel.get(rel, frozenset()),
+                    )
                 )
                 print(
                     f"[Chisel] ERROR: Stage 5 Subsystem {phase_num} Layer {layer_idx} "

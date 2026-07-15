@@ -77,16 +77,17 @@ def _chisel_markdown_ready(path):
         return False
 
 
-def _chisel_info_ready(path, allow_no_submodules=True):
+def _chisel_info_ready(path, allow_no_submodules=True, expected_submodules=frozenset()):
     """Readiness for ``_info.md``: as ``_chisel_markdown_ready``, except that a
     leaf module's info file may legitimately be just a heading plus
     ``(no submodules)`` — the system prompt allows it — which is smaller than
     the anti-stub byte threshold.
 
-    Pass ``allow_no_submodules=False`` for modules whose call graph shows
-    submodules: their info must contain at least one ``# Submodule:`` entry
-    and must not claim ``(no submodules)`` — regardless of file size, so a
-    padded stub cannot slip through the byte threshold.
+    Pass ``allow_no_submodules=False`` for modules whose instantiation graph
+    shows submodules: their info must contain one ``# Submodule:`` entry per
+    expected instantiated module and must not claim ``(no submodules)`` —
+    regardless of file size, so a padded stub cannot slip through the byte
+    threshold.
     """
     try:
         with open(path, "r", errors="replace") as f:
@@ -94,30 +95,33 @@ def _chisel_info_ready(path, allow_no_submodules=True):
     except OSError:
         return False
     if not allow_no_submodules:
+        headings = set(_SUBMODULE_HEADING_RE.findall(content))
         return (
             _chisel_markdown_ready(path)
             and "(no submodules)" not in content
-            and _SUBMODULE_HEADING_RE.search(content) is not None
+            and expected_submodules <= headings
         )
     if _chisel_markdown_ready(path):
         return True
     return "#" in content and "(no submodules)" in content
 
 
-def chisel_spec_ready(module_file_path, expects_submodules=False):
+def chisel_spec_ready(module_file_path, expected_submodules=frozenset()):
     """True when both standalone Chisel Markdown outputs are non-trivial.
 
     "Non-trivial" means each file is at least :data:`_CHISEL_SPEC_MIN_BYTES`
     bytes and contains at least one Markdown heading, so an empty or truncated
     stub left by an interrupted run is not mistaken for a finished spec. The
     info file may instead be a small legal ``(no submodules)`` document —
-    unless ``expects_submodules=True`` (the call graph shows submodules).
+    unless ``expected_submodules`` is non-empty (the instantiation graph shows
+    submodules).
     """
     return (
         _chisel_markdown_ready(chisel_spec_path(module_file_path))
         and _chisel_info_ready(
             chisel_info_path(module_file_path),
-            allow_no_submodules=not expects_submodules,
+            allow_no_submodules=not expected_submodules,
+            expected_submodules=expected_submodules,
         )
     )
 
@@ -159,6 +163,22 @@ CHISEL_EXT_TO_LANG = {
 CHISEL_TEST_FILE_PATTERNS = [
     re.compile(r'^.*(?:Spec|Test|Tester)\.(?:scala|sc)$'),
 ]
+
+
+def is_chisel_test_file(rel_path):
+    """Return True when a Chisel path should be treated as test-only.
+
+    `src/main/...` is a hard keep. Older Chisel trees legitimately place
+    production modules under names like `*Tester.scala`, so filename-only
+    rules must not override the standard source-root layout.
+    """
+    norm = rel_path.replace("\\", "/")
+    parts = norm.split("/")
+    if any(part.lower() == "test" for part in parts[:-1]):
+        return True
+    if len(parts) >= 3 and parts[0].lower() == "src" and parts[1].lower() == "main":
+        return False
+    return any(pat.match(parts[-1]) for pat in CHISEL_TEST_FILE_PATTERNS)
 
 # Modifiers that may precede a top-level declaration keyword.
 _MOD = (
@@ -574,7 +594,10 @@ def _unit_end(lines, start_idx, masked_lines=None):
         # parameter clause -- Scala 2 allows a single newline before each
         # clause (``ClassParamClause ::= [nl] '(' ...``), the standard
         # rocket-chip-ecosystem shape for trailing ``(implicit p: ...)``.
-        if _next_code_line_starts_with(masked_lines, i, ("extends", "with", "(")):
+        # A body ``{`` may likewise move to the next line after the full
+        # declaration signature, e.g. ``class Foo(...) extends Module``
+        # followed by ``{`` on its own line.
+        if _next_code_line_starts_with(masked_lines, i, ("extends", "with", "(", "{")):
             i += 1
             continue
         return i
@@ -606,7 +629,9 @@ def _signature_text(lines, start_idx):
         # Same continuation set as _unit_end: a next line opening with `(`
         # is a further curried parameter clause (SLS: ClassParamClause ::=
         # [nl] '(' ...), commonly a trailing `(implicit p: Parameters)`.
-        if _next_code_line_starts_with(lines, i, ("extends", "with", "(")):
+        # Chisel2 code also frequently places the body-opening `{` on the
+        # line after `extends Module`.
+        if _next_code_line_starts_with(lines, i, ("extends", "with", "(", "{")):
             i += 1
             continue
         return "\n".join(parts)

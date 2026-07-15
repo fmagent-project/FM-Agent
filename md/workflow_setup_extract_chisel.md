@@ -72,7 +72,7 @@ Quickly scan the Scala/Chisel source tree and **immediately** write `fm_agent/gr
 - `subsystems[*].description` — one sentence on the hardware function this subsystem implements
 - `subsystems[*].source_groups[*].name` — matches the subdirectory or logical name of the source group. A **source group** is a `.scala`/`.sc` file or a tightly-coupled set of files — it is NOT a Chisel hardware `Module`. One `.scala`/`.sc` file may declare several hardware modules; that is fine
 - `subsystems[*].source_groups[*].source_files` — relative paths from repo root of all Scala source files (`.scala` or `.sc`) in this group. **Exclude all test/spec files** (files under `src/test/`, or named `*Spec.scala`/`*Spec.sc`, `*Test.scala`/`*Test.sc`, `*Tester.scala`/`*Tester.sc`)
-- `subsystems[*].depends_on_subsystems` — list of subsystem numbers whose hardware this subsystem instantiates or inherits from (empty list when there is no cross-subsystem dependency)
+- `subsystems[*].depends_on_subsystems` — list of subsystem numbers whose hardware this subsystem instantiates (empty list when there is no cross-subsystem dependency)
 
 Each source file must belong to **at most one subsystem**. If the same file appears in more than one subsystem's `source_groups[*].source_files`, the `groups.json` is invalid and must be corrected before proceeding.
 

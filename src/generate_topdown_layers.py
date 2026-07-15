@@ -4,11 +4,13 @@ import re
 import logging
 from pathlib import Path
 from collections import defaultdict
+from dataclasses import dataclass
 
 try:
     from src.extract import EXT_TO_LANG, LANG_CONFIG, load_units_manifest
     from src.chisel_support import chisel_decl_info, chisel_declared_name, find_chisel_call_sites, strip_chisel_comments
     from src.verilog_support import find_verilog_call_sites, verilog_declared_name
+    from src.languages.registry import call_edges_all
 except ModuleNotFoundError:
     # Allow standalone execution as `python3 src/generate_topdown_layers.py`.
     import sys
@@ -16,6 +18,7 @@ except ModuleNotFoundError:
     from src.extract import EXT_TO_LANG, LANG_CONFIG, load_units_manifest
     from src.chisel_support import chisel_decl_info, chisel_declared_name, find_chisel_call_sites, strip_chisel_comments
     from src.verilog_support import find_verilog_call_sites, verilog_declared_name
+    from src.languages.registry import call_edges_all
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +307,6 @@ def _find_call_sites(text, lang_key, known_stems, keywords):
         if ident in known_stems:
             found.add(ident)
     return found
-
 
 _CHISEL_REF_RE = re.compile(
     r"\b(?P<ctor>new)\s+(?P<ctor_name>[A-Za-z_$][\w$]*)"
@@ -621,7 +623,13 @@ def _resolve_chisel_refs(text, chisel_aliases, known_stems, keywords):
     return resolved
 
 
-def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, global_file_map=None):
+def _build_call_graph(
+    phase_files,
+    proj_dir,
+    global_stem_to_fqns=None,
+    global_file_map=None,
+    extra_call_edges=None,
+):
     """Build callees_map and callers_map for a set of phase files.
 
     Args:
@@ -631,11 +639,17 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, global_fi
                              used to compute all_callees (cross-phase)
         global_file_map: optional global fqn->filepath mapping across all phases,
                          used for Chisel source-name/kind aliases
+        extra_call_edges: optional iterable of supplemental CallEdge objects.
+                          caller.fqn is exact; caller.callsite_names are matched
+                          only against explicitly listed source callsite names.
 
     Returns:
-        (callees_map, callers_map, all_callees_map, file_map, module_map) where keys are FQNs.
+        (callees_map, callers_map, all_callees_map, file_map, module_map,
+        edge_aliases_map) where keys are FQNs.
         callees_map/callers_map contain only within-phase edges.
         all_callees_map contains callees from any phase.
+        edge_aliases_map maps callee -> caller -> supplemental callee labels
+        that may appear in a caller's [INFO] block.
     """
     # Build FQN mappings
     fqn_map = {}  # filepath -> fqn
@@ -654,46 +668,193 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, global_fi
     phase_fqns = set(fqn_map.values())
     # For call-site detection, use global stems if available
     effective_stem_to_fqns = global_stem_to_fqns if global_stem_to_fqns else stem_to_fqns
-    known_stems = set(effective_stem_to_fqns.keys())
     effective_file_map = global_file_map if global_file_map else file_map
     chisel_aliases = _build_chisel_aliases(effective_file_map)
+    # All extracted FQNs (across phases when a global map is supplied), used to
+    # keep only codegraph callees that correspond to an extracted function.
+    known_fqns = {
+        fqn
+        for fqns in effective_stem_to_fqns.values()
+        for fqn in fqns
+    }
+    extra_edges_by_caller_fqn, extra_edges_by_callsite = _resolve_extra_call_edges(
+        extra_call_edges,
+        phase_fqns=phase_fqns,
+        known_fqns=known_fqns,
+    )
+    known_stems = set(effective_stem_to_fqns.keys()) | set(extra_edges_by_callsite.keys())
 
     callees_map = defaultdict(set)  # fqn -> set of callee fqns (within phase)
     callers_map = defaultdict(set)  # fqn -> set of caller fqns (within phase)
     all_callees_map = defaultdict(set)  # fqn -> set of callee fqns (any phase)
+    edge_aliases_map = defaultdict(lambda: defaultdict(set))  # callee -> caller -> aliases
+
+    phase_langs = {_detect_lang_from_ext(fp) for fp, _ in phase_files if _detect_lang_from_ext(fp)}
+    registry_edges, registry_langs = call_edges_all(proj_dir, phase_langs)
 
     for filepath, module_name in phase_files:
         fqn = fqn_map[filepath]
         lang_key = _detect_lang_from_ext(filepath)
         if not lang_key:
             continue
-        keywords = _get_keywords_for_lang(lang_key)
 
-        try:
-            with open(filepath, "r", errors="replace") as f:
-                text = f.read()
-        except OSError:
+        called_stems = set()
+        if lang_key in registry_langs:
+            # codegraph: edges are already precise caller_fqn -> callee_fqn (the
+            # exact node codegraph resolved). Keep only callees that are extracted
+            # functions; drop external/library targets.
+            callee_fqns = {c for c in registry_edges.get(fqn, set())
+                           if c != fqn and c in known_fqns}
+            if extra_edges_by_callsite:
+                keywords = _get_keywords_for_lang(lang_key)
+                try:
+                    with open(filepath, "r", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    text = ""
+                called_stems = _find_call_sites(
+                    text, lang_key, set(extra_edges_by_callsite.keys()), keywords
+                )
+        else:
+            # regex fallback: detect bare-name call sites, then resolve each stem
+            # to every same-named FQN (an over-approximation — unchanged).
+            keywords = _get_keywords_for_lang(lang_key)
+            try:
+                with open(filepath, "r", errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            if LANG_CONFIG.get(lang_key, {}).get("body") == "chisel":
+                called_refs = _resolve_chisel_refs(
+                    text, chisel_aliases, known_stems, keywords
+                )
+            else:
+                called_refs = _find_call_sites(text, lang_key, known_stems, keywords)
+            called_stems = set()
+            callee_fqns = set()
+            for ref in called_refs:
+                if ref in effective_stem_to_fqns:
+                    called_stems.add(ref)
+                    callee_fqns.update(
+                        cf for cf in effective_stem_to_fqns.get(ref, set()) if cf != fqn
+                    )
+                elif ref != fqn:
+                    callee_fqns.add(ref)
+
+        for callee_fqn in callee_fqns:
+            all_callees_map[fqn].add(callee_fqn)
+            if callee_fqn in phase_fqns:
+                callees_map[fqn].add(callee_fqn)
+                callers_map[callee_fqn].add(fqn)
+
+        for stem in called_stems:
+            for edge in extra_edges_by_callsite.get(stem, ()):
+                _add_resolved_extra_edge(
+                    fqn,
+                    edge,
+                    phase_fqns,
+                    callees_map,
+                    callers_map,
+                    all_callees_map,
+                    edge_aliases_map,
+                )
+
+        for edge in extra_edges_by_caller_fqn.get(fqn, ()):
+            _add_resolved_extra_edge(
+                fqn,
+                edge,
+                phase_fqns,
+                callees_map,
+                callers_map,
+                all_callees_map,
+                edge_aliases_map,
+            )
+
+    return callees_map, callers_map, all_callees_map, file_map, module_map, edge_aliases_map
+
+
+@dataclass(frozen=True)
+class _ResolvedExtraEdge:
+    callee_fqn: str
+    info_names: tuple[str, ...]
+    source: str
+
+
+def _resolve_extra_call_edges(extra_call_edges, phase_fqns, known_fqns):
+    """Resolve supplemental edges into phase-local caller indexes."""
+    by_caller_fqn = defaultdict(list)
+    by_callsite = defaultdict(list)
+    if not extra_call_edges:
+        return by_caller_fqn, by_callsite
+
+    phase_fqns = set(phase_fqns)
+    known_fqns = set(known_fqns)
+    for edge in extra_call_edges:
+        callee_fqn = edge.callee.fqn
+        if callee_fqn not in known_fqns:
+            logging.warning(
+                "Skipping supplemental edge from %s: callee.fqn %r "
+                "was not found among extracted functions.",
+                edge.source or "edge file",
+                callee_fqn,
+            )
             continue
 
-        if LANG_CONFIG.get(lang_key, {}).get("body") == "chisel":
-            called_refs = _resolve_chisel_refs(text, chisel_aliases, known_stems, keywords)
-        else:
-            called_refs = _find_call_sites(text, lang_key, known_stems, keywords)
+        resolved = _ResolvedExtraEdge(
+            callee_fqn=callee_fqn,
+            info_names=tuple(edge.callee.info_names),
+            source=edge.source,
+        )
 
-        # Resolve stems or already-resolved FQNs to FQNs, excluding self.
-        for ref in called_refs:
-            if ref in effective_stem_to_fqns:
-                callee_fqns = effective_stem_to_fqns[ref]
+        if edge.caller.fqn:
+            caller_fqn = edge.caller.fqn
+            if caller_fqn in phase_fqns:
+                by_caller_fqn[caller_fqn].append(resolved)
             else:
-                callee_fqns = {ref}
-            for callee_fqn in callee_fqns:
-                if callee_fqn != fqn:
-                    all_callees_map[fqn].add(callee_fqn)
-                    if callee_fqn in phase_fqns:
-                        callees_map[fqn].add(callee_fqn)
-                        callers_map[callee_fqn].add(fqn)
+                logging.debug(
+                    "Skipping supplemental edge from %s in current phase: "
+                    "caller FQN %r is not in phase.",
+                    edge.source or "edge file",
+                    caller_fqn,
+                )
 
-    return callees_map, callers_map, all_callees_map, file_map, module_map
+        for callsite in edge.caller.callsite_names:
+            if not re.fullmatch(r"[A-Za-z_]\w*", callsite):
+                logging.warning(
+                    "Skipping supplemental edge callsite selector %r from %s: "
+                    "the current scanner only matches identifier callsites.",
+                    callsite,
+                    edge.source or "edge file",
+                )
+                continue
+            by_callsite[callsite].append(resolved)
+
+    return by_caller_fqn, by_callsite
+
+
+def _add_resolved_extra_edge(
+    caller_fqn,
+    edge: _ResolvedExtraEdge,
+    phase_fqns,
+    callees_map,
+    callers_map,
+    all_callees_map,
+    edge_aliases_map,
+):
+    """Inject one resolved supplemental edge and attach its callee aliases."""
+    callee_fqn = edge.callee_fqn
+    if caller_fqn == callee_fqn:
+        return False
+
+    before = len(all_callees_map[caller_fqn])
+    all_callees_map[caller_fqn].add(callee_fqn)
+    edge_aliases_map[callee_fqn][caller_fqn].update(edge.info_names)
+
+    if callee_fqn in phase_fqns:
+        callees_map[caller_fqn].add(callee_fqn)
+        callers_map[callee_fqn].add(caller_fqn)
+
+    return len(all_callees_map[caller_fqn]) != before
 
 
 # ---------------------------------------------------------------------------
@@ -870,12 +1031,13 @@ def _compute_layers(phase_fqns, callees_map, callers_map):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def generate_topdown_layers(proj_dir, phase_numbers=None):
+def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None):
     """Generate topdown layer JSON files for the specified phases (or all phases).
 
     Args:
         proj_dir: project root directory
         phase_numbers: list of phase numbers to process, or None for all
+        extra_call_edges: optional iterable of supplemental caller/callee edges
 
     Returns:
         list of output file paths written
@@ -895,9 +1057,6 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
             global_stem_to_fqns[stem].add(fqn)
             global_file_map[fqn] = filepath
 
-    global_chisel_decl_map = _build_chisel_decl_map(global_file_map)
-    global_module_classification = _classify_chisel_modules(global_chisel_decl_map)
-
     output_files = []
 
     for phase_info in phases_data["phases"]:
@@ -914,8 +1073,19 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
             continue
 
         # 1.4 Build call graph (also returns file_map and module_map)
-        callees_map, callers_map, all_callees_map, file_map, module_map = _build_call_graph(
-            phase_files, proj_dir, global_stem_to_fqns, global_file_map
+        (
+            callees_map,
+            callers_map,
+            all_callees_map,
+            file_map,
+            module_map,
+            edge_aliases_map,
+        ) = _build_call_graph(
+            phase_files,
+            proj_dir,
+            global_stem_to_fqns,
+            global_file_map=global_file_map,
+            extra_call_edges=extra_call_edges,
         )
         phase_fqns = set(file_map.keys())
 
@@ -925,6 +1095,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
         # Build phase-specific key names
         phase_callers_key = f"phase{phase_num}_callers"
         phase_callees_key = f"phase{phase_num}_callees"
+        phase_info_names_key = f"phase{phase_num}_callee_info_names_by_caller"
 
         # 1.6 Build output JSON
         total_functions = len(phase_fqns)
@@ -958,10 +1129,16 @@ def generate_topdown_layers(proj_dir, phase_numbers=None):
                     phase_callees_key: phase_callees,
                     "all_callees": all_callees,
                 }
-                if fqn in global_module_classification:
-                    is_module, reason = global_module_classification[fqn]
-                    entry["is_module"] = is_module
-                    entry["module_classification_reason"] = reason
+                if LANG_CONFIG.get(_detect_lang_from_ext(filepath), {}).get("body") == "chisel":
+                    entry["is_module"] = True
+                    entry["module_classification_reason"] = "module_unit"
+                info_names_by_caller = {
+                    caller: sorted(info_names)
+                    for caller, info_names in edge_aliases_map.get(fqn, {}).items()
+                    if caller in phase_fqns and info_names
+                }
+                if info_names_by_caller:
+                    entry[phase_info_names_key] = info_names_by_caller
                 func_entries.append(entry)
 
             layer_dict["functions"] = func_entries

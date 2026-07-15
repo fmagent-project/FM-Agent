@@ -38,7 +38,8 @@ from config import (
     OPENCODE_SPEC_MODEL,
     OPENCODE_MODEL_PROVIDER,
 )
-from src.file_utils import collect_file_names
+from src.file_utils import collect_file_names, _get_phase_files
+from src.pipeline_setup import _deduplicate_phases
 from src.verilog_support import (
     _SUBMODULE_HEADING_RE,
     _verilog_info_ready,
@@ -71,11 +72,7 @@ from src.chisel_spec_generator import (
     _report_undocumented_submodules,
     _reset_derived_state,
 )
-from main import (
-    _clean_previous_run,
-    _deduplicate_phases,
-    _get_phase_files,
-)
+from main import _clean_previous_run
 
 
 def _force_verilog_phase_languages(work_dir):
@@ -427,6 +424,10 @@ def run_verilog_spec_generation(proj_dir, resume=False):
     shutil.copy2(
         os.path.join(src_dir, "generate_batch_prompts.py"),
         os.path.join(spec_prompts_dir, "generate_batch_prompts.py"),
+    )
+    shutil.copy2(
+        os.path.join(src_dir, "file_utils.py"),
+        os.path.join(spec_prompts_dir, "file_utils.py"),
     )
 
     # Re-alias domain context in case extraction recreated spec_prompts layout

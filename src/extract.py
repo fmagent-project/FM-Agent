@@ -8,8 +8,8 @@ import logging
 from .chisel_support import (
     CHISEL_LANG_CONFIG,
     CHISEL_EXT_TO_LANG,
-    CHISEL_TEST_FILE_PATTERNS,
     extract_chisel_functions,
+    is_chisel_test_file,
 )
 from .verilog_support import (
     VERILOG_LANG_CONFIG,
@@ -18,6 +18,9 @@ from .verilog_support import (
     VERILOG_TEST_FILE_PATTERNS,
     extract_verilog_functions,
 )
+from src.file_utils import is_file_ready
+from src.languages.codegraph import canonicalize
+from src.languages.registry import batch_extract_all, function_spans_for_file
 
 LANG_CONFIG = {
     "cpp": {
@@ -121,6 +124,19 @@ LANG_CONFIG = {
         },
         "body": "brace",
     },
+    "erlang": {
+        "comment_prefix": "%",
+        "spec_marker": "% [SPEC]",
+        "skip_prefixes": ("%", "-module", "-export", "-import", "-include"),
+        "skip_keywords_line": ("-record", "-type", "-spec", "-callback"),
+        "keywords": {
+            "after", "and", "andalso", "band", "begin", "bnot", "bor", "bsl",
+            "bsr", "bxor", "case", "catch", "cond", "div", "end", "fun", "if",
+            "let", "maybe", "not", "of", "or", "orelse", "receive", "rem",
+            "try", "when", "xor",
+        },
+        "body": "external",
+    },
     "cuda": {
         "comment_prefix": "//",
         "spec_marker": "// [SPEC]",
@@ -166,6 +182,7 @@ LANG_CONFIG.update(VERILOG_LANG_CONFIG)
 EXT_TO_LANG = {
     "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "c": "c", "h": "cpp", "hpp": "cpp",
     "py": "python",
+    "erl": "erlang",
     "go": "go",
     "rs": "rust",
     "java": "java",
@@ -195,7 +212,7 @@ _TEST_FILE_PATTERNS = [
     re.compile(r'^.*\.(?:test|spec)\.(?:js|jsx|ts|tsx)$'),  # JS/TS: foo.test.js
     re.compile(r'^.*_test\.rs$'),          # Rust: foo_test.rs
     re.compile(r'^.*\.test\.(?:ets)$'),    # ArkTS: foo.test.ets
-] + CHISEL_TEST_FILE_PATTERNS + VERILOG_TEST_FILE_PATTERNS  # Chisel & Verilog test files
+] + VERILOG_TEST_FILE_PATTERNS  # Chisel has its own path-aware test filter.
 
 
 def _is_test_file(rel_path):
@@ -213,15 +230,29 @@ def _is_test_file(rel_path):
         for part in parts[:-1]:
             if part.lower() in VERILOG_TEST_DIR_NAMES:
                 return True
+    if ext in CHISEL_EXT_TO_LANG:
+        return is_chisel_test_file(rel_path)
     # Check filename against test patterns
     for pat in _TEST_FILE_PATTERNS:
         if pat.match(basename):
             return True
     return False
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _safe_filename(name: str, ext: str) -> str:
+    """Return a safe filename from a function name and extension.
+
+    Replaces "/" (directory separator) with "_" and falls back to
+    "_function" for empty names.  Does *not* strip leading or trailing
+    underscores so that names like __init__ and _private stay consistent
+    with codegraph call-edge keys and FQN resolution.
+    """
+    safe = name.replace('/', '_')
+    if not safe:
+        safe = "_function"
+    return f"{safe}.{ext}"
 
 
 def _strip_angle_brackets(text):
@@ -243,6 +274,15 @@ def _strip_angle_brackets(text):
 def _extract_func_name_brace(signature_text, lang_cfg):
     """Extract the function name from a brace-delimited language signature."""
     lang_keywords = lang_cfg["keywords"]
+
+    m = re.search(
+        r'\b(operator\s*(?:\[\]|\(\)|[+\-*/%&|^~!=<>]+|new(?:\s*\[\s*\])?|delete(?:\s*\[\s*\])?))'
+        r'\s*\(',
+        signature_text,
+    )
+    if m:
+        return m.group(1)
+
     cleaned = _strip_angle_brackets(signature_text)
     for m in re.finditer(r'\b(\w+)\s*\(', cleaned):
         name = m.group(1)
@@ -254,11 +294,20 @@ def _extract_func_name_brace(signature_text, lang_cfg):
 def _find_brace_end(lines, start_idx):
     """Find the line index of the closing '}' that matches the first '{' at or after start_idx.
 
-    Handles string/char literals and // comments.
+    Handles string/char literals and // comments. Braces belonging to Go
+    anonymous composite types (`interface{...}` / `struct{...}`, possibly
+    spanning multiple lines) are tracked separately so they are not mistaken
+    for the function body.
+
     Returns the line index of the closing brace, or len(lines)-1 if unmatched.
     """
     depth = 0
     found_open = False
+    # Depth of braces inside an anonymous composite type; these do not count
+    # toward the function body. `pending_type_brace` means an `interface`/
+    # `struct` keyword was seen and its opening `{` is expected next.
+    type_depth = 0
+    pending_type_brace = False
     for i in range(start_idx, len(lines)):
         line = lines[i]
         j = 0
@@ -302,6 +351,48 @@ def _find_brace_end(lines, start_idx):
                 # If block comment spans lines, continue on next line
                 # (simplified: assume single-line block comments for now)
                 continue
+            # Inside an anonymous composite type: its braces belong to the type,
+            # not the function body, so track them with a separate counter.
+            if type_depth > 0:
+                if ch == '{':
+                    type_depth += 1
+                elif ch == '}':
+                    type_depth -= 1
+                j += 1
+                continue
+            # A keyword's opening '{' is expected; consume whitespace until it.
+            if pending_type_brace:
+                if ch in ' \t':
+                    j += 1
+                    continue
+                if ch == '{':
+                    type_depth = 1
+                    pending_type_brace = False
+                    j += 1
+                    continue
+                # Not actually a composite type; fall through to normal handling.
+                pending_type_brace = False
+            # Detect Go anonymous composite types `interface{...}` / `struct{...}`,
+            # whose braces (even when the type spans multiple lines) must not be
+            # counted as the function body's braces.
+            if ch in 'is' and (line.startswith('interface', j) or line.startswith('struct', j)):
+                kw_len = 9 if line.startswith('interface', j) else 6
+                end = j + kw_len
+                prev_ok = j == 0 or not (line[j - 1].isalnum() or line[j - 1] == '_')
+                next_ok = end >= len(line) or not (line[end].isalnum() or line[end] == '_')
+                if prev_ok and next_ok:
+                    k = end
+                    while k < len(line) and line[k] in ' \t':
+                        k += 1
+                    if k < len(line) and line[k] == '{':
+                        type_depth = 1
+                        j = k + 1
+                        continue
+                    if k >= len(line):
+                        # The opening '{' is on a following line.
+                        pending_type_brace = True
+                    j = end
+                    continue
             if ch == '{':
                 depth += 1
                 found_open = True
@@ -324,6 +415,8 @@ def _extract_functions_brace(lines, lang_key, lang_cfg):
     i = 0
     skip_prefixes = lang_cfg["skip_prefixes"]
     skip_kw_line = lang_cfg["skip_keywords_line"]
+    in_block_comment = False
+    _block_comment_langs = {"cpp", "c", "cuda", "java", "javascript", "typescript", "arkts"}
 
     while i < len(lines):
         line = lines[i]
@@ -333,6 +426,23 @@ def _extract_functions_brace(lines, lang_key, lang_cfg):
         if not stripped:
             i += 1
             continue
+
+        # Skip /* */ block comments for C-family languages
+        if lang_key in _block_comment_langs:
+            if in_block_comment:
+                end_idx = stripped.find("*/")
+                if end_idx != -1:
+                    in_block_comment = False
+                i += 1
+                continue
+            start_idx = stripped.find("/*")
+            if start_idx != -1:
+                # Check whether the block comment closes on the same line
+                after_start = stripped[start_idx + 2:]
+                if "*/" not in after_start:
+                    in_block_comment = True
+                i += 1
+                continue
 
         # Skip comment / preprocessor / using lines
         if any(stripped.startswith(p) for p in skip_prefixes):
@@ -398,7 +508,16 @@ def _extract_functions_brace(lines, lang_key, lang_cfg):
 
         # Rust: detect fn keyword
         if lang_key == "rust":
-            m = re.match(r'(?:pub\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)', stripped)
+            m = re.match(
+                r'(?:pub(?:\s*\([^)]*\))?\s+)?'   # pub, pub(crate), pub(super), pub(in ...)
+                r'(?:default\s+)?'
+                r'(?:const\s+)?'
+                r'(?:async\s+)?'
+                r'(?:unsafe\s+)?'
+                r'(?:extern\s+"[^"]*"\s+)?'
+                r'fn\s+(\w+)',
+                stripped,
+            )
             if not m:
                 i += 1
                 continue
@@ -562,24 +681,29 @@ def extract_functions_from_file(filepath, lang_key):
         raw_funcs = extract_verilog_functions(lines, lang_key, lang_cfg)
     elif lang_cfg["body"] == "brace":
         raw_funcs = _extract_functions_brace(lines, lang_key, lang_cfg)
-    else:
+    elif lang_cfg["body"] == "indent":
         raw_funcs = _extract_functions_indent(lines, lang_cfg)
+    else:
+        # Semantic-only languages (currently Erlang) are extracted by their
+        # registered backend and have no reliable file-local fallback.
+        return []
 
-    # Deduplicate names
+    # Deduplicate names (applied after canonicalize so operator overloads
+    # produce safe filenames and FQN components).
     name_counts = {}
     results = []
     for name, start, end in raw_funcs:
-        count = name_counts.get(name, 0)
-        name_counts[name] = count + 1
+        cname = canonicalize(name)
+        count = name_counts.get(cname, 0)
+        name_counts[cname] = count + 1
         if count > 0:
-            deduped = f"{name}_{count}"
+            deduped = f"{cname}_{count}"
         else:
-            deduped = name
+            deduped = cname
         source = '\n'.join(lines[start:end + 1]) + '\n'
         results.append((deduped, source))
 
     return results
-
 
 def _remove_stale_hdl_outputs(out_file, new_source, lang_cfg):
     """Delete standalone ``_spec.md``/``_info.md`` siblings when the extracted
@@ -653,6 +777,47 @@ def load_units_manifest(work_dir):
     units = data.get("units")
     return units if isinstance(units, dict) else None
 
+def _function_spans(filepath, lang_key, proj_dir=None):
+    """Return ``(spans, raw_lines)`` for a source file.
+
+    ``spans`` is a list of ``(deduped_name, start_idx, end_idx)`` line ranges,
+    one per function, named exactly as run_extraction names the extracted files
+    (duplicate names get ``_1``, ``_2``, ... suffixes). ``raw_lines`` are the
+    file's original lines (newline characters preserved) so callers can rewrite
+    the file by line index.
+
+    Function boundaries come from codegraph via the language registry when
+    ``proj_dir`` is given and codegraph indexes the file; otherwise they fall
+    back to the regex extractor (_extract_functions_brace / _indent). Both
+    backends yield the same (name, start_idx, end_idx) shape, so the dedup
+    naming below is identical regardless of which one is used.
+    """
+    lang_cfg = LANG_CONFIG[lang_key]
+    with open(filepath, "r", errors="replace") as f:
+        raw_lines = f.readlines()
+    # Extraction operates on newline-stripped lines; indices line up 1:1 with
+    # raw_lines (readlines yields one entry per line).
+    norm_lines = [l.rstrip("\n").rstrip("\r") for l in raw_lines]
+
+    raw_funcs = None
+    if proj_dir is not None:
+        raw_funcs = function_spans_for_file(proj_dir, filepath, lang_key)
+    if raw_funcs is None:
+        if lang_cfg["body"] == "brace":
+            raw_funcs = _extract_functions_brace(norm_lines, lang_key, lang_cfg)
+        else:
+            raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
+
+    name_counts = {}
+    spans = []
+    for name, start, end in raw_funcs:
+        cname = canonicalize(name)
+        count = name_counts.get(cname, 0)
+        name_counts[cname] = count + 1
+        deduped = cname if count == 0 else f"{cname}_{count}"
+        spans.append((deduped, start, end))
+    return spans, raw_lines
+
 
 def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     """Run function extraction on a project directory.
@@ -671,6 +836,12 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
 
     with open(phases_path, 'r') as f:
         phases_data = json.load(f)
+
+    registry_funcs, registry_langs = batch_extract_all(proj_dir)
+    registry_funcs = {
+        os.path.normcase(os.path.normpath(path)): funcs
+        for path, funcs in registry_funcs.items()
+    }
 
     # Build source file list from phases.json
     source_files = []
@@ -713,7 +884,6 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             logging.warning(f"Unsupported file extension '.{ext}' for {src_rel}, skipping.")
             continue
         lang_cfg = LANG_CONFIG[lang_key]
-        spec_marker = lang_cfg["spec_marker"]
 
         # Compute output directory: replace last dot in filename with hyphen
         src_dir = os.path.dirname(src_rel)
@@ -725,7 +895,13 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             dir_name = src_base
         out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
 
-        funcs = extract_functions_from_file(src_path, lang_key)
+        registry_key = os.path.normcase(os.path.normpath(src_path))
+        if lang_key == "chisel":
+            funcs = registry_funcs.get(registry_key, [])
+        elif registry_key in registry_funcs:
+            funcs = registry_funcs[registry_key]
+        else:
+            funcs = extract_functions_from_file(src_path, lang_key)
         if not funcs:
             logging.warning(f"No functions extracted from {src_rel}")
             continue
@@ -733,21 +909,15 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         os.makedirs(out_dir, exist_ok=True)
 
         for func_name, func_source in funcs:
-            out_file = os.path.join(out_dir, f"{func_name}.{ext}")
+            out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
             manifest_units[src_rel].append(os.path.relpath(out_file, output_base))
 
-            # Check if file already has spec marker
-            if not force and os.path.exists(out_file):
-                try:
-                    with open(out_file, 'r') as f:
-                        first_line = f.readline()
-                    if first_line.strip().startswith(spec_marker.strip()):
-                        if verbose:
-                            print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
-                        skipped += 1
-                        continue
-                except OSError:
-                    pass
+            # Skip only when the file already has both [SPEC] and [INFO] blocks
+            if not force and os.path.exists(out_file) and is_file_ready(out_file):
+                if verbose:
+                    print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
+                skipped += 1
+                continue
 
             _remove_stale_hdl_outputs(out_file, func_source, lang_cfg)
             with open(out_file, 'w') as f:
@@ -766,7 +936,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         return written, skipped
 
     # --- Validation (Step 2) ---
-    validation_failures = _validate_extraction(output_base)
+    validation_failures = _validate_extraction(output_base, registry_langs=registry_langs)
     if validation_failures:
         logging.warning(
             f"Validation: {len(validation_failures)} file(s) do not contain exactly one function."
@@ -785,8 +955,13 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     return written, skipped
 
 
-def _validate_extraction(extracted_dir):
+def _validate_extraction(extracted_dir, registry_langs=None):
     """Re-parse every extracted file and verify each contains exactly one function.
+
+    Files for languages that returned data from their REGISTRY backend are skipped:
+    those backends write exactly one function body per file by construction, so
+    regex re-parsing adds no safety and produces false negatives for forms the
+    regex cannot recognise (async def, class methods, arrow functions).
 
     Returns a list of (file_path, function_count) for files that fail validation.
     """
@@ -796,6 +971,8 @@ def _validate_extraction(extracted_dir):
             ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
             lang_key = EXT_TO_LANG.get(ext)
             if not lang_key:
+                continue
+            if registry_langs and lang_key in registry_langs:
                 continue
             fpath = os.path.join(root, fname)
             funcs = extract_functions_from_file(fpath, lang_key)
