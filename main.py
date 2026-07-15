@@ -87,6 +87,7 @@ def run_pipeline(
     submodules=None,
     one_phase=False,
     extra_call_edges_path=None,
+    only_spec=False,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -186,7 +187,10 @@ def run_pipeline(
     generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
 
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
-    print("[Pipeline] Stage 4/4: Generating specs & verification...")
+    if only_spec:
+        print("[Pipeline] Stage 4/4: Generating specs (reasoning & bug validation disabled)...")
+    else:
+        print("[Pipeline] Stage 4/4: Generating specs & verification...")
     run_spec_generation_and_verification(
         proj_dir,
         work_dir,
@@ -197,18 +201,24 @@ def run_pipeline(
         phases_data,
         resume=resume,
         extra_call_edges=extra_call_edges,
+        only_spec=only_spec,
     )
 
 
-    # Print confirmed bug count
-    summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-    if os.path.exists(summary_path):
-        with open(summary_path, "r") as f:
-            summary = json.load(f)
-        confirmed = summary.get("total_confirmed", 0)
-        print(f"[Pipeline] Confirmed bugs: {confirmed}")
+    # Print confirmed bug count (skipped in only-spec mode, which runs no
+    # reasoning or bug validation).
+    if not only_spec:
+        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
+        if os.path.exists(summary_path):
+            with open(summary_path, "r") as f:
+                summary = json.load(f)
+            confirmed = summary.get("total_confirmed", 0)
+            print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
-    print("[Pipeline] Done.")
+    if only_spec:
+        print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
+    else:
+        print("[Pipeline] Done.")
 
 
 if __name__ == "__main__":
@@ -216,7 +226,7 @@ if __name__ == "__main__":
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
-              "[--end-func PATH ...] [--extra-edge FILE]",
+              "[--end-func PATH ...] [--extra-edge FILE] [--only-spec]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -243,6 +253,12 @@ if __name__ == "__main__":
         "--one-phase",
         action="store_true",
         help="Put all planned source files into a single analysis phase.",
+    )
+    parser.add_argument(
+        "--only-spec",
+        action="store_true",
+        help="Only generate behavioral specs; skip the reasoning and bug "
+        "validation stages.",
     )
     parser.add_argument(
         "--domain-knowledge",
@@ -309,6 +325,12 @@ if __name__ == "__main__":
     if submodules and args.entry_func is not None:
         parser.error("--submodule cannot be combined with --entry-func.")
 
+    if args.only_spec and args.incremental:
+        parser.error(
+            "--only-spec cannot be combined with --incremental "
+            "(incremental mode is inherently a reasoning/bug-validation flow)."
+        )
+
     # ---- pre-flight environment check (shared by all pipeline modes) ----
     import config
     from src.env_check import run as env_check_run
@@ -329,6 +351,7 @@ if __name__ == "__main__":
             domain_knowledge_files=domain_knowledge_files,
             one_phase=args.one_phase,
             extra_call_edges_path=extra_call_edges_path,
+            only_spec=args.only_spec,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -396,6 +419,7 @@ if __name__ == "__main__":
                     submodules=submodules,
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
+                    only_spec=args.only_spec,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is

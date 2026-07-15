@@ -111,7 +111,7 @@ def _run_spec_generation_batch(
 
 def run_spec_generation_and_verification(
     proj_dir, work_dir, input_dir, output_dir, script_dir, spec_prompts_dir,
-    phases_data, resume=False, extra_call_edges=None,
+    phases_data, resume=False, extra_call_edges=None, only_spec=False,
 ):
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
@@ -182,22 +182,25 @@ def run_spec_generation_and_verification(
                 # Find batches with unspecced functions
                 pending_batches = _get_pending_batches(all_batches, proj_dir)
                 if not pending_batches:
-                    incomplete_verification = _get_incomplete_verification_files(
-                        layer_files, input_dir, output_dir, work_dir
-                    )
-                    if incomplete_verification:
-                        logging.info(
-                            f"Phase {phase_num} Layer {layer_idx}: "
-                            f"{len(incomplete_verification)} ready file(s) still need verification or validation"
+                    # All functions in this layer are specced. In only-spec mode
+                    # we stop here without running the reasoner/bug validation.
+                    if not only_spec:
+                        incomplete_verification = _get_incomplete_verification_files(
+                            layer_files, input_dir, output_dir, work_dir
                         )
-                        newly_processed = streaming_reasoner(
-                            input_dir, output_dir, file_list=layer_files,
-                            proj_dir=proj_dir, work_dir=work_dir,
-                            spec_procs=None,
-                            already_processed=all_processed | layer_processed,
-                            resume=resume,
-                        )
-                        layer_processed.update(newly_processed)
+                        if incomplete_verification:
+                            logging.info(
+                                f"Phase {phase_num} Layer {layer_idx}: "
+                                f"{len(incomplete_verification)} ready file(s) still need verification or validation"
+                            )
+                            newly_processed = streaming_reasoner(
+                                input_dir, output_dir, file_list=layer_files,
+                                proj_dir=proj_dir, work_dir=work_dir,
+                                spec_procs=None,
+                                already_processed=all_processed | layer_processed,
+                                resume=resume,
+                            )
+                            layer_processed.update(newly_processed)
                     break
 
                 # Submit all pending spec batches through a bounded executor so
@@ -232,7 +235,7 @@ def run_spec_generation_and_verification(
                         f"submitted {len(spec_futures)} spec-generation batch tasks "
                         f"(max_workers={MAX_WORKERS}, total_pending_batches={len(pending_batches)})"
                     )
-                    if spec_futures:
+                    if spec_futures and not only_spec:
                         newly_processed = streaming_reasoner(
                             input_dir, output_dir, file_list=layer_files,
                             proj_dir=proj_dir, work_dir=work_dir,
