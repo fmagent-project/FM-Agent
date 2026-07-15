@@ -1337,7 +1337,7 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
     )
 
 
-def _collect_caller_context(fqn, callers_map, file_map):
+def _collect_caller_context(fqn, callers_map, callees_map, file_map):
     """
     Gather the context an existing caller provides about fqn, mirroring the caller context
     run_pipeline feeds into spec generation: each caller's own [SPEC] block and the entry in
@@ -1356,7 +1356,14 @@ def _collect_caller_context(fqn, callers_map, file_map):
         cpath_p = Path(cpath)
         caller_spec = extract_spec_block(cpath_p)
         info_block = extract_info_block(cpath_p)
-        expectation = extract_callee_spec_from_info(info_block, fqn) if info_block else None
+        expectation = (
+            extract_callee_spec_from_info(
+                info_block,
+                fqn,
+                callees_map.get(caller_fqn, ()),
+            )
+            if info_block else None
+        )
         if caller_spec or expectation:
             context.append((caller_fqn, caller_spec, expectation))
     return context
@@ -1558,7 +1565,9 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
             # one from scratch the way the full run does, rather than skipping the function.
             source = content
             old_spec, old_info = None, None
-            caller_context = _collect_caller_context(fqn, callers_map, file_map)
+            caller_context = _collect_caller_context(
+                fqn, callers_map, callees_map, file_map
+            )
             result = _opencode_generate_spec(
                 proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
                 developer_intent, callee_names, source, caller_context,

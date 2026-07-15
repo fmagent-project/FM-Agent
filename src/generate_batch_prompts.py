@@ -67,6 +67,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip functions already specced (file_utils.is_file_ready) when building batches",
     )
+    parser.add_argument(
+        "--functions",
+        nargs="+",
+        default=None,
+        help="Only generate prompts for these function FQNs",
+    )
+    parser.add_argument(
+        "--require-all-callers",
+        action="store_true",
+        help="Fail if any selected function has a caller contract that is not ready",
+    )
     return parser.parse_args()
 
 
@@ -160,9 +171,9 @@ def extract_callee_spec_from_info(
         # Strip the comment prefix to get the actual content
         if prefix and first_line.startswith(prefix):
             first_line = first_line[len(prefix):].strip()
-        if callee_fqn in first_line:
+        if re.match(rf"^{re.escape(callee_fqn)}\s*\(", first_line):
             return entry
-        if (callee_stem + "(") not in first_line:
+        if not re.match(rf"^{re.escape(callee_stem)}\s*\(", first_line):
             continue
         if candidate_callee_fqns is not None:
             same_stem = {
@@ -187,19 +198,51 @@ def read_json(path: Path) -> dict:
 
 def load_global_call_graph(work_dir: Path) -> dict:
     path = work_dir / "spec_prompts" / "global_call_graph.json"
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text())
+    graph = read_json(path)
+    if not isinstance(graph, dict):
+        raise ValueError(f"invalid global call graph {path}: root must be an object")
+    if graph.get("schema_version") != 1:
+        raise ValueError(f"invalid global call graph {path}: unsupported schema_version")
 
+    required = {"functions", "callers", "callees"}
+    missing = required - set(graph)
+    if missing:
+        raise ValueError(
+            f"invalid global call graph {path}: missing {', '.join(sorted(missing))}"
+        )
+    for key in required:
+        if not isinstance(graph[key], dict):
+            raise ValueError(f"invalid global call graph {path}: {key} must be an object")
 
-def phase_callers_key(func: dict, phase: int) -> str:
-    target = f"phase{phase}_callers"
-    if target in func:
-        return target
-    for key in func.keys():
-        if key.endswith("_callers") and key.startswith("phase"):
-            return key
-    return target
+    function_names = set(graph["functions"])
+    if set(graph["callers"]) != function_names or set(graph["callees"]) != function_names:
+        raise ValueError(f"invalid global call graph {path}: function coverage is inconsistent")
+    for fqn, meta in graph["functions"].items():
+        if not isinstance(meta, dict) or not {"phase", "layer", "file"} <= set(meta):
+            raise ValueError(f"invalid global call graph {path}: incomplete metadata for {fqn}")
+        if (
+            not isinstance(meta["phase"], int)
+            or not isinstance(meta["layer"], int)
+            or not isinstance(meta["file"], str)
+        ):
+            raise ValueError(f"invalid global call graph {path}: invalid metadata for {fqn}")
+        for edge_key in ("callers", "callees"):
+            edges = graph[edge_key][fqn]
+            if (
+                not isinstance(edges, list)
+                or len(edges) != len(set(edges))
+                or any(edge not in function_names for edge in edges)
+            ):
+                raise ValueError(f"invalid global call graph {path}: invalid {edge_key} for {fqn}")
+    for caller_fqn, callee_fqns in graph["callees"].items():
+        for callee_fqn in callee_fqns:
+            if caller_fqn not in graph["callers"][callee_fqn]:
+                raise ValueError(f"invalid global call graph {path}: call edges are inconsistent")
+    for callee_fqn, caller_fqns in graph["callers"].items():
+        for caller_fqn in caller_fqns:
+            if callee_fqn not in graph["callees"][caller_fqn]:
+                raise ValueError(f"invalid global call graph {path}: call edges are inconsistent")
+    return graph
 
 
 def detect_lang_and_comment(file_rel: str, ext_to_lang: Dict[str, str]) -> Tuple[str, str]:
@@ -219,7 +262,8 @@ def build_prompt(
     work_dir: Path,
     fm_agent_prefix: str,
     ext_to_lang: Dict[str, str],
-    global_call_graph: Optional[dict] = None,
+    global_call_graph: dict,
+    require_all_callers: bool = False,
 ) -> str:
     lines: List[str] = []
     sample_lang = "unknown"
@@ -252,10 +296,10 @@ def build_prompt(
     lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
     lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each one")
 
-    graph = global_call_graph or {}
-    global_funcs = graph.get("functions", {})
-    global_callers = graph.get("callers", {})
-    global_callees = graph.get("callees", {})
+    graph = global_call_graph
+    global_funcs = graph["functions"]
+    global_callers = graph["callers"]
+    global_callees = graph["callees"]
     caller_specs = []
     caller_expectations = {}
     available_callers = {}
@@ -264,16 +308,16 @@ def build_prompt(
     seen_expectations = set()
     for fn in functions:
         fn_name = fn["name"]
-        caller_key = phase_callers_key(fn, phase)
-        callers = global_callers.get(fn_name, fn.get(caller_key, []))
+        if fn_name not in global_callers:
+            raise ValueError(f"function missing from global call graph: {fn_name}")
+        callers = global_callers[fn_name]
         for caller_name in sorted(set(callers)):
-            caller_meta = global_funcs.get(caller_name) or all_funcs.get(caller_name)
+            caller_meta = global_funcs.get(caller_name)
             if not caller_meta:
-                pending_callers.append((fn_name, caller_name, "function metadata not found"))
-                continue
-            caller_phase = caller_meta.get("phase", phase)
-            caller_layer = caller_meta.get("layer", func_to_layer.get(caller_name))
-            if caller_phase == phase and (
+                raise ValueError(f"caller missing from global call graph: {caller_name}")
+            caller_phase = caller_meta["phase"]
+            caller_layer = caller_meta["layer"]
+            if not require_all_callers and caller_phase == phase and (
                 caller_layer is None or caller_layer >= layer_idx
             ):
                 continue
@@ -295,7 +339,7 @@ def build_prompt(
             entry = extract_callee_spec_from_info(
                 info_block,
                 fn_name,
-                global_callees.get(caller_name) if graph else None,
+                global_callees[caller_name],
             )
             if entry:
                 expectation_key = (fn_name, caller_name, entry.strip())
@@ -310,6 +354,13 @@ def build_prompt(
                     caller_name,
                     "matching INFO entry not found or callee name is ambiguous",
                 ))
+
+    if require_all_callers and pending_callers:
+        details = "; ".join(
+            f"{caller_name} -> {fn_name}: {reason}"
+            for fn_name, caller_name, reason in sorted(set(pending_callers))
+        )
+        raise RuntimeError(f"caller contracts are not ready: {details}")
 
     if caller_specs:
         lines.append("")
@@ -344,6 +395,11 @@ def build_prompt(
     if pending_callers:
         lines.append("")
         lines.append("## PENDING CALLER CONTRACTS")
+        lines.append(
+            "The following callers exist, but their contracts are not available "
+            "in this generation pass."
+        )
+        lines.append("Do not assume that these callers have no requirements.")
         for fn_name, caller_name, reason in sorted(set(pending_callers)):
             lines.append(f"- {caller_name} -> {fn_name}: {reason}")
 
@@ -457,10 +513,17 @@ def main() -> int:
     batch_index = 0
     write_targets: List[Tuple[Path, str]] = []
     stale_targets: List[Path] = []
+    requested_functions = set(args.functions or [])
+    found_functions = set()
 
     for layer_idx in range(start_layer, end_layer + 1):
         layer = layers[layer_idx]
         layer_functions = layer.get("functions", [])
+        if requested_functions:
+            layer_functions = [
+                fn for fn in layer_functions if fn["name"] in requested_functions
+            ]
+            found_functions.update(fn["name"] for fn in layer_functions)
         is_cycle = bool(layer.get("cycle_resolution", False))
         tag = "cycle" if is_cycle else "extracted"
         chunks = chunked(layer_functions, args.batch_size)
@@ -492,6 +555,7 @@ def main() -> int:
                     fm_agent_prefix,
                     ext_to_lang,
                     global_call_graph,
+                    args.require_all_callers,
                 )
                 write_targets.append((out_path, content))
             else:
@@ -510,6 +574,13 @@ def main() -> int:
                 }
             )
             batch_index += 1
+
+    missing_functions = requested_functions - found_functions
+    if missing_functions:
+        raise ValueError(
+            "requested functions not found in selected layers: "
+            + ", ".join(sorted(missing_functions))
+        )
 
     manifest = {
         "phase": args.phase,
