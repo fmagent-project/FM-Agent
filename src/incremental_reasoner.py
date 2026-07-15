@@ -1484,7 +1484,7 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
     block from scratch for a function that has no existing specification — e.g. a function
     freshly added by the modification.
 
-    Mirrors the full run's spec generation (run_pipeline Stage 5) but for a single function:
+    Mirrors the full run's spec generation (run_pipeline Stage 6) but for a single function:
     opencode reads the project's spec format rules (fm_agent/spec_prompts/system_prompt.md),
     is given the same caller context the full run provides (each caller's [SPEC] block and what
     that caller's [INFO] block expects from this function, in caller_context as returned by

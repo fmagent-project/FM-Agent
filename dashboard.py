@@ -41,7 +41,7 @@ from rich.align import Align
 from src.verification import load_current_validation_state
 
 
-STAGES = ["init", "setup_context", "spec_generation", "verification", "bug_validation"]
+STAGES = ["init", "generate_phases_json", "generate_domain_context", "spec_generation", "verification", "bug_validation"]
 CACHE_WINDOW = 200
 LLM_STATUS_WINDOW = 80
 
