@@ -1258,17 +1258,25 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
                 if validation_result_is_valid(validation_result, bug_id):
                     if is_candidate:
                         validation_result["candidate_sha256"] = candidate_sha256
-                        _guard_all_bugs_validation_paths(
-                            result_json_rel,
-                            proj_dir,
-                            work_dir,
-                            bug_id,
-                        )
-                        _write_json_atomic(
-                            result_path,
-                            validation_result,
-                            work_dir=work_dir,
-                        )
+                    else:
+                        # Bind newly generated legacy records to the exact target
+                        # selected by this invocation.  The validator may report
+                        # the original source file instead of the extracted
+                        # function path requested by bug_validator.md; accepting
+                        # that unbound value here makes the authoritative state
+                        # reject an otherwise terminal record as pending.
+                        validation_result["source_file"] = descriptor["source_identity"]
+                    _guard_all_bugs_validation_paths(
+                        result_json_rel,
+                        proj_dir,
+                        work_dir,
+                        bug_id,
+                    )
+                    _write_json_atomic(
+                        result_path,
+                        validation_result,
+                        work_dir=work_dir,
+                    )
                     return
                 try:
                     _secure_unlink_artifact(
