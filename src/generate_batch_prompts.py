@@ -162,7 +162,6 @@ def extract_callee_spec_from_info(
                 break
 
     split_tag = f"{prefix} [SPLIT]" if prefix else "[SPLIT]"
-    exact_names = {callee_fqn, *(aliases or ())}
     callee_stem = callee_fqn.split("::")[-1]
     for entry in info_block.split(split_tag):
         entry = entry.strip()
@@ -172,15 +171,16 @@ def extract_callee_spec_from_info(
         # Strip the comment prefix to get the actual content
         if prefix and first_line.startswith(prefix):
             first_line = first_line[len(prefix):].strip()
-        match = re.match(r"^(?P<label>[^\s(]+)\s*\(", first_line)
-        if not match:
-            continue
-        called_label = match.group("label")
-        if called_label in exact_names:
+        if _info_line_contains_call_name(first_line, callee_fqn):
             return entry
-        called_stem = re.split(r"::|->|\.", called_label)[-1]
-        if called_stem != callee_stem:
-            continue
+        if any(
+            _info_line_contains_call_name(
+                first_line, alias, allow_qualified_prefix=True
+            )
+            for alias in aliases or ()
+            if alias
+        ):
+            return entry
         if candidate_callee_fqns is not None:
             same_stem = {
                 name for name in candidate_callee_fqns
@@ -188,8 +188,31 @@ def extract_callee_spec_from_info(
             }
             if len(same_stem) != 1:
                 continue
-        return entry
+        if _info_line_contains_call_name(
+            first_line, callee_stem, allow_qualified_prefix=True
+        ):
+            return entry
     return None
+
+
+def _info_line_contains_call_name(
+    first_line: str,
+    name: str,
+    allow_qualified_prefix: bool = False,
+) -> bool:
+    if not name:
+        return False
+    left_boundary = (
+        r"(?<![A-Za-z0-9_])"
+        if allow_qualified_prefix
+        else r"(?<![A-Za-z0-9_:])"
+    )
+    return bool(
+        re.search(
+            rf"{left_boundary}{re.escape(name)}(?=\s*\()",
+            first_line,
+        )
+    )
 
 
 def chunked(items: List[dict], size: int) -> List[List[dict]]:
