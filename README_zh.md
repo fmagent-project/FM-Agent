@@ -175,6 +175,7 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--sub
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
+| `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 
 `proj_dir` 必须是一个 git 仓库。
 
@@ -196,6 +197,12 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 `--submodule` 路径必须是 `proj_dir` 内部目录。该参数可与 `--resume`、`--isolate` 和 `--incremental` 一起使用，但不能与 `--entry-func` 一起使用。
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
+
+使用 `--only-spec` 可以在生成行为规约后即停止，跳过推理与 Bug 验证阶段。它会为每个函数生成 `[SPEC]` 块，而不在验证上花费时间，适用于只需要规约、或希望先审阅规约再运行完整分析的场景。该参数不能与 `--incremental` 一起使用，因为增量模式本质上是一个推理/Bug 验证流程。
+
+```bash
+uv run python main.py <proj_dir> --only-spec
+```
 
 当静态解析无法看到关键调用关系时（例如间接 syscall 分发），可使用 `--extra-edge FILE`。补充边会同时作用于完整运行、入口函数范围运行和增量运行。JSON 格式如下：
 
