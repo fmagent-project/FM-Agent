@@ -1525,6 +1525,14 @@ def _accepted_validation_record(descriptor, project_dir, work_dir):
             work_dir,
             validation_dir,
         )
+    except AllBugsArtifactError as exc:
+        # A missing or invalid per-target record is not a workspace failure.
+        # Keep the target pending/error so it can be retried or summarized,
+        # while still failing closed if the validation root itself is unsafe.
+        if not _validation_dir_is_safe(work_dir, validation_dir):
+            raise AllBugsArtifactError("unsafe bug_validation directory") from exc
+        logging.warning("Could not read %s: %s", result_path, exc)
+        return None
     except (OSError, ValueError, UnicodeError) as exc:
         if not _validation_dir_is_safe(work_dir, validation_dir):
             raise AllBugsArtifactError("unsafe bug_validation directory") from exc
