@@ -39,6 +39,8 @@ from .file_utils import (
     _get_all_phase_files,
     _is_metadata_sidecar,
     _write_file_names,
+    _is_valid_spec_json,
+    _is_valid_info_json,
 )
 from .generate_batch_prompts import (
     extract_callee_spec_from_info,
@@ -763,10 +765,16 @@ def _validate_spec_update(data):
         isinstance(name, str) and name.strip() for name in data["updated_callees"]
     ):
         raise ValueError("spec-update JSON field updated_callees must be an array of non-empty strings")
-    if data["spec_updated"] and not isinstance(data["new_spec"], dict):
-        raise ValueError("spec-update JSON requires object new_spec when spec_updated is true")
-    if data["info_updated"] and not isinstance(data["new_info"], dict):
-        raise ValueError("spec-update JSON requires object new_info when info_updated is true")
+    if data["spec_updated"]:
+        if not isinstance(data["new_spec"], dict):
+            raise ValueError("spec-update JSON requires object new_spec when spec_updated is true")
+        if not _is_valid_spec_json(data["new_spec"]):
+            raise ValueError("spec-update JSON new_spec must match the .spec.json schema")
+    if data["info_updated"]:
+        if not isinstance(data["new_info"], dict):
+            raise ValueError("spec-update JSON requires object new_info when info_updated is true")
+        if not _is_valid_info_json(data["new_info"]):
+            raise ValueError("spec-update JSON new_info must match the .info.json schema")
     return {
         "spec_updated": data["spec_updated"],
         "new_spec": _normalize_spec_dict(data["new_spec"]) if data["spec_updated"] else None,
@@ -786,8 +794,11 @@ def _validate_caller_info_update(data):
         raise ValueError("caller-info JSON missing required field(s): " + ", ".join(missing))
     if not isinstance(data["info_updated"], bool):
         raise ValueError("caller-info JSON field info_updated must be a boolean")
-    if data["info_updated"] and not isinstance(data["new_info"], dict):
-        raise ValueError("caller-info JSON requires object new_info when info_updated is true")
+    if data["info_updated"]:
+        if not isinstance(data["new_info"], dict):
+            raise ValueError("caller-info JSON requires object new_info when info_updated is true")
+        if not _is_valid_info_json(data["new_info"]):
+            raise ValueError("caller-info JSON new_info must match the .info.json schema")
     return {
         "info_updated": data["info_updated"],
         "new_info": _normalize_info_dict(data["new_info"]) if data["info_updated"] else None,
