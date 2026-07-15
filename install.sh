@@ -158,33 +158,15 @@ if codegraph --version 2>/dev/null | grep -qx "$codegraph_want"; then
     echo "[ok] codegraph $codegraph_want already installed"
 else
     echo "[..] installing codegraph $CODEGRAPH_VERSION from $CODEGRAPH_REPO"
+    codegraph_bin_dir="${CODEGRAPH_BIN_DIR:-$HOME/.local/bin}"
     curl -fsSL "https://raw.githubusercontent.com/$CODEGRAPH_REPO/main/install.sh" \
-      | CODEGRAPH_VERSION="$CODEGRAPH_VERSION" sh
-    command -v codegraph &>/dev/null || { echo "[!!] codegraph install failed"; exit 1; }
-    # If a different codegraph still wins on PATH, tell the user exactly how to
-    # remove it. We never uninstall global software ourselves.
-    if ! codegraph --version 2>/dev/null | grep -qx "$codegraph_want"; then
-        codegraph_now="$(command -v codegraph 2>/dev/null || true)"
-        codegraph_ver="$(codegraph --version 2>/dev/null || echo none)"
-        echo ""
-        echo "=================================================================="
-        echo "  [!!] ACTION REQUIRED - a different codegraph is shadowing ours"
-        echo ""
-        echo "    want : $codegraph_want  (fmagent fork, fixes C name loss)"
-        echo "    found: $codegraph_ver  ->  ${codegraph_now:-<not found>}"
-        echo ""
-        echo "    FM-Agent will silently lose functions until you remove it."
-        echo "    Run the matching command, then re-run ./install.sh :"
-        if command -v bun &>/dev/null && bun pm ls -g 2>/dev/null | grep -q '@colbymchenry/codegraph'; then
-            echo "      bun rm -g @colbymchenry/codegraph"
-        elif command -v npm &>/dev/null && npm ls -g @colbymchenry/codegraph >/dev/null 2>&1; then
-            echo "      npm rm -g @colbymchenry/codegraph"
-        elif [ -n "$codegraph_now" ]; then
-            echo "      rm -f \"$codegraph_now\"     # remove the shadowing launcher"
-        fi
-        echo "=================================================================="
-        echo ""
-    fi
+      | CODEGRAPH_VERSION="$CODEGRAPH_VERSION" CODEGRAPH_BIN_DIR="$codegraph_bin_dir" sh
+    # The installer writes $codegraph_bin_dir/codegraph but can't change this
+    # shell's PATH, so verify by the file (not `command -v`) and then put the dir
+    # on PATH for the rest of setup. If a different codegraph shadows this one, or
+    # the dir is not on your shell PATH, the installer prints how to fix it.
+    [ -x "$codegraph_bin_dir/codegraph" ] || { echo "[!!] codegraph install failed"; exit 1; }
+    case ":$PATH:" in *":$codegraph_bin_dir:"*) ;; *) export PATH="$codegraph_bin_dir:$PATH" ;; esac
 fi
 
 version_ge() {
