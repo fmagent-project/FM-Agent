@@ -1,9 +1,37 @@
+import posixpath
+
+
 LEGACY_GAP_FIELDS = {
     "spec_claim",
     "actual_behavior",
     "code_evidence",
     "trigger_condition",
 }
+
+
+def _extracted_function_identity(path):
+    """Return the stable path below ``extracted_functions/``, if present.
+
+    Legacy verification results stored an absolute path to the extracted
+    function.  An isolated resume copies those results into a newly-created
+    snapshot, so the absolute prefix changes even though the extracted function
+    is the same.  The path below ``extracted_functions/`` is stable across those
+    snapshots and across POSIX/Windows path separators.
+    """
+    if not isinstance(path, str):
+        return None
+
+    normalized = posixpath.normpath(path.replace("\\", "/"))
+    parts = normalized.split("/")
+    try:
+        marker_index = len(parts) - 1 - parts[::-1].index("extracted_functions")
+    except ValueError:
+        return None
+
+    relative_parts = parts[marker_index + 1:]
+    if not relative_parts or any(part in {"", ".", ".."} for part in relative_parts):
+        return None
+    return "/".join(relative_parts)
 
 
 def legacy_result_has_valid_schema(result):
@@ -37,7 +65,15 @@ def legacy_result_has_valid_schema(result):
 
 def legacy_result_is_resumable(result, file_path):
     """Return whether a legacy result is valid for the expected function."""
+    if not legacy_result_has_valid_schema(result):
+        return False
+
+    stored_path = result["function"]
+    if stored_path == file_path:
+        return True
+
+    stored_identity = _extracted_function_identity(stored_path)
     return (
-        legacy_result_has_valid_schema(result)
-        and result["function"] == file_path
+        stored_identity is not None
+        and stored_identity == _extracted_function_identity(file_path)
     )
