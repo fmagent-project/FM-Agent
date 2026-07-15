@@ -376,25 +376,24 @@ class CodeGraphExtractor:
         return dict(result)
 
 
-def _codegraph_env() -> dict:
-    """Return a copy of the environment whose PATH is prepended with the directory
-    FM-Agent installs the pinned codegraph into.
+def _codegraph_cmd() -> str:
+    """Return the codegraph executable to invoke.
 
-    FM-Agent's install.sh installs the fork's fixed codegraph into
-    ``$CODEGRAPH_BIN_DIR`` (default ``~/.local/bin``). That directory is not on
-    the default PATH on macOS (and some Linux setups), and an older codegraph may
-    sit earlier on PATH, so invoking a bare ``codegraph`` could miss the pinned
-    build or a shadowing one could win. Prepending the install dir here — the same
-    approach ``npm run`` uses for ``node_modules/.bin`` — makes the subprocess use
-    the pinned build without touching the user's shell configuration. Operates on
-    a copy so the parent process's environment is never mutated.
+    FM-Agent's install.sh installs the pinned fork build into ``$CODEGRAPH_BIN_DIR``
+    (default ``~/.local/bin``) and keeps that path pointing at the pinned version.
+    Invoking it by absolute path — rather than a bare ``codegraph`` resolved against
+    the user's PATH — means the pinned build is used even when that directory is not
+    on PATH (the macOS default) and a different/older codegraph earlier on PATH
+    cannot shadow it (the pipx/Playwright pattern of running a managed binary from
+    its known location instead of by name). Falls back to a bare ``codegraph`` when
+    the pinned build is absent, so an externally provided codegraph still works; the
+    caller turns a missing binary into the regex-extractor fallback.
     """
-    env = os.environ.copy()
     bin_dir = os.environ.get("CODEGRAPH_BIN_DIR") or os.path.join(
         os.path.expanduser("~"), ".local", "bin"
     )
-    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
-    return env
+    local = os.path.join(bin_dir, "codegraph")
+    return local if os.access(local, os.X_OK) else "codegraph"
 
 
 def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
@@ -429,8 +428,7 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
         print("[Pipeline] Building codegraph index...")
     try:
         result = subprocess.run(
-            ["codegraph", "init"], cwd=proj_dir, capture_output=True, text=True,
-            env=_codegraph_env(),
+            [_codegraph_cmd(), "init"], cwd=proj_dir, capture_output=True, text=True
         )
     except FileNotFoundError:
         return  # codegraph not installed

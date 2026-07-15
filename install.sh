@@ -154,19 +154,17 @@ fi
 CODEGRAPH_REPO="fmagent-project/codegraph"
 CODEGRAPH_VERSION="v1.3.0-fmagent.1"                 # <- switch: bump this one line
 codegraph_want="${CODEGRAPH_VERSION#v}"
-if codegraph --version 2>/dev/null | grep -qx "$codegraph_want"; then
-    echo "[ok] codegraph $codegraph_want already installed"
+codegraph_bin_dir="${CODEGRAPH_BIN_DIR:-$HOME/.local/bin}"
+# Check/install against $codegraph_bin_dir specifically (not a bare `codegraph`
+# that might resolve to a different copy on PATH): FM-Agent invokes codegraph by
+# absolute path from this dir, so this is the location that must hold the pin.
+if [ "$("$codegraph_bin_dir/codegraph" --version 2>/dev/null)" = "$codegraph_want" ]; then
+    echo "[ok] codegraph $codegraph_want already installed in $codegraph_bin_dir"
 else
     echo "[..] installing codegraph $CODEGRAPH_VERSION from $CODEGRAPH_REPO"
-    codegraph_bin_dir="${CODEGRAPH_BIN_DIR:-$HOME/.local/bin}"
     curl -fsSL "https://raw.githubusercontent.com/$CODEGRAPH_REPO/main/install.sh" \
       | CODEGRAPH_VERSION="$CODEGRAPH_VERSION" CODEGRAPH_BIN_DIR="$codegraph_bin_dir" sh
-    # The installer writes $codegraph_bin_dir/codegraph but can't change this
-    # shell's PATH, so verify by the file (not `command -v`) and then put the dir
-    # on PATH for the rest of setup. If a different codegraph shadows this one, or
-    # the dir is not on your shell PATH, the installer prints how to fix it.
     [ -x "$codegraph_bin_dir/codegraph" ] || { echo "[!!] codegraph install failed"; exit 1; }
-    case ":$PATH:" in *":$codegraph_bin_dir:"*) ;; *) export PATH="$codegraph_bin_dir:$PATH" ;; esac
 fi
 
 version_ge() {
