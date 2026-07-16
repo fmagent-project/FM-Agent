@@ -145,12 +145,41 @@ else
     bunx oh-my-openagent install --no-tui --claude=no --gemini=no --copilot=no
 fi
 
-# ---------- codegraph ----------
-if command -v codegraph &>/dev/null; then
-    echo "[ok] codegraph found: $(codegraph --version 2>/dev/null || echo 'unknown version')"
+# ---------- codegraph (pinned via fm-agent.toml [codegraph]) ----------
+# The pinned fork build fixes a C extraction bug in upstream's latest release
+# (a macro attribute + typedef'd return type on a no-arg function is indexed under
+# its parameter list `(VOID)` instead of its name), so tracking upstream silently
+# drops functions. Repo + version come from fm-agent.toml so "which codegraph" is
+# set in one place; bump [codegraph].version there to switch. python3 (>=3.12,
+# checked above) has tomllib, and FM-Agent invokes codegraph by absolute path from
+# $codegraph_bin_dir, so that is the location that must hold the pin.
+_cg="$(python3 - "$SCRIPT_DIR/fm-agent.toml" <<'PY'
+import sys, os, tomllib, pathlib
+c = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())["codegraph"]
+print(c["repo"]); print(c["version"]); print(os.path.expanduser(c["bin_dir"]))
+PY
+)"
+CODEGRAPH_REPO="$(printf '%s\n' "$_cg" | sed -n 1p)"
+CODEGRAPH_VERSION="$(printf '%s\n' "$_cg" | sed -n 2p)"
+_toml_bin_dir="$(printf '%s\n' "$_cg" | sed -n 3p)"
+[ -n "$CODEGRAPH_REPO" ] && [ -n "$CODEGRAPH_VERSION" ] && [ -n "$_toml_bin_dir" ] || {
+    echo "[!!] could not read [codegraph] repo/version/bin_dir from fm-agent.toml"; exit 1; }
+codegraph_want="${CODEGRAPH_VERSION#v}"
+# env override wins over the toml default, matching config.py's env > toml.
+codegraph_bin_dir="${CODEGRAPH_BIN_DIR:-$_toml_bin_dir}"
+# Expand a leading ~ (the toml default is already absolute; a ~-containing env
+# value would otherwise diverge from codegraph.py's os.path.expanduser).
+case "$codegraph_bin_dir" in "~"|"~/"*) codegraph_bin_dir="$HOME${codegraph_bin_dir#\~}";; esac
+if [ "$("$codegraph_bin_dir/codegraph" --version 2>/dev/null)" = "$codegraph_want" ]; then
+    echo "[ok] codegraph $codegraph_want already installed in $codegraph_bin_dir"
 else
-    echo "[..] installing codegraph"
-    bun install -g @colbymchenry/codegraph
+    echo "[..] installing codegraph $CODEGRAPH_VERSION from $CODEGRAPH_REPO"
+    curl -fsSL "https://raw.githubusercontent.com/$CODEGRAPH_REPO/main/install.sh" \
+      | CODEGRAPH_VERSION="$CODEGRAPH_VERSION" CODEGRAPH_BIN_DIR="$codegraph_bin_dir" sh
+    # Verify the pinned VERSION installed, not just that a binary exists: a bad
+    # version/network failure otherwise leaves a stale build in place silently.
+    [ "$("$codegraph_bin_dir/codegraph" --version 2>/dev/null)" = "$codegraph_want" ] \
+      || { echo "[!!] codegraph $codegraph_want install failed"; exit 1; }
 fi
 
 version_ge() {

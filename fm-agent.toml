@@ -31,7 +31,10 @@ command   = "elp"   # ELP_COMMAND
 timeout_s = 180     # ELP_TIMEOUT_SECONDS
 
 [codegraph]
-# Placeholder — not consumed yet. A follow-up will point install.sh (and the
-# codegraph invocation) at these values so the pinned version lives in one place.
+# The pinned codegraph build. install.sh reads these to install it, and the
+# runtime invokes that pinned binary — so this is the single place that decides
+# "which codegraph": bump `version` to switch. The fork build fixes an upstream C
+# extraction bug that otherwise drops macro-decorated functions.
 repo    = "fmagent-project/codegraph"   # CODEGRAPH_REPO
 version = "v1.3.0-fmagent.1"            # CODEGRAPH_VERSION
+bin_dir = "~/.local/bin"                # CODEGRAPH_BIN_DIR — where the codegraph launcher is installed and invoked from

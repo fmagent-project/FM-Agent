@@ -73,6 +73,7 @@ _ENV_MAP: dict[str, tuple[str, str]] = {
     # [codegraph]
     "CODEGRAPH_REPO": ("codegraph", "repo"),
     "CODEGRAPH_VERSION": ("codegraph", "version"),
+    "CODEGRAPH_BIN_DIR": ("codegraph", "bin_dir"),
 }
 
 
@@ -135,11 +136,12 @@ class InjectCfg(_Section):
 
 
 class CodegraphCfg(_Section):
-    # Placeholder for the pinned maintenance-fork build. Nothing reads this yet;
-    # a follow-up will point install.sh (and the codegraph invocation) here so
-    # the version lives in one place. See issue #124.
+    # The pinned maintenance-fork build. install.sh reads these to install it and
+    # the runtime invokes the pinned binary, so this is the single place that
+    # decides "which codegraph" and "where it lives".
     repo: str = "fmagent-project/codegraph"
     version: str = ""
+    bin_dir: str = "~/.local/bin"  # launcher location; install and run must agree
 
 
 class _LayeredSource(PydanticBaseSettingsSource):
