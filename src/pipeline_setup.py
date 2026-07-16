@@ -265,7 +265,33 @@ def _deduplicate_phases(phases_dir):
     changed_modules = []
     for phase in sorted(data["phases"], key=lambda p: p["phase"]):
         for module in phase["modules"]:
-            original = module["source_files"]
+            source_files = module.get("source_files")
+
+            if source_files is None:
+                logging.warning(
+                    "Phase %s module '%s' has missing or null source_files; "
+                    "normalizing it to an empty list",
+                    phase.get("phase"),
+                    module.get("name", ""),
+                )
+                original = []
+            elif not isinstance(source_files, list):
+                raise ValueError(
+                    "Phase "
+                    f"{phase.get('phase')} module "
+                    f"{module.get('name', '')!r} field source_files "
+                    "must be an array or null"
+                )
+            elif not all(isinstance(source_file, str) for source_file in source_files):
+                raise ValueError(
+                    "Phase "
+                    f"{phase.get('phase')} module "
+                    f"{module.get('name', '')!r} field source_files "
+                    "must contain only strings"
+                )
+            else:
+                original = list(source_files)
+
             deduped = []
             for sf in original:
                 if sf not in seen:
