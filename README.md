@@ -192,12 +192,10 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `proj_dir`                  | Directory of codebase that you want to check correctness                                        |
 | `--resume`                  | Continue a previous, interrupted run instead of starting over                                   |
 | `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
-| `--all-bugs`                | Continue reasoning across later checkpoints and independently validate every reported bug candidate. |
+| `--all-bugs`                | Continue reasoning after a mismatch and validate every candidate reported for the function. |
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
-| `--entry-func PATH`         | Analyze only the call graph reachable from the named entry function. |
-| `--end-func PATH [PATH ...]` | Stop entry-mode analysis at one or more named functions. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 
@@ -228,7 +226,9 @@ uv run python main.py <proj_dir> --incremental intent.md --all-bugs
 uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 ```
 
-The option is off by default, preserving the existing one-mismatch-per-function behavior and output. When enabled, reasoning continues across later checkpoints and each candidate is validated independently; incremental mode still returns a sorted unique list of functions with at least one confirmed candidate. In the v1 reasoning model, a single implication check reports at most one mismatch, even though later checkpoints continue to be analyzed.
+The option is off by default. When enabled, FM-Agent continues through later
+reasoning checkpoints, writes one standard mismatch result per candidate, and
+validates each candidate independently.
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
 

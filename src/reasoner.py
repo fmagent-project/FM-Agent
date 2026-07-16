@@ -194,7 +194,6 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
         if all_bugs:
             return {
                 "status": "ERROR",
-                "reasoning_complete": False,
                 "violations": [],
                 "error": error,
             }
@@ -215,62 +214,36 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
             "block_index": i,
             "block_count": len(blocks),
         }
-        try:
-            post_condition = _generate_block_post_condition(
-                block,
-                current_pre,
-                info,
-                language,
-                trace_dir=trace_dir,
-                trace_meta=trace_meta,
-            )
-        except Exception as exc:
-            if all_bugs:
-                return {
-                    "status": "ERROR",
-                    "reasoning_complete": False,
-                    "violations": violations,
-                    "error": f"Failed to generate post-condition for block {i+1}: {exc}",
-                }
-            raise
+        post_condition = _generate_block_post_condition(
+            block,
+            current_pre,
+            info,
+            language,
+            trace_dir=trace_dir,
+            trace_meta=trace_meta,
+        )
         if not post_condition:
             error = f"Failed to generate post-condition for block {i+1}."
             if all_bugs:
-                return {
-                    "status": "ERROR",
-                    "reasoning_complete": False,
-                    "violations": violations,
-                    "error": error,
-                }
+                return {"status": "ERROR", "violations": [], "error": error}
             return error
 
         # Check against spec post-condition if block has terminating statements
         # or if this is the last block (implicit return at end of function)
         is_last_block = (i == len(blocks) - 1)
         if _has_terminating_statement(block, language) or is_last_block:
-            try:
-                passed, stmts, post_cond, reason = _check_post_implies_spec(
-                    block,
-                    post_condition,
-                    spec_post_condition,
-                    info,
-                    language,
-                    trace_dir=trace_dir,
-                    trace_meta=trace_meta,
-                )
-            except Exception as exc:
-                if all_bugs:
-                    return {
-                        "status": "ERROR",
-                        "reasoning_complete": False,
-                        "violations": violations,
-                        "error": f"Failed to check post-condition for block {i+1}: {exc}",
-                    }
-                raise
+            passed, stmts, post_cond, reason = _check_post_implies_spec(
+                block,
+                post_condition,
+                spec_post_condition,
+                info,
+                language,
+                trace_dir=trace_dir,
+                trace_meta=trace_meta,
+            )
             if not passed:
                 if all_bugs:
                     violations.append({
-                        "block_index": i + 1,
                         "statements": stmts,
                         "post_condition": post_cond,
                         "reason": reason,
@@ -289,7 +262,6 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
     if all_bugs:
         return {
             "status": "MISMATCH" if violations else "MATCH",
-            "reasoning_complete": True,
             "violations": violations,
             "error": None,
         }

@@ -171,12 +171,10 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `proj_dir` | 待检测代码库的目录路径 |
 | `--resume` | 续跑上一次中断的运行，而非从头开始 |
 | `--incremental INTENT_FILE` | 以增量模式运行，参数值为描述本次修改目标的意图文件路径。 |
-| `--all-bugs` | 在后续检查点继续推理，并独立验证每个已报告的 Bug 候选。 |
+| `--all-bugs` | 在发现不匹配后继续推理，并验证该函数报告的每个候选 Bug。 |
 | `--domain-knowledge FILE [FILE ...]` | 将额外的 Markdown 领域知识文件复制到本次运行中，并提供给 setup、规约生成和 Bug 验证 Agent。别名：`--knowledge`；可重复传入。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
-| `--entry-func PATH` | 仅分析从指定入口函数可达的调用图。 |
-| `--end-func PATH [PATH ...]` | 在一个或多个指定函数处停止入口模式分析。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 
@@ -207,7 +205,7 @@ uv run python main.py <proj_dir> --incremental intent.md --all-bugs
 uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 ```
 
-该选项默认关闭，因此原有的“每个函数至多报告一个不匹配”行为和输出保持不变。启用后，推理会继续检查后续检查点，并对每个候选 Bug 分别执行验证；增量模式仍返回至少有一个候选被确认的函数所组成的排序去重列表。v1 推理模型中，单次蕴含检查仍至多返回一个不匹配，但后续检查点会继续执行。
+该选项默认关闭。启用后，FM-Agent 会继续检查后续推理检查点，为每个候选写出一个标准 mismatch 结果，并分别执行 Bug 验证。
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
 

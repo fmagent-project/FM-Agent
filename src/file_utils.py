@@ -76,6 +76,7 @@ _TEST_FILE_PATTERNS = [
 # reasoned about even if it lives in a test directory or is named like a test.
 _TEST_FILE_EXEMPTIONS = set()
 
+
 def add_test_file_exemption(rel_path):
     """Exempt a project-relative source path from the test-file heuristics."""
     _TEST_FILE_EXEMPTIONS.add(rel_path.replace('\\', '/'))
@@ -86,109 +87,77 @@ def clear_test_file_exemptions():
     _TEST_FILE_EXEMPTIONS.clear()
 
 
-def _load_json_dict(path, root):
-    from .secure_fs import SecureFilesystemError, load_json as secure_load_json
-
-    try:
-        value = secure_load_json(root, os.path.relpath(path, root))
-        return value if isinstance(value, dict) else None
-    except (OSError, ValueError, UnicodeError, SecureFilesystemError):
+def _all_bugs_candidate_paths(result_path, result):
+    """Return deterministic candidate paths for a complete all-bugs result."""
+    if not isinstance(result, dict) or result.get("all_bugs") is not True:
         return None
+    verdict = result.get("verdict")
+    bug_count = result.get("bug_count")
+    if not isinstance(bug_count, int) or isinstance(bug_count, bool):
+        return None
+    if verdict == "MATCH" and bug_count == 0:
+        return []
+    if verdict != "MISMATCH" or bug_count < 1:
+        return None
+
+    stem, ext = os.path.splitext(result_path)
+    candidates = [f"{stem}.bug-{index:03d}{ext}" for index in range(1, bug_count + 1)]
+    for candidate_path in candidates:
+        try:
+            with open(candidate_path, "r") as f:
+                candidate = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(candidate, dict)
+            or set(candidate) != {"function", "verdict", "gaps"}
+            or not isinstance(candidate.get("function"), str)
+            or candidate.get("verdict") != "MISMATCH"
+            or not isinstance(candidate.get("gaps"), dict)
+        ):
+            return None
+    return candidates
 
 
 def _get_incomplete_verification_files(
-    layer_files,
-    input_dir,
-    output_dir,
-    work_dir,
-    status_by_target=None,
-    all_bugs=False,
+    layer_files, input_dir, output_dir, work_dir, all_bugs=False
 ):
     """Return layer files missing verification or required bug validation output."""
-    from .all_bugs_schema import (
-        VALID_CONFIRMATION_STATUSES,
-        all_bugs_candidate_matches,
-        all_bugs_candidate_paths_are_contained,
-        all_bugs_summary_is_complete,
-        all_bugs_summary_paths_are_contained,
-        resolve_project_relative_path,
-    )
-    from .verification_schema import legacy_result_is_resumable
-
     incomplete = []
-    project_dir = (
-        os.path.dirname(os.path.normpath(work_dir))
-        if os.path.basename(os.path.normpath(work_dir)) == "fm_agent"
-        else work_dir
-    )
     for rel in layer_files:
         result_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
-        result = _load_json_dict(result_path, project_dir)
-        if result is None:
+        try:
+            with open(result_path, "r") as f:
+                result = json.load(f)
+        except (OSError, json.JSONDecodeError):
             incomplete.append(rel)
-            continue
-
-        if (
-            result.get("result_kind") == "function_summary"
-            or result.get("all_bugs") is True
-        ):
-            if not all_bugs:
-                incomplete.append(rel)
-                continue
-            summary_result_file = os.path.relpath(result_path, project_dir).replace(os.sep, "/")
-            if not all_bugs_summary_is_complete(result, summary_result_file):
-                incomplete.append(rel)
-                continue
-
-            if not all_bugs_summary_paths_are_contained(result, project_dir):
-                incomplete.append(rel)
-                continue
-            candidates_complete = True
-            for ordinal, bug in enumerate(result["bugs"], start=1):
-                result_file = bug["result_file"]
-                candidate_path = resolve_project_relative_path(result_file, project_dir)
-                if candidate_path is None:
-                    candidates_complete = False
-                    break
-                candidate = _load_json_dict(candidate_path, project_dir)
-                if not all_bugs_candidate_matches(
-                    candidate,
-                    bug,
-                    summary_result_file,
-                    ordinal,
-                ) or not all_bugs_candidate_paths_are_contained(
-                    candidate,
-                    project_dir,
-                ) or (
-                    status_by_target is None
-                    or status_by_target.get(result_file)
-                    not in VALID_CONFIRMATION_STATUSES
-                ):
-                    candidates_complete = False
-                    break
-            if not candidates_complete:
-                incomplete.append(rel)
             continue
 
         if all_bugs:
-            incomplete.append(rel)
-            continue
-
-        if not legacy_result_is_resumable(
-            result,
-            os.path.join(input_dir, rel),
-        ):
-            incomplete.append(rel)
+            candidates = _all_bugs_candidate_paths(result_path, result)
+            if candidates is None:
+                incomplete.append(rel)
+                continue
+            missing_validation = False
+            for candidate_path in candidates:
+                candidate_rel = os.path.relpath(candidate_path, output_dir)
+                bug_id = os.path.splitext(candidate_rel)[0].replace(os.sep, "--")
+                validation_path = os.path.join(
+                    work_dir, "bug_validation", f"{bug_id}.result.json"
+                )
+                if not _json_file_is_valid(validation_path):
+                    missing_validation = True
+                    break
+            if missing_validation:
+                incomplete.append(rel)
             continue
 
         if result.get("verdict") != "MISMATCH":
             continue
 
-        target_path = os.path.relpath(result_path, project_dir).replace(os.sep, "/")
-        if (
-            status_by_target is None
-            or status_by_target.get(target_path) not in VALID_CONFIRMATION_STATUSES
-        ):
+        bug_id = os.path.splitext(rel)[0].replace(os.sep, "--").replace("/", "--")
+        validation_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
+        if not _json_file_is_valid(validation_path):
             incomplete.append(rel)
     return incomplete
 

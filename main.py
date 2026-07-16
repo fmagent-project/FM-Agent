@@ -16,12 +16,7 @@ from src.file_utils import (
     _get_incomplete_verification_files,
     _is_under_submodules,
 )
-from src.verification import (
-    _collect_current_validation_state,
-    _generate_validation_summary,
-    _guard_verification_results_dir,
-    streaming_reasoner,
-)
+from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.opencode_trace import (
@@ -208,7 +203,6 @@ def run_pipeline(
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    _guard_verification_results_dir(output_dir, work_dir)
     extra_call_edges = load_call_edges(extra_call_edges_path)
 
     # Clean files from the previous run — unless resuming, where we keep all
@@ -294,13 +288,6 @@ def run_pipeline(
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
-        if all_bugs:
-            validation_state = _generate_validation_summary(work_dir)
-            print(
-                "[Pipeline] Confirmed bugs: "
-                f"{validation_state['summary']['total_confirmed']}"
-            )
-            print("[Pipeline] Done.")
         return
 
     # --- Stage 5: Generate topdown layers ---
@@ -383,13 +370,8 @@ def run_pipeline(
                     # All functions in this layer are specced. In only-spec mode
                     # we stop here without running the reasoner/bug validation.
                     if not only_spec:
-                        validation_state = _collect_current_validation_state(work_dir)
                         incomplete_verification = _get_incomplete_verification_files(
-                            layer_files,
-                            input_dir,
-                            output_dir,
-                            work_dir,
-                            status_by_target=validation_state["status_by_target"],
+                            layer_files, input_dir, output_dir, work_dir,
                             all_bugs=all_bugs,
                         )
                         if incomplete_verification:
@@ -501,10 +483,11 @@ def run_pipeline(
     # Print confirmed bug count (skipped in only-spec mode, which runs no
     # reasoning or bug validation).
     if not only_spec:
-        validation_dir = os.path.join(work_dir, "bug_validation")
-        if all_bugs or os.path.lexists(validation_dir):
-            validation_state = _generate_validation_summary(work_dir)
-            confirmed = validation_state["summary"]["total_confirmed"]
+        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
+        if os.path.exists(summary_path):
+            with open(summary_path, "r") as f:
+                summary = json.load(f)
+            confirmed = summary.get("total_confirmed", 0)
             print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
     if only_spec:
@@ -513,7 +496,7 @@ def run_pipeline(
         print("[Pipeline] Done.")
 
 
-def main(argv=None):
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
@@ -599,7 +582,7 @@ def main(argv=None):
         help="optional JSON file, or directory of JSON files, containing "
         "supplemental caller->callee edges.",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args()
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
@@ -641,22 +624,16 @@ def main(argv=None):
     # entry function. Runs directly against the project directory (no worktree
     # isolation or incremental diffing).
     if args.entry_func is not None:
-        entry_kwargs = {
-            "entry_func": args.entry_func,
-            "end_funcs": args.end_func,
-            "resume": resume,
-            "domain_knowledge_files": domain_knowledge_files,
-            "all_bugs": args.all_bugs,
-        }
-        if args.one_phase:
-            entry_kwargs["one_phase"] = True
-        if extra_call_edges_path:
-            entry_kwargs["extra_call_edges_path"] = extra_call_edges_path
-        if args.only_spec:
-            entry_kwargs["only_spec"] = True
         run_entry_pipeline(
             proj_dir,
-            **entry_kwargs,
+            entry_func=args.entry_func,
+            end_funcs=args.end_func,
+            resume=resume,
+            domain_knowledge_files=domain_knowledge_files,
+            one_phase=args.one_phase,
+            extra_call_edges_path=extra_call_edges_path,
+            only_spec=args.only_spec,
+            all_bugs=args.all_bugs,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -707,37 +684,26 @@ def main(argv=None):
             # Incremental mode requires a recorded commit to diff against; without a
             # version.log from a previous run, fall back to the full pipeline.
             if args.incremental and old_commit:
-                incremental_kwargs = {
-                    "domain_knowledge_files": domain_knowledge_files,
-                    "submodules": submodules,
-                    "all_bugs": args.all_bugs,
-                }
-                if args.one_phase:
-                    incremental_kwargs["one_phase"] = True
-                if extra_call_edges_path:
-                    incremental_kwargs["extra_call_edges_path"] = extra_call_edges_path
                 run_incremental_pipeline(
                     run_dir,
                     intent_path,
                     old_commit,
-                    **incremental_kwargs,
+                    domain_knowledge_files=domain_knowledge_files,
+                    submodules=submodules,
+                    one_phase=args.one_phase,
+                    extra_call_edges_path=extra_call_edges_path,
+                    all_bugs=args.all_bugs,
                 )
             else:
-                pipeline_kwargs = {
-                    "resume": resume,
-                    "domain_knowledge_files": domain_knowledge_files,
-                    "submodules": submodules,
-                    "all_bugs": args.all_bugs,
-                }
-                if args.one_phase:
-                    pipeline_kwargs["one_phase"] = True
-                if extra_call_edges_path:
-                    pipeline_kwargs["extra_call_edges_path"] = extra_call_edges_path
-                if args.only_spec:
-                    pipeline_kwargs["only_spec"] = True
                 run_pipeline(
                     run_dir,
-                    **pipeline_kwargs,
+                    resume=resume,
+                    domain_knowledge_files=domain_knowledge_files,
+                    submodules=submodules,
+                    one_phase=args.one_phase,
+                    extra_call_edges_path=extra_call_edges_path,
+                    only_spec=args.only_spec,
+                    all_bugs=args.all_bugs,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
@@ -760,7 +726,3 @@ def main(argv=None):
                     print(f"[Pipeline] Copied results back to {dst_fm}")
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")
-
-
-if __name__ == "__main__":
-    main()
