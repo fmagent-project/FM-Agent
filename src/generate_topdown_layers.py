@@ -6,9 +6,9 @@ from pathlib import Path
 from collections import defaultdict
 from dataclasses import dataclass
 
-from src.chisel_backend import call_edges as chisel_call_edges
 from src.chisel_support import chisel_declared_name
 from src.extract import EXT_TO_LANG, LANG_CONFIG
+from src.languages.chisel import call_edges as chisel_call_edges
 from src.languages.registry import call_edges_all
 
 
