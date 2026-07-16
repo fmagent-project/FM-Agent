@@ -94,27 +94,57 @@ def _extracted_file_to_source_rel(extracted_rel):
     Inverse of the extraction layout: ``src/engine/loader-cpp/loadData.cpp``
     (a function file) -> ``src/engine/loader.cpp`` (the source file). Extraction
     builds the function directory by replacing the source filename's last dot
-    with a hyphen (``loader.cpp`` -> ``loader-cpp``), so we reverse the last
-    hyphen of the directory name.
+    with a hyphen (``loader.cpp`` -> ``loader-cpp``). Member functions keep the
+    class qualifier in the flat filename (``.../loader-cpp/MyClass::method.cpp``),
+    so the ``<base>-<ext>`` directory is the function file's immediate parent; we
+    still locate it by scanning the path components from the right (matching a
+    component that ends in ``-<known extension>``) so the mapping is robust.
     """
-    func_dir = os.path.dirname(extracted_rel)        # src/engine/loader-cpp
-    src_dir = os.path.dirname(func_dir)              # src/engine
-    dir_name = os.path.basename(func_dir)            # loader-cpp
+    parts = extracted_rel.split(os.sep)
+    for i in range(len(parts) - 2, -1, -1):          # skip the trailing func file
+        comp = parts[i]
+        hyphen = comp.rfind("-")
+        if hyphen > 0 and comp[hyphen + 1:] in EXT_TO_LANG:
+            src_dir = os.sep.join(parts[:i])
+            source_base = comp[:hyphen] + "." + comp[hyphen + 1:]
+            return os.path.join(src_dir, source_base) if src_dir else source_base
+    # Fallback: original immediate-parent behaviour (no recognised -ext dir).
+    func_dir = os.path.dirname(extracted_rel)
+    src_dir = os.path.dirname(func_dir)
+    dir_name = os.path.basename(func_dir)
     hyphen = dir_name.rfind("-")
-    if hyphen > 0:
-        source_base = dir_name[:hyphen] + "." + dir_name[hyphen + 1:]
-    else:
-        source_base = dir_name
+    source_base = dir_name[:hyphen] + "." + dir_name[hyphen + 1:] if hyphen > 0 else dir_name
     return os.path.join(src_dir, source_base) if src_dir else source_base
+
+
+def _fqn_to_ident(fqn):
+    """Return a function's class-qualified identifier: the FQN tail after the
+    ``<base>-<ext>`` source-file component.
+
+        src::storage-cpp::LocalStorage::Flush -> LocalStorage::Flush
+        src::checkpoint-cpp::RunCheckpoint     -> RunCheckpoint
+
+    This is exactly the name run_extraction wrote (as the flat filename stem)
+    and _function_spans reports, so trim keeps/removes the right same-name method
+    instead of collapsing LocalStorage::Flush and WriteAheadLog::Flush together.
+    """
+    parts = fqn.split("::")
+    for i in range(len(parts) - 1, -1, -1):
+        comp = parts[i]
+        hyphen = comp.rfind("-")
+        if hyphen > 0 and comp[hyphen + 1:] in EXT_TO_LANG:
+            return "::".join(parts[i + 1:])
+    return parts[-1]
 
 
 def _entry_func_source_rel(entry_func):
     """Map an entry_func FQN back to its source file (project-relative path).
 
-    ``src::engine::loader-cpp::loadData`` -> ``src/engine/loader.cpp``. The FQN's
-    last component is the function name and the second-to-last is the extraction
-    function directory (``loader-cpp``); reuse the extracted-file inverse mapping
-    by treating the ``::``-joined FQN as an extracted-file path.
+    ``src::engine::loader-cpp::loadData`` -> ``src/engine/loader.cpp``;
+    ``src::storage-cpp::LocalStorage::Flush`` -> ``src/storage.cpp``. Reuse the
+    extracted-file inverse mapping by treating the ``::``-joined FQN as an
+    extracted-file path; _extracted_file_to_source_rel finds the ``<base>-<ext>``
+    directory regardless of any class components after it.
     """
     extracted_rel = os.path.join(*entry_func.split("::"))
     return _extracted_file_to_source_rel(extracted_rel).replace(os.sep, "/")
@@ -404,7 +434,7 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
         # Every extractable function, grouped by source file.
         all_by_source = defaultdict(set)
         for fqn in all_fqns:
-            all_by_source[_entry_func_source_rel(fqn)].add(fqn.split("::")[-1])
+            all_by_source[_entry_func_source_rel(fqn)].add(_fqn_to_ident(fqn))
     finally:
         shutil.rmtree(sel_dir, ignore_errors=True)
 
@@ -427,10 +457,10 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
         f"from entry {entry_func}."
     )
 
-    # Map the selected FQNs back to their (source file, function name).
+    # Map the selected FQNs back to their (source file, function identifier).
     keep_by_source = defaultdict(set)
     for fqn in call_graph:
-        keep_by_source[_entry_func_source_rel(fqn)].add(fqn.split("::")[-1])
+        keep_by_source[_entry_func_source_rel(fqn)].add(_fqn_to_ident(fqn))
 
     return all_by_source, keep_by_source
 
