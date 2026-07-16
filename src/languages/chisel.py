@@ -199,6 +199,7 @@ class _CirctBackend:
         return (tuple(_circt_argv()), self.input_path, plugin_record, tuple(records))
 
     def load_graph(self) -> CirctGraph | None:
+        expected_fingerprint = _fingerprint_digest(self.fingerprint())
         for path in self.graph_candidate_paths():
             try:
                 with open(path, "r") as handle:
@@ -207,6 +208,10 @@ class _CirctBackend:
                 continue
             except json.JSONDecodeError:
                 logging.warning("Ignoring corrupt CIRCT graph file: %s", path)
+                continue
+            stored_fingerprint = data.get("project_fingerprint")
+            if stored_fingerprint and stored_fingerprint != expected_fingerprint:
+                logging.info("Ignoring stale CIRCT graph file with mismatched fingerprint: %s", path)
                 continue
             graph = _normalize_graph_payload(data)
             if graph is None:
@@ -1237,10 +1242,21 @@ def _instantiated_module_names(text: str, known_names: set[str]) -> set[str]:
         parts = line.replace("(", " ").replace(")", " ").replace("{", " ").split()
         for idx, token in enumerate(parts[:-1]):
             if token == "new":
-                name = parts[idx + 1]
+                name = _normalize_instantiated_name(parts[idx + 1])
                 if name in known_names:
                     found.add(name)
     return found
+
+
+def _normalize_instantiated_name(name: str) -> str:
+    candidate = name.strip().rstrip(",")
+    for token in ("[", "(", "{"):
+        pos = candidate.find(token)
+        if pos != -1:
+            candidate = candidate[:pos].rstrip()
+    if "." in candidate:
+        candidate = candidate.rsplit(".", 1)[-1]
+    return candidate
 
 
 def _local_declared_names(text: str) -> set[str]:
