@@ -54,9 +54,9 @@ def frozen_worktree(proj_dir, exclude=("fm_agent",), copy_excluded=True):
 
     The snapshot is built through a private index (GIT_INDEX_FILE), so proj_dir's
     real index and working tree are never touched. Falls back to a plain directory
-    copy when proj_dir is not a git repository with a commit. The snapshot exists
-    only for the duration of the context and is removed on both success and error;
-    callers must copy any outputs they need before leaving the context.
+    copy when proj_dir is not a git repository with a commit. The snapshot folder
+    is left in place after the run (including its fm_agent/ outputs); its path is
+    logged so it can be inspected or cleaned up manually.
 
     The `exclude` dirs (the FM-Agent's own workspace) are always kept out of the
     git snapshot commit so it stays clean. When `copy_excluded` is set, they are
@@ -121,14 +121,8 @@ def frozen_worktree(proj_dir, exclude=("fm_agent",), copy_excluded=True):
                 shutil.copytree(src, dst, symlinks=True)
 
     print(f"[Pipeline] Snapshot created at: {wt}")
-    try:
-        yield wt
-    finally:
-        try:
-            if is_git:
-                _git("worktree", "remove", "--force", wt)
-            else:
-                shutil.rmtree(wt, ignore_errors=True)
-        finally:
-            shutil.rmtree(base, ignore_errors=True)
-        print(f"[Pipeline] Snapshot removed: {wt}")
+    print(f"[Pipeline] Snapshot is kept after the run. "
+          f"Remove with: git -C {proj_dir} worktree remove --force {wt}"
+          if is_git else
+          f"[Pipeline] Snapshot is kept after the run. Remove with: rm -rf {wt}")
+    yield wt

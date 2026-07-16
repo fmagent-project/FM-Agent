@@ -298,8 +298,8 @@ class CodeGraphExtractor:
         # codegraph uses 1-indexed lines with an inclusive end_line.
         return [(canonicalize(_bare_function_name(name)), int(start) - 1, int(end) - 1) for name, start, end in rows]
 
-    def get_call_edges(self, lang_key: str):
-        """Return call edges for the language, or None when it was not indexed.
+    def get_call_edges(self, lang_key: str) -> dict:
+        """Return {caller_fqn: {callee_fqn, ...}} for the given language.
 
         Each FQN matches generate_topdown_layers._file_to_fqn for the
         corresponding extracted function (``dir::file-ext::dedup_name``). Edges
@@ -329,12 +329,6 @@ class CodeGraphExtractor:
         # Map every function/method node to its FQN once, using the same per-file
         # dedup as get_functions_by_file, then resolve edges by node id.
         fqn_of = _node_fqn_map(cur, cg_langs)
-        if not fqn_of:
-            # A successful but empty codegraph index must not suppress the
-            # regex fallback. This occurs for entry-pipeline copies that do not
-            # contain repository metadata with some codegraph versions.
-            conn.close()
-            return None
 
         result = defaultdict(set)
 
