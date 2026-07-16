@@ -40,7 +40,7 @@ from rich.progress_bar import ProgressBar
 from rich.align import Align
 
 
-STAGES = ["init", "setup_context", "spec_generation", "verification", "bug_validation"]
+STAGES = ["init", "generate_phases_json", "generate_domain_context", "spec_generation", "verification", "bug_validation"]
 CACHE_WINDOW = 200
 LLM_STATUS_WINDOW = 80
 

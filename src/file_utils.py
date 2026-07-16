@@ -182,10 +182,15 @@ def _get_phase_files(phases_data, phase_num, input_dir):
                 subdir = base
             extracted_dir = os.path.join(input_dir, dir_part, subdir)
             if os.path.isdir(extracted_dir):
-                for fname in sorted(os.listdir(extracted_dir)):
-                    fpath = os.path.join(extracted_dir, fname)
-                    if os.path.isfile(fpath):
-                        phase_files.append(os.path.relpath(fpath, input_dir))
+                # Every extracted function is a flat file directly in
+                # extracted_dir, member functions keeping the class qualifier in
+                # the name (<file>-cpp/LocalStorage::Flush.cpp). os.walk stays
+                # robust to any legacy nested file.
+                for root, _dirs, fnames in os.walk(extracted_dir):
+                    for fname in sorted(fnames):
+                        fpath = os.path.join(root, fname)
+                        if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
+                            phase_files.append(os.path.relpath(fpath, input_dir))
     return phase_files
 
 

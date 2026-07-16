@@ -147,7 +147,7 @@ def run_spec_generation_and_verification(
         )
 
         for layer_idx in range(total_layers):
-            print(f"[Pipeline] Stage 4/4: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
+            print(f"[Pipeline] Stage 6/6: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
 
             # Generate batch prompts for this layer. On resume, skip functions
             # that were already specced in a previous run.
@@ -270,18 +270,18 @@ def run_spec_generation_and_verification(
                 if attempt < OPENCODE_MAX_RETRIES:
                     delay = 10
                     print(
-                        f"[Pipeline] Stage 4 Phase {phase_num} Layer {layer_idx} produced no specs "
+                        f"[Pipeline] Stage 6 Phase {phase_num} Layer {layer_idx} produced no specs "
                         f"(attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
                         f"Retrying in {delay}s..."
                     )
                     logging.warning(
-                        f"Stage 4 Phase {phase_num} Layer {layer_idx} attempt {attempt} failed: "
+                        f"Stage 6 Phase {phase_num} Layer {layer_idx} attempt {attempt} failed: "
                         f"no specs generated. Retrying in {delay}s."
                     )
                     time.sleep(delay)
                 else:
                     print(
-                        f"[Pipeline] ERROR: Stage 4 Phase {phase_num} Layer {layer_idx} failed "
+                        f"[Pipeline] ERROR: Stage 6 Phase {phase_num} Layer {layer_idx} failed "
                         f"after {OPENCODE_MAX_RETRIES} attempts. "
                         f"No specs were generated. "
                         f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
@@ -291,5 +291,4 @@ def run_spec_generation_and_verification(
         # Mark all files from this phase as processed for subsequent phases
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
-
 

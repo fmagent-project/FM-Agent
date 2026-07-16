@@ -753,6 +753,16 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         os.makedirs(out_dir, exist_ok=True)
 
         for func_name, func_source in funcs:
+            # A class-qualified identifier ("LocalStorage::Flush") is written as a
+            # single flat file that keeps the "::" in its name
+            # ("LocalStorage::Flush.ext"). generate_topdown_layers._file_to_fqn
+            # rebuilds the FQN by joining the path components with "::", so the "::"
+            # already inside the filename yields "...-cpp::LocalStorage::Flush",
+            # matching the call-edge FQNs. A bare name (free function, or the regex
+            # fallback which cannot know classes) has no "::" and is written the same
+            # way. ":" is a legal filename character on Linux/macOS (this pipeline
+            # does not target Windows extraction). _safe_filename keeps the "::",
+            # maps "/" -> "_", and falls back to "_function" for empty names.
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
 
             # Skip only when the file already has both [SPEC] and [INFO] blocks
