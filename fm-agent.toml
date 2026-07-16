@@ -5,11 +5,12 @@
 # trailing comment. Secrets (the LLM API key) stay in .env — never here.
 
 [llm]
-name     = "anthropic/claude-sonnet-4.6"     # LLM_MODEL
-provider = "openrouter"                        # OPENCODE_MODEL_PROVIDER — must match a provider in ~/.config/opencode/opencode.json
-base_url = "https://openrouter.ai/api/v1"      # LLM_API_BASE_URL
-backend  = "opencode"                          # FM_AGENT_MODEL_BACKEND — opencode | auto | codex-cli | claude-cli
-effort   = ""                                  # LLM_EFFORT — reasoning-effort hint ("", low, medium, high)
+name      = "anthropic/claude-sonnet-4.6"    # LLM_MODEL
+provider  = "openrouter"                       # OPENCODE_MODEL_PROVIDER — the OpenCode provider id FM-Agent generates
+base_url  = "https://openrouter.ai/api/v1"     # LLM_API_BASE_URL
+backend   = "opencode"                         # FM_AGENT_MODEL_BACKEND — opencode | auto | codex-cli | claude-cli
+effort    = ""                                 # LLM_EFFORT — reasoning-effort hint ("", low, medium, high)
+api_style = "openai"                            # LLM_API_STYLE — endpoint style for the OpenCode adapter: openai | anthropic
 
 [runtime]
 max_workers                = 10    # MAX_WORKERS

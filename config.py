@@ -49,6 +49,7 @@ _ENV_MAP: dict[str, tuple[str, str]] = {
     "LLM_MODEL": ("llm", "name"),
     "LLM_EFFORT": ("llm", "effort"),
     "OPENCODE_MODEL_PROVIDER": ("llm", "provider"),
+    "LLM_API_STYLE": ("llm", "api_style"),
     # [runtime]
     "MAX_SPC_ITER": ("runtime", "max_spec_iter"),
     "GRANULARITY": ("runtime", "granularity"),
@@ -87,6 +88,10 @@ class LLMCfg(_Section):
     name: str = "anthropic/claude-sonnet-4.6"
     effort: str = ""
     provider: str = "openrouter"
+    # Endpoint API style, used to pick the OpenCode SDK adapter when FM-Agent
+    # injects the provider block: "openai" -> @ai-sdk/openai-compatible (most
+    # relays: OpenRouter, DeepSeek, …), "anthropic" -> @ai-sdk/anthropic.
+    api_style: str = "openai"
 
 
 class RuntimeCfg(_Section):

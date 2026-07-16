@@ -1,10 +1,11 @@
+import json
 import logging
 import os
 import subprocess
 import threading
 from dataclasses import dataclass
 
-from config import OPENCODE_TIMEOUT_SECONDS
+from config import OPENCODE_TIMEOUT_SECONDS, settings
 from .cli_backend import command_argv, command_display, command_stdin
 from .trace_writer import (
     new_event_id,
@@ -72,12 +73,55 @@ def _opencode_trace_path(work_dir, event_id):
     return os.path.join(_trace_dir(work_dir), "opencode", f"{event_id}.jsonl")
 
 
+def _opencode_provider_config():
+    """Build an OpenCode ``provider`` block from FM-Agent's own LLM settings.
+
+    This makes ``fm-agent.toml`` the single source of truth for provider / base
+    URL / model: instead of the user hand-writing (and keeping in sync) a
+    provider block in ``~/.config/opencode/opencode.json``, FM-Agent injects an
+    equivalent block into the OpenCode subprocess via ``OPENCODE_CONFIG_CONTENT``.
+    OpenCode merges config sources per-key, so the user's global config (notably
+    its ``plugin`` array) is preserved — only the provider is supplied by us.
+
+    Returns ``None`` when no API key is configured, so a user who authenticates
+    OpenCode some other way keeps their existing behaviour untouched.
+    """
+    if not settings.llm.api_key:
+        return None
+    adapter = (
+        "@ai-sdk/anthropic"
+        if settings.llm.api_style == "anthropic"
+        else "@ai-sdk/openai-compatible"
+    )
+    return {
+        "provider": {
+            settings.llm.provider: {
+                "npm": adapter,
+                "options": {
+                    "baseURL": settings.llm.base_url,
+                    # Resolved by OpenCode from the child env (set below), so the
+                    # key is never written to a config file on disk.
+                    "apiKey": "{env:LLM_API_KEY}",
+                },
+                "models": {settings.llm.name: {}},
+            }
+        }
+    }
+
+
 def _opencode_env(work_dir, event_id):
     env = os.environ.copy()
     trace_dir = os.path.abspath(os.path.join(_trace_dir(work_dir), "opencode"))
     os.makedirs(trace_dir, exist_ok=True)
     env["TRACE_DIR"] = trace_dir
     env["TRACE_FILENAME"] = event_id
+    provider_config = _opencode_provider_config()
+    if provider_config is not None:
+        # Make the resolved key available under LLM_API_KEY so the injected
+        # `{env:LLM_API_KEY}` resolves regardless of where config read it from,
+        # then hand OpenCode the provider block as the highest-precedence source.
+        env["LLM_API_KEY"] = settings.llm.api_key
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(provider_config)
     # subprocess.Popen(cwd=...) chdirs the child but doesn't sync PWD; opencode
     # walks PWD upward looking for AGENTS.md, so without this it picks up the
     # fm-agent repo's own AGENTS.md instead of the target's, baking ~10K bytes
