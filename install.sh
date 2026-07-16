@@ -4,19 +4,24 @@ set -euo pipefail
 echo "=== fm-agent: installing required software ==="
 
 INSTALL_ERLANG_SUPPORT=0
+INSTALL_CHISEL_SUPPORT=0
 for arg in "$@"; do
     case "$arg" in
         --with-erlang)
             INSTALL_ERLANG_SUPPORT=1
             ;;
+        --with-chisel)
+            INSTALL_CHISEL_SUPPORT=1
+            ;;
         -h|--help)
-            echo "Usage: ./install.sh [--with-erlang]"
+            echo "Usage: ./install.sh [--with-erlang] [--with-chisel]"
             echo "  --with-erlang  Install/verify Erlang/OTP 26+, rebar3 3.24.0+, and ELP"
+            echo "  --with-chisel  Install/verify CIRCT firtool and the FM-Agent Chisel CIRCT pass plugin"
             exit 0
             ;;
         *)
             echo "[!!] unknown option: $arg"
-            echo "Usage: ./install.sh [--with-erlang]"
+            echo "Usage: ./install.sh [--with-erlang] [--with-chisel]"
             exit 1
             ;;
     esac
@@ -214,6 +219,61 @@ print(max(candidates)[2])
     export PATH="$HOME/.local/bin:$PATH"
 }
 
+install_circt_and_chisel_tool() {
+    local circt_root circt_src circt_build tool_build repo_root parallel_jobs
+    circt_root="${FM_AGENT_CIRCT_ROOT:-$HOME/.cache/fm-agent/circt}"
+    circt_src="$circt_root/src"
+    circt_build="$circt_root/build"
+    tool_build="$circt_root/fm-agent-chisel-build"
+    repo_root="$SCRIPT_DIR"
+    parallel_jobs="${FM_AGENT_CIRCT_JOBS:-1}"
+
+    command -v git &>/dev/null || { echo "[!!] git is required for CIRCT support"; exit 1; }
+    command -v cmake &>/dev/null || { echo "[!!] cmake is required for CIRCT support"; exit 1; }
+    command -v ninja &>/dev/null || { echo "[!!] ninja is required for CIRCT support"; exit 1; }
+    command -v clang++ &>/dev/null || { echo "[!!] clang++ is required for CIRCT support"; exit 1; }
+
+    mkdir -p "$circt_root"
+    if [[ ! -d "$circt_src/.git" ]]; then
+        echo "[..] cloning llvm/circt"
+        git clone --depth 1 --recursive --shallow-submodules https://github.com/llvm/circt.git "$circt_src"
+    else
+        echo "[ok] CIRCT source found: $circt_src"
+    fi
+
+    if [[ ! -f "$circt_build/lib/cmake/circt/CIRCTConfig.cmake" ]]; then
+        echo "[..] configuring CIRCT"
+        cmake -G Ninja "$circt_src/llvm/llvm" -B "$circt_build" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DLLVM_TARGETS_TO_BUILD=host \
+            -DLLVM_ENABLE_PROJECTS=mlir \
+            -DLLVM_EXTERNAL_PROJECTS=circt \
+            -DLLVM_EXTERNAL_CIRCT_SOURCE_DIR="$circt_src"
+    fi
+
+    if [[ ! -x "$circt_build/bin/firtool" || ! -x "$circt_build/bin/circt-opt" ]]; then
+        echo "[..] building CIRCT firtool"
+        ninja -C "$circt_build" -j"$parallel_jobs" bin/firtool
+    fi
+
+    echo "[..] configuring FM-Agent Chisel CIRCT plugin"
+    cmake -G Ninja -S "$repo_root/tools/chisel-circt" -B "$tool_build" \
+        -DCIRCT_DIR="$circt_build/lib/cmake/circt" \
+        -DMLIR_DIR="$circt_build/lib/cmake/mlir" \
+        -DLLVM_DIR="$circt_build/lib/cmake/llvm"
+
+    echo "[..] building FM-Agent Chisel CIRCT plugin"
+    ninja -C "$tool_build" -j"$parallel_jobs" FMAgentChiselCirctPlugin
+
+    mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+    install -m 0755 "$circt_build/bin/firtool" "$HOME/.local/bin/firtool"
+    plugin_path="$(find "$tool_build" -name 'libFMAgentChiselCirctPlugin.so' -o -name 'FMAgentChiselCirctPlugin.so' -o -name 'libFMAgentChiselCirctPlugin.dylib' -o -name 'FMAgentChiselCirctPlugin.dylib' | head -n 1)"
+    [[ -n "$plugin_path" ]] || { echo "[!!] Chisel CIRCT plugin build succeeded but no plugin library was found"; exit 1; }
+    install -m 0755 "$plugin_path" "$HOME/.local/lib/$(basename "$plugin_path")"
+    export PATH="$HOME/.local/bin:$PATH"
+}
+
 if [[ "$INSTALL_ERLANG_SUPPORT" -eq 1 ]]; then
     echo "[..] installing/verifying optional Erlang support"
     os_name="$(uname -s)"
@@ -285,6 +345,18 @@ if [[ "$INSTALL_ERLANG_SUPPORT" -eq 1 ]]; then
     echo "[ok] Erlang/OTP $installed_otp"
     echo "[ok] rebar3 $installed_rebar"
     echo "[ok] $(elp version)"
+fi
+
+if [[ "$INSTALL_CHISEL_SUPPORT" -eq 1 ]]; then
+    echo "[..] installing/verifying optional Chisel/CIRCT support"
+    install_circt_and_chisel_tool
+    command -v firtool &>/dev/null || { echo "[!!] firtool was not installed"; exit 1; }
+    find "$HOME/.local/lib" -maxdepth 1 \( -name 'libFMAgentChiselCirctPlugin.so' -o -name 'FMAgentChiselCirctPlugin.so' -o -name 'libFMAgentChiselCirctPlugin.dylib' -o -name 'FMAgentChiselCirctPlugin.dylib' \) | grep -q . || {
+        echo "[!!] FM-Agent Chisel CIRCT plugin was not installed"
+        exit 1
+    }
+    echo "[ok] firtool installed"
+    echo "[ok] FM-Agent Chisel CIRCT plugin installed"
 fi
 
 echo ""

@@ -5,9 +5,8 @@ import sys
 import shutil
 import logging
 
-from src.chisel_backend import batch_extract as batch_extract_chisel
-from src.chisel_support import CHISEL_EXT_TO_LANG, CHISEL_LANG_CONFIG
 from src.file_utils import is_file_ready, _is_test_file
+from src.languages.chisel import extract_chisel_functions
 from src.languages.codegraph import canonicalize
 from src.languages.registry import batch_extract_all, function_spans_for_file
 
@@ -155,8 +154,21 @@ LANG_CONFIG = {
         },
         "body": "brace",
     },
+    "chisel": {
+        "comment_prefix": "//",
+        "spec_marker": "// [SPEC]",
+        "skip_prefixes": ("//", "/*", "*", "package", "import"),
+        "skip_keywords_line": (),
+        "keywords": {
+            "abstract", "case", "catch", "class", "def", "do", "else", "extends",
+            "final", "finally", "for", "forSome", "if", "implicit", "import", "lazy",
+            "match", "new", "object", "override", "package", "private", "protected",
+            "return", "sealed", "super", "this", "throw", "trait", "try", "type",
+            "val", "var", "while", "with", "yield",
+        },
+        "body": "chisel",
+    },
 }
-LANG_CONFIG.update(CHISEL_LANG_CONFIG)
 
 # Map file extensions to language keys
 EXT_TO_LANG = {
@@ -170,8 +182,8 @@ EXT_TO_LANG = {
     "js": "javascript", "jsx": "javascript",
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
+    "scala": "chisel", "sc": "chisel",
 }
-EXT_TO_LANG.update(CHISEL_EXT_TO_LANG)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -616,7 +628,6 @@ def extract_functions_from_file(filepath, lang_key):
     elif lang_cfg["body"] == "indent":
         raw_funcs = _extract_functions_indent(lines, lang_cfg)
     elif lang_cfg["body"] == "chisel":
-        from src.chisel_support import extract_chisel_functions
         raw_funcs = extract_chisel_functions(lines, lang_key, lang_cfg)
     else:
         # Semantic-only languages (currently Erlang) are extracted by their
@@ -670,7 +681,6 @@ def _function_spans(filepath, lang_key, proj_dir=None):
         if lang_cfg["body"] == "brace":
             raw_funcs = _extract_functions_brace(norm_lines, lang_key, lang_cfg)
         elif lang_cfg["body"] == "chisel":
-            from src.chisel_support import extract_chisel_functions
             raw_funcs = extract_chisel_functions(norm_lines, lang_key, lang_cfg)
         else:
             raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
@@ -709,10 +719,6 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         os.path.normcase(os.path.normpath(path)): funcs
         for path, funcs in registry_funcs.items()
     }
-    chisel_funcs = {
-        os.path.normcase(os.path.normpath(path)): funcs
-        for path, funcs in batch_extract_chisel(proj_dir).items()
-    }
 
     # Build source file list from phases.json
     source_files = []
@@ -725,10 +731,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     written = 0
     skipped = 0
     errors = []
-    manifest_units = {}
-
     for src_rel in source_files:
-        manifest_units.setdefault(src_rel, [])
         # Skip test files
         if _is_test_file(src_rel):
             if verbose:
@@ -759,10 +762,10 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
 
         registry_key = os.path.normcase(os.path.normpath(src_path))
         if lang_key == "chisel":
-            # Chisel extraction is intentionally conservative: an empty result
-            # means "no hardware module unit here", not "fall back to generic
-            # Scala regex extraction".
-            funcs = chisel_funcs.get(registry_key, [])
+            # Chisel's registered backend is authoritative: an empty result
+            # means "no hardware module units in this file", not "fall back to
+            # generic top-level declaration extraction".
+            funcs = registry_funcs.get(registry_key, [])
         elif registry_key in registry_funcs:
             funcs = registry_funcs[registry_key]
         else:
