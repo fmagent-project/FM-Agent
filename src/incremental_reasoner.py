@@ -2045,7 +2045,7 @@ def _verify_incremental_functions(
         ]
     if not file_list:
         logging.info("    [verify] no functions require re-verification.")
-        return []
+        return ([], 0) if all_bugs else []
     logging.info("    [verify] running reasoner on %d function(s)...", len(file_list))
 
     # Drop stale verification results so the reasoner re-runs rather than reusing the cached
