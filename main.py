@@ -15,6 +15,7 @@ from src.file_utils import (
     _json_file_is_valid,
     _get_incomplete_verification_files,
     _is_under_submodules,
+    _ensure_resume_mode_compatible,
 )
 from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
@@ -216,6 +217,8 @@ def run_pipeline(
             resume = False
     else:
         _clean_previous_run(work_dir)
+    if resume and not only_spec:
+        _ensure_resume_mode_compatible(output_dir, all_bugs)
     os.makedirs(work_dir, exist_ok=True)
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
@@ -510,8 +513,9 @@ if __name__ == "__main__":
         "--resume",
         action="store_true",
         help="continue a previous run in <proj_dir>/fm_agent instead of wiping it: "
-        "keeps phases.json, generated specs, and existing verification results; "
-        "only does the remaining work.",
+             "keeps phases.json, generated specs, and existing verification results; "
+             "only does the remaining work. Repeat --all-bugs when resuming an "
+             "all-bugs run.",
     )
     parser.add_argument(
         "--incremental",

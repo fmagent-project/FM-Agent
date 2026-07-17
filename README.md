@@ -235,10 +235,12 @@ bug validation.
 For a result such as `path/to/function.json`, all-bugs candidates are written
 beside it as `path/to/function.bug-001.json`, `bug-002.json`, and so on. The
 primary result records `bug_count` and `reasoning_complete`; validation results
-record `candidate_sha256` so `--resume` only reuses validation for unchanged
-candidate content.
+record both a workspace-independent `candidate_sha256` and the exact
+`validated_counterexample`, so `--resume` only reuses a validation that belongs
+to the same candidate and tested the candidate's required counterexample. The
+hash ignores only the transient path before `fm_agent/extracted_functions/`.
 
-By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
+By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work. Resume with the same reasoning mode: an all-bugs workspace requires `--resume --all-bugs`; default-mode resume rejects it so existing candidates and validation records are not mixed with legacy output.
 
 Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces the `[SPEC]` blocks for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
 
@@ -315,7 +317,11 @@ Each confirmed or investigated bug produces a Markdown report containing:
 | Probe Script | The full test script used to confirm the bug |
 | Probe Output | Raw stdout from executing the probe script |
 
-A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results with counts of total reported, confirmed, not confirmed bugs.
+A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results
+with counts of total reported, confirmed, not confirmed bugs. In `--all-bugs`
+mode, the summary additionally reports pending candidates; a missing, corrupt,
+stale, or candidate-mismatched validation is pending instead of disappearing
+from the totals. Default-mode summary behavior is unchanged.
 
 ## Important Notes
 

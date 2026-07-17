@@ -215,14 +215,34 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
             "block_index": i,
             "block_count": len(blocks),
         }
-        post_condition = _generate_block_post_condition(
-            block,
-            current_pre,
-            info,
-            language,
-            trace_dir=trace_dir,
-            trace_meta=trace_meta,
-        )
+        if all_bugs:
+            try:
+                post_condition = _generate_block_post_condition(
+                    block,
+                    current_pre,
+                    info,
+                    language,
+                    trace_dir=trace_dir,
+                    trace_meta=trace_meta,
+                )
+            except Exception as exc:
+                return {
+                    "status": "ERROR",
+                    "violations": violations,
+                    "error": (
+                        f"Failed to generate post-condition for block {i+1}: {exc}"
+                    ),
+                    "reasoning_complete": False,
+                }
+        else:
+            post_condition = _generate_block_post_condition(
+                block,
+                current_pre,
+                info,
+                language,
+                trace_dir=trace_dir,
+                trace_meta=trace_meta,
+            )
         if not post_condition:
             error = f"Failed to generate post-condition for block {i+1}."
             if all_bugs:
@@ -238,21 +258,51 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
         # or if this is the last block (implicit return at end of function)
         is_last_block = (i == len(blocks) - 1)
         if _has_terminating_statement(block, language) or is_last_block:
-            passed, stmts, post_cond, reason = _check_post_implies_spec(
-                block,
-                post_condition,
-                spec_post_condition,
-                info,
-                language,
-                trace_dir=trace_dir,
-                trace_meta=trace_meta,
-            )
+            if all_bugs:
+                try:
+                    (
+                        passed,
+                        stmts,
+                        post_cond,
+                        reason,
+                        counterexample,
+                    ) = _check_post_implies_spec(
+                        block,
+                        post_condition,
+                        spec_post_condition,
+                        info,
+                        language,
+                        trace_dir=trace_dir,
+                        trace_meta=trace_meta,
+                        include_counterexample=True,
+                    )
+                except Exception as exc:
+                    return {
+                        "status": "ERROR",
+                        "violations": violations,
+                        "error": (
+                            "Failed to check post-condition against the "
+                            f"specification for block {i+1}: {exc}"
+                        ),
+                        "reasoning_complete": False,
+                    }
+            else:
+                passed, stmts, post_cond, reason = _check_post_implies_spec(
+                    block,
+                    post_condition,
+                    spec_post_condition,
+                    info,
+                    language,
+                    trace_dir=trace_dir,
+                    trace_meta=trace_meta,
+                )
             if not passed:
                 if all_bugs:
                     violations.append({
                         "statements": stmts,
                         "post_condition": post_cond,
                         "reason": reason,
+                        "counterexample": counterexample,
                     })
                 else:
                     return (

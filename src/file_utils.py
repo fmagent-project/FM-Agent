@@ -104,6 +104,35 @@ def _json_sha256(path):
     return hashlib.sha256(payload).hexdigest()
 
 
+def _candidate_sha256(path):
+    """Hash a candidate without binding it to a transient workspace root."""
+    try:
+        with open(path, "r") as f:
+            candidate = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(candidate, dict) or not isinstance(
+        candidate.get("function"), str
+    ):
+        return None
+
+    normalized = dict(candidate)
+    function_path = candidate["function"].replace("\\", "/")
+    extracted_prefix = "fm_agent/extracted_functions/"
+    prefix_index = function_path.rfind(extracted_prefix)
+    if prefix_index >= 0:
+        function_path = function_path[prefix_index + len(extracted_prefix):]
+    normalized["function"] = function_path
+
+    payload = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _all_bugs_candidate_paths(result_path, result, allow_partial=False):
     """Return deterministic candidate paths for a valid all-bugs result."""
     if not isinstance(result, dict) or result.get("all_bugs") is not True:
@@ -111,10 +140,35 @@ def _all_bugs_candidate_paths(result_path, result, allow_partial=False):
     verdict = result.get("verdict")
     bug_count = result.get("bug_count")
     reasoning_complete = result.get("reasoning_complete", True)
+    primary_function = result.get("function")
+    if not isinstance(primary_function, str) or not primary_function:
+        return None
     if not isinstance(bug_count, int) or isinstance(bug_count, bool):
         return None
     if not isinstance(reasoning_complete, bool):
         return None
+    stem, ext = os.path.splitext(result_path)
+    candidates = [f"{stem}.bug-{index:03d}{ext}" for index in range(1, bug_count + 1)]
+    directory = os.path.dirname(result_path)
+    basename = os.path.basename(stem)
+    sidecar_pattern = re.compile(
+        rf"^{re.escape(basename)}\.bug-\d{{3}}{re.escape(ext)}$"
+    )
+    try:
+        actual_candidates = (
+            sorted(
+                os.path.join(directory, filename)
+                for filename in os.listdir(directory)
+                if sidecar_pattern.fullmatch(filename)
+            )
+            if os.path.isdir(directory)
+            else []
+        )
+    except OSError:
+        return None
+    if actual_candidates != candidates:
+        return None
+
     if not reasoning_complete and not allow_partial:
         return None
     if verdict == "MATCH" and bug_count == 0 and reasoning_complete:
@@ -124,8 +178,6 @@ def _all_bugs_candidate_paths(result_path, result, allow_partial=False):
     if verdict != "MISMATCH" or bug_count < 1:
         return None
 
-    stem, ext = os.path.splitext(result_path)
-    candidates = [f"{stem}.bug-{index:03d}{ext}" for index in range(1, bug_count + 1)]
     for candidate_path in candidates:
         try:
             with open(candidate_path, "r") as f:
@@ -135,27 +187,114 @@ def _all_bugs_candidate_paths(result_path, result, allow_partial=False):
         if (
             not isinstance(candidate, dict)
             or set(candidate) != {"function", "verdict", "gaps"}
-            or not isinstance(candidate.get("function"), str)
+            or candidate.get("function") != primary_function
             or candidate.get("verdict") != "MISMATCH"
             or not isinstance(candidate.get("gaps"), dict)
+            or not isinstance(candidate["gaps"].get("counterexample"), str)
+            or not candidate["gaps"]["counterexample"].strip()
         ):
             return None
     return candidates
 
 
-def _validation_matches_candidate(validation_path, candidate_path):
-    candidate_sha256 = _json_sha256(candidate_path)
+class ResumeModeMismatchError(RuntimeError):
+    """Raised when resume would mix default and all-bugs results."""
+
+
+def _result_reasoning_mode(result):
+    """Return the readable primary result's reasoning mode, if recognizable."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("all_bugs") is True:
+        return "all-bugs"
+    if result.get("verdict") in {"MATCH", "MISMATCH", "ERROR"}:
+        return "default"
+    return None
+
+
+def _ensure_resume_result_mode(result, result_path, all_bugs):
+    """Reject reuse when a primary result belongs to the other reasoning mode."""
+    existing_mode = _result_reasoning_mode(result)
+    requested_mode = "all-bugs" if all_bugs else "default"
+    if existing_mode is not None and existing_mode != requested_mode:
+        existing_label = (
+            "an all-bugs workspace"
+            if existing_mode == "all-bugs"
+            else "a default-mode workspace"
+        )
+        original_command = (
+            "--resume --all-bugs"
+            if existing_mode == "all-bugs"
+            else "--resume without --all-bugs"
+        )
+        raise ResumeModeMismatchError(
+            f"Cannot resume {existing_label} in {requested_mode} mode. "
+            f"Re-run with {original_command}, or omit --resume to start a fresh "
+            f"{requested_mode} run. Existing result: {result_path}"
+        )
+
+
+def _ensure_resume_mode_compatible(output_dir, all_bugs):
+    """Check every readable primary result before a resumed pipeline mutates state."""
+    if not os.path.isdir(output_dir):
+        return
+    for root, _dirs, files in os.walk(output_dir):
+        for filename in files:
+            if (
+                not filename.endswith(".json")
+                or re.search(r"\.bug-\d{3}\.json$", filename)
+            ):
+                continue
+            result_path = os.path.join(root, filename)
+            try:
+                with open(result_path, "r") as f:
+                    result = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            _ensure_resume_result_mode(result, result_path, all_bugs)
+
+
+def _candidate_validation_error(validation_path, candidate_path):
+    """Return why a validation cannot be reused for this candidate, or None."""
+    candidate_sha256 = _candidate_sha256(candidate_path)
     if candidate_sha256 is None:
-        return False
+        return "invalid_candidate"
+    try:
+        with open(candidate_path, "r") as f:
+            candidate = json.load(f)
+        counterexample = candidate["gaps"]["counterexample"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return "invalid_candidate"
+    if not isinstance(counterexample, str) or not counterexample.strip():
+        return "invalid_candidate"
     try:
         with open(validation_path, "r") as f:
             validation = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return False
-    return (
-        isinstance(validation, dict)
-        and validation.get("candidate_sha256") == candidate_sha256
-    )
+        return "missing_or_invalid_result"
+    if not isinstance(validation, dict):
+        return "invalid_result"
+    if validation.get("candidate_sha256") != candidate_sha256:
+        return "candidate_sha_mismatch"
+    status = validation.get("confirmation_status")
+    if status not in {"confirmed", "not_confirmed", "error"}:
+        return "invalid_result"
+    if "validated_counterexample" not in validation:
+        return "candidate_binding_mismatch"
+    validated_counterexample = validation.get("validated_counterexample")
+    if validated_counterexample is not None and not isinstance(
+        validated_counterexample, str
+    ):
+        return "candidate_binding_mismatch"
+    if validated_counterexample != counterexample:
+        return "candidate_binding_mismatch"
+    if validation.get("validation_error") == "candidate_binding_mismatch":
+        return "candidate_binding_mismatch"
+    return None
+
+
+def _validation_matches_candidate(validation_path, candidate_path):
+    return _candidate_validation_error(validation_path, candidate_path) is None
 
 
 def _get_incomplete_verification_files(
@@ -171,6 +310,8 @@ def _get_incomplete_verification_files(
         except (OSError, json.JSONDecodeError):
             incomplete.append(rel)
             continue
+
+        _ensure_resume_result_mode(result, result_path, all_bugs)
 
         if all_bugs:
             candidates = _all_bugs_candidate_paths(result_path, result)

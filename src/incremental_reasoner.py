@@ -54,6 +54,7 @@ from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import try_codegraph_init
 from .verification import (
     EXT_TO_LANG as _VERIFY_EXT_TO_LANG,
+    _generate_all_bugs_validation_summary,
     _generate_validation_summary,
     _validate_single_bug,
     _validation_status,
@@ -2125,7 +2126,7 @@ def _verify_incremental_functions(
                 except Exception:
                     logging.exception("Bug validation failed for %s", target_rel)
 
-        _generate_validation_summary(work_dir)
+        _generate_all_bugs_validation_summary(work_dir)
         confirmed_functions = set()
         confirmed_bug_count = 0
         for function_rel, target_rel in validation_targets:
