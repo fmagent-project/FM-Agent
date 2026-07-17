@@ -1,5 +1,6 @@
-import os
+import hashlib
 import json
+import os
 import re
 
 
@@ -87,16 +88,39 @@ def clear_test_file_exemptions():
     _TEST_FILE_EXEMPTIONS.clear()
 
 
-def _all_bugs_candidate_paths(result_path, result):
-    """Return deterministic candidate paths for a complete all-bugs result."""
+def _json_sha256(path):
+    """Return a stable digest for a JSON artifact, or None if it is unreadable."""
+    try:
+        with open(path, "r") as f:
+            value = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _all_bugs_candidate_paths(result_path, result, allow_partial=False):
+    """Return deterministic candidate paths for a valid all-bugs result."""
     if not isinstance(result, dict) or result.get("all_bugs") is not True:
         return None
     verdict = result.get("verdict")
     bug_count = result.get("bug_count")
+    reasoning_complete = result.get("reasoning_complete", True)
     if not isinstance(bug_count, int) or isinstance(bug_count, bool):
         return None
-    if verdict == "MATCH" and bug_count == 0:
+    if not isinstance(reasoning_complete, bool):
+        return None
+    if not reasoning_complete and not allow_partial:
+        return None
+    if verdict == "MATCH" and bug_count == 0 and reasoning_complete:
         return []
+    if verdict == "ERROR" and bug_count == 0 and not reasoning_complete:
+        return [] if allow_partial else None
     if verdict != "MISMATCH" or bug_count < 1:
         return None
 
@@ -117,6 +141,21 @@ def _all_bugs_candidate_paths(result_path, result):
         ):
             return None
     return candidates
+
+
+def _validation_matches_candidate(validation_path, candidate_path):
+    candidate_sha256 = _json_sha256(candidate_path)
+    if candidate_sha256 is None:
+        return False
+    try:
+        with open(validation_path, "r") as f:
+            validation = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(validation, dict)
+        and validation.get("candidate_sha256") == candidate_sha256
+    )
 
 
 def _get_incomplete_verification_files(
@@ -145,7 +184,9 @@ def _get_incomplete_verification_files(
                 validation_path = os.path.join(
                     work_dir, "bug_validation", f"{bug_id}.result.json"
                 )
-                if not _json_file_is_valid(validation_path):
+                if not _validation_matches_candidate(
+                    validation_path, candidate_path
+                ):
                     missing_validation = True
                     break
             if missing_validation:

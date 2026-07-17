@@ -2,7 +2,7 @@ import config
 from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL
 from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
-from .file_utils import _all_bugs_candidate_paths, is_file_ready
+from .file_utils import _all_bugs_candidate_paths, _json_sha256, is_file_ready
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
 from .llm_client import build_llm_cli_command
 from .domain_knowledge import (
@@ -13,6 +13,7 @@ from .domain_knowledge import (
 import os
 import re
 import json
+import glob
 import time
 import logging
 import subprocess
@@ -287,6 +288,80 @@ def _clear_candidate_files(output_path):
                 pass
 
 
+def _candidate_snapshot(output_path):
+    directory = os.path.dirname(output_path)
+    stem = os.path.splitext(os.path.basename(output_path))[0]
+    pattern = re.compile(rf"^{re.escape(stem)}\.bug-\d{{3}}\.json$")
+    snapshot = {}
+    if not os.path.isdir(directory):
+        return snapshot
+    for filename in os.listdir(directory):
+        if not pattern.fullmatch(filename):
+            continue
+        path = os.path.join(directory, filename)
+        digest = _json_sha256(path)
+        if digest is not None:
+            snapshot[path] = digest
+    return snapshot
+
+
+def _clear_bug_validation_artifacts(work_dir, bug_id):
+    validation_dir = os.path.join(work_dir, "bug_validation")
+    paths = [
+        os.path.join(validation_dir, f"{bug_id}.result.json"),
+        os.path.join(validation_dir, f"{bug_id}.md"),
+        os.path.join(validation_dir, f"bug_validator_{bug_id}.md"),
+    ]
+    paths.extend(
+        glob.glob(
+            os.path.join(validation_dir, f"probe_{glob.escape(bug_id)}.*")
+        )
+    )
+    for path in paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    try:
+        os.remove(os.path.join(validation_dir, "summary.json"))
+    except OSError:
+        pass
+
+
+def _candidate_bug_id(candidate_path, output_dir):
+    candidate_rel = os.path.relpath(candidate_path, output_dir)
+    return os.path.splitext(candidate_rel)[0].replace(os.sep, "--")
+
+
+def _reconcile_candidate_validation_artifacts(
+    old_snapshot, new_snapshot, output_dir, work_dir
+):
+    for candidate_path, old_digest in old_snapshot.items():
+        if new_snapshot.get(candidate_path) == old_digest:
+            continue
+        _clear_bug_validation_artifacts(
+            work_dir,
+            _candidate_bug_id(candidate_path, output_dir),
+        )
+
+
+def _stamp_candidate_sha256(result_path, candidate_sha256):
+    if candidate_sha256 is None:
+        return
+    try:
+        with open(result_path, "r") as f:
+            record = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(record, dict):
+        return
+    record["candidate_sha256"] = candidate_sha256
+    tmp_path = result_path + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(record, f, ensure_ascii=False)
+    os.replace(tmp_path, result_path)
+
+
 def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False, all_bugs=False):
     """Verify a single file and write the result JSON."""
     # Skip if resuming and a valid result already exists
@@ -304,12 +379,18 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
             pass  # re-verify if existing result is corrupted
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    old_candidate_snapshot = {}
     if all_bugs:
+        old_candidate_snapshot = _candidate_snapshot(output_path)
         _clear_candidate_files(output_path)
 
     try:
         func, spec, knowledge = parse_input_function(file_path)
         if not spec:
+            if all_bugs and work_dir:
+                _reconcile_candidate_validation_artifacts(
+                    old_candidate_snapshot, {}, output_dir, work_dir
+                )
             return file_path, "SKIPPED"
 
         _, spec_post = _parse_spec_conditions(spec)
@@ -335,7 +416,12 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
 
         if all_bugs:
             status = result.get("status", "ERROR")
-            violations = result.get("violations", []) if status == "MISMATCH" else []
+            reasoning_complete = result.get(
+                "reasoning_complete", status in {"MATCH", "MISMATCH"}
+            )
+            violations = result.get("violations", [])
+            if not isinstance(violations, list):
+                violations = []
             candidate_gaps = [
                 {
                     "spec_claim": spec_post or "",
@@ -356,14 +442,22 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 })
                 with open(candidate_path, "w") as f:
                     json.dump(candidate, f, indent=2, ensure_ascii=False)
+            verdict = (
+                "MISMATCH"
+                if candidate_gaps
+                else "MATCH"
+                if status == "MATCH" and reasoning_complete
+                else "ERROR"
+            )
             output = {
                 "function": file_path,
-                "verdict": status,
+                "verdict": verdict,
                 "gaps": candidate_gaps[0] if candidate_gaps else None,
                 "all_bugs": True,
                 "bug_count": len(candidate_gaps),
+                "reasoning_complete": bool(reasoning_complete),
             }
-            if status == "ERROR":
+            if not reasoning_complete or status == "ERROR":
                 output["error"] = result.get("error") or "Reasoning failed."
         elif "passes the verification" in result:
             output = {"function": file_path, "verdict": "MATCH", "gaps": None}
@@ -400,11 +494,23 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
         logging.exception(f"Verification failed for {file_path}")
         output = {"function": file_path, "verdict": "ERROR", "gaps": None, "error": str(exc)}
         if all_bugs:
-            output.update({"all_bugs": True, "bug_count": 0})
+            output.update({
+                "all_bugs": True,
+                "bug_count": 0,
+                "reasoning_complete": False,
+            })
 
     output = _sanitize_strings(output)
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
+
+    if all_bugs and work_dir:
+        _reconcile_candidate_validation_artifacts(
+            old_candidate_snapshot,
+            _candidate_snapshot(output_path),
+            output_dir,
+            work_dir,
+        )
 
     return file_path, output["verdict"]
 
@@ -428,7 +534,9 @@ def _validation_targets(result_json_rel, proj_dir, all_bugs):
             result = json.load(f)
     except (OSError, json.JSONDecodeError):
         return []
-    candidates = _all_bugs_candidate_paths(result_path, result)
+    candidates = _all_bugs_candidate_paths(
+        result_path, result, allow_partial=True
+    )
     if candidates is None:
         return []
     return [os.path.relpath(path, proj_dir) for path in candidates]
@@ -457,6 +565,31 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
         r"\.bug-\d{3}(?=\.json$)", "", result_json_rel
     )
     function_id = function_id_from_result_path(function_result_rel)
+    result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
+    result_path = os.path.join(proj_dir, result_relpath)
+    is_candidate = re.search(r"\.bug-\d{3}(?=\.json$)", result_json_rel) is not None
+    candidate_sha256 = (
+        _json_sha256(os.path.join(proj_dir, result_json_rel))
+        if is_candidate
+        else None
+    )
+
+    # Resume idempotency is content-aware for all-bugs candidates. Legacy
+    # single-result validation keeps its existing compatibility behavior.
+    if resume and os.path.exists(result_path):
+        try:
+            with open(result_path) as _f:
+                existing = json.load(_f)
+            reusable = not is_candidate or (
+                candidate_sha256 is not None
+                and existing.get("candidate_sha256") == candidate_sha256
+            )
+            if reusable:
+                logging.info(f"Bug validation already done, skipping: {bug_id}")
+                return
+        except (json.JSONDecodeError, OSError, AttributeError):
+            pass
+        _clear_bug_validation_artifacts(work_dir, bug_id)
 
     # Read the base bug_validator.md
     base_md_path = os.path.join(script_dir, "md", "bug_validator.md")
@@ -503,17 +636,6 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
         cwd=proj_dir,
         files=[prompt_path],
     )
-    result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
-    result_path = os.path.join(proj_dir, result_relpath)
-    # Resume idempotency: if resuming and this bug was already validated, don't pay for it again.
-    if resume and os.path.exists(result_path):
-        try:
-            with open(result_path) as _f:
-                json.load(_f)
-            logging.info(f"Bug validation already done, skipping: {bug_id}")
-            return
-        except (json.JSONDecodeError, OSError):
-            pass  # corrupted result — re-validate
     try:
         max_attempts = config.BUG_VALIDATION_MAX_RETRIES
         for attempt in range(1, max_attempts + 1):
@@ -548,6 +670,7 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
                 )
 
             if os.path.exists(result_path):
+                _stamp_candidate_sha256(result_path, candidate_sha256)
                 return
 
             if attempt < max_attempts:

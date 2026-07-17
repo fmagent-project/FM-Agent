@@ -192,7 +192,7 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `proj_dir`                  | Directory of codebase that you want to check correctness                                        |
 | `--resume`                  | Continue a previous, interrupted run instead of starting over                                   |
 | `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
-| `--all-bugs`                | Continue reasoning after a mismatch and validate every candidate reported for the function. |
+| `--all-bugs`                | Continue reasoning after a mismatch and report every candidate. Full and incremental modes validate each candidate; entry mode does not run bug validation. |
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
@@ -227,8 +227,16 @@ uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 ```
 
 The option is off by default. When enabled, FM-Agent continues through later
-reasoning checkpoints, writes one standard mismatch result per candidate, and
-validates each candidate independently.
+reasoning checkpoints and writes one standard mismatch result per candidate.
+Full and incremental modes validate each candidate independently. Entry-point
+reasoning reports the candidates and their count but intentionally does not run
+bug validation.
+
+For a result such as `path/to/function.json`, all-bugs candidates are written
+beside it as `path/to/function.bug-001.json`, `bug-002.json`, and so on. The
+primary result records `bug_count` and `reasoning_complete`; validation results
+record `candidate_sha256` so `--resume` only reuses validation for unchanged
+candidate content.
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
 

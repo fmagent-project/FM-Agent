@@ -533,7 +533,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--all-bugs",
         action="store_true",
-        help="continue reasoning after mismatches and validate every reported candidate.",
+        help="continue reasoning after mismatches and report every candidate; "
+        "full and incremental modes validate each candidate.",
     )
     parser.add_argument(
         "--only-spec",

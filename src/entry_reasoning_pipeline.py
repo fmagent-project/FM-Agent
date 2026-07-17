@@ -266,9 +266,9 @@ def run_entry_pipeline(
          the unrelated functions and source files from that copy. ``proj_dir``
          itself is never modified.
       3. Invoke the standard ``run_pipeline`` directly on the run directory:
-         because only the related functions remain, it naturally specs, reasons
-         about, and bug-validates exactly that set, writing results to
-         ``<run_dir>/fm_agent/``.
+         because only the related functions remain, it naturally specs and
+         reasons about exactly that set, writing results to ``<run_dir>/fm_agent/``.
+         Entry reasoning intentionally does not perform bug validation.
       4. Copy the generated ``fm_agent/`` workspace back into ``proj_dir`` and
          discard the run directory. The copy-back runs even when the pipeline
          fails, so partial results are preserved, and any stray edits the
@@ -287,7 +287,8 @@ def run_entry_pipeline(
             ``entry_func`` is selected.
         resume: forwarded directly to the standard pipeline.
         one_phase: forwarded directly to the standard pipeline.
-        all_bugs: forwarded directly to the standard pipeline.
+        all_bugs: report every mismatch candidate while keeping entry-mode bug
+            validation disabled.
         extra_call_edges_path: optional file containing supplemental caller/callee
             edges used for entry reachability and later top-down layer generation.
     """
@@ -296,9 +297,7 @@ def run_entry_pipeline(
 
     proj_dir = os.path.abspath(proj_dir)
     work_dir = os.path.join(proj_dir, "fm_agent")
-    config.BUG_VALIDATION_MAX_RETRIES = (
-        max(1, config.BUG_VALIDATION_MAX_RETRIES) if all_bugs else 0
-    )
+    config.BUG_VALIDATION_MAX_RETRIES = 0
 
     # The entry_func's source file may match the test-file heuristics (a test
     # directory or test-like name). Exempt it so neither the selection extraction

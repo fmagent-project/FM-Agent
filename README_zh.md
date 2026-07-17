@@ -171,7 +171,7 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `proj_dir` | 待检测代码库的目录路径 |
 | `--resume` | 续跑上一次中断的运行，而非从头开始 |
 | `--incremental INTENT_FILE` | 以增量模式运行，参数值为描述本次修改目标的意图文件路径。 |
-| `--all-bugs` | 在发现不匹配后继续推理，并验证该函数报告的每个候选 Bug。 |
+| `--all-bugs` | 在发现不匹配后继续推理并报告每个候选 Bug。完整和增量模式会逐个验证；入口函数模式不执行 Bug Validation。 |
 | `--domain-knowledge FILE [FILE ...]` | 将额外的 Markdown 领域知识文件复制到本次运行中，并提供给 setup、规约生成和 Bug 验证 Agent。别名：`--knowledge`；可重复传入。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
@@ -205,7 +205,9 @@ uv run python main.py <proj_dir> --incremental intent.md --all-bugs
 uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 ```
 
-该选项默认关闭。启用后，FM-Agent 会继续检查后续推理检查点，为每个候选写出一个标准 mismatch 结果，并分别执行 Bug 验证。
+该选项默认关闭。启用后，FM-Agent 会继续检查后续推理检查点，并为每个候选写出一个标准 mismatch 结果。完整和增量模式会分别验证每个候选；入口函数模式只报告候选及其数量，按设计不执行 Bug Validation。
+
+若主结果为 `path/to/function.json`，all-bugs 候选会写在同一目录下，依次命名为 `path/to/function.bug-001.json`、`bug-002.json` 等。主结果通过 `bug_count` 和 `reasoning_complete` 记录候选数量及推理是否完整；验证结果通过 `candidate_sha256` 绑定候选内容，确保 `--resume` 只复用未变化候选的验证结果。
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
 

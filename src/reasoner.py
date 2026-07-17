@@ -196,6 +196,7 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
                 "status": "ERROR",
                 "violations": [],
                 "error": error,
+                "reasoning_complete": False,
             }
         return error
 
@@ -225,7 +226,12 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
         if not post_condition:
             error = f"Failed to generate post-condition for block {i+1}."
             if all_bugs:
-                return {"status": "ERROR", "violations": [], "error": error}
+                return {
+                    "status": "ERROR",
+                    "violations": violations,
+                    "error": error,
+                    "reasoning_complete": False,
+                }
             return error
 
         # Check against spec post-condition if block has terminating statements
@@ -264,6 +270,7 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
             "status": "MISMATCH" if violations else "MATCH",
             "violations": violations,
             "error": None,
+            "reasoning_complete": True,
         }
     return "The function passes the verification. All code blocks satisfy the specification's post-condition."
 
