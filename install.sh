@@ -30,30 +30,6 @@ if [[ -f "$SCRIPT_DIR/.env" ]]; then
     set +a
 fi
 
-# Backend default comes from fm-agent.toml [llm].backend (env > toml > opencode),
-# so the installer picks the same backend the runtime will. Falls back to opencode
-# if python3/tomllib isn't usable yet (a too-old python is rejected just below).
-if _toml_backend="$(python3 - "${FM_AGENT_CONFIG:-$SCRIPT_DIR/fm-agent.toml}" 2>/dev/null <<'PY'
-import sys, tomllib, pathlib
-print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text()).get("llm", {}).get("backend", ""))
-PY
-)"; then :; else _toml_backend=""; fi
-FM_AGENT_MODEL_BACKEND="${FM_AGENT_MODEL_BACKEND:-${_toml_backend:-opencode}}"
-FM_AGENT_MODEL_BACKEND="$(echo "$FM_AGENT_MODEL_BACKEND" | tr '[:upper:]' '[:lower:]')"
-USE_LOCAL_CLI_BACKEND=0
-case "$FM_AGENT_MODEL_BACKEND" in
-    ""|0|false|no|off|opencode|open-code)
-        USE_LOCAL_CLI_BACKEND=0
-        ;;
-    auto|codex|codex-cli|claude|claude-cli)
-        USE_LOCAL_CLI_BACKEND=1
-        ;;
-    *)
-        echo "[!!] unsupported FM_AGENT_MODEL_BACKEND: $FM_AGENT_MODEL_BACKEND"
-        exit 1
-        ;;
-esac
-
 # ---------- Python 3.12+ ----------
 if command -v python3 &>/dev/null; then
     py_ver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
@@ -103,6 +79,44 @@ fi
 # unable to import config.
 echo "[..] installing Python dependencies"
 uv sync --locked
+
+# ---------- read config from the app's own loader ----------
+# Read the settings install.sh needs straight from config.py, so the installer and
+# the runtime share ONE parser, ONE precedence (env > toml), and ONE validation
+# instead of a second hand-rolled TOML reader that could drift. Runs after
+# `uv sync` so pydantic is importable; honors FM_AGENT_CONFIG like the runtime. A
+# missing toml yields built-in defaults; a broken/invalid toml makes config.py
+# abort here with a readable message (set -e stops the install).
+_fmcfg="$(PYTHONPATH="$SCRIPT_DIR" uv run --no-sync python - <<'PY'
+import os
+from config import settings
+print(settings.llm.backend)
+print(settings.codegraph.repo)
+print(settings.codegraph.version)
+print(os.path.expanduser(settings.codegraph.bin_dir))
+PY
+)"
+FM_AGENT_MODEL_BACKEND="$(printf '%s\n' "$_fmcfg" | sed -n 1p | tr '[:upper:]' '[:lower:]')"
+CODEGRAPH_REPO="$(printf '%s\n' "$_fmcfg" | sed -n 2p)"
+CODEGRAPH_VERSION="$(printf '%s\n' "$_fmcfg" | sed -n 3p)"
+codegraph_bin_dir="$(printf '%s\n' "$_fmcfg" | sed -n 4p)"
+
+# Decide whether to set up a local CLI backend or OpenCode. config.py keeps
+# `backend` a free string, so the installer still owns the allow-list of values
+# it knows how to provision.
+USE_LOCAL_CLI_BACKEND=0
+case "$FM_AGENT_MODEL_BACKEND" in
+    ""|0|false|no|off|opencode|open-code)
+        USE_LOCAL_CLI_BACKEND=0
+        ;;
+    auto|codex|codex-cli|claude|claude-cli)
+        USE_LOCAL_CLI_BACKEND=1
+        ;;
+    *)
+        echo "[!!] unsupported FM_AGENT_MODEL_BACKEND: $FM_AGENT_MODEL_BACKEND"
+        exit 1
+        ;;
+esac
 
 # ---------- unzip ----------
 if command -v unzip &>/dev/null; then
@@ -154,33 +168,14 @@ else
 fi
 
 # ---------- codegraph (pinned via fm-agent.toml [codegraph]) ----------
-# repo/version/bin_dir come from fm-agent.toml (bump [codegraph].version to switch);
-# the pinned fork build fixes an upstream C extraction bug that otherwise drops
-# macro-decorated functions. Read with python3's tomllib (needs 3.11+, ensured by
-# the 3.12 check above); FM_AGENT_CONFIG is honored like config.py so install and
-# runtime read the same file.
-_cg_toml="${FM_AGENT_CONFIG:-$SCRIPT_DIR/fm-agent.toml}"
-_cg="$(python3 - "$_cg_toml" <<'PY'
-import sys, os, tomllib, pathlib
-c = tomllib.loads(pathlib.Path(sys.argv[1]).read_text()).get("codegraph", {})
-bin_dir = c.get("bin_dir", "")
-print(c.get("repo", "")); print(c.get("version", ""))
-print(os.path.expanduser(bin_dir) if bin_dir else "")
-PY
-)"
-_toml_repo="$(printf '%s\n' "$_cg" | sed -n 1p)"
-_toml_version="$(printf '%s\n' "$_cg" | sed -n 2p)"
-_toml_bin_dir="$(printf '%s\n' "$_cg" | sed -n 3p)"
-# env overrides the toml value, matching config.py's env > toml (for all three).
-CODEGRAPH_REPO="${CODEGRAPH_REPO:-$_toml_repo}"
-CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-$_toml_version}"
-codegraph_bin_dir="${CODEGRAPH_BIN_DIR:-$_toml_bin_dir}"
+# repo/version/bin_dir were read from config.settings above (env > toml, already
+# ~-expanded); bump [codegraph].version in fm-agent.toml to switch. The pinned fork
+# build fixes an upstream C extraction bug that otherwise drops macro-decorated
+# functions. version has no built-in default (the toml is its only home), so a
+# missing/empty value is a hard error rather than an attempt to install "".
 [ -n "$CODEGRAPH_REPO" ] && [ -n "$CODEGRAPH_VERSION" ] && [ -n "$codegraph_bin_dir" ] || {
-    echo "[!!] could not read [codegraph] repo/version/bin_dir from $_cg_toml"; exit 1; }
+    echo "[!!] [codegraph] repo/version/bin_dir not set in fm-agent.toml"; exit 1; }
 codegraph_want="${CODEGRAPH_VERSION#v}"
-# Expand a leading ~ (the toml default is already absolute; a ~-containing env
-# value would otherwise diverge from codegraph.py's os.path.expanduser).
-case "$codegraph_bin_dir" in "~"|"~/"*) codegraph_bin_dir="$HOME${codegraph_bin_dir#\~}";; esac
 if [ "$("$codegraph_bin_dir/codegraph" --version 2>/dev/null)" = "$codegraph_want" ]; then
     echo "[ok] codegraph $codegraph_want already installed in $codegraph_bin_dir"
 else

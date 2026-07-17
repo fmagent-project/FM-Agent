@@ -3,6 +3,7 @@
 # Precedence (highest wins):  process env  >  .env  >  this file  >  built-in defaults.
 # Each setting is also overridable by the legacy environment variable shown in the
 # trailing comment. Secrets (the LLM API key) stay in .env — never here.
+# What each setting does, with defaults: see docs/configuration.md
 
 [llm]
 name      = "anthropic/claude-sonnet-4.6"    # LLM_MODEL

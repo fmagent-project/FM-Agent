@@ -20,6 +20,7 @@ Set ``FM_AGENT_CONFIG`` to point at an alternate toml file (defaults to
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from pathlib import Path
 from typing import Literal
@@ -166,6 +167,14 @@ class _LayeredSource(PydanticBaseSettingsSource):
         data: dict = {}
         if path.is_file():
             data = tomllib.loads(path.read_text())
+        else:
+            # A missing default fm-agent.toml is tolerated (built-in defaults are
+            # kept identical to it), but warn: it usually means a broken checkout
+            # or a deleted file, and silently using defaults would hide that.
+            print(
+                f"FM-Agent: {path.name} not found at {path}; using built-in defaults.",
+                file=sys.stderr,
+            )
         for env_name, (section, field) in _ENV_MAP.items():
             value = os.environ.get(env_name)
             if value is not None:
@@ -209,9 +218,10 @@ class Settings(BaseSettings):
 
 try:
     settings = Settings()
-except ValidationError as exc:
-    # Fail fast with a readable message instead of a raw pydantic traceback: a bad
-    # value or typo'd key in fm-agent.toml / .env / an env var stops startup here.
+except (ValidationError, tomllib.TOMLDecodeError) as exc:
+    # Fail fast with a readable message instead of a raw traceback: a bad value or
+    # typo'd key (ValidationError) or a syntax error in the toml (TOMLDecodeError)
+    # in fm-agent.toml / .env / an env var stops startup here.
     raise SystemExit(
         f"FM-Agent: invalid configuration (check {_CONFIG_PATH.name}, .env, or the "
         f"matching environment variable)\n{exc}"
