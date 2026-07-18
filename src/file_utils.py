@@ -107,7 +107,7 @@ def _json_sha256(path):
 def _candidate_sha256(path):
     """Hash a candidate without binding it to a transient workspace root."""
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             candidate = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
@@ -180,7 +180,7 @@ def _all_bugs_candidate_paths(result_path, result, allow_partial=False):
 
     for candidate_path in candidates:
         try:
-            with open(candidate_path, "r") as f:
+            with open(candidate_path, "r", encoding="utf-8") as f:
                 candidate = json.load(f)
         except (OSError, json.JSONDecodeError):
             return None
@@ -247,7 +247,7 @@ def _ensure_resume_mode_compatible(output_dir, all_bugs):
                 continue
             result_path = os.path.join(root, filename)
             try:
-                with open(result_path, "r") as f:
+                with open(result_path, "r", encoding="utf-8") as f:
                     result = json.load(f)
             except (OSError, json.JSONDecodeError):
                 continue
@@ -260,7 +260,7 @@ def _candidate_validation_error(validation_path, candidate_path):
     if candidate_sha256 is None:
         return "invalid_candidate"
     try:
-        with open(candidate_path, "r") as f:
+        with open(candidate_path, "r", encoding="utf-8") as f:
             candidate = json.load(f)
         counterexample = candidate["gaps"]["counterexample"]
     except (OSError, json.JSONDecodeError, KeyError, TypeError):
@@ -268,7 +268,7 @@ def _candidate_validation_error(validation_path, candidate_path):
     if not isinstance(counterexample, str) or not counterexample.strip():
         return "invalid_candidate"
     try:
-        with open(validation_path, "r") as f:
+        with open(validation_path, "r", encoding="utf-8") as f:
             validation = json.load(f)
     except (OSError, json.JSONDecodeError):
         return "missing_or_invalid_result"
@@ -305,7 +305,7 @@ def _get_incomplete_verification_files(
     for rel in layer_files:
         result_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
         try:
-            with open(result_path, "r") as f:
+            with open(result_path, "r", encoding="utf-8") as f:
                 result = json.load(f)
         except (OSError, json.JSONDecodeError):
             incomplete.append(rel)

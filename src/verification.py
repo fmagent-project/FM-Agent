@@ -362,7 +362,7 @@ def _finalize_candidate_validation_record(
     if candidate_sha256 is None or candidate_counterexample is None:
         return
     try:
-        with open(result_path, "r") as f:
+        with open(result_path, "r", encoding="utf-8") as f:
             record = json.load(f)
     except (OSError, json.JSONDecodeError):
         return
@@ -386,7 +386,7 @@ def _finalize_candidate_validation_record(
         record["expected_candidate_sha256"] = candidate_sha256
         record["expected_counterexample"] = candidate_counterexample
     tmp_path = result_path + ".tmp"
-    with open(tmp_path, "w") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
     os.replace(tmp_path, result_path)
 
@@ -398,7 +398,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     output_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
     if resume and os.path.exists(output_path):
         try:
-            with open(output_path) as f:
+            with open(output_path, encoding="utf-8") as f:
                 existing = json.load(f)
             _ensure_resume_result_mode(existing, output_path, all_bugs)
             verdict = existing.get("verdict", "ERROR")
@@ -466,12 +466,12 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 _candidate_paths_for_output(output_path, len(candidate_gaps)),
                 candidate_gaps,
             ):
-                candidate = _sanitize_strings({
+                candidate = {
                     "function": file_path,
                     "verdict": "MISMATCH",
                     "gaps": gaps,
-                })
-                with open(candidate_path, "w") as f:
+                }
+                with open(candidate_path, "w", encoding="utf-8") as f:
                     json.dump(candidate, f, indent=2, ensure_ascii=False)
             verdict = (
                 "MISMATCH"
@@ -531,8 +531,9 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 "reasoning_complete": False,
             })
 
-    output = _sanitize_strings(output)
-    with open(output_path, "w") as f:
+    if not all_bugs:
+        output = _sanitize_strings(output)
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
 
     if all_bugs and work_dir:
@@ -561,7 +562,7 @@ def _validation_targets(result_json_rel, proj_dir, all_bugs):
         return [result_json_rel]
     result_path = os.path.join(proj_dir, result_json_rel)
     try:
-        with open(result_path, "r") as f:
+        with open(result_path, "r", encoding="utf-8") as f:
             result = json.load(f)
     except (OSError, json.JSONDecodeError):
         return []
@@ -608,7 +609,7 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     candidate_counterexample = None
     if is_candidate:
         try:
-            with open(candidate_path, "r") as candidate_file:
+            with open(candidate_path, "r", encoding="utf-8") as candidate_file:
                 candidate_record = json.load(candidate_file)
             candidate_counterexample = candidate_record["gaps"]["counterexample"]
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
@@ -653,7 +654,8 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
             "schema below, write these two fields to the result JSON exactly as "
             "shown, for confirmed, not_confirmed, and error results:\n\n"
             f'```json\n{{"candidate_sha256": "{candidate_sha256 or ""}", '
-            f'"validated_counterexample": {json.dumps(candidate_counterexample)}}}\n'
+            f'"validated_counterexample": '
+            f'{json.dumps(candidate_counterexample, ensure_ascii=False)}}}\n'
             "```\n\nThese fields are machine-checked; missing or different values make "
             "the validation non-reusable.\n\n---\n\n"
         )
@@ -678,7 +680,7 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     prompt_path = os.path.join(proj_dir, prompt_filename)
 
     tmp_path = prompt_path + ".tmp"
-    with open(tmp_path, "w") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         f.write(prompt_content)
     os.replace(tmp_path, prompt_path)
 
@@ -782,7 +784,7 @@ def _expected_all_bugs_validation_targets(work_dir):
                 continue
             primary_path = os.path.join(root, filename)
             try:
-                with open(primary_path, "r") as f:
+                with open(primary_path, "r", encoding="utf-8") as f:
                     primary = json.load(f)
             except (OSError, json.JSONDecodeError):
                 continue
@@ -804,7 +806,7 @@ def _pending_all_bugs_validation_record(
     target_rel = os.path.relpath(target_path, results_dir)
     bug_id = os.path.splitext(target_rel)[0].replace(os.sep, "--")
     try:
-        with open(target_path, "r") as f:
+        with open(target_path, "r", encoding="utf-8") as f:
             target = json.load(f)
     except (OSError, json.JSONDecodeError):
         target = {}
@@ -898,7 +900,7 @@ def _generate_all_bugs_validation_summary(work_dir):
         record = None
         if validation_error is None:
             try:
-                with open(result_path, "r") as f:
+                with open(result_path, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
                 if (
                     isinstance(loaded, dict)
@@ -959,7 +961,7 @@ def _generate_all_bugs_validation_summary(work_dir):
 
     summary_path = os.path.join(validation_dir, "summary.json")
     tmp_path = summary_path + ".tmp"
-    with open(tmp_path, "w") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     os.replace(tmp_path, summary_path)
     logging.info(f"Validation summary written to {summary_path}")
