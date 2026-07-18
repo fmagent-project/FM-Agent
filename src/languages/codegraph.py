@@ -122,12 +122,10 @@ def _bare_function_name(name: str) -> str:
             return "operator[]"
         if rest.startswith("()"):
             return "operator()"
-        if rest.startswith("new"):
-            suffix = rest[len("new"):].lstrip()
-            return "operator new[]" if suffix.startswith("[]") else "operator new"
-        if rest.startswith("delete"):
-            suffix = rest[len("delete"):].lstrip()
-            return "operator delete[]" if suffix.startswith("[]") else "operator delete"
+        if re.fullmatch(r'new(?:\s*\[\s*\])?', rest):
+            return "operator new[]" if "[" in rest else "operator new"
+        if re.fullmatch(r'delete(?:\s*\[\s*\])?', rest):
+            return "operator delete[]" if "[" in rest else "operator delete"
 
         symbol = []
         for ch in rest:
