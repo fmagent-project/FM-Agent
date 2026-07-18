@@ -155,7 +155,9 @@ class CodegraphCfg(_Section):
     # the runtime invokes the pinned binary, so this is the single place that
     # decides "which codegraph" and "where it lives".
     repo: str = "fmagent-project/codegraph"
-    version: str = ""
+    # fm-agent.toml is the authoritative source; this default is only the fallback
+    # when the toml is absent. Keep it in sync when bumping the pinned version.
+    version: str = "v1.3.0-fmagent.1"
     bin_dir: str = "~/.local/bin"  # launcher location; install and run must agree
 
 

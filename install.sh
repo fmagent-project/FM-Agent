@@ -23,6 +23,9 @@ for arg in "$@"; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Run from the repo root so `uv sync`/`uv run` target the FM-Agent project and
+# `from config import settings` resolves, regardless of the caller's directory.
+cd "$SCRIPT_DIR"
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
     set -a
     # shellcheck disable=SC1091
@@ -87,7 +90,7 @@ uv sync --locked
 # `uv sync` so pydantic is importable; honors FM_AGENT_CONFIG like the runtime. A
 # missing toml yields built-in defaults; a broken/invalid toml makes config.py
 # abort here with a readable message (set -e stops the install).
-_fmcfg="$(PYTHONPATH="$SCRIPT_DIR" uv run --no-sync python - <<'PY'
+_fmcfg="$(uv run --no-sync python - <<'PY'
 import os
 from config import settings
 print(settings.llm.backend)
@@ -171,8 +174,8 @@ fi
 # repo/version/bin_dir were read from config.settings above (env > toml, already
 # ~-expanded); bump [codegraph].version in fm-agent.toml to switch. The pinned fork
 # build fixes an upstream C extraction bug that otherwise drops macro-decorated
-# functions. version has no built-in default (the toml is its only home), so a
-# missing/empty value is a hard error rather than an attempt to install "".
+# functions. Empty only if explicitly cleared (e.g. CODEGRAPH_VERSION=""), which
+# can't be installed — treat as a hard error.
 [ -n "$CODEGRAPH_REPO" ] && [ -n "$CODEGRAPH_VERSION" ] && [ -n "$codegraph_bin_dir" ] || {
     echo "[!!] [codegraph] repo/version/bin_dir not set in fm-agent.toml"; exit 1; }
 codegraph_want="${CODEGRAPH_VERSION#v}"
