@@ -4,10 +4,8 @@ from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
 from .file_utils import (
     _all_bugs_candidate_paths,
-    _candidate_sha256,
-    _candidate_validation_error,
     _ensure_resume_result_mode,
-    _validation_matches_candidate,
+    _terminal_validation_is_valid,
     is_file_ready,
 )
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
@@ -157,7 +155,11 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                         completed_count += 1
                         rel_path = os.path.relpath(fpath, proj_dir) if proj_dir else os.path.relpath(fpath, input_dir)
                         # Submit bug validation for MISMATCH results; defer printing
-                        if verdict == "MISMATCH" and proj_dir is not None:
+                        if (
+                            verdict == "MISMATCH"
+                            and proj_dir is not None
+                            and config.BUG_VALIDATION_MAX_RETRIES > 0
+                        ):
                             rel = os.path.relpath(fpath, input_dir)
                             result_json_rel = os.path.join(
                                 os.path.relpath(output_dir, proj_dir),
@@ -298,23 +300,6 @@ def _clear_candidate_files(output_path):
                 pass
 
 
-def _candidate_snapshot(output_path):
-    directory = os.path.dirname(output_path)
-    stem = os.path.splitext(os.path.basename(output_path))[0]
-    pattern = re.compile(rf"^{re.escape(stem)}\.bug-\d{{3}}\.json$")
-    snapshot = {}
-    if not os.path.isdir(directory):
-        return snapshot
-    for filename in os.listdir(directory):
-        if not pattern.fullmatch(filename):
-            continue
-        path = os.path.join(directory, filename)
-        digest = _candidate_sha256(path)
-        if digest is not None:
-            snapshot[path] = digest
-    return snapshot
-
-
 def _clear_bug_validation_artifacts(work_dir, bug_id):
     validation_dir = os.path.join(work_dir, "bug_validation")
     paths = [
@@ -338,62 +323,46 @@ def _clear_bug_validation_artifacts(work_dir, bug_id):
         pass
 
 
-def _candidate_bug_id(candidate_path, output_dir):
-    candidate_rel = os.path.relpath(candidate_path, output_dir)
-    return os.path.splitext(candidate_rel)[0].replace(os.sep, "--")
-
-
-def _reconcile_candidate_validation_artifacts(
-    old_snapshot, new_snapshot, output_dir, work_dir
-):
-    for candidate_path, old_digest in old_snapshot.items():
-        if new_snapshot.get(candidate_path) == old_digest:
-            continue
-        _clear_bug_validation_artifacts(
-            work_dir,
-            _candidate_bug_id(candidate_path, output_dir),
+def _clear_function_all_bugs_artifacts(output_path, output_dir, work_dir):
+    """Reset one incomplete function without disturbing completed functions."""
+    if work_dir:
+        validation_dir = os.path.join(work_dir, "bug_validation")
+        result_rel = os.path.relpath(output_path, output_dir)
+        bug_prefix = (
+            os.path.splitext(result_rel)[0]
+            .replace(os.sep, "--")
+            .replace("/", "--")
+            + ".bug-"
         )
+        ordinal = "[0-9][0-9][0-9]"
+        patterns = (
+            f"{glob.escape(bug_prefix)}{ordinal}.result.json",
+            f"{glob.escape(bug_prefix)}{ordinal}.md",
+            f"bug_validator_{glob.escape(bug_prefix)}{ordinal}.md",
+            f"probe_{glob.escape(bug_prefix)}{ordinal}.*",
+        )
+        for pattern in patterns:
+            for path in glob.glob(os.path.join(validation_dir, pattern)):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        try:
+            os.remove(os.path.join(validation_dir, "summary.json"))
+        except OSError:
+            pass
 
-
-def _finalize_candidate_validation_record(
-    result_path, candidate_sha256, candidate_counterexample
-):
-    """Reject terminal validation records that are not bound to the candidate."""
-    if candidate_sha256 is None or candidate_counterexample is None:
-        return
+    _clear_candidate_files(output_path)
     try:
-        with open(result_path, "r", encoding="utf-8") as f:
-            record = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return
-    if not isinstance(record, dict):
-        return
-    binding_errors = []
-    if record.get("candidate_sha256") != candidate_sha256:
-        binding_errors.append("candidate_sha256")
-    if record.get("validated_counterexample") != candidate_counterexample:
-        binding_errors.append("validated_counterexample")
-    if record.get("confirmation_status") not in {
-        "confirmed",
-        "not_confirmed",
-        "error",
-    }:
-        binding_errors.append("confirmation_status")
-    if binding_errors:
-        record["confirmation_status"] = "error"
-        record["validation_error"] = "candidate_binding_mismatch"
-        record["binding_mismatch_fields"] = binding_errors
-        record["expected_candidate_sha256"] = candidate_sha256
-        record["expected_counterexample"] = candidate_counterexample
-    tmp_path = result_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(record, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, result_path)
+        os.remove(output_path)
+    except OSError:
+        pass
 
 
 def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False, all_bugs=False):
     """Verify a single file and write the result JSON."""
-    # Skip if resuming and a valid result already exists
+    # A complete function result is the reasoning checkpoint. Resume never
+    # re-runs it; missing candidate validations are resumed independently.
     rel = os.path.relpath(file_path, input_dir)
     output_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
     if resume and os.path.exists(output_path):
@@ -409,18 +378,19 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
             pass  # re-verify if existing result is corrupted
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    old_candidate_snapshot = {}
     if all_bugs:
-        old_candidate_snapshot = _candidate_snapshot(output_path)
-        _clear_candidate_files(output_path)
+        # Reaching this point means reasoning did not finish cleanly. Discard
+        # only this function's intermediate candidates and validations before
+        # restarting it; completed functions remain untouched.
+        _clear_function_all_bugs_artifacts(
+            output_path,
+            output_dir,
+            work_dir,
+        )
 
     try:
         func, spec, knowledge = parse_input_function(file_path)
         if not spec:
-            if all_bugs and work_dir:
-                _reconcile_candidate_validation_artifacts(
-                    old_candidate_snapshot, {}, output_dir, work_dir
-                )
             return file_path, "SKIPPED"
 
         _, spec_post = _parse_spec_conditions(spec)
@@ -473,13 +443,14 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 }
                 with open(candidate_path, "w", encoding="utf-8") as f:
                     json.dump(candidate, f, indent=2, ensure_ascii=False)
-            verdict = (
-                "MISMATCH"
-                if candidate_gaps
-                else "MATCH"
-                if status == "MATCH" and reasoning_complete
-                else "ERROR"
-            )
+            if not reasoning_complete or status == "ERROR":
+                verdict = "ERROR"
+            elif candidate_gaps:
+                verdict = "MISMATCH"
+            elif status == "MATCH":
+                verdict = "MATCH"
+            else:
+                verdict = "ERROR"
             output = {
                 "function": file_path,
                 "verdict": verdict,
@@ -536,14 +507,6 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
 
-    if all_bugs and work_dir:
-        _reconcile_candidate_validation_artifacts(
-            old_candidate_snapshot,
-            _candidate_snapshot(output_path),
-            output_dir,
-            work_dir,
-        )
-
     return file_path, output["verdict"]
 
 
@@ -566,9 +529,7 @@ def _validation_targets(result_json_rel, proj_dir, all_bugs):
             result = json.load(f)
     except (OSError, json.JSONDecodeError):
         return []
-    candidates = _all_bugs_candidate_paths(
-        result_path, result, allow_partial=True
-    )
+    candidates = _all_bugs_candidate_paths(result_path, result)
     if candidates is None:
         return []
     return [os.path.relpath(path, proj_dir) for path in candidates]
@@ -600,30 +561,14 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
     result_path = os.path.join(proj_dir, result_relpath)
     is_candidate = re.search(r"\.bug-\d{3}(?=\.json$)", result_json_rel) is not None
-    candidate_path = os.path.join(proj_dir, result_json_rel) if is_candidate else None
-    candidate_sha256 = (
-        _candidate_sha256(candidate_path)
-        if is_candidate
-        else None
-    )
-    candidate_counterexample = None
-    if is_candidate:
-        try:
-            with open(candidate_path, "r", encoding="utf-8") as candidate_file:
-                candidate_record = json.load(candidate_file)
-            candidate_counterexample = candidate_record["gaps"]["counterexample"]
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
-            candidate_counterexample = None
 
-    # Candidate resume is content-aware and must run before regenerating the
-    # prompt because stale candidate cleanup removes candidate-specific files.
+    # Candidate resume mirrors the legacy stage checkpoint: a terminal result
+    # finishes this validation stage. Candidate identity is fixed by the
+    # completed reasoning artifacts, so no content hash is needed here.
     if is_candidate and resume and os.path.exists(result_path):
-        try:
-            if _validation_matches_candidate(result_path, candidate_path):
-                logging.info(f"Bug validation already done, skipping: {bug_id}")
-                return
-        except (json.JSONDecodeError, OSError, AttributeError):
-            pass
+        if _terminal_validation_is_valid(result_path):
+            logging.info(f"Bug validation already done, skipping: {bug_id}")
+            return
         _clear_bug_validation_artifacts(work_dir, bug_id)
 
     # Read the base bug_validator.md
@@ -643,32 +588,12 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     else:
         user_knowledge_section = ""
 
-    if is_candidate:
-        candidate_binding_section = (
-            "## Candidate Binding\n\n"
-            f"**Candidate SHA-256:** `{candidate_sha256 or ''}`\n\n"
-            "**Required counterexample (verbatim):**\n\n"
-            f"```text\n{candidate_counterexample or ''}\n```\n\n"
-            "Validate exactly this candidate and this counterexample. Do not replace "
-            "it with another bug in the same function. In addition to the result "
-            "schema below, write these two fields to the result JSON exactly as "
-            "shown, for confirmed, not_confirmed, and error results:\n\n"
-            f'```json\n{{"candidate_sha256": "{candidate_sha256 or ""}", '
-            f'"validated_counterexample": '
-            f'{json.dumps(candidate_counterexample, ensure_ascii=False)}}}\n'
-            "```\n\nThese fields are machine-checked; missing or different values make "
-            "the validation non-reusable.\n\n---\n\n"
-        )
-    else:
-        candidate_binding_section = ""
-
     # Generate a per-file prompt with target file and bug ID header
     prompt_content = (
         "# Bug Validator\n\n"
         f"**Target result file:** `{result_json_rel}`\n"
         f"**Bug ID:** `{bug_id}`\n\n---\n\n"
         + user_knowledge_section
-        + candidate_binding_section
         + base_content
     )
 
@@ -735,13 +660,18 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
                 )
 
             if os.path.exists(result_path):
-                if is_candidate:
-                    _finalize_candidate_validation_record(
-                        result_path,
-                        candidate_sha256,
-                        candidate_counterexample,
-                    )
-                return
+                if not is_candidate or _terminal_validation_is_valid(result_path):
+                    return
+                logging.warning(
+                    "bug_validation wrote a non-terminal result for %s on attempt %d/%d",
+                    bug_id,
+                    attempt,
+                    max_attempts,
+                )
+                try:
+                    os.remove(result_path)
+                except OSError:
+                    pass
 
             if attempt < max_attempts:
                 logging.warning(
@@ -791,9 +721,7 @@ def _expected_all_bugs_validation_targets(work_dir):
             if not isinstance(primary, dict):
                 continue
             if primary.get("all_bugs") is True:
-                candidates = _all_bugs_candidate_paths(
-                    primary_path, primary, allow_partial=True
-                )
+                candidates = _all_bugs_candidate_paths(primary_path, primary)
                 if candidates:
                     targets.extend(candidates)
     return sorted(targets)
@@ -826,8 +754,6 @@ def _pending_all_bugs_validation_record(
         "trigger_summary": gaps.get("trigger_condition", ""),
         "validation_error": validation_error,
     }
-    record["candidate_sha256"] = _candidate_sha256(target_path)
-    record["expected_counterexample"] = gaps.get("counterexample")
     return record
 
 
@@ -896,27 +822,26 @@ def _generate_all_bugs_validation_summary(work_dir):
         bug_id = os.path.splitext(target_rel)[0].replace(os.sep, "--")
         result_path = os.path.join(validation_dir, f"{bug_id}.result.json")
         expected_result_paths.add(os.path.normpath(result_path))
-        validation_error = _candidate_validation_error(result_path, target_path)
         record = None
-        if validation_error is None:
-            try:
-                with open(result_path, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                if (
-                    isinstance(loaded, dict)
-                    and loaded.get("confirmation_status")
-                    in {"confirmed", "not_confirmed", "error"}
-                ):
-                    record = loaded
-                else:
-                    validation_error = "invalid_result"
-            except (OSError, json.JSONDecodeError):
-                validation_error = "missing_or_invalid_result"
+        validation_error = "missing_or_invalid_result"
+        try:
+            with open(result_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if (
+                isinstance(loaded, dict)
+                and loaded.get("confirmation_status")
+                in {"confirmed", "not_confirmed", "error"}
+            ):
+                record = loaded
+            else:
+                validation_error = "invalid_result"
+        except (OSError, json.JSONDecodeError):
+            pass
         if record is None:
             record = _pending_all_bugs_validation_record(
                 target_path,
                 results_dir,
-                validation_error or "missing_or_invalid_result",
+                validation_error,
             )
         bugs.append(record)
 

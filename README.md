@@ -234,11 +234,11 @@ bug validation.
 
 For a result such as `path/to/function.json`, all-bugs candidates are written
 beside it as `path/to/function.bug-001.json`, `bug-002.json`, and so on. The
-primary result records `bug_count` and `reasoning_complete`; validation results
-record both a workspace-independent `candidate_sha256` and the exact
-`validated_counterexample`, so `--resume` only reuses a validation that belongs
-to the same candidate and tested the candidate's required counterexample. The
-hash ignores only the transient path before `fm_agent/extracted_functions/`.
+primary result records `bug_count` and `reasoning_complete`. Resume treats a
+complete primary result as the reasoning checkpoint and only reruns candidate
+validations that do not yet have a terminal result. If reasoning stopped partway
+through, FM-Agent clears that function's intermediate candidates and validations
+and reruns the function without disturbing completed functions.
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work. Resume with the same reasoning mode: an all-bugs workspace requires `--resume --all-bugs`; default-mode resume rejects it so existing candidates and validation records are not mixed with legacy output.
 
@@ -320,8 +320,8 @@ Each confirmed or investigated bug produces a Markdown report containing:
 A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results
 with counts of total reported, confirmed, not confirmed bugs. In `--all-bugs`
 mode, the summary additionally reports pending candidates; a missing, corrupt,
-stale, or candidate-mismatched validation is pending instead of disappearing
-from the totals. Default-mode summary behavior is unchanged.
+or non-terminal validation is pending instead of disappearing from the totals.
+Default-mode summary behavior is unchanged.
 
 ## Important Notes
 

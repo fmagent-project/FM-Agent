@@ -1,3 +1,4 @@
+import config
 from config import (
     MAX_WORKERS,
     OPENCODE_MAX_RETRIES,
@@ -17,7 +18,10 @@ from src.file_utils import (
     _is_under_submodules,
     _ensure_resume_mode_compatible,
 )
-from src.verification import streaming_reasoner
+from src.verification import (
+    _generate_all_bugs_validation_summary,
+    streaming_reasoner,
+)
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.opencode_trace import (
@@ -376,6 +380,9 @@ def run_pipeline(
                         incomplete_verification = _get_incomplete_verification_files(
                             layer_files, input_dir, output_dir, work_dir,
                             all_bugs=all_bugs,
+                            bug_validation_enabled=(
+                                config.BUG_VALIDATION_MAX_RETRIES > 0
+                            ),
                         )
                         if incomplete_verification:
                             logging.info(
@@ -486,6 +493,11 @@ def run_pipeline(
     # Print confirmed bug count (skipped in only-spec mode, which runs no
     # reasoning or bug validation).
     if not only_spec:
+        if all_bugs:
+            # A resumed run may find every function and candidate validation
+            # already complete, so no watcher runs to refresh the persistent
+            # summary. Rebuild it from the current terminal records here.
+            _generate_all_bugs_validation_summary(work_dir)
         summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
         if os.path.exists(summary_path):
             with open(summary_path, "r") as f:
@@ -618,7 +630,6 @@ if __name__ == "__main__":
         )
 
     # ---- pre-flight environment check (shared by all pipeline modes) ----
-    import config
     from src.env_check import run as env_check_run
     if not env_check_run(proj_dir, config):
         sys.exit(0)

@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import re
@@ -88,52 +87,7 @@ def clear_test_file_exemptions():
     _TEST_FILE_EXEMPTIONS.clear()
 
 
-def _json_sha256(path):
-    """Return a stable digest for a JSON artifact, or None if it is unreadable."""
-    try:
-        with open(path, "r") as f:
-            value = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    payload = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _candidate_sha256(path):
-    """Hash a candidate without binding it to a transient workspace root."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            candidate = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(candidate, dict) or not isinstance(
-        candidate.get("function"), str
-    ):
-        return None
-
-    normalized = dict(candidate)
-    function_path = candidate["function"].replace("\\", "/")
-    extracted_prefix = "fm_agent/extracted_functions/"
-    prefix_index = function_path.rfind(extracted_prefix)
-    if prefix_index >= 0:
-        function_path = function_path[prefix_index + len(extracted_prefix):]
-    normalized["function"] = function_path
-
-    payload = json.dumps(
-        normalized,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _all_bugs_candidate_paths(result_path, result, allow_partial=False):
+def _all_bugs_candidate_paths(result_path, result):
     """Return deterministic candidate paths for a valid all-bugs result."""
     if not isinstance(result, dict) or result.get("all_bugs") is not True:
         return None
@@ -169,12 +123,10 @@ def _all_bugs_candidate_paths(result_path, result, allow_partial=False):
     if actual_candidates != candidates:
         return None
 
-    if not reasoning_complete and not allow_partial:
+    if not reasoning_complete:
         return None
     if verdict == "MATCH" and bug_count == 0 and reasoning_complete:
         return []
-    if verdict == "ERROR" and bug_count == 0 and not reasoning_complete:
-        return [] if allow_partial else None
     if verdict != "MISMATCH" or bug_count < 1:
         return None
 
@@ -254,51 +206,29 @@ def _ensure_resume_mode_compatible(output_dir, all_bugs):
             _ensure_resume_result_mode(result, result_path, all_bugs)
 
 
-def _candidate_validation_error(validation_path, candidate_path):
-    """Return why a validation cannot be reused for this candidate, or None."""
-    candidate_sha256 = _candidate_sha256(candidate_path)
-    if candidate_sha256 is None:
-        return "invalid_candidate"
-    try:
-        with open(candidate_path, "r", encoding="utf-8") as f:
-            candidate = json.load(f)
-        counterexample = candidate["gaps"]["counterexample"]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
-        return "invalid_candidate"
-    if not isinstance(counterexample, str) or not counterexample.strip():
-        return "invalid_candidate"
+def _terminal_validation_is_valid(validation_path):
+    """Return whether a bug-validation artifact reached a terminal state."""
     try:
         with open(validation_path, "r", encoding="utf-8") as f:
             validation = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return "missing_or_invalid_result"
+        return False
     if not isinstance(validation, dict):
-        return "invalid_result"
-    if validation.get("candidate_sha256") != candidate_sha256:
-        return "candidate_sha_mismatch"
-    status = validation.get("confirmation_status")
-    if status not in {"confirmed", "not_confirmed", "error"}:
-        return "invalid_result"
-    if "validated_counterexample" not in validation:
-        return "candidate_binding_mismatch"
-    validated_counterexample = validation.get("validated_counterexample")
-    if validated_counterexample is not None and not isinstance(
-        validated_counterexample, str
-    ):
-        return "candidate_binding_mismatch"
-    if validated_counterexample != counterexample:
-        return "candidate_binding_mismatch"
-    if validation.get("validation_error") == "candidate_binding_mismatch":
-        return "candidate_binding_mismatch"
-    return None
-
-
-def _validation_matches_candidate(validation_path, candidate_path):
-    return _candidate_validation_error(validation_path, candidate_path) is None
+        return False
+    return validation.get("confirmation_status") in {
+        "confirmed",
+        "not_confirmed",
+        "error",
+    }
 
 
 def _get_incomplete_verification_files(
-    layer_files, input_dir, output_dir, work_dir, all_bugs=False
+    layer_files,
+    input_dir,
+    output_dir,
+    work_dir,
+    all_bugs=False,
+    bug_validation_enabled=True,
 ):
     """Return layer files missing verification or required bug validation output."""
     incomplete = []
@@ -318,6 +248,8 @@ def _get_incomplete_verification_files(
             if candidates is None:
                 incomplete.append(rel)
                 continue
+            if not bug_validation_enabled:
+                continue
             missing_validation = False
             for candidate_path in candidates:
                 candidate_rel = os.path.relpath(candidate_path, output_dir)
@@ -325,15 +257,15 @@ def _get_incomplete_verification_files(
                 validation_path = os.path.join(
                     work_dir, "bug_validation", f"{bug_id}.result.json"
                 )
-                if not _validation_matches_candidate(
-                    validation_path, candidate_path
-                ):
+                if not _terminal_validation_is_valid(validation_path):
                     missing_validation = True
                     break
             if missing_validation:
                 incomplete.append(rel)
             continue
 
+        if not bug_validation_enabled:
+            continue
         if result.get("verdict") != "MISMATCH":
             continue
 
