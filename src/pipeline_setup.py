@@ -266,7 +266,6 @@ def _deduplicate_phases(phases_dir):
     for phase in sorted(data["phases"], key=lambda p: p["phase"]):
         for module in phase["modules"]:
             original = module["source_files"]
-
             deduped = []
             for sf in original:
                 if sf not in seen:
