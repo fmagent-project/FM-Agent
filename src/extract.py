@@ -6,6 +6,7 @@ import shutil
 import logging
 
 from src.file_utils import is_file_ready, _is_test_file
+from src.languages.chisel import extract_chisel_functions
 from src.languages.codegraph import canonicalize
 from src.languages.registry import batch_extract_all, function_spans_for_file
 
@@ -153,6 +154,20 @@ LANG_CONFIG = {
         },
         "body": "brace",
     },
+    "chisel": {
+        "comment_prefix": "//",
+        "spec_marker": "// [SPEC]",
+        "skip_prefixes": ("//", "/*", "*", "package", "import"),
+        "skip_keywords_line": (),
+        "keywords": {
+            "abstract", "case", "catch", "class", "def", "do", "else", "extends",
+            "final", "finally", "for", "forSome", "if", "implicit", "import", "lazy",
+            "match", "new", "object", "override", "package", "private", "protected",
+            "return", "sealed", "super", "this", "throw", "trait", "try", "type",
+            "val", "var", "while", "with", "yield",
+        },
+        "body": "chisel",
+    },
 }
 
 # Map file extensions to language keys
@@ -167,6 +182,7 @@ EXT_TO_LANG = {
     "js": "javascript", "jsx": "javascript",
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
+    "scala": "chisel", "sc": "chisel",
 }
 
 # ---------------------------------------------------------------------------
@@ -611,6 +627,8 @@ def extract_functions_from_file(filepath, lang_key):
         raw_funcs = _extract_functions_brace(lines, lang_key, lang_cfg)
     elif lang_cfg["body"] == "indent":
         raw_funcs = _extract_functions_indent(lines, lang_cfg)
+    elif lang_cfg["body"] == "chisel":
+        raw_funcs = extract_chisel_functions(lines, lang_key, lang_cfg)
     else:
         # Semantic-only languages (currently Erlang) are extracted by their
         # registered backend and have no reliable file-local fallback.
@@ -662,6 +680,8 @@ def _function_spans(filepath, lang_key, proj_dir=None):
     if raw_funcs is None:
         if lang_cfg["body"] == "brace":
             raw_funcs = _extract_functions_brace(norm_lines, lang_key, lang_cfg)
+        elif lang_cfg["body"] == "chisel":
+            raw_funcs = extract_chisel_functions(norm_lines, lang_key, lang_cfg)
         else:
             raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
 
@@ -711,8 +731,9 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     written = 0
     skipped = 0
     errors = []
-
+    manifest_units = {}
     for src_rel in source_files:
+        manifest_units.setdefault(src_rel, [])
         # Skip test files
         if _is_test_file(src_rel):
             if verbose:
@@ -742,7 +763,12 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
 
         registry_key = os.path.normcase(os.path.normpath(src_path))
-        if registry_key in registry_funcs:
+        if lang_key == "chisel":
+            # Chisel's registered backend is authoritative: an empty result
+            # means "no hardware module units in this file", not "fall back to
+            # generic top-level declaration extraction".
+            funcs = registry_funcs.get(registry_key, [])
+        elif registry_key in registry_funcs:
             funcs = registry_funcs[registry_key]
         else:
             funcs = extract_functions_from_file(src_path, lang_key)
@@ -764,6 +790,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             # does not target Windows extraction). _safe_filename keeps the "::",
             # maps "/" -> "_", and falls back to "_function" for empty names.
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
+            manifest_units[src_rel].append(os.path.relpath(out_file, output_base))
 
             # Skip only when the file already has both [SPEC] and [INFO] blocks
             if not force and os.path.exists(out_file) and is_file_ready(out_file):
@@ -777,6 +804,9 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             written += 1
             if verbose:
                 print(f"  WRITE: {os.path.relpath(out_file, proj_dir)}")
+
+    with open(os.path.join(work_dir, "extracted_units.json"), "w") as f:
+        json.dump({"units": {k: sorted(v) for k, v in manifest_units.items()}}, f, indent=2)
 
     print(f"Extraction complete: {written} written, {skipped} skipped.")
 

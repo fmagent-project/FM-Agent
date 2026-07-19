@@ -119,6 +119,14 @@ Erlang support is optional because its toolchain is not needed for other languag
 
 The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
 
+Chisel support is also optional. To install or verify `firtool` plus the FM-Agent CIRCT pass plugin used by the Chisel backend, run:
+
+```bash
+./install.sh --with-chisel
+```
+
+The Chisel backend uses a real CIRCT FIRRTL pass to build an authoritative module graph. When CIRCT inputs are available, FM-Agent uses CIRCT to identify Chisel hardware modules and module-instantiation edges, then slices source bodies only for the matched module declarations in the CIRCT-reported source files. The current implementation treats `Module`, `RawModule`, `ExtModule`, `BlackBox`, and `MultiIOModule` as supported hardware-module units. Bundles are kept as surrounding source context and are not extracted as standalone units. If CIRCT support is unavailable, FM-Agent falls back to conservative source-based extraction.
+
 (Optional) If needed, you can manually set the default LLM model and API key of OpenCode in its configuration file.
 
 **Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready, and if necessary, specify how to run test cases in `md/bug_validator.md`. If you do not specify, the agent will autonomously decide the execution method.
@@ -300,7 +308,7 @@ A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results w
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
 2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For reusable framework behavior, customize the built-in prompts; for example, if you are reasoning about a compiler, modify `md/bug_validator.md` to instruct the agent to compare outputs against a reference implementation (e.g., GCC).
-3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
+3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang, Chisel. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning. Chisel extraction and module graphs require CIRCT `firtool` plus the FM-Agent Chisel CIRCT pass plugin; when available, CIRCT is authoritative for module identification and module-instantiation edges, and FM-Agent uses source scanning only to materialize the matched Chisel module bodies. If CIRCT support is unavailable, FM-Agent falls back to conservative source-based extraction.
 
 ## Citation
 

@@ -208,6 +208,10 @@ def _is_test_file(rel_path):
     norm_path = rel_path.replace('\\', '/')
     if norm_path in _TEST_FILE_EXEMPTIONS:
         return False
+    ext = norm_path.rsplit(".", 1)[-1].lower() if "." in norm_path else ""
+    if ext in {"scala", "sc"}:
+        from src.chisel_support import is_chisel_test_file
+        return is_chisel_test_file(norm_path)
     parts = norm_path.split('/')
     # Check if any directory component is a known test directory
     for part in parts[:-1]:
