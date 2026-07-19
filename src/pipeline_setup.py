@@ -911,7 +911,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         if os.path.exists(phases_json)
         else []
     )
-    _resume_skip = resume and not phase_plan_errors
+    _resume_skip = resume and _phase_plan_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
