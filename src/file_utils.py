@@ -6,7 +6,6 @@ import re
 _METADATA_SIDECAR_SUFFIXES = (".spec.json", ".info.json")
 
 _SPEC_FIELDS = {
-    "unit",
     "signature",
     "pre_condition",
     "post_condition",

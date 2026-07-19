@@ -117,7 +117,6 @@ def extract_spec_block(filepath: Path) -> Optional[str]:
         return None
 
     return (
-        f"Unit: {spec.get('unit', '')}\n\n"
         f"{spec.get('signature', '')}\n\n"
         f"Pre-condition:\n{spec.get('pre_condition', '')}\n\n"
         f"Post-condition:\n{spec.get('post_condition', '')}"
@@ -350,8 +349,7 @@ def build_prompt(
     lines.append("`<function-file>.spec.json`:")
     lines.append("```json")
     lines.append(
-        '{"unit": "<file path relative to repo root>", '
-        '"signature": "<FunctionName>(<params>) -> <ReturnType>", '
+        '{"signature": "<FunctionName>(<params>) -> <ReturnType>", '
         '"pre_condition": "...", "post_condition": "..."}'
     )
     lines.append("```")

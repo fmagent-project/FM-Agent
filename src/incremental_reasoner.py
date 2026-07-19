@@ -819,7 +819,6 @@ def _validate_module_selection(data):
 def _normalize_spec_dict(spec):
     """Keep only fields supported by a .spec.json sidecar."""
     return {
-        "unit": spec.get("unit", ""),
         "signature": spec.get("signature", ""),
         "pre_condition": spec.get("pre_condition", ""),
         "post_condition": spec.get("post_condition", ""),
@@ -1292,7 +1291,7 @@ def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefi
         "function's behavior after the intended modification. If it remains correct, no "
         "update is needed.\n"
         "2. If it must change, produce the COMPLETE replacement .spec.json object, with "
-        "exactly unit, signature, pre_condition, and post_condition, and NO source code.\n"
+        "exactly signature, pre_condition, and post_condition, and NO source code.\n"
         "3. ONLY if you updated .spec.json AND this function has callees: bring "
         f".info.json into line with this function's CURRENT callees ({callee_hint}). That "
         "means: (a) keep entries whose recorded expectation still matches the callee's role, "
@@ -1505,8 +1504,8 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
         "rules used by this project.\n"
         f"{user_knowledge_step}"
         f"{2 + step_offset}. Produce the COMPLETE .spec.json object describing this "
-        "function's behavior, with exactly unit, signature, pre_condition, and "
-        "post_condition, and NO source code.\n"
+        "function's behavior, with exactly signature, pre_condition, and post_condition, "
+        "and NO source code.\n"
         f"{info_step}"
         f"{4 + step_offset}. Write your answer to `{result_relpath}` as a JSON object with keys:\n"
         '   - "spec_updated": boolean — true because you produced a .spec.json object.\n'

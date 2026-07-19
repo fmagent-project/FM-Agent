@@ -28,7 +28,6 @@ source file.
 
 ```json
 {
-  "unit": "<file path relative to repo root>",
   "signature": "<FunctionName>(<params>) -> <ReturnType>",
   "pre_condition": "<what must hold before the call>",
   "post_condition": "<what the function guarantees after return>"
