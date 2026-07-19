@@ -4,10 +4,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
-from dotenv import load_dotenv
-
-
-load_dotenv()
+from config import settings
 
 
 _BACKEND_ALIASES = {
@@ -37,7 +34,7 @@ def _normalize_backend(value):
 
 
 def resolve_model_backend():
-    backend = _normalize_backend(os.environ.get("FM_AGENT_MODEL_BACKEND"))
+    backend = _normalize_backend(settings.llm.backend)
     if backend != "auto":
         return backend
 
@@ -63,7 +60,7 @@ def is_cli_backend_enabled():
 
 
 def cli_effort():
-    return os.environ.get("LLM_EFFORT", "").strip()
+    return settings.llm.effort.strip()
 
 
 def _compose_stdin(prompt, files):

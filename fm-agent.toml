@@ -1,0 +1,44 @@
+# FM-Agent configuration (committed, non-secret).
+#
+# Precedence (highest wins):  process env  >  .env  >  this file  >  built-in defaults.
+# Each setting is also overridable by the legacy environment variable shown in the
+# trailing comment. Secrets (the LLM API key) stay in .env — never here.
+# What each setting does, with defaults: see docs/configuration.md
+
+[llm]
+name      = "anthropic/claude-sonnet-4.6"    # LLM_MODEL
+provider  = "openrouter"                       # OPENCODE_MODEL_PROVIDER — the OpenCode provider id FM-Agent generates
+base_url  = "https://openrouter.ai/api/v1"     # LLM_API_BASE_URL
+backend   = "opencode"                         # FM_AGENT_MODEL_BACKEND — opencode | auto | codex-cli | claude-cli
+effort    = ""                                 # LLM_EFFORT — reasoning-effort hint ("", low, medium, high)
+api_style = "openai"                            # LLM_API_STYLE — endpoint style for the OpenCode adapter: openai | anthropic
+
+[runtime]
+max_workers                = 10    # MAX_WORKERS
+max_spec_iter              = 5     # MAX_SPC_ITER
+granularity                = 40    # GRANULARITY
+opencode_max_retries       = 5     # OPENCODE_MAX_RETRIES
+bug_validation_max_retries = 1     # BUG_VALIDATION_MAX_RETRIES
+opencode_timeout_s         = 1800  # OPENCODE_TIMEOUT_SECONDS — hard cap on one `opencode run`
+
+[scope]
+top_k                    = 5    # SCOPE_TOP_K
+llm_trigger_funcs        = 5    # SCOPE_LLM_TRIGGER_FUNCS
+llm_top_k                = 5    # SCOPE_LLM_TOP_K
+llm_confidence_threshold = 8.0  # SCOPE_LLM_CONFIDENCE_THRESHOLD
+
+[erlang]
+command   = "elp"   # ELP_COMMAND
+timeout_s = 180     # ELP_TIMEOUT_SECONDS
+
+[codegraph]
+# The pinned codegraph build. install.sh reads these to install it, and the
+# runtime invokes that pinned binary — so this is the single place that decides
+# "which codegraph": bump `version` (and `repo`), then re-run ./install.sh to
+# switch. The fork build fixes an upstream C extraction bug that otherwise drops
+# macro-decorated functions.
+# Do not run `codegraph upgrade` on this build — it pulls upstream's latest and
+# silently replaces the pinned binary (the runtime then only warns, not fails).
+repo    = "fmagent-project/codegraph"   # CODEGRAPH_REPO
+version = "v1.3.0-fmagent.1"            # CODEGRAPH_VERSION
+bin_dir = "~/.local/bin"                # CODEGRAPH_BIN_DIR — where the codegraph launcher is installed and invoked from
