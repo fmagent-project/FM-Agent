@@ -44,6 +44,7 @@ from src.chisel_support import (
     _SUBMODULE_HEADING_RE,
     _chisel_info_ready,
     _chisel_markdown_ready,
+    chisel_defines_io,
     chisel_info_path,
     chisel_spec_path,
     chisel_spec_ready,
@@ -949,6 +950,37 @@ def _report_undocumented_submodules(work_dir, info_path_fn, label,
     return gaps
 
 
+def _module_defines_io(module_path):
+    """True when the extracted Chisel module source declares a ``val io`` port
+    bundle. Unreadable files are treated as having io so a transient read error
+    never silently drops a module from spec generation."""
+    try:
+        with open(module_path, "r", errors="replace") as f:
+            return chisel_defines_io(f.read())
+    except OSError:
+        return True
+
+
+def _drop_batches_without_io(all_batches, proj_dir):
+    """Skip Chisel modules that declare no ``val io`` port bundle.
+
+    Checked against the actual module source just before the LLM is invoked:
+    a module with no ``val io`` has no port surface to write a spec against, so
+    the batch is dropped and never sent for spec generation. Returns
+    ``(kept_batches, skipped_module_rels)`` — batches keep their default size
+    of one module each, so a dropped batch is exactly one skipped module.
+    """
+    kept = []
+    skipped = []
+    for batch in all_batches:
+        funcs = batch.get("functions", [])
+        if any(_module_defines_io(os.path.join(proj_dir, f)) for f in funcs):
+            kept.append(batch)
+        else:
+            skipped.extend(funcs)
+    return kept, skipped
+
+
 def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False):
     """Generate verification-oriented specs for a Chisel (Scala) design.
 
@@ -1228,6 +1260,11 @@ def run_chisel_spec_generation(proj_dir, resume=False, chisel_modules_only=False
             manifest_path = os.path.join(batch_dir, "manifest.json")
             manifest = _load_json_file(manifest_path, f"batch manifest for subsystem {phase_num} layer {layer_idx}")
             all_batches = manifest.get("batches", [])
+
+            # Skip modules with no `val io` port bundle before invoking the LLM.
+            all_batches, skipped_no_io = _drop_batches_without_io(all_batches, proj_dir)
+            for func_rel in skipped_no_io:
+                print(f"[Chisel] Skipping {func_rel}: no 'val io' port bundle (nothing to spec).")
 
             if not all_batches:
                 logging.info(f"Subsystem {phase_num} Layer {layer_idx}: no batches, skipping.")

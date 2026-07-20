@@ -715,6 +715,32 @@ def chisel_decl_info(text):
     return None, None, None, None
 
 
+# A ``val io`` port-bundle declaration: an optional run of modifiers, then
+# ``val io``, an optional type ascription, and the ``=`` that binds it. The
+# ``\bio\b`` boundary keeps lookalikes such as ``val ioCtrl`` / ``val io_reg``
+# from matching (``_`` and alphanumerics are word chars, so no boundary falls
+# between them and ``io``).
+_CHISEL_IO_DECL_RE = re.compile(
+    r'\bval\s+io\b\s*(?::[^=\n]+)?=', re.M
+)
+
+
+def chisel_defines_io(text):
+    """True when an extracted Chisel unit declares a ``val io`` port bundle.
+
+    Chisel modules expose their ports through a ``val io = IO(new Bundle{...})``
+    declaration (or the legacy ``val io = new Bundle{...}``), optionally with
+    modifiers or a type ascription (``override val io``, ``val io: FooIO = ...``).
+    A unit with no such declaration has no port surface to write a port-level
+    spec against, so the ``--hardware --chisel`` flow skips it.
+
+    Detection runs on comment- and string-masked text
+    (:func:`strip_chisel_comments`), so a commented-out or quoted
+    ``val io =`` never counts as a real port declaration.
+    """
+    return _CHISEL_IO_DECL_RE.search(strip_chisel_comments(text)) is not None
+
+
 # ---------------------------------------------------------------------------
 # Public entry point invoked by extract.py
 # ---------------------------------------------------------------------------
