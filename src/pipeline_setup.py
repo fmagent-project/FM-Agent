@@ -31,6 +31,7 @@ from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
 )
+from .run_workspace import workdir_relpath
 
 
 def _merge_descriptions(target_desc, source_desc):
@@ -197,8 +198,11 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
         )
         return
 
-    prompt = _build_domain_context_regen_prompt(regenerate, phase_cleanup)
-    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
+    work_rel = workdir_relpath(proj_dir, work_dir)
+    prompt = _build_domain_context_regen_prompt(regenerate, phase_cleanup).replace(
+        "fm_agent/", f"{work_rel}/"
+    )
+    fm_reminder = (f"IMPORTANT: {work_rel}/ is your output workspace, not project source. "
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
@@ -220,11 +224,11 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
                 command=command,
                 stage="sync_domain_context",
                 input_files=[
-                    "fm_agent/phases.json",
+                    f"{work_rel}/phases.json",
                     *list_staged_domain_knowledge_relpaths(work_dir),
                 ],
                 output_files=[
-                    "fm_agent/spec_prompts/domain_context/engine_overview.txt",
+                    f"{work_rel}/spec_prompts/domain_context/engine_overview.txt",
                 ],
                 summary=f"Regenerate domain_context for changed phases (attempt {attempt})",
                 metadata={"attempt": attempt},
@@ -535,13 +539,15 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
         logging.info("No phases.json to update module descriptions in; skipping.")
         return
 
+    work_rel = workdir_relpath(proj_dir, work_dir)
     prompt = _build_module_description_prompt(modified_modules, phases_path)
     if not prompt:
         logging.info(
             "No changed module still owns source files; skipping description update."
         )
         return
-    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
+    prompt = prompt.replace("fm_agent/", f"{work_rel}/")
+    fm_reminder = (f"IMPORTANT: {work_rel}/ is your output workspace, not project source. "
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
@@ -562,8 +568,8 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
                 work_dir=work_dir,
                 command=command,
                 stage="update_module_description",
-                input_files=["fm_agent/phases.json"],
-                output_files=["fm_agent/phases.json"],
+                input_files=[f"{work_rel}/phases.json"],
+                output_files=[f"{work_rel}/phases.json"],
                 summary=f"Update module descriptions after phase dedup (attempt {attempt})",
                 metadata={"attempt": attempt},
             )
@@ -784,6 +790,8 @@ def _prepare_setup_workflow_file(proj_dir, work_dir, script_dir):
     proj_dir_name = os.path.basename(proj_dir_abs)
     with open(workflow_dst, "r") as _f:
         md = _f.read()
+    work_rel = workdir_relpath(proj_dir, work_dir)
+    md = md.replace("fm_agent/", f"{work_rel}/")
     old = ("- `phases[*].modules[*].source_files` — relative paths from repo root of all source files "
            "that belong to this module.")
     new = (f"- `phases[*].modules[*].source_files` — relative paths from the project root "
@@ -827,13 +835,14 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
 
     _prepare_setup_workflow_file(proj_dir, work_dir, script_dir)
 
-    fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
+    work_rel = workdir_relpath(proj_dir, work_dir)
+    fm_reminder = (f"IMPORTANT: The {work_rel}/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
                     "Do NOT include fm_agent/ paths in phases.json. "
                     "Do NOT modify any existing project files.")
-    incremental_reminder = ("IMPORTANT: An existing fm_agent/phases.json from a previous run is already "
+    incremental_reminder = (f"IMPORTANT: An existing {work_rel}/phases.json from a previous run is already "
                             "present. Do NOT regenerate it from scratch. Instead, inspect the current "
-                            "state of the source code and UPDATE the existing fm_agent/phases.json so it "
+                            f"state of the source code and UPDATE the existing {work_rel}/phases.json so it "
                             "reflects the current version of the code: add modules and source files that "
                             "are new, remove entries whose files no longer exist, and adjust phases as "
                             "needed. Preserve entries that are still accurate.")
@@ -862,13 +871,13 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
             # regenerating everything and overwriting valid work.
             prompt = ("A previous setup attempt was interrupted and may have already produced some of the "
                       "required output files. Follow the instructions in the attached file, but FIRST "
-                      "check the current progress in fm_agent/ (e.g. phases.json and the "
+                      f"check the current progress in {work_rel}/ (e.g. phases.json and the "
                       "spec_prompts/domain_context/ files). Keep any existing valid output as-is and only "
                       "generate the files that are missing or incomplete — do NOT regenerate or overwrite "
                       f"work that is already done. {fm_reminder} {submodule_reminder}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
-        prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_setup_extract.md")
+        prompt_file = os.path.join(work_dir, "workflow_setup_extract.md")
         if is_cli_backend_enabled():
             command = build_agent_command(
                 model=OPENCODE_SETUP_MODEL,
@@ -886,12 +895,12 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                 command=command,
                 stage="setup_context",
                 input_files=[
-                    "fm_agent/workflow_setup_extract.md",
+                    f"{work_rel}/workflow_setup_extract.md",
                     *list_staged_domain_knowledge_relpaths(work_dir),
                 ],
                 output_files=[
-                    "fm_agent/phases.json",
-                    "fm_agent/spec_prompts/domain_context/engine_overview.txt",
+                    f"{work_rel}/phases.json",
+                    f"{work_rel}/spec_prompts/domain_context/engine_overview.txt",
                 ],
                 summary=f"OpenCode setup context attempt {attempt}",
                 metadata={"attempt": attempt},
@@ -937,7 +946,7 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
             print(
                 f"[Pipeline] ERROR: Stage 1 failed after {OPENCODE_MAX_RETRIES} attempts. "
                 f"{missing}. "
-                f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
+                f"Check {work_rel}/trace/ for details."
             )
             sys.exit(1)
 

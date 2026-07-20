@@ -15,18 +15,19 @@ from .trace_writer import (
 
 def function_id_from_extracted_path(path):
     rel = path.replace("\\", "/")
-    for prefix in ("fm_agent/extracted_functions/", "extracted_functions/"):
-        if rel.startswith(prefix):
-            rel = rel[len(prefix):]
-            break
+    marker = "/extracted_functions/"
+    if marker in f"/{rel}":
+        rel = f"/{rel}".split(marker, 1)[1]
+    elif rel.startswith("extracted_functions/"):
+        rel = rel[len("extracted_functions/"):]
     return os.path.splitext(rel)[0].replace("/", "::")
 
 
 def function_id_from_result_path(path):
     rel = path.replace("\\", "/")
-    prefix = "fm_agent/logic_verification_results/"
-    if rel.startswith(prefix):
-        rel = rel[len(prefix):]
+    marker = "/logic_verification_results/"
+    if marker in f"/{rel}":
+        rel = f"/{rel}".split(marker, 1)[1]
     return os.path.splitext(rel)[0].replace("/", "::")
 
 
@@ -72,7 +73,7 @@ def _opencode_trace_path(work_dir, event_id):
     return os.path.join(_trace_dir(work_dir), "opencode", f"{event_id}.jsonl")
 
 
-def _opencode_env(work_dir, event_id):
+def _opencode_env(proj_dir, work_dir, event_id):
     env = os.environ.copy()
     trace_dir = os.path.abspath(os.path.join(_trace_dir(work_dir), "opencode"))
     os.makedirs(trace_dir, exist_ok=True)
@@ -83,8 +84,7 @@ def _opencode_env(work_dir, event_id):
     # fm-agent repo's own AGENTS.md instead of the target's, baking ~10K bytes
     # of repo docs into every system prompt and invalidating the cache prefix
     # on every edit.
-    proj_dir = os.path.dirname(os.path.abspath(work_dir))
-    env["PWD"] = proj_dir
+    env["PWD"] = os.path.abspath(proj_dir)
     return env
 
 
@@ -118,7 +118,7 @@ def _start_opencode_process(proj_dir, work_dir, event_id, command, trace_log_pat
     proc = subprocess.Popen(
         command_argv(command),
         cwd=proj_dir,
-        env=_opencode_env(work_dir, event_id),
+        env=_opencode_env(proj_dir, work_dir, event_id),
         stdin=subprocess.PIPE if stdin_text is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

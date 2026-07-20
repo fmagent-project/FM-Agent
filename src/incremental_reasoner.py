@@ -58,6 +58,7 @@ from .domain_knowledge import (
     load_staged_domain_knowledge_text,
     stage_domain_knowledge_files,
 )
+from .run_workspace import inferred_workdir_relpath
 
 
 class _StdoutTee:
@@ -154,7 +155,7 @@ def _setup_incremental_logging(work_dir):
     return log_path
 
 
-def check_last_run_existence(proj_dir, submodules=None):
+def check_last_run_existence(proj_dir, submodules=None, work_dir=None):
     """
     Return whether a full pipeline run (run_pipeline) has already completed under proj_dir.
 
@@ -174,7 +175,7 @@ def check_last_run_existence(proj_dir, submodules=None):
     selected scope has at least one ready function and no selected function is
     incomplete; otherwise False (so the caller can fall back to a scoped full run).
     """
-    work_dir = os.path.join(proj_dir, "fm_agent")
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
 
     if not os.path.isfile(os.path.join(work_dir, "phases.json")):
         return False
@@ -196,7 +197,7 @@ def check_last_run_existence(proj_dir, submodules=None):
     return saw_function
 
 
-def extract_existing_specs(proj_dir):
+def extract_existing_specs(proj_dir, work_dir=None):
     """
     Collect the leading [SPEC]/[INFO] blocks from every specced file produced by a
     previous full run (the extracted_functions tree that _run_setup_extract +
@@ -217,7 +218,8 @@ def extract_existing_specs(proj_dir):
     block. Files without a [SPEC] block are skipped. Returns an empty dict when the
     extracted_functions directory does not exist.
     """
-    extracted_dir = os.path.join(proj_dir, "fm_agent", "extracted_functions")
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
+    extracted_dir = os.path.join(work_dir, "extracted_functions")
     if not os.path.isdir(extracted_dir):
         return {}
 
@@ -248,7 +250,7 @@ def extract_existing_specs(proj_dir):
     return specs
 
 
-def _reapply_existing_specs(proj_dir, specs):
+def _reapply_existing_specs(proj_dir, specs, work_dir=None):
     """
     Prepend previously captured [SPEC]/[INFO] header blocks back onto the freshly
     re-extracted function files.
@@ -265,7 +267,8 @@ def _reapply_existing_specs(proj_dir, specs):
 
     Returns the number of files to which a spec block was (re)applied.
     """
-    extracted_dir = os.path.join(proj_dir, "fm_agent", "extracted_functions")
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
+    extracted_dir = os.path.join(work_dir, "extracted_functions")
     for rel_path, entry in specs.items():
         spec_block = entry.get("spec")
         if not spec_block:
@@ -402,7 +405,8 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
 
 
 def _modified_function_targets(
-    proj_dir, modified_functions, classes=("added", "removed", "modified")
+    proj_dir, modified_functions, classes=("added", "removed", "modified"),
+    work_dir=None,
 ):
     """
     Map the functions recorded in modified_functions to (FQN, extracted-file path).
@@ -418,7 +422,8 @@ def _modified_function_targets(
 
     Returns a dict mapping FQN -> absolute extracted-file path.
     """
-    extracted_base = os.path.join(proj_dir, "fm_agent", "extracted_functions")
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
+    extracted_base = os.path.join(work_dir, "extracted_functions")
     targets = {}
     for abs_src, changes in modified_functions.items():
         rel = os.path.relpath(abs_src, proj_dir)
@@ -438,12 +443,12 @@ def _modified_function_targets(
         for name in names:
             fname = f"{name}.{ext}" if ext else name
             path = os.path.join(func_dir, fname)
-            fqn = _file_to_fqn(path, os.path.join(proj_dir, "fm_agent"))
+            fqn = _file_to_fqn(path, work_dir)
             targets[fqn] = path
     return targets
 
 
-def _remove_stale_extracted(proj_dir, modified_functions):
+def _remove_stale_extracted(proj_dir, modified_functions, work_dir=None):
     """
     Delete extracted-function files for functions reported as removed (including every
     function of a deleted source file), and prune any function directory left empty as
@@ -451,7 +456,7 @@ def _remove_stale_extracted(proj_dir, modified_functions):
     stale specs under fm_agent/extracted_functions/.
     """
     removed = _modified_function_targets(
-        proj_dir, modified_functions, classes=("removed",)
+        proj_dir, modified_functions, classes=("removed",), work_dir=work_dir
     )
     for path in removed.values():
         if os.path.isfile(path):
@@ -576,6 +581,7 @@ def run_incremental_pipeline(
     proj_dir,
     intent_file_path,
     old_commit_id,
+    work_dir=None,
     domain_knowledge_files=None,
     submodules=None,
 ):
@@ -592,7 +598,7 @@ def run_incremental_pipeline(
     # import them lazily here to avoid a src -> main import cycle at module load time.
     from main import run_pipeline, _run_setup_extract
 
-    work_dir = os.path.join(proj_dir, "fm_agent")
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
@@ -618,13 +624,16 @@ def run_incremental_pipeline(
 
     # 1. Check whether there is a last run to compare against; if not, fall back to a full run since we have no basis for incremental analysis.
     logging.info("[Stage 1/10] Checking for a previous full run to compare against...")
-    has_last_run = check_last_run_existence(proj_dir, submodules=submodules)
+    has_last_run = check_last_run_existence(
+        proj_dir, submodules=submodules, work_dir=work_dir
+    )
     if not has_last_run:
         logging.warning(
             "No previous full run detected (phases.json missing or incomplete extracted_functions), so falling back to a full run rather than incremental."
         )
         run_pipeline(
             proj_dir,
+            work_dir=work_dir,
             domain_knowledge_files=domain_knowledge_files,
             submodules=submodules,
         )
@@ -691,7 +700,7 @@ def run_incremental_pipeline(
     #    added or whose extraction path changed are left unspecced for the spec-update
     #    stage to handle; unchanged functions keep their previous specs verbatim.
     logging.info("[Stage 4/10] Re-extracting functions and restoring previous specs...")
-    old_spec = extract_existing_specs(proj_dir)
+    old_spec = extract_existing_specs(proj_dir, work_dir=work_dir)
     logging.info("  -> captured %d existing spec block(s) before re-extraction.", len(old_spec))
     # Rebuild the codegraph index before re-extraction. The index still reflects the code as
     # of the previous full run, but the working tree has changed since then; run_extraction
@@ -700,7 +709,7 @@ def run_incremental_pipeline(
     # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
     try_codegraph_init(proj_dir)
     run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
-    _reapply_existing_specs(proj_dir, old_spec)
+    _reapply_existing_specs(proj_dir, old_spec, work_dir=work_dir)
     logging.info("  -> functions re-extracted and prior [SPEC]/[INFO] headers reapplied.")
 
     # 5. Collect changed functions by comparing against the old version of functions in commit_id
@@ -719,7 +728,7 @@ def run_incremental_pipeline(
     # 5b. Delete extracted-function files for functions (or whole source files) that were
     #     removed since old_commit_id. Re-extraction never rewrites these, so without this
     #     they linger as stale specs and would pollute the file list and call graph below.
-    _remove_stale_extracted(proj_dir, changed_functions)
+    _remove_stale_extracted(proj_dir, changed_functions, work_dir=work_dir)
     logging.info("  -> stale extracted-function files for removed functions deleted.")
 
     # 6. Update file list
@@ -743,7 +752,9 @@ def run_incremental_pipeline(
 
     # 8. Collect the scope of functions relevant to the developer intent (the intent file defines the goal of modification).
     logging.info("[Stage 8/10] Collecting functions relevant to the developer intent...")
-    spec_files = collect_relevent_function_scope(proj_dir, developer_intent, changed_functions)
+    spec_files = collect_relevent_function_scope(
+        proj_dir, developer_intent, changed_functions, work_dir=work_dir
+    )
     logging.info("  -> %d function(s) judged relevant to the intent.", len(spec_files))
 
     # 9. Re-generate the spec of functions if it satisfies one of the following conditions: 1) the function is changed; 2) the function is relevant to the developer intent.
@@ -921,7 +932,9 @@ def _domain_knowledge_prompt_section(work_dir):
     return f"## User-provided domain knowledge\n\n{text}\n\n" if text else ""
 
 
-def collect_relevent_function_scope(proj_dir, developer_intent, changed_functions, range=None):
+def collect_relevent_function_scope(
+    proj_dir, developer_intent, changed_functions, range=None, work_dir=None
+):
     """
     Select the functions relevant to developer_intent and return the most relevant ones.
 
@@ -946,7 +959,8 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     relevance score and truncated to the first `range` entries. Returns an empty list when
     phases.json has no modules or opencode selects none / fails to produce a result.
     """
-    work_dir = os.path.join(proj_dir, "fm_agent")
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
+    work_rel = inferred_workdir_relpath(work_dir)
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
     phases_data = _load_phases(work_dir)
@@ -1049,7 +1063,7 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
             "1. Read each of the module source files listed below.\n"
             "2. Decide which files are relevant to the developer intent -- a file is relevant "
             "if the developer intent is likely to affect it or depend on its behavior.\n"
-            f"3. Write your answer to `fm_agent/relevant_files_{idx}.json` as a JSON array of "
+            f"3. Write your answer to `{work_rel}/relevant_files_{idx}.json` as a JSON array of "
             "the relevant file paths, each copied verbatim from the list below. Write `[]` if "
             "no file is relevant. Write ONLY that file; do not modify any other project "
             "files.\n\n"
@@ -1061,11 +1075,11 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
         file_selection = _opencode_select_json(
             proj_dir,
             work_dir,
-            os.path.join("fm_agent", f"select_relevant_files_{idx}.md"),
+            os.path.join(work_rel, f"select_relevant_files_{idx}.md"),
             file_prompt,
-            os.path.join("fm_agent", f"relevant_files_{idx}.json"),
+            os.path.join(work_rel, f"relevant_files_{idx}.json"),
             stage="select_relevant_files",
-            input_files=[f"fm_agent/select_relevant_files_{idx}.md", *source_files],
+            input_files=[f"{work_rel}/select_relevant_files_{idx}.md", *source_files],
         )
 
         if isinstance(file_selection, list):
@@ -1381,8 +1395,9 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
     produced), "new_spec" (str), "info_updated" (bool), "new_info" (str), "updated_callees"
     (list[str]) — or None when opencode produced nothing usable.
     """
-    result_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.json")
-    prompt_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.md")
+    work_rel = inferred_workdir_relpath(work_dir)
+    result_relpath = os.path.join(work_rel, f"spec_generate_{idx}.json")
+    prompt_relpath = os.path.join(work_rel, f"spec_generate_{idx}.md")
 
     # Caller context (callers' own specs + what each caller's [INFO] expects from this
     # function), mirroring run_pipeline's "EARLIER-LAYER CALLER SPECS" / "CALLEE EXPECTATIONS
@@ -1443,7 +1458,7 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
         f"```{lang_key}\n{source.strip()}\n```\n\n"
         f"{caller_section}"
         "## Steps\n\n"
-        "1. Read `fm_agent/spec_prompts/system_prompt.md` for the exact [SPEC]/[INFO] format "
+        f"1. Read `{work_rel}/spec_prompts/system_prompt.md` for the exact [SPEC]/[INFO] format "
         "rules used by this project.\n"
         f"{user_knowledge_step}"
         f"{2 + step_offset}. Produce the COMPLETE [SPEC] block describing this function's behavior — the "
@@ -1468,7 +1483,7 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
         stage="generate_function_spec",
         input_files=[
             prompt_relpath,
-            "fm_agent/spec_prompts/system_prompt.md",
+            f"{work_rel}/spec_prompts/system_prompt.md",
             *user_knowledge_paths,
         ],
     )
@@ -1505,7 +1520,8 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
     # exist on disk) plus functions relevant to the developer intent.
     seed = set()
     changed_targets = _modified_function_targets(
-        proj_dir, changed_functions, classes=("added", "modified")
+        proj_dir, changed_functions, classes=("added", "modified"),
+        work_dir=work_dir,
     )
     seed.update(changed_targets.keys())
     for rel in relevant_rel_files:
@@ -1799,7 +1815,8 @@ def _verify_incremental_functions(
     # (1) Functions changed in the working tree (added/modified; removed ones are gone).
     verify_targets.update(
         _modified_function_targets(
-            proj_dir, changed_functions, classes=("added", "modified")
+            proj_dir, changed_functions, classes=("added", "modified"),
+            work_dir=work_dir,
         ).values()
     )
 

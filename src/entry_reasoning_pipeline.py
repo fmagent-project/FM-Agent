@@ -218,6 +218,7 @@ def run_entry_pipeline(
     entry_func=None,
     end_funcs=None,
     resume=False,
+    work_dir=None,
     domain_knowledge_files=None,
 ):
     """Run the entry-point-scoped reasoning pipeline.
@@ -256,7 +257,7 @@ def run_entry_pipeline(
         raise ValueError("entry_func is required to run the entry pipeline")
 
     proj_dir = os.path.abspath(proj_dir)
-    work_dir = os.path.join(proj_dir, "fm_agent")
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
     config.BUG_VALIDATION_MAX_RETRIES = 0
 
     # The entry_func's source file may match the test-file heuristics (a test
@@ -419,7 +420,8 @@ def _run_entry_pipeline_inner(
     # 2. Copy the sources into a separate run directory, then trim that copy.
     # proj_dir is left untouched throughout.
     run_dir = proj_dir + ".fm-entry-run"
-    run_work_dir = os.path.join(run_dir, "fm_agent")
+    work_rel = os.path.relpath(work_dir, proj_dir)
+    run_work_dir = os.path.join(run_dir, work_rel)
     # _make_run_copy brings along an existing fm_agent/, so a resumed run finds
     # the prior state in run_dir without any extra seeding here.
     _make_run_copy(proj_dir, run_dir)
@@ -447,6 +449,7 @@ def _run_entry_pipeline_inner(
         run_pipeline(
             run_dir,
             resume=resume,
+            work_dir=run_work_dir,
             required_source_files=[_entry_func_source_rel(entry_func)],
             domain_knowledge_files=domain_knowledge_files,
         )
@@ -456,8 +459,9 @@ def _run_entry_pipeline_inner(
         if os.path.isdir(run_work_dir):
             if os.path.isdir(work_dir):
                 shutil.rmtree(work_dir)
+            os.makedirs(os.path.dirname(work_dir), exist_ok=True)
             shutil.copytree(run_work_dir, work_dir, symlinks=True)
-            print(f"[EntryPipeline] Copied generated fm_agent/ to {work_dir}.")
+            print(f"[EntryPipeline] Copied generated run to {work_dir}.")
         shutil.rmtree(run_dir, ignore_errors=True)
 
     # Report the bug count: the number of MISMATCH verdicts the reasoner wrote

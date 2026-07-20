@@ -2,7 +2,7 @@
 """Real-time TUI dashboard for an FM-Agent run.
 
 Usage:
-    uv run python dashboard.py <proj_dir>                        # live: <proj_dir>/fm_agent/
+    uv run python dashboard.py <proj_dir>                        # live: current run
     uv run python dashboard.py <proj_dir>/fm_agent.archived_xx   # any workspace dir (auto-detected by trace/ subdir)
     uv run python dashboard.py <proj_dir> --refresh 1.0          # refresh every 1.0s
 
@@ -178,14 +178,29 @@ def _locate_workdir(proj_dir):
     """Resolve which fm_agent workdir to monitor.
 
     Accepts either:
-      - A project root: dashboard looks for <root>/fm_agent/ (the live workspace).
+      - A project root: dashboard follows <root>/fm_agent/current_run.json.
       - A workspace directly (any name like fm_agent.opus_partial_*): detected
         by the presence of a `trace/` subdir, used as-is.
     """
     p = Path(proj_dir).resolve()
     if (p / "trace").is_dir():
         return p
-    return p / "fm_agent"
+    root = p / "fm_agent"
+    marker = root / "current_run.json"
+    try:
+        run_id = json.loads(marker.read_text()).get("run_id", "")
+    except (OSError, ValueError, AttributeError):
+        run_id = ""
+    if run_id and Path(run_id).name == run_id:
+        current = root / "runs" / run_id
+        if current.is_dir():
+            return current
+    runs_dir = root / "runs"
+    if runs_dir.is_dir():
+        runs = [candidate for candidate in runs_dir.iterdir() if candidate.is_dir()]
+        if runs:
+            return max(runs, key=lambda candidate: candidate.stat().st_mtime)
+    return root
 
 
 class State:
@@ -740,7 +755,7 @@ def build_layout(state):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("proj_dir",
-                    help=("Either a target codebase (monitors <proj_dir>/fm_agent/) "
+                    help=("Either a target codebase (monitors its current fm_agent run) "
                           "or a workspace directly (any dir containing a trace/ subdir)"))
     ap.add_argument("--refresh", type=float, default=1.5, help="Refresh seconds (default 1.5)")
     args = ap.parse_args()

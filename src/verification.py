@@ -10,6 +10,7 @@ from .domain_knowledge import (
     list_staged_domain_knowledge_relpaths,
     load_staged_domain_knowledge_text,
 )
+from .run_workspace import inferred_workdir_relpath
 import os
 import re
 import json
@@ -172,11 +173,12 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                         future.result()
                         # Read validation result to check confirmation
                         parts = result_json_rel
-                        prefix = os.path.join("fm_agent", "logic_verification_results") + os.sep
+                        result_prefix = os.path.relpath(output_dir, proj_dir)
+                        prefix = result_prefix + os.sep
                         if parts.startswith(prefix):
                             parts = parts[len(prefix):]
-                        elif parts.startswith("fm_agent/logic_verification_results/"):
-                            parts = parts[len("fm_agent/logic_verification_results/"):]
+                        elif parts.startswith(result_prefix.replace(os.sep, "/") + "/"):
+                            parts = parts[len(result_prefix.replace(os.sep, "/") + "/"):]
                         bug_id = os.path.splitext(parts)[0].replace(os.sep, "--").replace("/", "--")
                         result_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
                         confirmed = False
@@ -336,18 +338,19 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     # Derive bug id from result path relative to results dir
     # e.g. "fm_agent/logic_verification_results/mod/func.json" -> "mod--func"
     parts = result_json_rel
-    prefix = os.path.join("fm_agent", "logic_verification_results") + os.sep
+    work_rel = inferred_workdir_relpath(work_dir)
+    prefix = os.path.join(work_rel, "logic_verification_results") + os.sep
     if parts.startswith(prefix):
         parts = parts[len(prefix):]
-    elif parts.startswith("fm_agent/logic_verification_results/"):
-        parts = parts[len("fm_agent/logic_verification_results/"):]
+    elif parts.startswith(f"{work_rel}/logic_verification_results/"):
+        parts = parts[len(f"{work_rel}/logic_verification_results/"):]
     bug_id = os.path.splitext(parts)[0].replace(os.sep, "--").replace("/", "--")
     function_id = function_id_from_result_path(result_json_rel)
 
     # Read the base bug_validator.md
     base_md_path = os.path.join(script_dir, "md", "bug_validator.md")
     with open(base_md_path, "r") as f:
-        base_content = f.read()
+        base_content = f.read().replace("fm_agent/", f"{work_rel}/")
 
     user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
     if user_knowledge_paths:
@@ -373,7 +376,7 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     os.makedirs(os.path.join(work_dir, "bug_validation"), exist_ok=True)
 
     prompt_filename = os.path.join(
-        "fm_agent", "bug_validation", f"bug_validator_{bug_id}.md"
+        work_rel, "bug_validation", f"bug_validator_{bug_id}.md"
     )
     prompt_path = os.path.join(proj_dir, prompt_filename)
 
@@ -394,7 +397,7 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
         command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_BUG_VALIDATION_MODEL}",
                    "--file", prompt_path,
                    "--", prompt]
-    result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
+    result_relpath = os.path.join(work_rel, "bug_validation", f"{bug_id}.result.json")
     result_path = os.path.join(proj_dir, result_relpath)
     # Resume idempotency: if resuming and this bug was already validated, don't pay for it again.
     if resume and os.path.exists(result_path):
@@ -422,7 +425,7 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
                         *user_knowledge_paths,
                     ],
                     output_files=[
-                        os.path.join("fm_agent", "bug_validation", f"{bug_id}.md"),
+                        os.path.join(work_rel, "bug_validation", f"{bug_id}.md"),
                         result_relpath,
                     ],
                     summary=f"OpenCode bug validation for {bug_id}",
