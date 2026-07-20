@@ -210,6 +210,7 @@ marimo/_lsp/
 __marimo__/
 
 testcase/
+/tests/
 
 .claude/
 
