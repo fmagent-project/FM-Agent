@@ -17,9 +17,10 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 from urllib.parse import unquote, urlparse
 
+from config import settings
+
 
 _FUNCTION_KIND = 12
-_DEFAULT_TIMEOUT_SECONDS = 180
 _CONTENT_MODIFIED_ERROR = -32801
 _MAX_CONTENT_MODIFIED_RETRIES = 5
 _SKIP_DIRS = {
@@ -48,16 +49,13 @@ _CACHE_LOCK = threading.Lock()
 
 
 def _timeout_seconds() -> int:
-    value = os.environ.get("ELP_TIMEOUT_SECONDS", str(_DEFAULT_TIMEOUT_SECONDS))
-    try:
-        return max(1, int(value))
-    except ValueError:
-        logging.warning("Invalid ELP_TIMEOUT_SECONDS=%r; using %d", value, _DEFAULT_TIMEOUT_SECONDS)
-        return _DEFAULT_TIMEOUT_SECONDS
+    # ELP_TIMEOUT_SECONDS -> erlang.timeout_s is validated at config load (a
+    # non-integer value fails fast at startup), so it is always an int here.
+    return max(1, settings.erlang.timeout_s)
 
 
 def _elp_argv() -> list[str]:
-    command = os.environ.get("ELP_COMMAND", "elp").strip() or "elp"
+    command = settings.erlang.command.strip() or "elp"
     argv = shlex.split(command, posix=os.name != "nt")
     if not argv:
         argv = ["elp"]

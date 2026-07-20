@@ -1,7 +1,6 @@
 import time
 import json
 import random
-import os
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -52,11 +51,11 @@ _DEFAULT_INJECT_USER_ID = "stable-user-or-session-id-xxxxxxx123"
 
 
 def _stable_user_id():
-    return os.environ.get("INJECT_ID") or _DEFAULT_INJECT_USER_ID
+    return settings.inject.id or _DEFAULT_INJECT_USER_ID
 
 
 def _inject_targets():
-    return [s.strip() for s in (os.environ.get("INJECT_HOST") or "").split(",") if s.strip()]
+    return [s.strip() for s in (settings.inject.hosts or "").split(",") if s.strip()]
 
 
 def _matches_inject_target(url, target):

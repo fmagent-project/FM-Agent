@@ -17,6 +17,8 @@ import sqlite3
 import subprocess
 from collections import defaultdict
 
+from config import settings
+
 
 _SAFE_REPLACE = str.maketrans({"/": "_"})
 _UNSAFE = set("/")
@@ -40,6 +42,54 @@ def canonicalize(func_name):
             return func_name.translate(_SAFE_REPLACE)
     return func_name
 
+
+def _qualified_parts(name: str, qualified_name: str) -> list:
+    """Split codegraph's ``qualified_name`` into ``[*scope_parts, name]``.
+
+    Member functions carry their enclosing class (and namespace) so they can be
+    told apart by class instead of by an opaque line-order suffix:
+
+        free function ``main``                 -> ``['main']``
+        C++ ``LocalStorage::Flush``            -> ``['LocalStorage', 'Flush']``
+        nested ``ns::Widget::draw``            -> ``['ns', 'Widget', 'draw']``
+        dot-scoped (Python/Java) ``Foo.bar``   -> ``['Foo', 'bar']``
+
+    codegraph joins scopes with ``::`` (C/C++) or ``.`` (Python, Java, ...); both
+    are normalised here. If ``qualified_name`` is missing or does not end with
+    ``name`` (unexpected shape), we fall back to the bare name so behaviour never
+    regresses below the previous name-only scheme.
+    """
+    q = (qualified_name or "").strip()
+    if not q or not q.endswith(name):
+        return [name]
+    scope = q[: -len(name)].rstrip(":.")
+    if not scope:
+        return [name]
+    parts = [p for p in re.split(r"::|\.", scope) if p]
+    return parts + [name]
+
+
+def _extraction_ident(name: str, qualified_name: str) -> str:
+    """Return the class-qualified, filesystem-safe identifier for a function.
+
+    Each component is first stripped of any tree-sitter decoration by
+    :func:`_bare_function_name` (codegraph occasionally stores a whole signature
+    or template body in the name column — see issue #82, which would otherwise
+    blow past the filesystem's filename limit), then passed through
+    :func:`canonicalize` (so a class-scoped operator like ``Store::operator/``
+    stays path/FQN-safe), then joined with ``::``. This single string is used both
+    as a function's FQN tail and — with ``::`` turned into path separators — as its
+    extracted-file location, so the call edges (via :func:`_node_fqn_map`) and the
+    extracted files (via ``run_extraction`` + ``_file_to_fqn``) always agree.
+    Examples: ``main`` -> ``"main"``; ``LocalStorage::Flush`` ->
+    ``"LocalStorage::Flush"``.
+    """
+    return "::".join(
+        canonicalize(_bare_function_name(p))
+        for p in _qualified_parts(name, qualified_name)
+    )
+
+
 def _bare_function_name(name: str) -> str:
     """Extract the bare function identifier from a potentially decorated name.
 
@@ -52,6 +102,7 @@ def _bare_function_name(name: str) -> str:
     - Simple identifier: ``"my_func"`` -> ``"my_func"``
     - Qualified name: ``"ns::Cls::method"`` -> ``"method"``
     - Go pointer receiver: ``"(*T).Method"`` -> ``"Method"``
+    - C++ operator overload: ``"Vec::operator=="`` -> ``"operator=="``
     - Function-pointer: ``"(*func)(type *param)"`` -> ``"func"``
     - Pointer return: ``"*func_name(...)"`` -> ``"func_name"``
     - this-dot: ``"this.onClick"`` -> ``"onClick"``
@@ -61,7 +112,33 @@ def _bare_function_name(name: str) -> str:
     if not name:
         return ""
 
-    m = re.search(r'(?:[:\.)])(\w+)$', name)
+    tail = name
+    if "::" in tail:
+        tail = tail.rsplit("::", 1)[1].lstrip()
+    elif "." in tail:
+        tail = tail.rsplit(".", 1)[1].lstrip()
+
+    if tail.startswith("operator"):
+        rest = tail[len("operator"):].lstrip()
+        if rest.startswith("[]"):
+            return "operator[]"
+        if rest.startswith("()"):
+            return "operator()"
+        if re.fullmatch(r'new(?:\s*\[\s*\])?', rest):
+            return "operator new[]" if "[" in rest else "operator new"
+        if re.fullmatch(r'delete(?:\s*\[\s*\])?', rest):
+            return "operator delete[]" if "[" in rest else "operator delete"
+
+        symbol = []
+        for ch in rest:
+            if ch in "+-*/%&|^~!=<>,":
+                symbol.append(ch)
+            else:
+                break
+        if symbol:
+            return "operator" + "".join(symbol)
+
+    m = re.search(r'(?:^|::|\.)(\w+)$', name)
     if m:
         return m.group(1)
     m = re.match(r'\(\s*\*\s*(\w+)\s*\)', name)
@@ -144,7 +221,7 @@ def _node_fqn_map(cur, cg_langs) -> dict:
     placeholders = ",".join("?" * len(cg_langs))
     cur.execute(
         f"""
-        SELECT id, name, file_path, start_line
+        SELECT id, name, qualified_name, file_path, start_line
         FROM nodes
         WHERE kind IN ('function', 'method') AND language IN ({placeholders})
         ORDER BY file_path, start_line
@@ -153,13 +230,12 @@ def _node_fqn_map(cur, cg_langs) -> dict:
     )
     counts: dict = {}
     result: dict = {}
-    for node_id, name, file_path, _start in cur.fetchall():
-        bare = _bare_function_name(name)
-        cname = canonicalize(bare)
-        key = (file_path, cname)
+    for node_id, name, qualified_name, file_path, _start in cur.fetchall():
+        ident = _extraction_ident(name, qualified_name)
+        key = (file_path, ident)
         c = counts.get(key, 0)
         counts[key] = c + 1
-        deduped = cname if c == 0 else f"{cname}_{c}"
+        deduped = ident if c == 0 else f"{ident}_{c}"
         result[node_id] = _fqn_for(file_path, deduped)
     return result
 
@@ -203,7 +279,7 @@ class CodeGraphExtractor:
         placeholders = ",".join("?" * len(cg_langs))
         cur.execute(
             f"""
-            SELECT name, file_path, start_line, end_line
+            SELECT name, qualified_name, file_path, start_line, end_line
             FROM nodes
             WHERE kind IN ('function', 'method') AND language IN ({placeholders})
             ORDER BY file_path, start_line
@@ -214,8 +290,9 @@ class CodeGraphExtractor:
         conn.close()
 
         by_file = defaultdict(list)
-        for name, file_path, start_line, end_line in rows:
-            by_file[file_path].append((name, int(start_line), int(end_line)))
+        for name, qualified_name, file_path, start_line, end_line in rows:
+            ident = _extraction_ident(name, qualified_name)
+            by_file[file_path].append((ident, int(start_line), int(end_line)))
 
         result = {}
         for file_path, funcs in by_file.items():
@@ -226,23 +303,22 @@ class CodeGraphExtractor:
             except OSError:
                 continue
 
-            name_counts = {}
+            ident_counts = {}
             file_funcs = []
-            for name, start_line, end_line in funcs:
-                # Disambiguate functions sharing a name within one file
-                # (LocalStorage::Flush vs RemoteCache::Flush, overloads, a method
-                # and a same-named free function, ...). codegraph stores them all
-                # under the same bare name; run_extraction writes each to
-                # "<name>.<ext>", so without a suffix the later definition
-                # silently overwrites the earlier one — dropping functions from
-                # both extraction and the call graph. Mirror the regex path's
-                # dedup ("Flush", "Flush_1", ...). funcs are line-ordered (SQL
-                # ORDER BY start_line), so suffix assignment is deterministic.
-                bare = _bare_function_name(name)
-                cname = canonicalize(bare)
-                count = name_counts.get(cname, 0)
-                name_counts[cname] = count + 1
-                deduped = cname if count == 0 else f"{cname}_{count}"
+            for ident, start_line, end_line in funcs:
+                # ``ident`` is the class-qualified identifier ("LocalStorage::Flush",
+                # or the bare name for a free function). Member functions in
+                # different classes are already distinct here, so the class name —
+                # not an opaque line-order suffix — is what tells them apart.
+                # A suffix is still appended only when two functions share the exact
+                # same qualified identifier (e.g. overloads: same class + same name,
+                # different parameters), which would otherwise overwrite each other
+                # ("LocalStorage::Flush", "LocalStorage::Flush_1"). funcs are
+                # line-ordered (SQL ORDER BY start_line), so the suffix is
+                # deterministic. run_extraction keeps the "::" in the flat filename.
+                count = ident_counts.get(ident, 0)
+                ident_counts[ident] = count + 1
+                deduped = ident if count == 0 else f"{ident}_{count}"
                 # codegraph uses 1-indexed lines, end_line is inclusive
                 body_lines = all_lines[start_line - 1 : end_line]
                 body = "".join(body_lines)
@@ -282,7 +358,7 @@ class CodeGraphExtractor:
         placeholders = ",".join("?" * len(cg_langs))
         cur.execute(
             f"""
-            SELECT name, start_line, end_line
+            SELECT name, qualified_name, start_line, end_line
             FROM nodes
             WHERE kind IN ('function', 'method') AND language IN ({placeholders})
               AND file_path = ?
@@ -295,8 +371,13 @@ class CodeGraphExtractor:
 
         if not rows:
             return None
-        # codegraph uses 1-indexed lines with an inclusive end_line.
-        return [(canonicalize(_bare_function_name(name)), int(start) - 1, int(end) - 1) for name, start, end in rows]
+        # codegraph uses 1-indexed lines with an inclusive end_line. Return the
+        # class-qualified identifier so the caller's dedup + name matching (trim)
+        # stays consistent with the extracted files and the call graph.
+        return [
+            (_extraction_ident(name, qualified_name), int(start) - 1, int(end) - 1)
+            for name, qualified_name, start, end in rows
+        ]
 
     def get_call_edges(self, lang_key: str) -> dict:
         """Return {caller_fqn: {callee_fqn, ...}} for the given language.
@@ -376,6 +457,46 @@ class CodeGraphExtractor:
         return dict(result)
 
 
+def _codegraph_cmd() -> str:
+    """Return the codegraph executable to invoke.
+
+    ``install.sh`` installs the pinned fork build (from ``fm-agent.toml``'s
+    ``[codegraph]``) into ``bin_dir`` (default ``~/.local/bin``); we invoke it
+    from that same configured location. Invoking it by absolute path — rather than
+    a bare ``codegraph`` resolved via PATH — uses the pinned build even when that
+    directory is not on PATH (the macOS default) and cannot be shadowed by a
+    different/older codegraph earlier on PATH. Falls back to a bare ``codegraph``
+    when the pinned build is absent, so an externally provided one still works; a
+    missing binary then becomes the regex-extractor fallback in the caller.
+    """
+    bin_dir = os.path.expanduser(settings.codegraph.bin_dir)
+    local = os.path.join(bin_dir, "codegraph")
+    return local if os.access(local, os.X_OK) else "codegraph"
+
+
+def _warn_on_codegraph_version_mismatch(cmd: str) -> None:
+    """Warn (never fail) when the codegraph about to run is not the version pinned
+    in ``fm-agent.toml``'s ``[codegraph].version`` — e.g. a stale build shadowing
+    it. install.sh is what guarantees the pinned version; this is a runtime heads-up.
+    """
+    want = settings.codegraph.version.strip().removeprefix("v")
+    if not want:
+        return
+    try:
+        got = subprocess.run(
+            [cmd, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return
+    if got and got != want:
+        logging.warning(
+            "codegraph %r does not match the pinned %r "
+            "(fm-agent.toml [codegraph].version); re-run install.sh to update.",
+            got,
+            want,
+        )
+
+
 def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     """Build the codegraph index for proj_dir with `codegraph init`.
 
@@ -406,9 +527,11 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
         print("[Pipeline] Rebuilding codegraph index for current working tree...")
     else:
         print("[Pipeline] Building codegraph index...")
+    cmd = _codegraph_cmd()
+    _warn_on_codegraph_version_mismatch(cmd)
     try:
         result = subprocess.run(
-            ["codegraph", "init"], cwd=proj_dir, capture_output=True, text=True
+            [cmd, "init"], cwd=proj_dir, capture_output=True, text=True
         )
     except FileNotFoundError:
         return  # codegraph not installed
