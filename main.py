@@ -73,6 +73,42 @@ def _get_pending_batches(batches, proj_dir):
     return pending
 
 
+def _resolve_bug_validator_path(raw_path, proj_dir, fallback_base_dir=None):
+    """Resolve and validate a custom bug-validator prompt path."""
+    if not raw_path:
+        return None
+
+    expanded = os.path.expanduser(raw_path)
+    if os.path.isabs(expanded):
+        candidates = [expanded]
+    else:
+        candidates = [os.path.join(proj_dir, expanded)]
+        if fallback_base_dir:
+            candidates.append(os.path.join(fallback_base_dir, expanded))
+
+    path = next(
+        (candidate for candidate in candidates if os.path.exists(candidate)),
+        candidates[0],
+    )
+    path = os.path.abspath(path)
+
+    if not os.path.isfile(path):
+        raise ValueError(
+            "--bug-validator must point to a file: "
+            f"{raw_path}"
+        )
+
+    try:
+        with open(path, "r"):
+            pass
+    except OSError as exc:
+        raise ValueError(
+            f"--bug-validator file is not readable: {exc}"
+        ) from exc
+
+    return path
+
+
 def _normalize_submodules(proj_dir, submodules):
     """Return validated project-relative submodule directories."""
     if not submodules:
@@ -590,19 +626,14 @@ if __name__ == "__main__":
     extra_call_edges_path = args.extra_edge
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
-    bug_validator_path = None
-    if args.bug_validator:
-        bug_validator_path = os.path.abspath(args.bug_validator)
-        if not os.path.isfile(bug_validator_path):
-            parser.error(
-                "--bug-validator must point to a file: "
-                f"{args.bug_validator}"
-            )
-        try:
-            with open(bug_validator_path, "r"):
-                pass
-        except OSError as exc:
-            parser.error(f"--bug-validator file is not readable: {exc}")
+    try:
+        bug_validator_path = _resolve_bug_validator_path(
+            args.bug_validator,
+            proj_dir=proj_dir,
+            fallback_base_dir=os.getcwd(),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
