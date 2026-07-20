@@ -61,6 +61,12 @@ When the buggy function is not itself exported, identify the smallest public API
 
 If a buggy internal has no single obvious public caller, choose the **simplest public call** whose code path passes through the buggy lines as identified in `"code_evidence"`. Reason from the call stack, not from the module name.
 
+#### FM-Agent self-validation guard (mandatory)
+
+When the project under validation is FM-Agent itself, the probe **must not start or call FM-Agent to validate FM-Agent**. In particular, do not invoke `run_pipeline()`, `run_incremental_pipeline()`, `main.py`, the FM-Agent CLI, OpenCode, or any subprocess/entry point that starts an FM-Agent workflow. Test only the smallest relevant unit with mocks or fixtures. If the reported behavior cannot be tested without starting an FM-Agent workflow, classify it as `NOT CONFIRMED`; do not run the workflow from the probe.
+
+Never use the active repository, its isolation snapshot, the current working directory, or its `fm_agent/` directory as a probe workspace. Any probe-created files must live under a fresh temporary directory owned by the probe. The probe must not delete, replace, or regenerate the active run's `fm_agent/` artifacts.
+
 #### Script requirements
 
 The probe script must:
