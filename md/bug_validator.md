@@ -65,12 +65,20 @@ If a buggy internal has no single obvious public caller, choose the **simplest p
 
 When the project under validation is FM-Agent itself, the probe **must not start or call FM-Agent to validate FM-Agent**. In particular, do not invoke `run_pipeline()`, `run_incremental_pipeline()`, `main.py`, the FM-Agent CLI, OpenCode, or any subprocess/entry point that starts an FM-Agent workflow. Test only the smallest relevant unit with mocks or fixtures. If the reported behavior cannot be tested without starting an FM-Agent workflow, classify it as `NOT CONFIRMED`; do not run the workflow from the probe.
 
-Never use the active repository, its isolation snapshot, the current working directory, or its `fm_agent/` directory as a probe workspace. Any probe-created files must live under a fresh temporary directory owned by the probe. The probe must not delete, replace, or regenerate the active run's `fm_agent/` artifacts.
+Never use the active repository, its isolation snapshot, the current working directory, or its `fm_agent/` directory as the probe's runtime workspace. All test fixtures, copied source trees, generated test inputs, runtime outputs, and intermediate files must live under a fresh temporary directory owned by the probe.
+
+The required final validation artifacts are the only files that may be created or updated under the active run's `fm_agent/` directory:
+
+- `fm_agent/bug_validation/<bug_id>.md`
+- `fm_agent/bug_validation/probe_<bug_id>.<ext>`
+- `fm_agent/bug_validation/<bug_id>.result.json`
+
+These fixed paths are artifact destinations only; do not use `fm_agent/bug_validation/` as the probe workspace. The probe must not delete, replace, or regenerate any other active-run `fm_agent/` artifact.
 
 #### Script requirements
 
 The probe script must:
-- Be **self-contained** — no network calls, no file I/O beyond loading source modules.
+- Be **self-contained** — no network calls. Apart from loading project modules, any file I/O needed for fixtures, generated inputs, runtime outputs, or intermediate state must remain inside the probe's fresh temporary directory.
 - Load the package exclusively via its public entry point.
 - Catch any thrown errors so a crash does not hide the result.
 - Print exactly `CONFIRMED` or `NOT CONFIRMED` to stdout (with any additional detail after the keyword).
@@ -121,7 +129,7 @@ else:
 
 > **Do not use any test framework** (Jest, pytest, JUnit, etc.) for these probe scripts. Plain language runtime only.
 
-### 2c. Write the Script to a Temporary File
+### 2c. Write the Script to Its Required Artifact Path
 
 Write the probe script to `fm_agent/bug_validation/probe_<bug_id>.<ext>`, where:
 - `<bug_id>` is the bug ID provided in the prompt header.
