@@ -672,6 +672,7 @@ def run_incremental_pipeline(
     submodules=None,
     one_phase=False,
     extra_call_edges_path=None,
+    bug_validator_path=None,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -724,6 +725,7 @@ def run_incremental_pipeline(
             submodules=submodules,
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
+            bug_validator_path=bug_validator_path,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -867,6 +869,7 @@ def run_incremental_pipeline(
     buggy_files = _verify_incremental_functions(
         proj_dir, work_dir, changed_functions, updated_spec_files,
         submodules=submodules,
+        bug_validator_path=bug_validator_path,
     )
     logging.info("=" * 70)
     logging.info(
@@ -1963,7 +1966,8 @@ def _update_specs_for_intent(
 
 
 def _verify_incremental_functions(
-    proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None
+    proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None,
+    bug_validator_path=None,
 ):
     """
     Step 10: re-run the verification stage (reasoner + bug validation) on only the functions
@@ -2070,7 +2074,12 @@ def _verify_incremental_functions(
             os.path.relpath(output_dir, proj_dir),
             os.path.splitext(rel)[0] + ".json",
         )
-        _validate_single_bug(result_json_rel, proj_dir, work_dir)
+        _validate_single_bug(
+            result_json_rel,
+            proj_dir,
+            work_dir,
+            bug_validator_path=bug_validator_path,
+        )
         return rel
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:

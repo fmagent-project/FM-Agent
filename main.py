@@ -188,6 +188,7 @@ def run_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
+    bug_validator_path=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -383,6 +384,7 @@ def run_pipeline(
                                 spec_procs=None,
                                 already_processed=all_processed | layer_processed,
                                 resume=resume,
+                                bug_validator_path=bug_validator_path,
                             )
                             layer_processed.update(newly_processed)
                     break
@@ -426,6 +428,7 @@ def run_pipeline(
                             spec_procs=spec_futures,
                             already_processed=all_processed | layer_processed,
                             resume=resume,
+                            bug_validator_path=bug_validator_path,
                         )
                         layer_processed.update(newly_processed)
 
@@ -497,7 +500,8 @@ if __name__ == "__main__":
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
-              "[--end-func PATH ...] [--extra-edge FILE] [--only-spec]",
+              "[--end-func PATH ...] [--extra-edge FILE] "
+              "[--bug-validator FILE] [--only-spec]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", help="path to the project directory")
@@ -572,6 +576,13 @@ if __name__ == "__main__":
         help="optional JSON file, or directory of JSON files, containing "
         "supplemental caller->callee edges.",
     )
+    parser.add_argument(
+        "--bug-validator",
+        metavar="FILE",
+        default=None,
+        help="use a custom Markdown prompt for bug validation instead of "
+        "the built-in md/bug_validator.md",
+    )
     args = parser.parse_args()
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
@@ -579,6 +590,19 @@ if __name__ == "__main__":
     extra_call_edges_path = args.extra_edge
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
+    bug_validator_path = None
+    if args.bug_validator:
+        bug_validator_path = os.path.abspath(args.bug_validator)
+        if not os.path.isfile(bug_validator_path):
+            parser.error(
+                "--bug-validator must point to a file: "
+                f"{args.bug_validator}"
+            )
+        try:
+            with open(bug_validator_path, "r"):
+                pass
+        except OSError as exc:
+            parser.error(f"--bug-validator file is not readable: {exc}")
     try:
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
@@ -623,6 +647,7 @@ if __name__ == "__main__":
             one_phase=args.one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=args.only_spec,
+            bug_validator_path=bug_validator_path,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -681,6 +706,7 @@ if __name__ == "__main__":
                     submodules=submodules,
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
+                    bug_validator_path=bug_validator_path,
                 )
             else:
                 run_pipeline(
@@ -691,6 +717,7 @@ if __name__ == "__main__":
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     only_spec=args.only_spec,
+                    bug_validator_path=bug_validator_path,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
