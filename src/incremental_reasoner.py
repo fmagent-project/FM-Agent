@@ -2,17 +2,18 @@ import os
 import sys
 import glob
 import json
+import re
 import time
 import shutil
 import logging
 import subprocess
 import tempfile
 import concurrent.futures
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
 from config import (
-    OPENCODE_MODEL_PROVIDER,
     OPENCODE_SETUP_MODEL,
     OPENCODE_MAX_RETRIES,
     MAX_WORKERS,
@@ -21,6 +22,7 @@ from config import (
 from .extract import (
     EXT_TO_LANG,
     LANG_CONFIG,
+    _function_spans,
     extract_functions_from_file,
     run_extraction,
 )
@@ -31,6 +33,7 @@ from .generate_topdown_layers import (
     _load_phases,
     generate_topdown_layers,
 )
+from .call_graph_edges import load_call_edges
 from .file_utils import (
     is_file_ready,
     collect_file_names,
@@ -46,9 +49,7 @@ from .generate_batch_prompts import (
     extract_spec_block,
 )
 from .opencode_trace import run_opencode_traced
-from .llm_client import _llm_provider_client, _llm_call
-from .cli_backend import build_agent_command, is_cli_backend_enabled
-from .prompts import _load_spec_check_json
+from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import try_codegraph_init
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
@@ -404,6 +405,56 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     return result
 
 
+def _src_rel_to_func_dir(proj_dir, abs_src, work_dir=None):
+    """(func_dir, ext) for a source file: the extracted-functions directory that
+    holds its functions (``.../loader-cpp``) and the source extension."""
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
+    extracted_base = os.path.join(work_dir, "extracted_functions")
+    rel = os.path.relpath(abs_src, proj_dir)
+    src_dir = os.path.dirname(rel)
+    src_base = os.path.basename(rel)
+    last_dot = src_base.rfind(".")
+    if last_dot > 0:
+        dir_name = src_base[:last_dot] + "-" + src_base[last_dot + 1:]
+        ext = src_base[last_dot + 1:]
+    else:
+        dir_name = src_base
+        ext = ""
+    func_dir = os.path.join(extracted_base, src_dir, dir_name) if src_dir else os.path.join(extracted_base, dir_name)
+    return func_dir, ext
+
+
+def _extracted_files_by_method(func_dir):
+    """``{key: [abs_path, ...]}`` for every extracted-function file under
+    ``func_dir``, walked recursively. Each file is registered under BOTH keys so a
+    caller can look it up whichever kind of name it holds:
+
+      - its bare stem (``Flush``) — the regex change detector reports names
+        without a class, so a bare name matches every same-named member;
+      - its class-qualified identifier (``LocalStorage::Flush``) — scope ranking
+        gets qualified names from codegraph spans, so this gives an exact match.
+
+    A free function (``func_dir/foo.ext``) has identical stem and identifier, so it
+    is registered once."""
+    index = defaultdict(list)
+    if not os.path.isdir(func_dir):
+        return index
+    for root, _dirs, fnames in os.walk(func_dir):
+        for fn in fnames:
+            abs_path = os.path.join(root, fn)
+            # Flat layout: the filename stem is the full identifier, keeping any
+            # "::" ("LocalStorage::Flush"). Register it under both the full
+            # identifier and the bare tail ("Flush") so both codegraph's qualified
+            # names and the regex detector's bare names resolve. (os.walk still
+            # tolerates a legacy nested file, whose stem is already bare.)
+            stem = fn[: fn.rfind(".")] if "." in fn else fn
+            index[stem].append(abs_path)
+            bare = stem.split("::")[-1]
+            if bare != stem:
+                index[bare].append(abs_path)
+    return index
+
+
 def _modified_function_targets(
     proj_dir, modified_functions, classes=("added", "removed", "modified"),
     work_dir=None,
@@ -413,58 +464,104 @@ def _modified_function_targets(
 
     modified_functions is the mapping returned by _collect_changed_functions: an
     absolute source-file path -> {"added", "removed", "modified"} lists of function
-    names. For each (file, name) pair whose change class is in classes, this computes
-    the FQN used by the call graph and the path of the function's file under
-    proj_dir/fm_agent/extracted_functions/, both matching that layout (the source
-    file's final dot becomes a hyphen and path components are joined with "::"), e.g.
-    an "load" function in "<proj_dir>/src/engine/loader.cpp" -> FQN
-    "src::engine::loader-cpp::load" at ".../extracted_functions/src/engine/loader-cpp/load.cpp".
+    names, which the regex change detector reports without a class (``Flush``,
+    ``Flush_1``). The extracted files, however, keep codegraph's class qualifier in
+    the filename (``.../storage-cpp/LocalStorage::Flush.cpp``), so we do not
+    reconstruct a path from the bare name — we walk the function directory and match
+    each changed name against the actual files by their bare method tail (tolerating
+    the regex dedup suffix). When two classes in one file share a
+    method name, a changed bare name maps to both members; that is a safe
+    over-approximation for the callers (spec/verify seeds).
 
     Returns a dict mapping FQN -> absolute extracted-file path.
     """
     work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
-    extracted_base = os.path.join(work_dir, "extracted_functions")
     targets = {}
     for abs_src, changes in modified_functions.items():
-        rel = os.path.relpath(abs_src, proj_dir)
-        src_dir = os.path.dirname(rel)
-        src_base = os.path.basename(rel)
-        last_dot = src_base.rfind(".")
-        if last_dot > 0:
-            dir_name = src_base[:last_dot] + "-" + src_base[last_dot + 1:]
-            ext = src_base[last_dot + 1:]
-        else:
-            dir_name = src_base
-            ext = ""
-        func_dir = os.path.join(extracted_base, src_dir, dir_name) if src_dir else os.path.join(extracted_base, dir_name)
+        func_dir, _ext = _src_rel_to_func_dir(
+            proj_dir, abs_src, work_dir=work_dir
+        )
+        by_method = _extracted_files_by_method(func_dir)
         names = set()
         for cls in classes:
             names.update(changes.get(cls, []))
         for name in names:
-            fname = f"{name}.{ext}" if ext else name
-            path = os.path.join(func_dir, fname)
-            fqn = _file_to_fqn(path, work_dir)
-            targets[fqn] = path
+            paths = list(by_method.get(name, ()))
+            if not paths:
+                # The regex extractor disambiguates same-name funcs as foo/foo_1;
+                # codegraph uses the class qualifier instead, so fall back to the
+                # stem.
+                stem = re.sub(r"_\d+$", "", name)
+                paths = by_method.get(stem, ())
+            for path in paths:
+                targets[_file_to_fqn(path, work_dir)] = path
     return targets
+
+
+def _reconcile_extracted_dir(proj_dir, abs_src, work_dir=None):
+    """Delete extracted-function files under abs_src's function directory that
+    codegraph no longer produces for it, then prune emptied directories.
+
+    ``valid`` is computed with the same backend (codegraph when it indexes the
+    file, else regex) that run_extraction used to write the files, so their
+    identifiers — and therefore the on-disk layout — agree; only genuinely orphaned
+    files are removed. A source file that no longer exists yields an empty ``valid``
+    set, so all of its extracted files are removed.
+    """
+    func_dir, ext = _src_rel_to_func_dir(
+        proj_dir, abs_src, work_dir=work_dir
+    )
+    if not os.path.isdir(func_dir):
+        return
+
+    valid = set()
+    lang_key = EXT_TO_LANG.get(ext)
+    if lang_key and os.path.isfile(abs_src):
+        spans, _raw = _function_spans(abs_src, lang_key, proj_dir)
+        for ident, _s, _e in spans:
+            # ident is the class-qualified, deduped identifier written by
+            # run_extraction as a flat file that keeps the "::" in its name.
+            path = os.path.join(func_dir, ident) + (f".{ext}" if ext else "")
+            valid.add(os.path.abspath(path))
+
+    for root, _dirs, fnames in os.walk(func_dir):
+        for fn in fnames:
+            abs_path = os.path.abspath(os.path.join(root, fn))
+            if abs_path not in valid:
+                os.remove(abs_path)
+
+    # Prune empty directories left behind (deepest first).
+    for root, _dirs, _files in os.walk(func_dir, topdown=False):
+        if root != func_dir and os.path.isdir(root) and not os.listdir(root):
+            os.rmdir(root)
 
 
 def _remove_stale_extracted(proj_dir, modified_functions, work_dir=None):
     """
-    Delete extracted-function files for functions reported as removed (including every
-    function of a deleted source file), and prune any function directory left empty as
-    a result. Re-extraction never rewrites these files, so without this they linger as
-    stale specs under fm_agent/extracted_functions/.
+    Reconcile the extracted-function tree against what codegraph now produces,
+    deleting any file that no longer corresponds to a current source function and
+    pruning emptied directories.
+
+    We reconcile every source file in the current phases.json plus any file
+    reported changed or deleted — not only files whose regex-visible function names
+    changed. A qualifier-only edit (e.g. renaming a C++ namespace around an
+    otherwise identical ``void foo(){...}``) moves the extracted file to a new
+    qualified directory without changing the regex name or body, so the old
+    qualified file would otherwise linger as a stale, orphaned spec. Reconciling by
+    path rather than by (class-less) name handles it.
     """
-    removed = _modified_function_targets(
-        proj_dir, modified_functions, classes=("removed",), work_dir=work_dir
-    )
-    for path in removed.values():
-        if os.path.isfile(path):
-            os.remove(path)
-    for path in removed.values():
-        func_dir = os.path.dirname(path)
-        if os.path.isdir(func_dir) and not os.listdir(func_dir):
-            os.rmdir(func_dir)
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
+    srcs = set(modified_functions)  # abs paths; includes deleted source files
+    try:
+        phases_data = _load_phases(work_dir)
+        for phase in phases_data.get("phases", []):
+            for module in phase.get("modules", []):
+                for rel in module.get("source_files", []):
+                    srcs.add(os.path.abspath(os.path.join(proj_dir, rel)))
+    except (OSError, ValueError, KeyError):
+        pass
+    for abs_src in srcs:
+        _reconcile_extracted_dir(proj_dir, abs_src, work_dir=work_dir)
 
 
 def _extract_leading_spec_comments(content, comment_prefix, spec_marker):
@@ -547,7 +644,7 @@ def _split_spec_and_info(block, comment_prefix, spec_marker):
     return spec_block, info_block
 
 
-def _topdown_ordered_fqns(work_dir):
+def _topdown_ordered_fqns(work_dir, extra_call_edges=None):
     """
     Return every extracted-function FQN in the top-down order used by run_pipeline for
     spec generation: phases in ascending phase number, layers from 0 upward, and the
@@ -557,7 +654,7 @@ def _topdown_ordered_fqns(work_dir):
     Regenerates the per-phase topdown-layer JSON files under work_dir/spec_prompts/ as
     a side effect (mirroring run_pipeline's generate_topdown_layers(work_dir) call).
     """
-    generate_topdown_layers(work_dir)
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
     phases_data = _load_phases(work_dir)
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
 
@@ -584,6 +681,8 @@ def run_incremental_pipeline(
     work_dir=None,
     domain_knowledge_files=None,
     submodules=None,
+    one_phase=False,
+    extra_call_edges_path=None,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -602,6 +701,7 @@ def run_incremental_pipeline(
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
+    extra_call_edges = load_call_edges(extra_call_edges_path)
 
     _setup_incremental_logging(work_dir)
     staged_knowledge = stage_domain_knowledge_files(
@@ -636,6 +736,8 @@ def run_incremental_pipeline(
             work_dir=work_dir,
             domain_knowledge_files=domain_knowledge_files,
             submodules=submodules,
+            one_phase=one_phase,
+            extra_call_edges_path=extra_call_edges_path,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -690,6 +792,7 @@ def run_incremental_pipeline(
     _run_setup_extract(
         proj_dir, work_dir, script_dir,
         is_incremental=True, submodules=submodules,
+        one_phase=one_phase,
     )
     logging.info("  -> phases.json regenerated.")
 
@@ -747,7 +850,7 @@ def run_incremental_pipeline(
     logging.info("[Stage 7/10] Generating topdown layers...")
     with open(os.path.join(work_dir, "phases.json"), "r") as f:
         phases_data = json.load(f)
-    generate_topdown_layers(work_dir)
+    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
     logging.info("  -> topdown layers generated for %d phase(s).", len(phases_data.get("phases", [])))
 
     # 8. Collect the scope of functions relevant to the developer intent (the intent file defines the goal of modification).
@@ -760,7 +863,12 @@ def run_incremental_pipeline(
     # 9. Re-generate the spec of functions if it satisfies one of the following conditions: 1) the function is changed; 2) the function is relevant to the developer intent.
     logging.info("[Stage 9/10] Updating specs for changed and relevant functions...")
     updated_spec_files = _update_specs_for_intent(
-        proj_dir, work_dir, developer_intent, changed_functions, spec_files
+        proj_dir,
+        work_dir,
+        developer_intent,
+        changed_functions,
+        spec_files,
+        extra_call_edges=extra_call_edges,
     )
     record_path = os.path.join(work_dir, "incremental_updated_specs.json")
     with open(record_path, "w") as f:
@@ -832,19 +940,12 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
     os.replace(tmp_path, prompt_path)
 
     prompt = "Follow the instructions in the attached file."
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_SETUP_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-            files=[prompt_path],
-        )
-    else:
-        command = [
-            "opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_SETUP_MODEL}",
-            "--file", prompt_path,
-            "--", prompt,
-        ]
+    command = build_llm_cli_command(
+        model=OPENCODE_SETUP_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+        files=[prompt_path],
+    )
 
     produced = False
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
@@ -890,42 +991,92 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
         return None
 
 
-def _llm_select_json(work_dir, prompt_content, stage, trace_meta=None):
-    """
-    Run a single direct LLM call that returns a JSON value, and return the parsed JSON.
+def _validate_module_selection(data):
+    """Validate the direct LLM response used to select relevant modules."""
+    if not isinstance(data, list):
+        raise ValueError("module-selection JSON must be an array")
+    validated = []
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"module-selection item {index} must be an object")
+        phase = item.get("phase")
+        name = item.get("name")
+        if isinstance(phase, bool) or not isinstance(phase, int):
+            raise ValueError(f"module-selection item {index} requires integer field: phase")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"module-selection item {index} requires non-empty string field: name")
+        validated.append({"phase": phase, "name": name.strip()})
+    return validated
 
-    The direct-call counterpart to _opencode_select_json: rather than spawning opencode to
-    read and write project files, this sends prompt_content to the LLM (via src/llm_client)
-    and asks it to emit its answer as JSON wrapped between [JSON] and [JSON] markers, which
-    _llm_call extracts (retrying on a malformed wrapper). It is therefore suitable ONLY for
-    self-contained prompts whose entire context is inlined and which need no repository file
-    access. The exchange is traced under work_dir/trace like the reasoner's LLM calls.
 
-    Returns the parsed JSON value, or None when the call produced no usable [JSON] block or
-    the payload could not be parsed.
+def _validate_spec_update(data):
+    """Validate a direct LLM decision about a function's [SPEC]/[INFO] blocks."""
+    if not isinstance(data, dict):
+        raise ValueError("spec-update JSON must be an object")
+    required = ("spec_updated", "new_spec", "info_updated", "new_info", "updated_callees")
+    missing = [field for field in required if field not in data]
+    if missing:
+        raise ValueError("spec-update JSON missing required field(s): " + ", ".join(missing))
+    if not isinstance(data["spec_updated"], bool) or not isinstance(data["info_updated"], bool):
+        raise ValueError("spec-update JSON fields spec_updated and info_updated must be booleans")
+    if not isinstance(data["new_spec"], str) or not isinstance(data["new_info"], str):
+        raise ValueError("spec-update JSON fields new_spec and new_info must be strings")
+    if not isinstance(data["updated_callees"], list) or not all(
+        isinstance(name, str) and name.strip() for name in data["updated_callees"]
+    ):
+        raise ValueError("spec-update JSON field updated_callees must be an array of non-empty strings")
+    if data["spec_updated"] and not data["new_spec"].strip():
+        raise ValueError("spec-update JSON requires non-empty new_spec when spec_updated is true")
+    if data["info_updated"] and not data["new_info"].strip():
+        raise ValueError("spec-update JSON requires non-empty new_info when info_updated is true")
+    return {
+        "spec_updated": data["spec_updated"],
+        "new_spec": data["new_spec"].strip(),
+        "info_updated": data["info_updated"],
+        "new_info": data["new_info"].strip(),
+        "updated_callees": [name.strip() for name in data["updated_callees"]],
+    }
+
+
+def _validate_caller_info_update(data):
+    """Validate a direct LLM decision about one caller's [INFO] block."""
+    if not isinstance(data, dict):
+        raise ValueError("caller-info JSON must be an object")
+    required = ("info_updated", "new_info")
+    missing = [field for field in required if field not in data]
+    if missing:
+        raise ValueError("caller-info JSON missing required field(s): " + ", ".join(missing))
+    if not isinstance(data["info_updated"], bool):
+        raise ValueError("caller-info JSON field info_updated must be a boolean")
+    if not isinstance(data["new_info"], str):
+        raise ValueError("caller-info JSON field new_info must be a string")
+    if data["info_updated"] and not data["new_info"].strip():
+        raise ValueError("caller-info JSON requires non-empty new_info when info_updated is true")
+    return {"info_updated": data["info_updated"], "new_info": data["new_info"].strip()}
+
+def _llm_select_json(work_dir, prompt_content, stage, validator, schema_description,
+                     trace_meta=None):
+    """Run a direct LLM call and return validated structured JSON.
+
+    This is for self-contained prompts whose context is already inlined. The
+    shared JSON caller records the raw exchange, accepts exactly one JSON
+    object or array (including a fenced or prose-wrapped one), validates the
+    required fields, and retries on protocol failures.
     """
     messages = [{"role": "user", "content": prompt_content}]
     meta = {"stage": stage, "summary": f"LLM {stage}", **(trace_meta or {})}
-    raw = _llm_call(
+    result = _llm_json_call(
         _llm_provider_client,
         LLM_MODEL,
         messages,
-        "JSON",
-        "JSON",
+        validator,
+        schema_description,
         trace_dir=os.path.join(work_dir, "trace"),
         trace_meta=meta,
     )
-    if raw is None:
-        logging.error("%s: LLM produced no parsable [JSON] block.", stage)
-        return None
-
-    # Tolerate strict, fenced, or prose-wrapped JSON inside the [JSON] markers.
-    try:
-        return _load_spec_check_json(raw)
-    except (ValueError, TypeError) as exc:
-        logging.error("%s: could not parse LLM JSON output: %s", stage, exc)
-        return None
-
+    if result is None:
+        logging.error("%s: LLM produced no valid JSON response after retries.", stage)
+    return result
 
 def _domain_knowledge_prompt_section(work_dir):
     text = load_staged_domain_knowledge_text(work_dir)
@@ -1005,11 +1156,14 @@ def collect_relevent_function_scope(
         "Return ONLY a JSON array of objects, each "
         '`{"phase": <phase number>, "name": "<module name>"}`, naming exactly the modules you '
         "judged relevant (reuse the same `phase` and `name` values from the list above). Use "
-        "`[]` if no module is relevant. Wrap the JSON array between `[JSON]` and `[JSON]` "
-        "markers.\n"
+        "`[]` if no module is relevant. Do not include Markdown, tags, or prose outside the JSON array.\n"
     )
     selection = _llm_select_json(
-        work_dir, module_prompt, stage="select_relevant_modules",
+        work_dir,
+        module_prompt,
+        stage="select_relevant_modules",
+        validator=_validate_module_selection,
+        schema_description='[{"phase": integer, "name": "non-empty string"}]',
     )
     if selection is None:
         selection = []
@@ -1145,9 +1299,15 @@ def collect_relevent_function_scope(
 
             if ranked:
                 # Keep the extracted-function file for each selected function name.
+                # The dual-key index resolves the name whether scope reports it bare
+                # ("Flush") or class-qualified ("LocalStorage::Flush"); a bare name
+                # matching two classes keeps both members — safe for scope.
+                by_method = _extracted_files_by_method(func_dir)
                 for f in ranked:
-                    cand = os.path.join(func_dir, f"{f['name']}.{ext}")
-                    if os.path.isfile(cand):
+                    cands = by_method.get(f["name"]) or by_method.get(
+                        re.sub(r"_\d+$", "", f["name"]), []
+                    )
+                    for cand in cands:
                         _record(os.path.relpath(cand, extracted_dir), f.get("score", 0.0))
                 logging.info(
                     "    [scope] pass 3/3: %s -> %s",
@@ -1155,11 +1315,14 @@ def collect_relevent_function_scope(
                     ", ".join(f"{f['name']}={f.get('score', 0.0):.2f}" for f in ranked),
                 )
             else:
-                # scope.py could not localize within this file — keep all of its functions.
-                for fname in os.listdir(func_dir):
-                    cand = os.path.join(func_dir, fname)
-                    if os.path.isfile(cand):
-                        _record(os.path.relpath(cand, extracted_dir), 0.0)
+                # scope.py could not localize within this file — keep all of its
+                # extracted-function files (walked; the layout is flat but os.walk
+                # stays robust to any legacy nested file).
+                for root, _dirs, fnames in os.walk(func_dir):
+                    for fname in fnames:
+                        cand = os.path.join(root, fname)
+                        if os.path.isfile(cand):
+                            _record(os.path.relpath(cand, extracted_dir), 0.0)
 
     # Order by descending relevance score (path as a deterministic tie-breaker), then keep
     # only the first `range` functions when a limit is given.
@@ -1171,15 +1334,16 @@ def collect_relevent_function_scope(
     return ordered
 
 
-def _project_call_graph(work_dir):
+def _project_call_graph(work_dir, extra_call_edges=None):
     """
     Build the project-wide call graph (keyed by FQN) over every extracted function.
 
     Treats all extracted functions across every phase in phases.json as one graph, so
     callee/caller edges span the whole project. Returns (callees_map, callers_map,
-    file_map): callees_map maps each FQN to the set of FQNs it calls directly, callers_map
-    the inverse (each FQN to the FQNs that call it directly), and file_map maps each FQN to
-    the absolute path of its extracted-function file.
+    file_map, edge_aliases_map): callees_map maps each FQN to the set of FQNs it calls
+    directly, callers_map the inverse (each FQN to the FQNs that call it directly),
+    file_map maps each FQN to the absolute path of its extracted-function file, and
+    edge_aliases_map maps callee -> caller -> supplemental edge labels.
     """
     phases = _load_phases(work_dir)
     all_files = []
@@ -1190,11 +1354,22 @@ def _project_call_graph(work_dir):
                 seen.add(fpath)
                 all_files.append((fpath, module_name))
 
-    callees_map, callers_map, _all_callees, file_map, _modmap = _build_call_graph(all_files, work_dir)
-    return callees_map, callers_map, file_map
+    (
+        callees_map,
+        callers_map,
+        _all_callees,
+        file_map,
+        _modmap,
+        edge_aliases_map,
+    ) = _build_call_graph(
+        all_files,
+        work_dir,
+        extra_call_edges=extra_call_edges,
+    )
+    return callees_map, callers_map, file_map, edge_aliases_map
 
 
-def _resolve_callee_fqns(caller_fqn, callee_names, callees_map):
+def _resolve_callee_fqns(caller_fqn, callee_names, callees_map, edge_aliases_map=None):
     """
     Map callee names reported by opencode (the [INFO] entries whose expected spec changed)
     back to the FQNs of caller_fqn's callees.
@@ -1209,7 +1384,11 @@ def _resolve_callee_fqns(caller_fqn, callee_names, callees_map):
     resolved = set()
     for callee_fqn in callees_map.get(caller_fqn, ()):
         stem = callee_fqn.split("::")[-1]
-        if stem in wanted or stem.lower() in wanted_lower:
+        aliases = set()
+        if edge_aliases_map:
+            aliases.update(edge_aliases_map.get(callee_fqn, {}).get(caller_fqn, ()))
+        alias_lower = {alias.lower() for alias in aliases}
+        if stem in wanted or stem.lower() in wanted_lower or aliases & wanted or alias_lower & wanted_lower:
             resolved.add(callee_fqn)
     return resolved
 
@@ -1288,11 +1467,18 @@ def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefi
         '   - "info_updated": boolean — true when you produced a new/replacement [INFO] block.\n'
         '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
         '   - "updated_callees": array of callee name strings whose expected spec you added or changed, or [].\n'
-        "   Wrap the JSON object between `[JSON]` and `[JSON]` markers.\n"
+        "   Do not include Markdown, tags, or prose outside the JSON object.\n"
     )
 
     return _llm_select_json(
-        work_dir, prompt_content, stage="update_function_spec",
+        work_dir,
+        prompt_content,
+        stage="update_function_spec",
+        validator=_validate_spec_update,
+        schema_description=(
+            '{"spec_updated": boolean, "new_spec": string, "info_updated": boolean, '
+            '"new_info": string, "updated_callees": [string]}'
+        ),
         trace_meta={"fqn": fqn, "idx": idx},
     )
 
@@ -1342,16 +1528,20 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
         "3. Return ONLY a JSON object with keys:\n"
         '   - "info_updated": boolean.\n'
         '   - "new_info": string — the full replacement [INFO] block, or "" if not updated.\n'
-        "   Wrap the JSON object between `[JSON]` and `[JSON]` markers.\n"
+        "   Do not include Markdown, tags, or prose outside the JSON object.\n"
     )
 
     return _llm_select_json(
-        work_dir, prompt_content, stage="update_caller_info",
+        work_dir,
+        prompt_content,
+        stage="update_caller_info",
+        validator=_validate_caller_info_update,
+        schema_description='{"info_updated": boolean, "new_info": string}',
         trace_meta={"caller_fqn": caller_fqn, "callee_name": callee_name, "idx": idx},
     )
 
 
-def _collect_caller_context(fqn, callers_map, file_map):
+def _collect_caller_context(fqn, callers_map, file_map, edge_aliases_map=None):
     """
     Gather the context an existing caller provides about fqn, mirroring the caller context
     run_pipeline feeds into spec generation: each caller's own [SPEC] block and the entry in
@@ -1370,7 +1560,10 @@ def _collect_caller_context(fqn, callers_map, file_map):
         cpath_p = Path(cpath)
         caller_spec = extract_spec_block(cpath_p)
         info_block = extract_info_block(cpath_p)
-        expectation = extract_callee_spec_from_info(info_block, fqn) if info_block else None
+        aliases = ()
+        if edge_aliases_map:
+            aliases = tuple(edge_aliases_map.get(fqn, {}).get(caller_fqn, ()))
+        expectation = extract_callee_spec_from_info(info_block, fqn, aliases) if info_block else None
         if caller_spec or expectation:
             context.append((caller_fqn, caller_spec, expectation))
     return context
@@ -1383,7 +1576,7 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
     block from scratch for a function that has no existing specification — e.g. a function
     freshly added by the modification.
 
-    Mirrors the full run's spec generation (run_pipeline Stage 5) but for a single function:
+    Mirrors the full run's spec generation (run_pipeline Stage 6) but for a single function:
     opencode reads the project's spec format rules (fm_agent/spec_prompts/system_prompt.md),
     is given the same caller context the full run provides (each caller's [SPEC] block and what
     that caller's [INFO] block expects from this function, in caller_context as returned by
@@ -1489,7 +1682,14 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
     )
 
 
-def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_functions, relevant_rel_files):
+def _update_specs_for_intent(
+    proj_dir,
+    work_dir,
+    developer_intent,
+    changed_functions,
+    relevant_rel_files,
+    extra_call_edges=None,
+):
     """
     re-generate the [SPEC] (and dependent [INFO]) blocks of every function that is
     either changed or relevant to the developer intent, propagating to callees.
@@ -1514,7 +1714,10 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
     """
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
-    callees_map, callers_map, file_map = _project_call_graph(work_dir)
+    callees_map, callers_map, file_map, edge_aliases_map = _project_call_graph(
+        work_dir,
+        extra_call_edges=extra_call_edges,
+    )
 
     # Seed: functions changed in the working tree (added/modified — removed ones no longer
     # exist on disk) plus functions relevant to the developer intent.
@@ -1537,7 +1740,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
 
     # Top-down order (callers before the callees they depend on); FQNs absent from the layer
     # graph sort last, by name.
-    topdown = _topdown_ordered_fqns(work_dir)
+    topdown = _topdown_ordered_fqns(work_dir, extra_call_edges=extra_call_edges)
     order_index = {fqn: i for i, fqn in enumerate(topdown)}
 
     def _order_key(fqn):
@@ -1574,7 +1777,9 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
             # one from scratch the way the full run does, rather than skipping the function.
             source = content
             old_spec, old_info = None, None
-            caller_context = _collect_caller_context(fqn, callers_map, file_map)
+            caller_context = _collect_caller_context(
+                fqn, callers_map, file_map, edge_aliases_map
+            )
             result = _opencode_generate_spec(
                 proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
                 developer_intent, callee_names, source, caller_context,
@@ -1732,7 +1937,7 @@ def _update_specs_for_intent(proj_dir, work_dir, developer_intent, changed_funct
             changed_spec_files.add(os.path.relpath(plan["fpath"], extracted_dir))
             if plan["info_updated"]:
                 for callee_fqn in _resolve_callee_fqns(
-                    plan["fqn"], plan["updated_callees"], callees_map
+                    plan["fqn"], plan["updated_callees"], callees_map, edge_aliases_map
                 ):
                     if callee_fqn not in checked:
                         to_check.add(callee_fqn)

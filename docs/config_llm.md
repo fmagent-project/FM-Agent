@@ -1,19 +1,35 @@
 # LLM Provider Configuration
 
-FM-Agent reads these settings from `.env` (mapped to constants in `config.py`):
+FM-Agent reads its non-secret settings from `fm-agent.toml` (loaded and validated
+by `config.py`); the LLM API key stays in `.env`. Every setting can also be
+overridden by the environment variable shown below, which takes precedence over
+the toml — so an existing `.env` that sets these still works.
+
+`fm-agent.toml` (committed, non-secret):
+
+```toml
+[llm]
+name     = "anthropic/claude-sonnet-4.6"    # override: LLM_MODEL — default model, same as upstream FM-Agent
+provider = "openrouter"                       # override: OPENCODE_MODEL_PROVIDER — an OpenCode provider id
+base_url = "https://openrouter.ai/api/v1"     # override: LLM_API_BASE_URL — endpoint for FM-Agent's direct reasoner calls
+backend  = "opencode"                         # override: FM_AGENT_MODEL_BACKEND — opencode, auto, codex-cli, or claude-cli
+effort   = ""                                 # override: LLM_EFFORT — optional local CLI reasoning effort
+```
+
+`.env` (gitignored, secret only):
 
 ```dotenv
-LLM_API_KEY=your-api-key                  # auth token for FM-Agent's direct calls
-LLM_API_BASE_URL=https://openrouter.ai/api/v1    # endpoint for FM-Agent's direct reasoner calls
-LLM_MODEL=anthropic/claude-sonnet-4.6              # default model, same as upstream FM-Agent
-LLM_EFFORT=                                        # optional local CLI reasoning effort
-FM_AGENT_MODEL_BACKEND=opencode                 # opencode, auto, codex-cli, or claude-cli
-OPENCODE_MODEL_PROVIDER=openrouter               # an OpenCode provider id
+LLM_API_KEY=your-api-key                      # auth token for FM-Agent's direct calls
 ```
+
+> **Migrating from an older `.env`:** because `.env` outranks `fm-agent.toml`, any
+> non-secret setting still in your `.env` (e.g. `LLM_MODEL`) silently wins and
+> editing the toml has no effect. Move those lines out of `.env`, keeping only
+> `LLM_API_KEY`, so `fm-agent.toml` is the effective source.
 
 It calls the model two ways:
 
-- **OpenCode** (setup / spec / bug validation): `opencode run --model "$OPENCODE_MODEL_PROVIDER/$LLM_MODEL"`, so that string must resolve to a provider + model registered in OpenCode (below).
+- **OpenCode** (setup / spec / bug validation): `opencode run --model "$OPENCODE_MODEL_PROVIDER/$LLM_MODEL"`; FM-Agent supplies the matching OpenCode provider automatically (below), so no manual OpenCode config is needed.
 - **Direct** (reasoner): hits `$LLM_API_BASE_URL` itself, authenticating with `$LLM_API_KEY`.
 
 When `FM_AGENT_MODEL_BACKEND` is set to `auto`, `codex-cli`, or `claude-cli`,
@@ -33,13 +49,18 @@ Set it only to a value accepted by the selected CLI and model.
 In this mode `LLM_API_KEY`, `LLM_API_BASE_URL`, and
 `OPENCODE_MODEL_PROVIDER` are not required for model access.
 
-## Register the OpenCode provider
+## The OpenCode provider (generated automatically)
 
-`OPENCODE_MODEL_PROVIDER/LLM_MODEL` is only valid if the provider is registered in `~/.config/opencode/opencode.json`:
+For the `opencode` backend, FM-Agent builds the OpenCode provider block from
+`[llm]` in `fm-agent.toml` and injects it into the OpenCode subprocess at
+runtime (via `OPENCODE_CONFIG_CONTENT`). **You do not need to register a provider
+in `~/.config/opencode/opencode.json`** — `fm-agent.toml` (with its env
+overrides) is the single source of truth.
+
+The generated block is equivalent to:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "provider": {
     "openrouter": {
       "npm": "@ai-sdk/openai-compatible",
@@ -53,19 +74,24 @@ In this mode `LLM_API_KEY`, `LLM_API_BASE_URL`, and
 }
 ```
 
-How it lines up with `.env`:
+built from:
 
-| `opencode.json` | `.env` |
+| generated field | `fm-agent.toml` `[llm]` / env override |
 |---|---|
-| provider key (`openrouter`) | `OPENCODE_MODEL_PROVIDER` |
-| `options.baseURL` | `LLM_API_BASE_URL` |
-| `options.apiKey` | `LLM_API_KEY` (read from env, never hard-coded) |
-| a key under `models` | `LLM_MODEL` |
+| provider key (`openrouter`) | `provider` / `OPENCODE_MODEL_PROVIDER` |
+| `npm` adapter | `api_style` / `LLM_API_STYLE` — `openai` → `@ai-sdk/openai-compatible`, `anthropic` → `@ai-sdk/anthropic` |
+| `options.baseURL` | `base_url` / `LLM_API_BASE_URL` |
+| `options.apiKey` | always `{env:LLM_API_KEY}` — the key is never written to disk |
+| a key under `models` | `name` / `LLM_MODEL` |
 
-To use another endpoint, copy the block, rename it, point `baseURL` at the
-endpoint, and update `.env` to match. Pick `npm` by API style:
-`@ai-sdk/openai-compatible` for OpenAI-style endpoints such as OpenRouter, or
-`@ai-sdk/anthropic` for Anthropic-style `/v1/messages` endpoints.
+To use another endpoint, change these in `fm-agent.toml` (or set the env
+overrides) — no OpenCode config edit needed. FM-Agent's block is OpenCode's
+highest-precedence config source, so it **overrides** a same-named provider in
+your `opencode.json`; you don't need (and shouldn't keep) a hand-written provider
+block there. OpenCode deep-merges the rest per key, so your other providers and
+the `plugin` array are preserved. (The block is injected whenever `LLM_API_KEY`
+and the `[llm]` fields are set — which is the normal case, since the direct
+reasoner needs `LLM_API_KEY` too.)
 
 ## Third-party LLM services and cache routing
 

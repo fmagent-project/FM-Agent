@@ -1,10 +1,11 @@
+import json
 import logging
 import os
 import subprocess
 import threading
 from dataclasses import dataclass
 
-from config import OPENCODE_TIMEOUT_SECONDS
+from config import OPENCODE_TIMEOUT_SECONDS, settings
 from .cli_backend import command_argv, command_display, command_stdin
 from .trace_writer import (
     new_event_id,
@@ -73,12 +74,84 @@ def _opencode_trace_path(work_dir, event_id):
     return os.path.join(_trace_dir(work_dir), "opencode", f"{event_id}.jsonl")
 
 
+def _opencode_provider_config():
+    """Build an OpenCode ``provider`` block from FM-Agent's own LLM settings.
+
+    ``fm-agent.toml`` is the single source of truth for provider / base URL /
+    model: instead of the user hand-writing (and keeping in sync) a provider
+    block in ``~/.config/opencode/opencode.json``, FM-Agent injects an equivalent
+    block into the OpenCode subprocess via ``OPENCODE_CONFIG_CONTENT``. That is
+    OpenCode's highest-precedence config source, so it wins over any same-named
+    provider in the user's ``opencode.json``; OpenCode deep-merges per key, so
+    other providers and the ``plugin`` array in that file are preserved.
+
+    Returns ``None`` (injecting nothing) unless we have every field needed to
+    build a working block — provider, base URL, model, and an API key. Without a
+    key the injected ``{env:LLM_API_KEY}`` would be empty and would clobber a
+    working config, so we stay out of the way and leave OpenCode's own config in
+    effect.
+    """
+    llm = settings.llm
+    if not (llm.api_key and llm.base_url and llm.name and llm.provider):
+        return None
+    adapter = (
+        "@ai-sdk/anthropic"
+        if llm.api_style == "anthropic"
+        else "@ai-sdk/openai-compatible"
+    )
+    return {
+        "provider": {
+            llm.provider: {
+                "npm": adapter,
+                "options": {
+                    "baseURL": llm.base_url,
+                    # Resolved by OpenCode from the child env (set below), so the
+                    # key is never written to a config file on disk.
+                    "apiKey": "{env:LLM_API_KEY}",
+                },
+                "models": {llm.name: {}},
+            }
+        }
+    }
+
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge ``overlay`` into ``base``; ``overlay`` wins on conflicting
+    leaves, nested dicts are merged (mirrors OpenCode's own config merge)."""
+    out = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
 def _opencode_env(proj_dir, work_dir, event_id):
     env = os.environ.copy()
     trace_dir = os.path.abspath(os.path.join(_trace_dir(work_dir), "opencode"))
     os.makedirs(trace_dir, exist_ok=True)
     env["TRACE_DIR"] = trace_dir
     env["TRACE_FILENAME"] = event_id
+    provider_config = _opencode_provider_config()
+    if provider_config is not None:
+        # Make the resolved key available under LLM_API_KEY so the injected
+        # `{env:LLM_API_KEY}` resolves regardless of where config read it from.
+        env["LLM_API_KEY"] = settings.llm.api_key
+        # Merge our provider block into any OPENCODE_CONFIG_CONTENT the caller
+        # already set (rather than overwriting it), so their inline plugins /
+        # permissions / MCP / agents survive; our provider still wins on the
+        # provider key it defines.
+        existing = {}
+        raw = env.get("OPENCODE_CONFIG_CONTENT")
+        if raw:
+            try:
+                loaded = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                loaded = None
+            if isinstance(loaded, dict):
+                existing = loaded
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(_deep_merge(existing, provider_config))
     # subprocess.Popen(cwd=...) chdirs the child but doesn't sync PWD; opencode
     # walks PWD upward looking for AGENTS.md, so without this it picks up the
     # fm-agent repo's own AGENTS.md instead of the target's, baking ~10K bytes

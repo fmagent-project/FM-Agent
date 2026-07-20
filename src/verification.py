@@ -1,10 +1,10 @@
 import config
-from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL, OPENCODE_MODEL_PROVIDER
+from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL
 from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
 from .file_utils import is_file_ready
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
-from .cli_backend import build_agent_command, is_cli_backend_enabled
+from .llm_client import build_llm_cli_command
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -386,17 +386,12 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     os.replace(tmp_path, prompt_path)
 
     prompt = "Follow the instructions in the attached file"
-    if is_cli_backend_enabled():
-        command = build_agent_command(
-            model=OPENCODE_BUG_VALIDATION_MODEL,
-            prompt=prompt,
-            cwd=proj_dir,
-            files=[prompt_path],
-        )
-    else:
-        command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{OPENCODE_BUG_VALIDATION_MODEL}",
-                   "--file", prompt_path,
-                   "--", prompt]
+    command = build_llm_cli_command(
+        model=OPENCODE_BUG_VALIDATION_MODEL,
+        prompt=prompt,
+        cwd=proj_dir,
+        files=[prompt_path],
+    )
     result_relpath = os.path.join(work_rel, "bug_validation", f"{bug_id}.result.json")
     result_path = os.path.join(proj_dir, result_relpath)
     # Resume idempotency: if resuming and this bug was already validated, don't pay for it again.

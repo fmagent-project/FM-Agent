@@ -1,14 +1,12 @@
-import re
 import time
 import json
 import random
-import os
 import urllib.request
 import urllib.error
 import urllib.parse
 import logging
 from config import *
-from .cli_backend import is_cli_backend_enabled, run_agent_for_messages
+from .cli_backend import build_agent_command, is_cli_backend_enabled, run_agent_for_messages
 from openai import OpenAI, RateLimitError, BadRequestError
 from .trace_writer import (
     new_event_id,
@@ -27,6 +25,22 @@ _MAX_LLM_RETRIES = 5
 _ANTHROPIC_MAX_TOKENS = 8192
 
 
+def build_llm_cli_command(model, prompt, cwd, files=None):
+    """Build the configured CLI command for a file-oriented LLM task.
+
+    The pipeline supports the configurable Codex/Claude agent backends as well
+    as the legacy ``opencode run`` backend. Keeping that choice here ensures
+    every caller passes files and prompts with the same command-line shape.
+    """
+    if is_cli_backend_enabled():
+        return build_agent_command(model=model, prompt=prompt, cwd=cwd, files=files)
+
+    command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{model}"]
+    for file_path in files or []:
+        command.extend(["--file", file_path])
+    return command + ["--", prompt]
+
+
 def _is_anthropic_model(model):
     """True if model should be routed through anthropic-native /v1/messages."""
     m = (model or "").lower()
@@ -37,11 +51,11 @@ _DEFAULT_INJECT_USER_ID = "stable-user-or-session-id-xxxxxxx123"
 
 
 def _stable_user_id():
-    return os.environ.get("INJECT_ID") or _DEFAULT_INJECT_USER_ID
+    return settings.inject.id or _DEFAULT_INJECT_USER_ID
 
 
 def _inject_targets():
-    return [s.strip() for s in (os.environ.get("INJECT_HOST") or "").split(",") if s.strip()]
+    return [s.strip() for s in (settings.inject.hosts or "").split(",") if s.strip()]
 
 
 def _matches_inject_target(url, target):
@@ -233,14 +247,57 @@ def _retry_create(client, model, messages):
             time.sleep(wait)
 
 
-def _extract_tagged(text, start_tag, end_tag):
-    pattern = rf"\[{re.escape(start_tag)}\](.*?)\[{re.escape(end_tag)}\]"
-    match = re.search(pattern, text, re.DOTALL)
-    return match.group(1).strip() if match else None
+def _parse_json_response(response):
+    """Parse the only JSON object or array in an LLM response.
 
+    Prefer a complete JSON response, but tolerate Markdown fences or explanatory
+    prose when they surround exactly one valid structured JSON value. Multiple
+    structured values are rejected because choosing one would be ambiguous.
+    """
+    if not isinstance(response, str):
+        raise ValueError("LLM response must be a JSON string")
+    text = response.strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as direct_exc:
+        decoder = json.JSONDecoder()
+        values = []
+        index = 0
+        while index < len(text):
+            object_start = text.find("{", index)
+            array_start = text.find("[", index)
+            starts = [start for start in (object_start, array_start) if start != -1]
+            if not starts:
+                break
+            start = min(starts)
+            try:
+                data, end = decoder.raw_decode(text, start)
+            except json.JSONDecodeError:
+                index = start + 1
+                continue
+            if isinstance(data, (dict, list)):
+                values.append(data)
+            index = end
 
-def _llm_call(client, model, messages, start_tag, end_tag, max_retries=MAX_SPC_ITER,
-              trace_dir=None, trace_meta=None):
+        if len(values) == 1:
+            return values[0]
+        if len(values) > 1:
+            raise ValueError("LLM response contains multiple JSON values")
+        raise ValueError(f"LLM response is not valid JSON: {direct_exc}") from direct_exc
+
+    if not isinstance(data, (dict, list)):
+        raise ValueError("LLM response must contain a JSON object or array")
+    return data
+
+def _llm_json_call(client, model, messages, validator, schema_description,
+                   max_retries=MAX_SPC_ITER, trace_dir=None, trace_meta=None):
+    """Call an LLM until it returns structured JSON accepted by ``validator``.
+
+    ``validator`` receives the parsed JSON value and must either return the
+    desired Python value or raise ``ValueError`` with a schema error. Keeping
+    JSON parsing and retry handling in one place makes every direct structured
+    LLM call follow the same protocol.
+    """
     trace_meta = trace_meta or {}
     for attempt in range(1, max_retries + 1):
         event_id = new_event_id("llm")
@@ -262,15 +319,23 @@ def _llm_call(client, model, messages, start_tag, end_tag, max_retries=MAX_SPC_I
                     **trace_meta,
                     "model": model,
                     "attempt": attempt,
-                    "start_tag": start_tag,
-                    "end_tag": end_tag,
                     "error": str(exc),
                 },
             }
             record_llm_exchange(trace_dir, event_id, event, messages)
             raise
-        result = _extract_tagged(response, start_tag, end_tag)
-        status = "success" if result is not None else "format_error"
+
+        parsed_json = None
+        result = None
+        parse_error = None
+        try:
+            parsed_json = _parse_json_response(response)
+            result = validator(parsed_json)
+            status = "success"
+        except ValueError as exc:
+            parse_error = str(exc)
+            status = "format_error"
+
         event = {
             "event_id": event_id,
             "type": "llm_call",
@@ -278,22 +343,26 @@ def _llm_call(client, model, messages, start_tag, end_tag, max_retries=MAX_SPC_I
             "status": status,
             "start_time": started,
             "end_time": utc_now_iso(),
-            "summary": trace_meta.get("summary", f"LLM call for {start_tag}"),
+            "summary": trace_meta.get("summary", "LLM JSON call"),
             "metadata": {
                 **trace_meta,
                 "model": model,
                 "attempt": attempt,
-                "start_tag": start_tag,
-                "end_tag": end_tag,
                 "usage": usage,
-                "parsed": result,
+                "parsed_json": parsed_json,
+                "parse_error": parse_error,
             },
         }
         record_llm_exchange(trace_dir, event_id, event, messages, response)
-        if result is not None:
+        if status == "success":
             return result
+
         messages = messages + [
-            {"role": "assistant", "content": response},
-            {"role": "user", "content": f"Your output format is wrong. Please wrap your answer within [{start_tag}] and [{end_tag}]."}
+            {"role": "assistant", "content": response or ""},
+            {"role": "user", "content": (
+                f"Your previous response was invalid: {parse_error}. "
+                f"Return only valid JSON matching this schema: {schema_description}. "
+                "Do not include Markdown, tags, or prose."
+            )},
         ]
     return None
