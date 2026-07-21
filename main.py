@@ -44,6 +44,11 @@ from src.domain_knowledge import (
     list_staged_domain_knowledge_relpaths,
     stage_domain_knowledge_files,
 )
+from src.run_workspace import (
+    RunSelectionCancelled,
+    select_run_workspace,
+    workdir_relpath,
+)
 import os
 import sys
 import argparse
@@ -54,12 +59,6 @@ import subprocess
 import logging
 import contextlib
 import concurrent.futures
-
-
-def _clean_previous_run(work_dir):
-    """Remove the fm_agent working directory from the previous pipeline run."""
-    if os.path.isdir(work_dir):
-        shutil.rmtree(work_dir)
 
 
 def _get_pending_batches(batches, proj_dir):
@@ -129,12 +128,13 @@ def _run_spec_generation_batch(
         function_id_from_extracted_path(func_rel)
         for func_rel in function_files
     ]
-    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
+    work_rel = workdir_relpath(proj_dir, work_dir)
+    fm_reminder = (f"IMPORTANT: {work_rel}/ is your output workspace, not project source. "
                     "Do NOT modify any existing project files.")
     if attempt == 1:
         prompt = (
             f"Process the batch prompt file at {batch_prompt_rel}. "
-            f"Read it and fm_agent/spec_prompts/system_prompt.md, "
+            f"Read it and {work_rel}/spec_prompts/system_prompt.md, "
             f"generate behavioral specs for each function listed, "
             f"and write the complete specced files directly. {fm_reminder}"
         )
@@ -144,9 +144,9 @@ def _run_spec_generation_batch(
             f"Some functions may already have specs from a previous attempt. "
             f"Check each function file — only generate specs for those "
             f"that don't have [SPEC] blocks yet. "
-            f"Read fm_agent/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
+            f"Read {work_rel}/spec_prompts/system_prompt.md for the format rules. {fm_reminder}"
         )
-    prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
+    prompt_file = os.path.join(work_dir, "workflow_spec_step4_batch.md")
     command = build_llm_cli_command(
         model=OPENCODE_SPEC_MODEL,
         prompt=prompt,
@@ -161,9 +161,9 @@ def _run_spec_generation_batch(
             stage="spec_generation",
             function_ids=function_ids,
             input_files=[
-                "fm_agent/workflow_spec_step4_batch.md",
+                f"{work_rel}/workflow_spec_step4_batch.md",
                 batch_prompt_rel,
-                "fm_agent/spec_prompts/system_prompt.md",
+                f"{work_rel}/spec_prompts/system_prompt.md",
                 *list_staged_domain_knowledge_relpaths(work_dir),
             ],
             output_files=function_files,
@@ -183,6 +183,7 @@ def _run_spec_generation_batch(
 def run_pipeline(
     proj_dir,
     resume=False,
+    work_dir=None,
     required_source_files=None,
     domain_knowledge_files=None,
     submodules=None,
@@ -200,24 +201,20 @@ def run_pipeline(
               f"Supported extensions: {', '.join(sorted(EXT_TO_LANG.keys()))}")
         sys.exit(1)
 
-    work_dir = os.path.join(proj_dir, "fm_agent")
+    work_dir = work_dir or os.path.join(proj_dir, "fm_agent")
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     extra_call_edges = load_call_edges(extra_call_edges_path)
 
-    # Clean files from the previous run — unless resuming, where we keep all
-    # prior progress (phases.json, generated specs, verification results) and
-    # only do the remaining work.
     if resume:
         if os.path.isdir(work_dir):
             print(f"[Pipeline] RESUME: keeping existing {os.path.relpath(work_dir, proj_dir)}/ — only remaining work will run.")
         else:
-            print("[Pipeline] RESUME requested but no previous fm_agent/ found — starting fresh.")
+            print("[Pipeline] RESUME requested but the selected run was not found — starting fresh.")
             resume = False
-    else:
-        _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
+    work_rel = workdir_relpath(proj_dir, work_dir)
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
     )
@@ -259,8 +256,8 @@ def run_pipeline(
     try_codegraph_init(proj_dir, force=not resume)
 
     # Run function extraction using extract.py
-    # force=False on resume preserves already-specced extracted files; on a fresh
-    # run fm_agent/ was just wiped so it is equivalent to force=True.
+    # force=False on resume preserves already-specced extracted files. A fresh
+    # run uses a newly created, empty run directory.
     print("[Pipeline] Stage 3/6: Extracting functions from source files...")
     run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
 
@@ -306,7 +303,10 @@ def run_pipeline(
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
     batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
-    shutil.copy2(batch_md_src, batch_md_dst)
+    with open(batch_md_src, "r") as f:
+        batch_md = f.read().replace("fm_agent/", f"{work_rel}/")
+    with open(batch_md_dst, "w") as f:
+        f.write(batch_md)
 
     all_processed = set()
     num_phases = len(phases_data["phases"])
@@ -341,8 +341,9 @@ def run_pipeline(
 
             # Generate batch prompts for this layer. On resume, skip functions
             # that were already specced in a previous run.
-            batch_cmd = ["python3", "fm_agent/spec_prompts/generate_batch_prompts.py",
-                         "--phase", str(phase_num), "--layers", str(layer_idx)]
+            batch_cmd = ["python3", f"{work_rel}/spec_prompts/generate_batch_prompts.py",
+                         "--phase", str(phase_num), "--layers", str(layer_idx),
+                         "--repo-root", proj_dir]
             if resume:
                 batch_cmd.append("--resume")
             subprocess.run(batch_cmd, cwd=proj_dir, check=True)
@@ -474,7 +475,7 @@ def run_pipeline(
                         f"[Pipeline] ERROR: Stage 6 Phase {phase_num} Layer {layer_idx} failed "
                         f"after {OPENCODE_MAX_RETRIES} attempts. "
                         f"No specs were generated. "
-                        f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
+                        f"Check {work_rel}/trace/ for details."
                     )
                     sys.exit(1)
 
@@ -511,7 +512,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="continue a previous run in <proj_dir>/fm_agent instead of wiping it: "
+        help="continue the run selected by <proj_dir>/fm_agent/current_run.json: "
         "keeps phases.json, generated specs, and existing verification results; "
         "only does the remaining work.",
     )
@@ -546,7 +547,7 @@ if __name__ == "__main__":
         nargs="+",
         default=[],
         help="additional Markdown domain-knowledge file(s) to copy into "
-        "fm_agent/spec_prompts/domain_context/user_knowledge/ and provide to "
+        "the selected run's spec_prompts/domain_context/user_knowledge/ and provide to "
         "setup, spec generation, and validation agents. May be repeated. "
         "FM_AGENT_DOMAIN_KNOWLEDGE can also provide os.pathsep-separated files.",
     )
@@ -646,6 +647,8 @@ if __name__ == "__main__":
     if submodules and args.entry_func is not None:
         parser.error("--submodule cannot be combined with --entry-func.")
 
+    if not os.path.isdir(proj_dir):
+        parser.error(f"project directory does not exist: {proj_dir}")
     if args.only_spec and args.incremental:
         parser.error(
             "--only-spec cannot be combined with --incremental "
@@ -658,6 +661,18 @@ if __name__ == "__main__":
     if not env_check_run(proj_dir, config):
         sys.exit(0)
 
+    try:
+        run_selection = select_run_workspace(
+            proj_dir,
+            resume_requested=resume,
+        )
+    except RunSelectionCancelled as exc:
+        print(f"[Pipeline] {exc}")
+        sys.exit(0)
+    resume = run_selection.resume
+    selected_work_dir = run_selection.work_dir
+    selected_work_rel = os.path.relpath(selected_work_dir, proj_dir)
+
     start_time = time.time()
 
     # Entry-point mode: reason only about the call graph reachable from a specific
@@ -669,6 +684,7 @@ if __name__ == "__main__":
             entry_func=args.entry_func,
             end_funcs=args.end_func,
             resume=resume,
+            work_dir=selected_work_dir,
             domain_knowledge_files=domain_knowledge_files,
             one_phase=args.one_phase,
             extra_call_edges_path=extra_call_edges_path,
@@ -697,7 +713,7 @@ if __name__ == "__main__":
     # the real project before snapshotting.
     old_commit = None
     if args.incremental:
-        version_path = os.path.join(proj_dir, "fm_agent", "version.log")
+        version_path = os.path.join(selected_work_dir, "version.log")
         if os.path.exists(version_path):
             with open(version_path, "r") as f:
                 commits = [line.strip() for line in f if line.strip()]
@@ -720,6 +736,7 @@ if __name__ == "__main__":
         else contextlib.nullcontext(proj_dir)
     )
     with run_ctx as run_dir:
+        run_work_dir = os.path.join(run_dir, selected_work_rel)
         try:
             # Incremental mode requires a recorded commit to diff against; without a
             # version.log from a previous run, fall back to the full pipeline.
@@ -728,6 +745,7 @@ if __name__ == "__main__":
                     run_dir,
                     intent_path,
                     old_commit,
+                    work_dir=run_work_dir,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
                     one_phase=args.one_phase,
@@ -738,6 +756,7 @@ if __name__ == "__main__":
                 run_pipeline(
                     run_dir,
                     resume=resume,
+                    work_dir=run_work_dir,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
                     one_phase=args.one_phase,
@@ -749,7 +768,7 @@ if __name__ == "__main__":
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
             # copied back to the real project below. Only recorded on success so a
             # partial run does not advance the version baseline.
-            _record_version(new_commit, os.path.join(run_dir, "fm_agent"))
+            _record_version(new_commit, run_work_dir)
         finally:
             # With --isolate the pipeline ran against a throwaway snapshot, so its
             # fm_agent/ results live in the snapshot. Copy them back into the real
@@ -757,12 +776,11 @@ if __name__ == "__main__":
             # even when the pipeline crashes or is interrupted mid-run, so partial
             # progress survives and can be resumed with --resume.
             if args.isolate:
-                src_fm = os.path.join(run_dir, "fm_agent")
-                dst_fm = os.path.join(proj_dir, "fm_agent")
-                if os.path.isdir(src_fm):
-                    if os.path.isdir(dst_fm):
-                        shutil.rmtree(dst_fm)
-                    shutil.copytree(src_fm, dst_fm, symlinks=True)
-                    print(f"[Pipeline] Copied results back to {dst_fm}")
+                if os.path.isdir(run_work_dir):
+                    if os.path.isdir(selected_work_dir):
+                        shutil.rmtree(selected_work_dir)
+                    os.makedirs(os.path.dirname(selected_work_dir), exist_ok=True)
+                    shutil.copytree(run_work_dir, selected_work_dir, symlinks=True)
+                    print(f"[Pipeline] Copied results back to {selected_work_dir}")
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")

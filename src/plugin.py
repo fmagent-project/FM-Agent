@@ -83,15 +83,21 @@ def _resolve_command(cmd: str, plugin_root: Path) -> str:
 
 
 def run_plugin_command(
-    cmd: str, plugin_root: Path, proj_dir: str, label: str = ""
+    cmd: str, plugin_root: Path, proj_dir: str, label: str = "",
+    work_dir: Optional[str] = None,
 ) -> None:
     """Execute a plugin bash command with ``check=True`` so failure stops the pipeline.
 
     Relative file paths in *cmd* are resolved under *plugin_root*. The command runs
-    in *proj_dir* with ``FM_AGENT_PLUGIN_ROOT`` set to the plugin root.
+    in *proj_dir* with ``FM_AGENT_PLUGIN_ROOT`` set to the plugin root. When a
+    run workspace is available, ``FM_AGENT_WORK_DIR`` contains its absolute
+    path and ``FM_AGENT_WORK_DIR_REL`` contains its project-relative path.
     """
     resolved = _resolve_command(cmd, plugin_root)
     env = dict(os.environ, FM_AGENT_PLUGIN_ROOT=str(plugin_root))
+    if work_dir is not None:
+        env["FM_AGENT_WORK_DIR"] = os.path.abspath(work_dir)
+        env["FM_AGENT_WORK_DIR_REL"] = os.path.relpath(work_dir, proj_dir)
     try:
         subprocess.run(resolved, shell=True, check=True, cwd=proj_dir, env=env)
     except subprocess.CalledProcessError as e:

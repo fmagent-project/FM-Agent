@@ -31,6 +31,7 @@ from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
 )
+from .run_workspace import workdir_relpath
 
 
 def _merge_descriptions(target_desc, source_desc):
@@ -197,8 +198,11 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
         )
         return
 
-    prompt = _build_domain_context_regen_prompt(regenerate, phase_cleanup)
-    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
+    work_rel = workdir_relpath(proj_dir, work_dir)
+    prompt = _build_domain_context_regen_prompt(regenerate, phase_cleanup).replace(
+        "fm_agent/", f"{work_rel}/"
+    )
+    fm_reminder = (f"IMPORTANT: {work_rel}/ is your output workspace, not project source. "
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
@@ -216,11 +220,11 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
                 command=command,
                 stage="sync_domain_context",
                 input_files=[
-                    "fm_agent/phases.json",
+                    f"{work_rel}/phases.json",
                     *list_staged_domain_knowledge_relpaths(work_dir),
                 ],
                 output_files=[
-                    "fm_agent/spec_prompts/domain_context/engine_overview.txt",
+                    f"{work_rel}/spec_prompts/domain_context/engine_overview.txt",
                 ],
                 summary=f"Regenerate domain_context for changed phases (attempt {attempt})",
                 metadata={"attempt": attempt},
@@ -574,13 +578,15 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
         logging.info("No phases.json to update module descriptions in; skipping.")
         return
 
+    work_rel = workdir_relpath(proj_dir, work_dir)
     prompt = _build_module_description_prompt(modified_modules, phases_path)
     if not prompt:
         logging.info(
             "No changed module still owns source files; skipping description update."
         )
         return
-    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
+    prompt = prompt.replace("fm_agent/", f"{work_rel}/")
+    fm_reminder = (f"IMPORTANT: {work_rel}/ is your output workspace, not project source. "
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
@@ -597,8 +603,8 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
                 work_dir=work_dir,
                 command=command,
                 stage="update_module_description",
-                input_files=["fm_agent/phases.json"],
-                output_files=["fm_agent/phases.json"],
+                input_files=[f"{work_rel}/phases.json"],
+                output_files=[f"{work_rel}/phases.json"],
                 summary=f"Update module descriptions after phase dedup (attempt {attempt})",
                 metadata={"attempt": attempt},
             )
@@ -802,6 +808,14 @@ def _ensure_source_files_in_phases(phases_json, required_source_files):
     }
 
 
+def _rewrite_workflow_workspace_paths(workflow_path, work_rel):
+    """Point workflow artifact paths at the selected run workspace."""
+    with open(workflow_path, "r") as workflow_file:
+        content = workflow_file.read()
+    with open(workflow_path, "w") as workflow_file:
+        workflow_file.write(content.replace("fm_agent/", f"{work_rel}/"))
+
+
 def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
     """Copy a workflow markdown into ``work_dir`` and rewrite the
     ``source_files`` instruction so it points at the concrete project root,
@@ -813,6 +827,8 @@ def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
     shutil.copy2(workflow_src, workflow_dst)
     proj_dir_abs = os.path.abspath(proj_dir)
     proj_dir_name = os.path.basename(proj_dir_abs)
+    work_rel = workdir_relpath(proj_dir, work_dir)
+    _rewrite_workflow_workspace_paths(workflow_dst, work_rel)
     with open(workflow_dst, "r") as _f:
         md = _f.read()
     old = ("- `phases[*].modules[*].source_files` — relative paths from repo root of all source files "
@@ -844,6 +860,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                          plugin_root=None):
     """Stage 1: generate phase.json — input target code, output phases.json."""
     phases_json = os.path.join(work_dir, "phases.json")
+    work_rel = workdir_relpath(proj_dir, work_dir)
     run_llm = True
 
     if plugin_stage is not None:
@@ -853,7 +870,10 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         elif plugin_stage.type == "replace":
             print("[Pipeline] Stage 1/6: Plugin stage 'generate_phase_plan' type=replace, running plugin command.")
             from .plugin import run_plugin_command
-            run_plugin_command(plugin_stage.replace_cmd, plugin_root, proj_dir, label="generate_phase_plan")
+            run_plugin_command(
+                plugin_stage.replace_cmd, plugin_root, proj_dir,
+                label="generate_phase_plan", work_dir=work_dir,
+            )
             run_llm = False
 
     if run_llm:
@@ -872,6 +892,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             workflow_src = str(plugin_root / plugin_stage.input_md)
             workflow_dst = os.path.join(work_dir, "workflow_generate_phases.md")
             shutil.copy2(workflow_src, workflow_dst)
+            _rewrite_workflow_workspace_paths(workflow_dst, work_rel)
             user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
             if user_knowledge_paths:
                 with open(workflow_dst, "a") as _f:
@@ -889,13 +910,13 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         else:
             _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
 
-        fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
+        fm_reminder = (f"IMPORTANT: The {work_rel}/ directory is NOT part of the project source code. "
                         "It is a workspace for storing your output files only. "
                         "Do NOT include fm_agent/ paths in phases.json. "
                         "Do NOT modify any existing project files.")
-        incremental_reminder = ("IMPORTANT: An existing fm_agent/phases.json from a previous run is already "
+        incremental_reminder = (f"IMPORTANT: An existing {work_rel}/phases.json from a previous run is already "
                                 "present. Do NOT regenerate it from scratch. Instead, inspect the current "
-                                "state of the source code and UPDATE the existing fm_agent/phases.json so it "
+                                f"state of the source code and UPDATE the existing {work_rel}/phases.json so it "
                                 "reflects the current version of the code: add modules and source files that "
                                 "are new, remove entries whose files no longer exist, and adjust phases as "
                                 "needed. Preserve entries that are still accurate.")
@@ -916,7 +937,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             else:
                 prompt = ("A previous attempt was interrupted and may have already produced some of the "
                           "required output files. Follow the instructions in the attached file, but FIRST "
-                          "check the current progress in fm_agent/ (e.g. phases.json). Keep any existing valid "
+                          f"check the current progress in {work_rel}/ (e.g. phases.json). Keep any existing valid "
                           "output as-is and only generate the files that are missing or incomplete — do NOT "
                           f"regenerate or overwrite work that is already done. {fm_reminder} {submodule_reminder}")
             if is_incremental:
@@ -926,7 +947,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                     f"- {error}" for error in phase_plan_errors
                 )
                 schema_repair_prompt = (
-                    "IMPORTANT: The existing fm_agent/phases.json is valid JSON or "
+                    f"IMPORTANT: The existing {work_rel}/phases.json is valid JSON or "
                     "partially generated, but it does not match the required schema. "
                     "Read the project source files and repair these problems:\n"
                     f"{formatted_errors}\n"
@@ -934,7 +955,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                     "Use an empty array only when the module genuinely owns no source files."
                 )
                 prompt = f"{prompt}\n\n{schema_repair_prompt}"
-            prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_generate_phases.md")
+            prompt_file = os.path.join(work_dir, "workflow_generate_phases.md")
             command = build_llm_cli_command(
                 model=OPENCODE_SETUP_MODEL,
                 prompt=prompt,
@@ -948,11 +969,11 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                     command=command,
                     stage="generate_phases_json",
                     input_files=[
-                        "fm_agent/workflow_generate_phases.md",
+                        f"{work_rel}/workflow_generate_phases.md",
                         *list_staged_domain_knowledge_relpaths(work_dir),
                     ],
                     output_files=[
-                        "fm_agent/phases.json",
+                        f"{work_rel}/phases.json",
                     ],
                     summary=f"OpenCode generate phases.json attempt {attempt}",
                     metadata={"attempt": attempt},
@@ -1006,17 +1027,20 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                 raise RuntimeError(
                     f"Stage generate_phase_plan failed after {OPENCODE_MAX_RETRIES} attempts. "
                     f"{missing}. "
-                    f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
+                    f"Check {work_rel}/trace/ for details."
                 )
 
         if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.output_process:
             print("[Pipeline] Stage 1/6: Running plugin post-process for generate_phase_plan...")
             from .plugin import run_plugin_command
-            run_plugin_command(plugin_stage.output_process, plugin_root, proj_dir, label="generate_phase_plan post-process")
+            run_plugin_command(
+                plugin_stage.output_process, plugin_root, proj_dir,
+                label="generate_phase_plan post-process", work_dir=work_dir,
+            )
 
     if not _phase_plan_complete(work_dir):
         raise RuntimeError(
-            "Stage generate_phase_plan failed: fm_agent/phases.json is missing or "
+            f"Stage generate_phase_plan failed: {work_rel}/phases.json is missing or "
             "invalid. Please re-run this stage to produce a valid phases.json."
         )
 
@@ -1075,6 +1099,7 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
     """Stage 2: generate domain context — input phases.json, output domain context
     files for each phase.
     """
+    work_rel = workdir_relpath(proj_dir, work_dir)
     run_llm = True
 
     if plugin_stage is not None:
@@ -1084,7 +1109,10 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
         elif plugin_stage.type == "replace":
             print("[Pipeline] Stage 2/6: Plugin stage 'generate_domain_context' type=replace, running plugin command.")
             from .plugin import run_plugin_command
-            run_plugin_command(plugin_stage.replace_cmd, plugin_root, proj_dir, label="generate_domain_context")
+            run_plugin_command(
+                plugin_stage.replace_cmd, plugin_root, proj_dir,
+                label="generate_domain_context", work_dir=work_dir,
+            )
             run_llm = False
 
     if run_llm:
@@ -1096,6 +1124,7 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
             workflow_src = str(plugin_root / plugin_stage.input_md)
             workflow_dst = os.path.join(work_dir, "workflow_generate_domain_context.md")
             shutil.copy2(workflow_src, workflow_dst)
+            _rewrite_workflow_workspace_paths(workflow_dst, work_rel)
             user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
             if user_knowledge_paths:
                 with open(workflow_dst, "a") as _f:
@@ -1111,7 +1140,7 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
         else:
             _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
 
-        fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
+        fm_reminder = (f"IMPORTANT: The {work_rel}/ directory is NOT part of the project source code. "
                         "It is a workspace for storing your output files only. "
                         "Do NOT modify any existing project files.")
 
@@ -1120,18 +1149,18 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
                 break
             if attempt == 1 and not resume:
                 prompt = (
-                    "Read fm_agent/phases.json first. "
+                    f"Read {work_rel}/phases.json first. "
                     "Then follow the instructions in the attached file. "
                     + fm_reminder
                 )
             else:
                 prompt = ("A previous domain-context generation attempt was interrupted and may have already "
-                          "produced some of the required output files. Read fm_agent/phases.json first. "
+                          f"produced some of the required output files. Read {work_rel}/phases.json first. "
                           "Then follow the instructions in the attached file, but FIRST "
-                          "check the current progress in fm_agent/spec_prompts/domain_context/. "
+                          f"check the current progress in {work_rel}/spec_prompts/domain_context/. "
                           "Keep any existing valid output as-is and only generate the files that are missing or "
                           f"incomplete — do NOT regenerate or overwrite work that is already done. {fm_reminder}")
-            prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_generate_domain_context.md")
+            prompt_file = os.path.join(work_dir, "workflow_generate_domain_context.md")
             command = build_llm_cli_command(
                 model=OPENCODE_SETUP_MODEL,
                 prompt=prompt,
@@ -1145,12 +1174,12 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
                     command=command,
                     stage="generate_domain_context",
                     input_files=[
-                        "fm_agent/workflow_generate_domain_context.md",
-                        "fm_agent/phases.json",
+                        f"{work_rel}/workflow_generate_domain_context.md",
+                        f"{work_rel}/phases.json",
                         *list_staged_domain_knowledge_relpaths(work_dir),
                     ],
                     output_files=[
-                        "fm_agent/spec_prompts/domain_context/engine_overview.txt",
+                        f"{work_rel}/spec_prompts/domain_context/engine_overview.txt",
                     ],
                     summary=f"OpenCode generate domain context attempt {attempt}",
                     metadata={"attempt": attempt},
@@ -1174,13 +1203,16 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
                 raise RuntimeError(
                     f"Stage generate_domain_context failed after {OPENCODE_MAX_RETRIES} attempts. "
                     f"Domain context outputs missing. "
-                    f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
+                    f"Check {work_rel}/trace/ for details."
                 )
 
         if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.output_process:
             print("[Pipeline] Stage 2/6: Running plugin post-process for generate_domain_context...")
             from .plugin import run_plugin_command
-            run_plugin_command(plugin_stage.output_process, plugin_root, proj_dir, label="generate_domain_context post-process")
+            run_plugin_command(
+                plugin_stage.output_process, plugin_root, proj_dir,
+                label="generate_domain_context post-process", work_dir=work_dir,
+            )
 
     if not _domain_context_complete(work_dir):
         raise RuntimeError(
@@ -1209,10 +1241,11 @@ def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                                  plugin_stage=context_stage, plugin_root=plugin_root)
 
     if not _setup_outputs_complete(work_dir):
+        work_rel = workdir_relpath(proj_dir, work_dir)
         print(
             "[Pipeline] ERROR: Stage 1/2 outputs are incomplete after "
-            "post-processing. Expected fm_agent/phases.json, "
-            "fm_agent/spec_prompts/domain_context/engine_overview.txt, and one "
+            f"post-processing. Expected {work_rel}/phases.json, "
+            f"{work_rel}/spec_prompts/domain_context/engine_overview.txt, and one "
             "phase_NN_types.txt per phase."
         )
         sys.exit(1)

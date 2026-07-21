@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 
+from .run_workspace import inferred_workdir_relpath
 from config import settings
 
 
@@ -106,8 +107,10 @@ def _safe_staged_name(source_path, used_names):
         index += 1
 
 
-def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
+def list_staged_domain_knowledge_relpaths(work_dir, prefix=None):
     """Return project-relative staged markdown paths, sorted for stable prompts."""
+    if prefix is None:
+        prefix = inferred_workdir_relpath(work_dir)
     knowledge_dir = os.path.join(work_dir, USER_KNOWLEDGE_REL_DIR)
     if not os.path.isdir(knowledge_dir):
         return []
@@ -158,7 +161,7 @@ def stage_domain_knowledge_files(proj_dir, work_dir, markdown_paths=None):
         )
         entries.append({
             "source_path": source_path,
-            "staged_path": f"fm_agent/{rel_to_work}",
+            "staged_path": f"{inferred_workdir_relpath(work_dir)}/{rel_to_work}",
         })
 
     manifest_path = os.path.join(tmp_dir, USER_KNOWLEDGE_MANIFEST)

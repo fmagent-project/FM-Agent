@@ -131,13 +131,13 @@ You can open your oh-my-openagent config file (typically ~/.config/opencode/oh-m
 
 ### Structured Trace
 
-FM-Agent always writes structured execution traces under `fm_agent/trace/`:
+FM-Agent writes structured execution traces under each run's `trace/` directory (`fm_agent/runs/<run-id>/trace/`):
 
 | Path | Content |
 |---|---|
-| `fm_agent/trace/events.jsonl` | Structured events for OpenCode calls and verification LLM calls |
-| `fm_agent/trace/payloads/` | Event payloads such as OpenCode stdout and selected LLM messages |
-| `fm_agent/trace/opencode/` | Optional raw OpenCode LLM request/response JSONL files |
+| `trace/events.jsonl` | Structured events for OpenCode calls and verification LLM calls |
+| `trace/payloads/` | Event payloads such as OpenCode stdout and selected LLM messages |
+| `trace/opencode/` | Optional raw OpenCode LLM request/response JSONL files |
 
 To capture raw OpenCode LLM traffic, install the OpenCode trace plugin manually by adding it to `~/.config/opencode/opencode.json`:
 
@@ -148,7 +148,7 @@ To capture raw OpenCode LLM traffic, install the OpenCode trace plugin manually 
 }
 ```
 
-FM-Agent automatically passes `TRACE_DIR` and `TRACE_FILENAME` to each OpenCode process. The plugin writes `fm_agent/trace/opencode/<event_id>.jsonl`, where `<event_id>` matches the corresponding `opencode_call` event in `events.jsonl`.
+FM-Agent automatically passes `TRACE_DIR` and `TRACE_FILENAME` to each OpenCode process. The plugin writes `trace/opencode/<event_id>.jsonl` inside the selected run, where `<event_id>` matches the corresponding `opencode_call` event in `events.jsonl`.
 OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/opencode/packages/@lucentia/opencode-trace@latest`.
 
 
@@ -177,7 +177,7 @@ To provide project-specific domain knowledge without editing FM-Agent's built-in
 uv run python main.py <proj_dir> --domain-knowledge docs/invariants.md docs/protocol.md
 ```
 
-FM-Agent stages these files under `fm_agent/spec_prompts/domain_context/user_knowledge/` for the current run. You can also set `FM_AGENT_DOMAIN_KNOWLEDGE` to an `os.pathsep`-separated list of Markdown files.
+FM-Agent stages these files under `fm_agent/runs/<run-id>/spec_prompts/domain_context/user_knowledge/` for the current run. You can also set `FM_AGENT_DOMAIN_KNOWLEDGE` to an `os.pathsep`-separated list of Markdown files.
 
 Use `--submodule` to limit a full or incremental run to selected project subdirectories:
 
@@ -188,7 +188,9 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 
 `--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`, but not with `--entry-func`.
 
-By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
+Each new invocation writes to a timestamped directory such as `fm_agent/runs/20260717-143000/`; FM-Agent never deletes the entire `fm_agent/` root automatically. `fm_agent/current_run.json` identifies the active run. When results already exist, an interactive terminal offers four choices: resume the current run, archive it by leaving it under `runs/` and create a new run, overwrite only the current run, or exit without changes. Pass `--resume` (or set `FM_AGENT_RESUME=1`) to select the current run directly. In a non-interactive terminal, existing results are preserved and FM-Agent exits unless `--resume` is explicit.
+
+Older flat `fm_agent/` workspaces are migrated to `fm_agent/runs/legacy-<timestamp>/` when resumed or archived.
 
 Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces the `[SPEC]` blocks for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
 
@@ -225,17 +227,17 @@ Extra-edge field rules:
 
 ### Incremental Mode
 
-In incremental mode, FM-Agent reuses the results of a previous run and only re-checks what changed. It diffs the current code against the commit recorded by the previous run in `fm_agent/version.log`. Each run records the processed commit id to that file, so a subsequent `--incremental` run automatically picks it up:
+In incremental mode, FM-Agent reuses the selected run and only re-checks what changed. It diffs the current code against the commit recorded in `fm_agent/runs/<run-id>/version.log`.
 
 ```bash
 python3 main.py <proj_dir> --incremental <intent_file>
 ```
 
-If `fm_agent/version.log` does not exist (no previous run to compare against), FM-Agent falls back to a full run.
+If the selected run has no `version.log`, FM-Agent falls back to a full run.
 
 ### Live Dashboard
 
-FM-Agent ships a standalone real-time TUI dashboard ([dashboard.py](dashboard.py)) that visualizes a run as it progresses: per-stage progress, token usage and cost, prompt-cache hit rate, and bug-validation verdicts. It reads the trace files FM-Agent writes under `fm_agent/`, so run it in a second terminal while `main.py` is going:
+FM-Agent ships a standalone real-time TUI dashboard ([dashboard.py](dashboard.py)) that visualizes a run as it progresses: per-stage progress, token usage and cost, prompt-cache hit rate, and bug-validation verdicts. Given a project root, it follows `current_run.json`; you can also pass a specific run directory.
 
 ```bash
 uv run python dashboard.py <proj_dir>
@@ -243,15 +245,15 @@ uv run python dashboard.py <proj_dir>
 
 | Argument    | Description                                                  |
 | ----------- | ----------------------------------------------------------- |
-| `proj_dir`  | Same codebase directory passed to `main.py` (monitors `<proj_dir>/fm_agent/`). You can also point it directly at any workspace directory containing a `trace/` subdir, e.g. an archived run |
+| `proj_dir`  | Same codebase directory passed to `main.py` (monitors the current run), or a specific `fm_agent/runs/<run-id>/` directory containing `trace/` |
 
 Press `Ctrl-C` to exit the dashboard; it does not affect the running pipeline.
 
 ### Output
 
-FM-Agent creates an `fm_agent/` directory under your codebase directory. The key outputs are:
+FM-Agent creates each run under `fm_agent/runs/<run-id>/`. The key outputs below are relative to that run directory:
 
-#### Bug Reports (`fm_agent/bug_validation/<bug_id>.md`)
+#### Bug Reports (`bug_validation/<bug_id>.md`)
 
 Each confirmed or investigated bug produces a Markdown report containing:
 
@@ -265,11 +267,11 @@ Each confirmed or investigated bug produces a Markdown report containing:
 | Probe Script | The full test script used to confirm the bug |
 | Probe Output | Raw stdout from executing the probe script |
 
-A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results with counts of total reported, confirmed, not confirmed bugs.
+A `summary.json` file in `bug_validation/` aggregates all bug results with counts of total reported, confirmed, not confirmed bugs.
 
 ## Important Notes
 
-1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
+1. FM-Agent keeps independent run directories under `fm_agent/runs/`; use `current_run.json` or the startup prompt to select the active run.
 2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For reusable framework behavior, customize the built-in prompts; for example, if you are reasoning about a compiler, modify `md/bug_validator.md` to instruct the agent to compare outputs against a reference implementation (e.g., GCC).
 3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
 

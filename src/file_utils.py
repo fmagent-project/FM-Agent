@@ -128,7 +128,7 @@ def load_phases(work_dir):
     phases_path = os.path.join(work_dir, "phases.json")
     if not _json_file_is_valid(phases_path):
         raise RuntimeError(
-            "fm_agent/phases.json is missing or invalid. "
+            f"{phases_path} is missing or invalid. "
             "Please re-run the generate_phase_plan stage to produce a valid phases.json."
         )
     with open(phases_path, "r") as f:

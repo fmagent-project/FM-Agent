@@ -62,6 +62,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--layers", required=True, help="Layer index or inclusive range, e.g. 0 or 0-5")
     parser.add_argument("--batch-size", type=int, default=2, help="Functions per prompt file")
     parser.add_argument("--output-dir", default=None, help="Output directory for batch prompt files")
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help=(
+            "Project repository root. Required when the copied script lives in "
+            "a nested run workspace; defaults to the work directory's parent "
+            "for compatibility with the legacy fm_agent/ layout."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Show plan without writing files")
     parser.add_argument(
         "--resume",
@@ -383,9 +392,16 @@ def main() -> int:
 
     # work_dir is the fm_agent/ directory (parent of spec_prompts/ where this script lives)
     work_dir = Path(__file__).resolve().parent.parent
-    # fm_agent_prefix is the relative path from the project root to work_dir
-    repo_root = work_dir.parent
-    fm_agent_prefix = str(work_dir.relative_to(repo_root)) + "/"
+    # fm_agent_prefix is the relative path from the project root to work_dir.
+    # A run-scoped workspace is nested under fm_agent/runs/<run-id>, so its
+    # parent is not the repository root; the caller passes that root explicitly.
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else work_dir.parent
+    try:
+        fm_agent_prefix = work_dir.relative_to(repo_root).as_posix() + "/"
+    except ValueError as exc:
+        raise ValueError(
+            f"work directory {work_dir} is not inside --repo-root {repo_root}"
+        ) from exc
 
     phases_json = read_json(work_dir / "phases.json")
     project = phases_json["project"]
