@@ -15,6 +15,7 @@ from src.file_utils import (
     _json_file_is_valid,
     _get_incomplete_verification_files,
     _is_under_submodules,
+    load_phases,
 )
 from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
@@ -280,9 +281,7 @@ def run_pipeline(
         os.path.join(spec_prompts_dir, "file_utils.py"),
     )
 
-    phases_path = os.path.join(work_dir, "phases.json")
-    with open(phases_path, "r") as f:
-        phases_data = json.load(f)
+    phases_data = load_phases(work_dir)
 
     print("[Pipeline] Stage 4/6: Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
