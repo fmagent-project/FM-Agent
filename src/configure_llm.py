@@ -357,7 +357,14 @@ def backup_file(path: Path, now: datetime | None = None) -> Path | None:
     if not path.exists():
         return None
     now = now or datetime.now()
-    backup = path.with_name(f"{path.name}.bak.{now.strftime('%Y%m%d-%H%M%S')}")
+    suffix = now.strftime("%Y%m%d-%H%M%S")
+    if path.name == ".env":
+        backup_dir = Path(tempfile.gettempdir()) / "fm-agent-config-backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        path_slug = str(path.parent.resolve()).strip(os.sep).replace(os.sep, "_") or "project"
+        backup = backup_dir / f"{path_slug}__env.bak.{suffix}"
+    else:
+        backup = path.with_name(f"{path.name}.bak.{suffix}")
     shutil.copy2(path, backup)
     return backup
 
