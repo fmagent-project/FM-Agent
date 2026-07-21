@@ -5,6 +5,35 @@ by `config.py`); the LLM API key stays in `.env`. Every setting can also be
 overridden by the environment variable shown below, which takes precedence over
 the toml — so an existing `.env` that sets these still works.
 
+## Recommended setup: interactive wizard
+
+Run:
+
+```bash
+python3 scripts/configure_llm.py
+```
+
+The wizard prompts for:
+
+- provider id
+- provider display name
+- API protocol (`openai`-compatible or `anthropic`-compatible)
+- API base URL
+- model id
+- API key
+- whether to validate the generated configuration
+
+It then:
+
+- updates `fm-agent.toml` with the non-secret `[llm]` settings
+- updates `.env` with `LLM_API_KEY` only
+- removes the common legacy LLM override keys from `.env` so they no longer shadow the toml
+- merges the matching provider entry into the detected OpenCode config file
+- previews the target files, requests confirmation, backs up existing files, and writes atomically
+
+The wizard never prints the API key in plain text and never writes it into
+`opencode.json`; the generated provider always references `{env:LLM_API_KEY}`.
+
 `fm-agent.toml` (committed, non-secret):
 
 ```toml
@@ -13,6 +42,7 @@ name     = "anthropic/claude-sonnet-4.6"    # override: LLM_MODEL — default mo
 provider = "openrouter"                       # override: OPENCODE_MODEL_PROVIDER — an OpenCode provider id
 base_url = "https://openrouter.ai/api/v1"     # override: LLM_API_BASE_URL — endpoint for FM-Agent's direct reasoner calls
 backend  = "opencode"                         # override: FM_AGENT_MODEL_BACKEND — opencode, auto, codex-cli, or claude-cli
+api_style = "openai"                          # override: LLM_API_STYLE — endpoint style for OpenCode adapter selection
 effort   = ""                                 # override: LLM_EFFORT — optional local CLI reasoning effort
 ```
 
@@ -55,7 +85,11 @@ For the `opencode` backend, FM-Agent builds the OpenCode provider block from
 `[llm]` in `fm-agent.toml` and injects it into the OpenCode subprocess at
 runtime (via `OPENCODE_CONFIG_CONTENT`). **You do not need to register a provider
 in `~/.config/opencode/opencode.json`** — `fm-agent.toml` (with its env
-overrides) is the single source of truth.
+overrides) is the single source of truth for FM-Agent itself.
+
+The configuration wizard still syncs a matching provider entry into your
+OpenCode config file so standalone `opencode run` usage can stay aligned with
+FM-Agent, but FM-Agent itself does not depend on that file at runtime.
 
 The generated block is equivalent to:
 

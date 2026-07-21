@@ -84,7 +84,20 @@ The following macOS environment has been tested with the install script:
 
 Set the LLM API key used by both FM-Agent and OpenCode. We recommend [OpenRouter](https://openrouter.ai/): FM-Agent invokes LLMs concurrently, and OpenRouter is generous on RPM (requests per minute) and TPM (tokens per minute) — but any compatible provider works.
 
-Put your API key in `.env` (gitignored, loaded automatically via python-dotenv); every other setting has a committed default in `fm-agent.toml`. Copy the template:
+The easiest setup path is the interactive wizard:
+
+```bash
+python3 scripts/configure_llm.py
+```
+
+It previews the changes, backs up existing files, updates `fm-agent.toml`, stores
+the API key only in `.env`, and syncs the matching OpenCode provider entry in
+`~/.config/opencode/opencode.json` (or the platform-equivalent config path)
+without requiring you to hand-edit JSON.
+
+If you prefer to edit files manually, put your API key in `.env` (gitignored,
+loaded automatically via python-dotenv); every other setting has a committed
+default in `fm-agent.toml`. Copy the template:
 
 ```bash
 cp .env.example .env
@@ -96,7 +109,15 @@ cp .env.example .env
 LLM_API_KEY=your-api-key-here
 ```
 
-Non-secret settings — model, endpoint, backend, provider, etc. — live in `fm-agent.toml` under `[llm]`. Edit them there for a permanent change. To override without touching the committed file — e.g. on a git clone you update with `git pull` — set the matching environment variable in `.env` or your shell. Precedence is `env > .env > fm-agent.toml`; because `.env` wins over the toml, a stale value there overrides a later toml edit, so check `.env` first if a change isn't taking effect. See [docs/config_llm.md](docs/config_llm.md) for details and OpenCode provider setup.
+Non-secret settings — model, endpoint, backend, provider, etc. — live in
+`fm-agent.toml` under `[llm]`. Edit them there for a permanent change. To
+override without touching the committed file — e.g. on a git clone you update
+with `git pull` — set the matching environment variable in `.env` or your
+shell. Precedence is `env > .env > fm-agent.toml`; because `.env` wins over the
+toml, a stale value there overrides a later toml edit, so check `.env` first if
+a change isn't taking effect. The wizard removes the common legacy LLM override
+keys from `.env` for you. See [docs/config_llm.md](docs/config_llm.md) for
+details and OpenCode provider setup.
 
 Then, all of the above dependencies (except Ubuntu and Python) can be installed via the provided script:
 
@@ -112,7 +133,10 @@ Erlang support is optional because its toolchain is not needed for other languag
 
 The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
 
-FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so you do not need to hand-edit `~/.config/opencode/opencode.json` for the model or key (see [docs/config_llm.md](docs/config_llm.md)).
+FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so
+you do not need to hand-edit `~/.config/opencode/opencode.json` for the model
+or key. The configuration wizard above can still keep that file synchronized for
+standalone OpenCode usage (see [docs/config_llm.md](docs/config_llm.md)).
 
 **Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready, and if necessary, specify how to run test cases in `md/bug_validator.md`. If you do not specify, the agent will autonomously decide the execution method.
 
