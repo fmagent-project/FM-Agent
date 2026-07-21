@@ -5,7 +5,7 @@ import sys
 import shutil
 import logging
 
-from src.file_utils import is_file_ready, _is_test_file
+from src.file_utils import is_file_ready, _is_test_file, load_phases
 from src.languages.codegraph import canonicalize
 from src.languages.registry import batch_extract_all, function_spans_for_file
 
@@ -687,12 +687,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     """
     if work_dir is None:
         work_dir = proj_dir
-    phases_path = os.path.join(work_dir, "phases.json")
-    if not os.path.exists(phases_path):
-        raise FileNotFoundError(f"phases.json not found at {phases_path}")
-
-    with open(phases_path, 'r') as f:
-        phases_data = json.load(f)
+    phases_data = load_phases(work_dir)
 
     registry_funcs, registry_langs = batch_extract_all(proj_dir)
     registry_funcs = {

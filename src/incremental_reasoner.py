@@ -41,6 +41,7 @@ from .file_utils import (
     _is_under_submodules,
     _get_all_phase_files,
     _write_file_names,
+    load_phases,
 )
 from .generate_batch_prompts import (
     _detect_comment_prefix,
@@ -672,6 +673,7 @@ def run_incremental_pipeline(
     submodules=None,
     one_phase=False,
     extra_call_edges_path=None,
+    plugin_config=None,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -724,6 +726,7 @@ def run_incremental_pipeline(
             submodules=submodules,
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
+            plugin_config=plugin_config,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -779,6 +782,7 @@ def run_incremental_pipeline(
         proj_dir, work_dir, script_dir,
         is_incremental=True, submodules=submodules,
         one_phase=one_phase,
+        plugin_config=plugin_config,
     )
     logging.info("  -> phases.json regenerated.")
 
@@ -825,8 +829,7 @@ def run_incremental_pipeline(
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
     file_list = collect_file_names(input_dir, file_list_path)
     if submodules:
-        with open(os.path.join(work_dir, "phases.json"), "r") as f:
-            phases_data = json.load(f)
+        phases_data = load_phases(work_dir)
         file_list = _write_file_names(
             _get_all_phase_files(phases_data, input_dir), file_list_path
         )
@@ -834,8 +837,7 @@ def run_incremental_pipeline(
 
     # 7. Update top-down layers
     logging.info("[Stage 7/10] Generating topdown layers...")
-    with open(os.path.join(work_dir, "phases.json"), "r") as f:
-        phases_data = json.load(f)
+    phases_data = load_phases(work_dir)
     generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
     logging.info("  -> topdown layers generated for %d phase(s).", len(phases_data.get("phases", [])))
 
