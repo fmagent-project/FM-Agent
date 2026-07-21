@@ -342,7 +342,8 @@ def run_pipeline(
             # Generate batch prompts for this layer. On resume, skip functions
             # that were already specced in a previous run.
             batch_cmd = ["python3", f"{work_rel}/spec_prompts/generate_batch_prompts.py",
-                         "--phase", str(phase_num), "--layers", str(layer_idx)]
+                         "--phase", str(phase_num), "--layers", str(layer_idx),
+                         "--repo-root", proj_dir]
             if resume:
                 batch_cmd.append("--resume")
             subprocess.run(batch_cmd, cwd=proj_dir, check=True)
