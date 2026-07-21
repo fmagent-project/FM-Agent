@@ -114,7 +114,8 @@ def _system_prompt(language):
     )
 
 
-def _user_prompt(numbered_src, signature_line, language, callee_summaries):
+def _user_prompt(numbered_src, signature_line, language, callee_summaries,
+                 source_provenance_context=None):
     callee_ctx = ""
     if callee_summaries:
         callee_ctx = (
@@ -123,11 +124,19 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries):
             "so the checker can resolve the callee's return provenance into this function):\n"
             + callee_summaries
         )
+    source_ctx = ""
+    if source_provenance_context:
+        source_ctx = (
+            "\n\nDeterministically collected surrounding source context (imports, module constants, "
+            "and sibling assignments relevant to provenance). Use it only to trace values used by "
+            "the function; do not invent operations from context:\n```\n"
+            + source_provenance_context + "\n```"
+        )
     return (
         f"Programming language: {language}\n\n"
         f"Function under analysis:\n{signature_line}\n"
         f"```{language.lower()}\n{numbered_src}\n```\n"
-        f"{callee_ctx}\n\n"
+        f"{callee_ctx}{source_ctx}\n\n"
         "Return EXACTLY ONE JSON object wrapped in [CRYPTO_JSON] and [/CRYPTO_JSON]. Include only "
         "fields that apply; use null / [] for absent facts. Schema:\n"
         "{\n"

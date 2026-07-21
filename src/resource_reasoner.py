@@ -29,6 +29,7 @@ Verdict precedence: ERROR > VULNERABLE > POLYMORPHIC > BOUNDED > SAFE.
 """
 
 from config import RESOURCE_FAIL_CLOSED  # noqa: F401 (kept for parity / future toggles)
+from src.resource_validation import BOUND_CAPS, accepted_bound, bounds_by_id
 
 
 VULNERABLE = "VULNERABLE"
@@ -46,30 +47,19 @@ UNKNOWN_PARAM = "UNKNOWN_PARAM"
 MAGNITUDE_KINDS = {
     "request_size", "element_count", "input_length", "recursion_depth",
     "decompressed_size", "numeric_param", "unknown_external",
+    "request_frequency", "logical_size",
 }
 
 OP_KINDS = {
     "allocation", "unbounded_read", "decompression", "regex_match",
-    "recursion", "loop", "collection_build",
+    "recursion", "loop", "collection_build", "expensive_call",
+    "regex_compile", "logical_allocation",
 }
 
 BOUND_KINDS = {
     "size_check", "count_limit", "depth_limit", "recursion_limit",
     "chunked_read_cap", "decompress_limit", "timeout", "input_length_cap",
-}
-
-# A bound caps a set of magnitude kinds. A costly op's magnitude is cleared only
-# if a dominating bound caps THAT magnitude's kind (exact membership), respecting
-# these intentionally NARROW kind->magnitude acceptances.
-BOUND_CAPS = {
-    "size_check": {"request_size", "input_length", "decompressed_size"},
-    "count_limit": {"element_count", "numeric_param"},
-    "depth_limit": {"recursion_depth"},
-    "recursion_limit": {"recursion_depth"},
-    "chunked_read_cap": {"request_size"},
-    "decompress_limit": {"decompressed_size"},
-    "timeout": {"input_length", "element_count", "recursion_depth", "numeric_param"},
-    "input_length_cap": {"input_length"},
+    "arithmetic_limit", "rate_limit",
 }
 
 OP_TO_FINDING = {
@@ -80,6 +70,9 @@ OP_TO_FINDING = {
     "recursion": ("UNCONTROLLED_RECURSION", "CWE-674"),
     "loop": ("UNCONTROLLED_RESOURCE_CONSUMPTION", "CWE-400"),
     "collection_build": ("ALLOCATION_OF_RESOURCES_WITHOUT_LIMITS", "CWE-770"),
+    "expensive_call": ("UNCONTROLLED_RESOURCE_CONSUMPTION", "CWE-400"),
+    "regex_compile": ("ALLOCATION_OF_RESOURCES_WITHOUT_LIMITS", "CWE-770"),
+    "logical_allocation": ("UNCONTROLLED_ALLOCATION", "CWE-789"),
 }
 
 
@@ -98,15 +91,23 @@ def validate(facts):
     if not facts or not isinstance(facts, dict):
         return "no valid resource abstraction"
     for m in facts.get("magnitude_sources") or []:
+        if not isinstance(m, dict):
+            return "malformed magnitude source"
         if m.get("magnitude_kind") not in MAGNITUDE_KINDS:
             return f"unknown magnitude_kind: {m.get('magnitude_kind')}"
     for b in facts.get("bounds") or []:
+        if not isinstance(b, dict):
+            return "malformed bound"
         if b.get("bound_kind") not in BOUND_KINDS:
             return f"unknown bound_kind: {b.get('bound_kind')}"
     for op in facts.get("costly_ops") or []:
+        if not isinstance(op, dict):
+            return "malformed costly op"
         if op.get("op_kind") not in OP_KINDS:
             return f"unknown op_kind: {op.get('op_kind')}"
         for mag in op.get("magnitudes") or []:
+            if not isinstance(mag, dict):
+                return "malformed magnitude flow"
             ref = mag.get("source")
             if not _valid_magnitude_ref(ref):
                 return f"malformed magnitude ref: {ref}"
@@ -152,7 +153,7 @@ def resolve_status(ref, concrete_mags, param_status):
 # --- typed bound matching -----------------------------------------------------
 
 def _bounds_by_id(facts):
-    return {b.get("id"): b for b in (facts.get("bounds") or []) if b.get("id")}
+    return bounds_by_id(facts)
 
 
 def _resolve_bound(entry, bounds_by_id):
@@ -180,36 +181,11 @@ def _magnitude_kind_of(ref, mags_by_id):
     return None
 
 
-def has_dominating_bound(magnitude, op_mag_kind, bounds_by_id):
+def has_dominating_bound(magnitude, op_mag_kind, bounds_by_id, op=None):
     """A magnitude is cleared iff one of its bounds (high-confidence, known kind)
     DOMINATES the op AND caps the op's magnitude kind. Typed: a size_check does
     not bound recursion depth."""
-    for entry in magnitude.get("bounds") or []:
-        b = _resolve_bound(entry, bounds_by_id)
-        if not b or not isinstance(b, dict):
-            continue
-        if b.get("confidence") != "high":
-            continue
-        if not b.get("dominates"):
-            continue
-        kind = b.get("bound_kind")
-        if kind not in BOUND_KINDS:
-            continue
-        declared = set(b.get("caps") or [])
-        allowed = BOUND_CAPS.get(kind, set())
-        # If we know the op's magnitude kind, require the bound to cap it (via the
-        # declared∩allowed set, or the allowed set when the LLM didn't declare).
-        if op_mag_kind:
-            covering = (declared & allowed) if declared else allowed
-            if op_mag_kind in covering:
-                return True
-        else:
-            # Unknown/parametric magnitude kind: accept a dominating, known bound
-            # that declares it caps SOMETHING in its allowed set (conservative —
-            # a real dominating cap on this flow).
-            if declared & allowed or allowed:
-                return True
-    return False
+    return accepted_bound(magnitude, op or {}, op_mag_kind, bounds_by_id) is not None
 
 
 # --- the checker --------------------------------------------------------------
@@ -249,9 +225,11 @@ def classify(facts, param_status=None):
             if status == SAFE_MAG:
                 continue
             relevant = True
-            op_mag_kind = _magnitude_kind_of(mag["source"], mags_by_id)
-            if has_dominating_bound(mag, op_mag_kind, bounds_by_id):
-                bounded_by = _first_bound_kind(mag, bounds_by_id)
+            op_mag_kind = _magnitude_kind_of(
+                mag["source"], mags_by_id
+            ) or mag.get("magnitude_kind")
+            if has_dominating_bound(mag, op_mag_kind, bounds_by_id, op):
+                bounded_by = _first_bound_kind(mag, op, op_mag_kind, bounds_by_id)
                 continue
             all_bounded = False
             if status == ATTACKER:
@@ -284,12 +262,9 @@ def classify(facts, param_status=None):
     return {"verdict": verdict, "findings": findings, "error": None}
 
 
-def _first_bound_kind(magnitude, bounds_by_id):
-    for entry in magnitude.get("bounds") or []:
-        b = _resolve_bound(entry, bounds_by_id)
-        if b and isinstance(b, dict):
-            return b.get("bound_kind")
-    return None
+def _first_bound_kind(magnitude, op, op_mag_kind, bounds_by_id):
+    bound = accepted_bound(magnitude, op, op_mag_kind, bounds_by_id)
+    return bound.get("bound_kind") if bound else None
 
 
 def _finding(status, kind, cwe, op, source=None, bounded_by=None):
@@ -311,36 +286,44 @@ def _finding(status, kind, cwe, op, source=None, bounded_by=None):
 
 # --- composition helpers (bottom-up, mirrors taint instantiate_sink) ----------
 
-def instantiate_magnitudes(magnitudes, param_to_actual_mags, call_id):
+def instantiate_magnitudes(magnitudes, param_to_actual_mags, call_id, bound_id_map=None):
     """Substitute a callee's parametric magnitude sources with the caller's actual
     argument magnitudes at a call site. Concrete callee magnitudes become opaque
     attacker (renamed under the call id); missing args fail closed to attacker."""
     out = []
     for mag in magnitudes or []:
         src = mag.get("source", "")
-        extra_bounds = list(mag.get("bounds") or [])
+        magnitude_kind = mag.get("magnitude_kind")
+        extra_bounds = [
+            (bound_id_map or {}).get(entry, entry) if isinstance(entry, str) else entry
+            for entry in (mag.get("bounds") or [])
+        ]
         if src.startswith("param:"):
             p = src[len("param:"):]
             actual = param_to_actual_mags.get(p)
             if actual is None:
                 out.append({"source": f"unknown:{call_id}:missing_arg:{p}",
-                            "bounds": extra_bounds})
+                            "bounds": extra_bounds, "magnitude_kind": magnitude_kind})
             else:
                 for am in actual:
                     out.append({"source": am["source"],
-                                "bounds": list(am.get("bounds") or []) + extra_bounds})
+                                "bounds": list(am.get("bounds") or []) + extra_bounds,
+                                "magnitude_kind": am.get("magnitude_kind") or magnitude_kind})
         elif src.startswith("mag:"):
-            out.append({"source": f"callee_mag:{call_id}:{src}", "bounds": extra_bounds})
+            out.append({"source": f"callee_mag:{call_id}:{src}", "bounds": extra_bounds,
+                        "magnitude_kind": magnitude_kind})
         elif src.startswith(("unknown:", "callee_mag:")):
-            out.append({"source": f"unknown:{call_id}:{src}", "bounds": extra_bounds})
+            out.append({"source": f"unknown:{call_id}:{src}", "bounds": extra_bounds,
+                        "magnitude_kind": magnitude_kind})
     return out
 
 
-def instantiate_op(callee_op, call_id, param_to_actual_mags):
+def instantiate_op(callee_op, call_id, param_to_actual_mags, bound_id_map=None):
     """Re-anchor a callee costly op at the caller, substituting param magnitudes."""
     new = dict(callee_op)
     new["id"] = f"{call_id}::{callee_op.get('id', 'OP')}"
     new["magnitudes"] = instantiate_magnitudes(callee_op.get("magnitudes"),
-                                               param_to_actual_mags, call_id)
+                                               param_to_actual_mags, call_id,
+                                               bound_id_map)
     new["_via"] = call_id
     return new

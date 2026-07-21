@@ -66,12 +66,23 @@ def _system_prompt(language):
         "- FS_USE — a non-atomic use of a path that was checked (open/read/write by path)\n"
         "- FS_ATOMIC_USE — an atomic create/use that needs no separate pre-check "
         "(os.open with O_CREAT|O_EXCL, open(x,'x'))\n"
+        "- FS_NOFOLLOW_GUARD / FS_ACQUIRE — symlink/reparse protection and the destructive path "
+        "acquisition it protects. Emit the guard for O_NOFOLLOW or a rejecting Windows reparse "
+        "check; FS_ACQUIRE for os.open with O_TRUNC. The guard must occur first and appear in the "
+        "acquisition's predecessors_must; mere presence elsewhere is unsafe.\n"
         "- CSRF_VALIDATE — a CSRF token validation (validate_csrf, check_csrf, csrf.protect)\n"
         "- STATE_CHANGE — a state-changing side effect in a request handler (DB write/insert/update/"
         "delete, filesystem write, privilege change) reachable from a POST/PUT/DELETE\n"
+        "- CONTENT_TYPE_CHECK / JSON_PARSE — validating an HTTP Content-Type as application/json "
+        "or application/*+json, and parsing the request as JSON. For CSRF/content-confusion safety, "
+        "the check must dominate JSON_PARSE and be listed in predecessors_must.\n"
         "- TLS_VERIFY_DISABLE — disabling TLS verification (verify=False, CERT_NONE, "
         "check_hostname=False, _create_unverified_context)\n"
         "- TLS_VERIFY_ENABLE / TLS_HANDSHAKE_VERIFY — enabling/performing TLS verification\n"
+        "- SSL_CONTEXT_CREATE / CERT_DEFAULT_LOAD — creating the function's own default SSL context "
+        "and loading OS default certificates into it. CERT_DEFAULT_LOAD is safe only on the branch "
+        "where no caller-provided ssl_context exists and SSL_CONTEXT_CREATE definitely preceded it; "
+        "loading defaults into a supplied context is unsafe.\n"
         "- NETWORK_USE — an outbound network request (requests.get/post, urlopen, socket send); set "
         "tls_verify=verified|disabled|unknown|not_applicable. IMPORTANT: a default secure library "
         "call (e.g. requests.get(url) with no verify=False) is tls_verify='verified', NOT unknown.\n"
@@ -90,7 +101,9 @@ def _system_prompt(language):
         "unknown (you cannot tell — the checker will fail closed). Use predecessors_must to list "
         "prior event ids that DEFINITELY occur before this event on every path (the minimal "
         "substitute for a control-flow graph). For TOCTOU, set control_depends_on to the FS_CHECK "
-        "event id whose result controls whether the FS_USE happens.\n\n"
+        "event id whose result controls whether the FS_USE happens. For content-type, SSL-context, "
+        "and no-follow/reparse guards, presence alone is never enough: the guard id MUST be in the "
+        "protected event's predecessors_must only when it dominates that event.\n\n"
         "EXIT STATES: for every LOCAL resource you RESOURCE_OPEN, emit exit_states describing its "
         "state (open/closed/released/escaped) on the normal path AND the exception path. A resource "
         "left 'open' on an exception path (e.g. open() then read() then close() with NO finally/with) "
@@ -125,7 +138,7 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries, funct
         '  "language": "' + language.lower() + '",\n'
         '  "resources": [\n'
         '    {"id": "r_path", "kind": "filesystem_path|file_handle|socket|lock|database_connection|'
-        'cursor|http_request|session|csrf_token|tls_session|http_client|principal|security_context|'
+        'cursor|http_request|session|csrf_token|tls_session|tls_context|http_client|principal|security_context|'
         'generic_resource|unknown", "canonical": "<expr>", "origin": "param|local|return|global|'
         'literal|call_return|unknown", "formal": "<param|null>", "mutability": "stable|'
         'external_mutable|internal_mutable|unknown", "escapes": "none|return|global|field|argument|'

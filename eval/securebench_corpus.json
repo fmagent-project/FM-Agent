@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "cve": "CVE-2019-19844",
+      "plugin": "authn",
+      "cwe": "CWE-640",
+      "repository": "https://github.com/django/django",
+      "fix_commit": "f4cff43bf921fcea6a29b726eb66767f67753fa2",
+      "vulnerable_commit": "a2355740ed76ca9461b34d65beb450c0156f3224",
+      "case_dir": "SecureBench/cases/CVE-2019-19844",
+      "status": "build",
+      "loci": [
+        {"path": "django/contrib/auth/forms.py", "function": "get_users"},
+        {"path": "django/contrib/auth/forms.py", "function": "save_1", "qualified_name": "PasswordResetForm.save"}
+      ]
+    },
+    {
+      "cve": "CVE-2024-47533",
+      "plugin": "authn",
+      "cwe": "CWE-287",
+      "repository": "https://github.com/cobbler/cobbler",
+      "fix_commit": "e19717623c10b29e7466ed4ab23515a94beb2dda",
+      "vulnerable_commit": "d6a270ab3dbe72616565fd542b5780460c52cf42",
+      "case_dir": "SecureBench/cases/CVE-2024-47533",
+      "status": "build",
+      "loci": [
+        {"path": "cobbler/cobblerd.py", "function": "regen_ss_file"},
+        {"path": "cobbler/remote.py", "function": "login"},
+        {"path": "cobbler/utils/__init__.py", "function": "get_shared_secret"}
+      ]
+    },
+    {
+      "cve": "CVE-2015-3982",
+      "plugin": "authn",
+      "cwe": "CWE-384",
+      "repository": "https://github.com/django/django",
+      "fix_commit": "31cb25adecba930bdeee4556709f5a1c42d88fd6",
+      "vulnerable_commit": "2b2a2157d0f4f1c7c4244374a460953846c65dd4",
+      "case_dir": "SecureBench/cases/CVE-2015-3982",
+      "status": "build",
+      "loci": [
+        {"path": "django/contrib/sessions/backends/cached_db.py", "function": "flush"}
+      ]
+    },
+    {
+      "cve": "CVE-2022-3327",
+      "plugin": "authz",
+      "cwe": "CWE-306",
+      "repository": "https://github.com/ikus060/rdiffweb",
+      "fix_commit": "f2a32f2a9f3fb8be1a9432ac3d81d3aacdb13095",
+      "vulnerable_commit": "fa4fd9daa651320d1aa0bc3aae57a1cea4126efa",
+      "case_dir": "SecureBench/cases/CVE-2022-3327",
+      "status": "build",
+      "loci": [
+        {"path": "rdiffweb/tools/auth_form.py", "function": "_is_login"},
+        {"path": "rdiffweb/tools/auth_form.py", "function": "run"},
+        {"path": "rdiffweb/tools/auth_form.py", "function": "login"}
+      ]
+    },
+    {
+      "cve": "CVE-2024-45606",
+      "plugin": "authz",
+      "cwe": "CWE-639",
+      "repository": "https://github.com/getsentry/sentry",
+      "fix_commit": "e8e71708758e1f9f56ce815ace73fe60d9e608dc",
+      "vulnerable_commit": "ca59242c563d2e006686a8b56e372d7f7ab0ae7e",
+      "case_dir": "SecureBench/cases/CVE-2024-45606",
+      "status": "reuse",
+      "loci": [
+        {"path": "src/sentry/api/endpoints/rule_snooze.py", "function": "get_rule", "fixed_expectation": "absent"},
+        {"path": "src/sentry/api/endpoints/rule_snooze.py", "function": "post"},
+        {"path": "src/sentry/api/endpoints/rule_snooze.py", "function": "delete"}
+      ]
+    },
+    {
+      "cve": "CVE-2023-51649",
+      "plugin": "authz",
+      "cwe": "CWE-863",
+      "repository": "https://github.com/nautobot/nautobot",
+      "fix_commit": "d33d0c15a36948c45244e5b5e10bc79b8e62de7f",
+      "vulnerable_commit": "e11c1b8255a4aca65a2043b8b38e4d57cf057dc4",
+      "case_dir": "SecureBench/cases/CVE-2023-51649",
+      "status": "build",
+      "loci": [
+        {"path": "nautobot/extras/views.py", "function": "post_6", "qualified_name": "JobButtonRunView.post", "fixed_expectation": "absent"}
+      ]
+    },
+    {
+      "cve": "CVE-2023-48224",
+      "plugin": "crypto",
+      "cwe": "CWE-338",
+      "repository": "https://github.com/ethyca/fides",
+      "fix_commit": "685bae61c203d29ed189f4b066a5223a9bb774c6",
+      "vulnerable_commit": "611b36bc0119c9c24d826e8b56824dff0b8fb573",
+      "case_dir": "SecureBench/cases/CVE-2023-48224",
+      "status": "reuse",
+      "loci": [
+        {"path": "src/fides/api/service/privacy_request/request_runner_service.py", "function": "generate_id_verification_code"}
+      ]
+    },
+    {
+      "cve": "CVE-2025-55449",
+      "plugin": "crypto",
+      "cwe": "CWE-321",
+      "repository": "https://github.com/AstrBotDevs/AstrBot",
+      "fix_commit": "d03e9fb90a0921a1bd10cf480bdacc9aaa246472",
+      "vulnerable_commit": "289214e85c78408aa36bad8e071766b6b56175bb",
+      "case_dir": "SecureBench/cases/CVE-2025-55449",
+      "status": "build",
+      "loci": [
+        {"path": "astrbot/dashboard/routes/auth.py", "function": "generate_jwt"},
+        {"path": "astrbot/dashboard/server.py", "function": "auth_middleware"}
+      ]
+    },
+    {
+      "cve": "CVE-2021-39182",
+      "plugin": "crypto",
+      "cwe": "CWE-326",
+      "repository": "https://github.com/Morgan-Phoenix/EnroCrypt",
+      "fix_commit": "e652d56ac60eadfc26489ab83927af13a9b9d8ce",
+      "vulnerable_commit": "d02050267cecbe4f2877a07ca8a930129528ac05",
+      "case_dir": "SecureBench/cases/CVE-2021-39182",
+      "status": "build",
+      "loci": [
+        {"path": "enrocrypt/hashing.py", "function": "MD5", "fixed_expectation": "absent"}
+      ]
+    },
+    {
+      "cve": "CVE-2020-1746",
+      "plugin": "ifc",
+      "cwe": "CWE-200",
+      "repository": "https://github.com/ansible/ansible",
+      "fix_commit": "e6199d768c1c18a4e750ec78d4ded088629baa3f",
+      "vulnerable_commit": "5eabf7bb93c9bfc375b806a2b1f623d650cddc2b",
+      "case_dir": "SecureBench/cases/CVE-2020-1746",
+      "status": "build",
+      "loci": [
+        {"path": "lib/ansible/modules/net_tools/ldap/ldap_attr.py", "function": "main"},
+        {"path": "lib/ansible/modules/net_tools/ldap/ldap_entry.py", "function": "main"}
+      ]
+    },
+    {
+      "cve": "CVE-2023-34110",
+      "plugin": "ifc",
+      "cwe": "CWE-209",
+      "repository": "https://github.com/dpgaspar/Flask-AppBuilder",
+      "fix_commit": "ae25ad4c87a9051ebe4a4e8f02aee73232642626",
+      "vulnerable_commit": "98e38086c3dcc17f954e8f82d074db97b82313a5",
+      "case_dir": "SecureBench/cases/CVE-2023-34110",
+      "status": "build",
+      "loci": [
+        {"path": "flask_appbuilder/models/sqla/interface.py", "function": "add"},
+        {"path": "flask_appbuilder/models/sqla/interface.py", "function": "edit"}
+      ]
+    },
+    {
+      "cve": "CVE-2018-16849",
+      "plugin": "ifc",
+      "cwe": "CWE-200",
+      "repository": "https://github.com/openstack/mistral",
+      "fix_commit": "2309e5265a1d5f28480ae872817b5de05f66e83c",
+      "vulnerable_commit": "2640c73d4adc41db85333410bc676f6f910267af",
+      "case_dir": "SecureBench/cases/CVE-2018-16849",
+      "status": "build",
+      "loci": [
+        {"path": "mistral/actions/std_actions.py", "function": "run_6", "qualified_name": "SSHAction.run"}
+      ]
+    },
+    {
+      "cve": "CVE-2021-29433",
+      "plugin": "resource",
+      "cwe": "CWE-400",
+      "repository": "https://github.com/matrix-org/sydent",
+      "fix_commit": "3175fd358ebc2c310eab7a3dbf296ce2bd54c1da",
+      "vulnerable_commit": "23ced7cf01fee201569d24bc33285e297afd6ca3",
+      "case_dir": "SecureBench/cases/CVE-2021-29433",
+      "status": "build",
+      "loci": [
+        {"path": "sydent/http/servlets/emailservlet.py", "function": "render_POST", "qualified_name": "EmailRequestCodeServlet.render_POST"},
+        {"path": "sydent/http/servlets/store_invite_servlet.py", "function": "render_POST"},
+        {"path": "sydent/util/stringutils.py", "function": "is_valid_client_secret"}
+      ]
+    },
+    {
+      "cve": "CVE-2023-45129",
+      "plugin": "resource",
+      "cwe": "CWE-770",
+      "repository": "https://github.com/matrix-org/synapse",
+      "fix_commit": "f84da3c32ec74cf054e2fd6d10618aa4997cffaa",
+      "vulnerable_commit": "17800a0e9779a1cfd7c9dff79ae331adf8f44f83",
+      "case_dir": "SecureBench/cases/CVE-2023-45129",
+      "status": "build",
+      "loci": [
+        {"path": "synapse/federation/federation_server.py", "function": "check_server_matches_acl"},
+        {"path": "synapse/federation/federation_server.py", "function": "server_matches_acl_event", "fixed_expectation": "absent"},
+        {"path": "synapse/federation/federation_server.py", "function": "_acl_entry_matches", "fixed_expectation": "absent"}
+      ]
+    },
+    {
+      "cve": "CVE-2023-30837",
+      "plugin": "resource",
+      "cwe": "CWE-789",
+      "repository": "https://github.com/vyperlang/vyper",
+      "fix_commit": "0bb7203b584e771b23536ba065a6efda457161bb",
+      "vulnerable_commit": "4f1a98a4291beef2c00147d7101d13162a561e96",
+      "case_dir": "SecureBench/cases/CVE-2023-30837",
+      "status": "build",
+      "loci": [
+        {"path": "vyper/semantics/analysis/data_positions.py", "function": "set_code_offsets"},
+        {"path": "vyper/semantics/analysis/data_positions.py", "function": "set_storage_slots"},
+        {"path": "vyper/semantics/analysis/data_positions.py", "function": "set_storage_slots_with_overrides"},
+        {"path": "vyper/semantics/types/subscriptable.py", "function": "__init___1", "qualified_name": "_SequenceT.__init__"}
+      ]
+    },
+    {
+      "cve": "CVE-2024-12029",
+      "plugin": "taint",
+      "cwe": "CWE-502",
+      "repository": "https://github.com/invoke-ai/invokeai",
+      "fix_commit": "756008dc5899081c5aa51e5bd8f24c1b3975a59e",
+      "vulnerable_commit": "965cd76e338e1959efd0eea3d760846e86c6e1e5",
+      "case_dir": "SecureBench/cases/CVE-2024-12029",
+      "status": "reuse",
+      "loci": [
+        {"path": "invokeai/app/services/model_load/model_load_default.py", "function": "load_model_from_path"},
+        {"path": "invokeai/backend/model_manager/probe.py", "function": "_scan_model"},
+        {"path": "invokeai/backend/model_manager/probe.py", "function": "_scan_and_load_checkpoint"},
+        {"path": "invokeai/backend/model_manager/util/model_util.py", "function": "read_checkpoint_meta"}
+      ]
+    },
+    {
+      "cve": "CVE-2023-34540",
+      "plugin": "taint",
+      "cwe": "CWE-78",
+      "repository": "https://github.com/langchain-ai/langchain",
+      "fix_commit": "a2f191a32229256dd41deadf97786fe41ce04cbb",
+      "vulnerable_commit": "61938a02a1e76fa6c6e8203c98a9344a179c810d",
+      "case_dir": "SecureBench/cases/CVE-2023-34540",
+      "status": "build",
+      "loci": [
+        {"path": "langchain/utilities/jira.py", "function": "run"},
+        {"path": "langchain/utilities/jira.py", "function": "other"}
+      ]
+    },
+    {
+      "cve": "CVE-2025-12764",
+      "plugin": "taint",
+      "cwe": "CWE-90",
+      "repository": "https://github.com/pgadmin-org/pgadmin4",
+      "fix_commit": "09d2b7eeb0e330df73b1aef0cba57788fde52b6b",
+      "vulnerable_commit": "e374edc69239b3e02ecde895e27d9f9e488b87ee",
+      "case_dir": "SecureBench/cases/CVE-2025-12764",
+      "status": "build",
+      "loci": [
+        {"path": "web/pgadmin/authenticate/ldap.py", "function": "authenticate"},
+        {"path": "web/pgadmin/authenticate/ldap.py", "function": "search_ldap_user"}
+      ]
+    },
+    {
+      "cve": "CVE-2021-32677",
+      "plugin": "typestate",
+      "cwe": "CWE-352",
+      "repository": "https://github.com/fastapi/fastapi",
+      "fix_commit": "fa7e3c996edf2d5482fff8f9d890ac2390dede4d",
+      "vulnerable_commit": "90120dd6e83d997fa2f7f54119a2e0cf906b1ded",
+      "case_dir": "SecureBench/cases/CVE-2021-32677",
+      "status": "reuse",
+      "loci": [
+        {"path": "fastapi/routing.py", "function": "get_request_handler"}
+      ]
+    },
+    {
+      "cve": "CVE-2019-11324",
+      "plugin": "typestate",
+      "cwe": "CWE-295",
+      "repository": "https://github.com/urllib3/urllib3",
+      "fix_commit": "1efadf43dc63317cd9eaa3e0fdb9e05ab07254b1",
+      "vulnerable_commit": "a6ec68a5c5c5743c59fe5c62c635c929586c429b",
+      "case_dir": "SecureBench/cases/CVE-2019-11324",
+      "status": "build",
+      "loci": [
+        {"path": "src/urllib3/util/ssl_.py", "function": "ssl_wrap_socket"}
+      ]
+    },
+    {
+      "cve": "CVE-2025-68146",
+      "plugin": "typestate",
+      "cwe": "CWE-367",
+      "repository": "https://github.com/tox-dev/filelock",
+      "fix_commit": "4724d7f8c3393ec1f048c93933e6e3e6ec321f0e",
+      "vulnerable_commit": "cb69414a2327cf0a9887e12054d1dc112ee700af",
+      "case_dir": "SecureBench/cases/CVE-2025-68146",
+      "status": "build",
+      "loci": [
+        {"path": "src/filelock/_unix.py", "function": "_acquire_1", "qualified_name": "UnixFileLock._acquire"},
+        {"path": "src/filelock/_windows.py", "function": "_acquire", "qualified_name": "WindowsFileLock._acquire"}
+      ]
+    }
+  ]
+}

@@ -25,6 +25,12 @@ from src.authz_reasoner import (
     classify, establishes_to_contexts,
     VULNERABLE, SAFE, NEEDS_REVIEW, ERROR,
 )
+from src.authz_validation import (
+    VALIDATION_VERSION,
+    source_digest,
+    source_rel_from_extracted,
+    validate_and_enrich,
+)
 from src.plugins.base import (
     AbstractionRequest,
     AnalysisPlugin,
@@ -60,7 +66,7 @@ class AuthzPlugin(AnalysisPlugin):
     """Access-control / authorization plugin (guarded-Hoare)."""
 
     model = AUTHZ_MODEL
-    SCHEMA = "authz.guarded_hoare.v1"
+    SCHEMA = "authz.guarded_hoare.v2"
 
     @property
     def metadata(self) -> PluginMetadata:
@@ -96,6 +102,7 @@ class AuthzPlugin(AnalysisPlugin):
         self, request: AbstractionRequest, raw_response: str
     ) -> Optional[FactEnvelope]:
         abstraction = _extract_authz_json(raw_response)
+        abstraction = validate_and_enrich(abstraction, request.function)
         if abstraction is None:
             return None
         return FactEnvelope(
@@ -187,6 +194,15 @@ class AuthzPlugin(AnalysisPlugin):
         if facts.status == "error" or not facts.payload:
             return Verdict(plugin_name="authz", verdict=ERROR, status="error",
                            data={"error": "no valid authorization abstraction (fail-closed)"})
+        if facts.schema_version != self.SCHEMA:
+            return Verdict(plugin_name="authz", verdict=ERROR, status="error",
+                           data={"error": "stale authorization fact schema (fail-closed)"})
+        if (facts.payload.get("_authz_validation") or {}).get("version") != VALIDATION_VERSION:
+            return Verdict(plugin_name="authz", verdict=ERROR, status="error",
+                           data={"error": "stale authorization validation facts (fail-closed)"})
+        if facts.payload.get("_function_digest") != source_digest(context.function):
+            return Verdict(plugin_name="authz", verdict=ERROR, status="error",
+                           data={"error": "stale authorization source binding (fail-closed)"})
 
         # Flatten propagated contexts (each entry is a tuple of frozen dicts).
         flat_ctx = []
@@ -209,7 +225,7 @@ class AuthzPlugin(AnalysisPlugin):
                 message=f.get("message", ""),
                 severity="high" if verdict == VULNERABLE else "info",
                 function=facts.function,
-                data={"op": op},
+                data={"op": op, "cwe": f.get("cwe")},
             ))
         return Verdict(
             plugin_name="authz",
@@ -219,12 +235,19 @@ class AuthzPlugin(AnalysisPlugin):
             data={"abstraction": facts.payload, "result": _strip_ops(result)},
         )
 
+    def render_result(self, unit, facts, verdict, context):
+        result = super().render_result(unit, facts, verdict, context)
+        result["rel"] = source_rel_from_extracted(unit.id.rel)
+        result["function"] = unit.id.name
+        return result
+
 
 # --- helpers: freeze context dicts so merge_contexts can dedup by repr --------
 
 def _freeze(d: dict):
     return tuple(sorted((k, d.get(k)) for k in
-                        ("resource_id_expr", "action", "subject_bound", "kind")))
+                        ("resource_id_expr", "scope_id_expr", "action", "subject_bound",
+                         "kind", "absolute_lifetime_bound")))
 
 
 def dict_from_frozen(fr):

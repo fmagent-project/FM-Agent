@@ -24,8 +24,13 @@ from typing import Dict, List, Optional, Sequence
 from config import AUTHN_MODEL
 from src.authn_prompts import _system_prompt, _user_prompt, _extract_authn_json
 from src.authn_reasoner import (
-    classify, establishes_to_contexts,
+    classify, establishes_to_contexts, validate,
     VULNERABLE, SAFE, NEEDS_REVIEW, ERROR,
+)
+from src.authn_validation import (
+    normalize_authentication_facts,
+    related_authentication_context,
+    source_rel_from_extracted,
 )
 from src.plugins.base import (
     AbstractionRequest,
@@ -54,6 +59,20 @@ def _summarize(abstraction: dict, fn_name: str) -> str:
     if ops:
         kinds = ",".join(sorted({o.get("kind", "op") for o in ops}))
         parts.append(f"protected_ops[{kinds}]")
+    recovery = abstraction.get("recovery_events") or []
+    if recovery:
+        bindings = ",".join(
+            f"{event.get('kind')}={event.get('binding')}"
+            for event in recovery
+        )
+        parts.append(f"recovery[{bindings}]")
+    credentials = abstraction.get("credential_events") or []
+    if credentials:
+        contracts = ",".join(
+            f"{event.get('kind')}={event.get('contract_status')}/{event.get('failure_mode')}"
+            for event in credentials
+        )
+        parts.append(f"credential_contract[{contracts}]")
     return f"{fn_name}: " + ("; ".join(parts) if parts else "(no protected operations)")
 
 
@@ -90,14 +109,20 @@ class AuthnPlugin(AnalysisPlugin):
             {"role": "system", "content": _system_prompt(unit.id.language)},
             {"role": "user", "content": _user_prompt(
                 numbered, unit.signature_line, unit.id.language,
-                callee_summaries, request.context.is_entrypoint)},
+                callee_summaries, request.context.is_entrypoint,
+                related_authentication_context(unit, request.context.program))},
         ]
 
     def parse_abstraction_response(
         self, request: AbstractionRequest, raw_response: str
     ) -> Optional[FactEnvelope]:
         abstraction = _extract_authn_json(raw_response)
-        if abstraction is None:
+        if not isinstance(abstraction, dict):
+            return None
+        abstraction = normalize_authentication_facts(
+            abstraction, request.function, request.context.program
+        )
+        if validate(abstraction):
             return None
         return FactEnvelope(
             plugin_name="authn",
@@ -196,7 +221,12 @@ class AuthnPlugin(AnalysisPlugin):
             elif isinstance(entry, dict):
                 flat_ctx.append(entry)
 
-        result = classify(facts.payload,
+        # Checkpoints contain model facts from the run that created them. Reapply
+        # source proofs so an offline replay uses the current deterministic guards.
+        abstraction = normalize_authentication_facts(
+            facts.payload, context.function, context.program
+        )
+        result = classify(abstraction,
                           is_entrypoint=context.is_entrypoint,
                           propagated_contexts=flat_ctx)
         verdict = result["verdict"]
@@ -209,15 +239,22 @@ class AuthnPlugin(AnalysisPlugin):
                 message=f.get("message", ""),
                 severity="high" if verdict == VULNERABLE else "info",
                 function=facts.function,
-                data={"op": op, "kind": f["kind"]},
+                data={"op": op, "kind": f["kind"], "cwe": f.get("cwe") or _finding_cwe(f["kind"])},
             ))
         return Verdict(
             plugin_name="authn",
             verdict=verdict,
             status="ok",
             findings=findings,
-            data={"abstraction": facts.payload, "result": _strip_ops(result)},
+            data={"abstraction": abstraction, "result": _strip_ops(result)},
         )
+
+    def render_result(self, unit, facts, verdict, context):
+        result = super().render_result(unit, facts, verdict, context)
+        result["facts"] = verdict.data.get("abstraction", result["facts"])
+        result["rel"] = source_rel_from_extracted(unit.id.rel)
+        result["function"] = unit.id.name
+        return result
 
 
 # --- helpers: freeze context dicts so merge_contexts can dedup by repr --------
@@ -237,3 +274,15 @@ def _strip_ops(result: dict) -> dict:
     return {"verdict": result.get("verdict"),
             "num_findings": len(result.get("findings", [])),
             "needs_review": (result.get("local") or {}).get("needs_review", False)}
+
+
+def _finding_cwe(kind: str) -> str:
+    return {
+        "MISSING_AUTHENTICATION": "CWE-287",
+        "ASSERTED_IDENTITY": "CWE-287",
+        "WEAK_AUTHENTICATION": "CWE-287",
+        "FAIL_OPEN_AUTHENTICATION": "CWE-287",
+        "SESSION_FIXATION": "CWE-384",
+        "INSUFFICIENT_SESSION_EXPIRATION": "CWE-613",
+        "WEAK_PASSWORD_RECOVERY": "CWE-640",
+    }.get(kind, "CWE-287")

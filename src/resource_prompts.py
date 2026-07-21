@@ -14,16 +14,20 @@ What the LLM is good at here (and is asked to extract):
   - recognizing MAGNITUDE SOURCES by code pattern: len(request.body), an
     attacker-supplied count/limit/size param, request-driven recursion depth,
     a decompressed-size or compression ratio, the length of a string fed to a
-    regex, the number of items in a parsed structure. Unknown external magnitude
+    regex, the number of items in a parsed structure, request frequency, and a
+    compile-time logical allocation/storage extent. Unknown external magnitude
     -> magnitude_kind "unknown_external" (NEVER omitted).
   - recognizing COSTLY OPS: allocation sized by input (bytes(n), [0]*n,
     list(range(n))), unbounded read (.read() with no cap, iterate full stream),
-    decompression (zlib/gzip/zipfile extract), regex match on attacker input
-    (ReDoS), recursion whose depth tracks input, a loop whose trip count tracks
-    input — with the exact magnitude argument they consume.
+    decompression (zlib/gzip/zipfile extract), unsafe regex match on attacker
+    input (ReDoS), repeated regex compilation, input-sized parser/database/email
+    work, logical storage allocation arithmetic, recursion whose depth tracks
+    input, or a loop whose trip count tracks input — with the exact magnitude.
   - recognizing BOUNDS and what they cap: an explicit size/len/count check that
     raises/returns before the op, a max-depth guard, a chunked read with a cap,
-    a stream-size limit, a timeout, a regex input-length cap, recursion-limit.
+    a stream-size limit, a timeout, a regex input-length cap, recursion-limit,
+    or a checked logical storage extent. Bounds must identify exact protected op
+    ids, placement, enforcement, and limit provenance.
   - PARAMETRIC consumption so callers compose: express a costly op's magnitude
     over the function's own parameters (param:<name>) when the magnitude
     originates there.
@@ -93,6 +97,9 @@ def _system_prompt(language):
         "   - recursion_depth: nesting/depth of attacker-supplied data driving recursion\n"
         "   - decompressed_size: output size or ratio of a decompression of external bytes\n"
         "   - numeric_param: an attacker-supplied count/limit/size/range integer\n"
+        "   - request_frequency: attacker-controlled repetition of a request-facing operation\n"
+        "   - logical_size: source/type-declaration-controlled logical array, byte, offset, "
+        "or storage-slot extent, even if it does not immediately allocate host RAM\n"
         "   - unknown_external: a magnitude crosses a trust boundary but you cannot "
         "classify it. EMIT THIS rather than omit.\n"
         "   Do NOT invent magnitudes for constants or clearly-internal bounded values.\n"
@@ -102,18 +109,36 @@ def _system_prompt(language):
         "   - unbounded_read: .read() / .recv() with no size cap, reading a full stream\n"
         "   - decompression: zlib/gzip/bz2/lzma decompress, zipfile/tarfile extract\n"
         "   - regex_match: re.match/search/sub on an attacker-controlled string (ReDoS)\n"
+        "   - regex_compile: compiling attacker-controlled glob/regex rules repeatedly, "
+        "especially inside a request path or an unbounded ACL loop\n"
+        "   - expensive_call: parsing, hashing, encoding, database/token, email, or external "
+        "work whose cost grows with an attacker-controlled input length\n"
+        "   - logical_allocation: unchecked or precision-losing logical array/storage/offset "
+        "allocation arithmetic driven by a source/type declaration\n"
         "   - recursion: a call to self/this function whose depth tracks a magnitude\n"
         "   - loop: a loop whose trip count tracks a magnitude (and does costly work)\n"
         "   - collection_build: building a list/dict/string whose size tracks a magnitude\n"
+        "   A lookup/match through a stable cached evaluator whose regexes were precompiled "
+        "outside the repeated request path is NOT regex_compile. Emit regex_match only when "
+        "the engine/pattern can have unsafe input-dependent complexity, not for every match. "
+        "Constant-size token generation is not attacker-sized work.\n"
         "3. BOUND — an operation that caps a magnitude for a SPECIFIC costly op. "
-        "Record bound_kind, the expr, the magnitude it caps, and whether it "
-        "`dominates` the op (executes on EVERY path before the op). Examples: "
+        "Record bound_kind, the expr, the magnitude it caps, exact `protects_op_ids`, "
+        "`placement` (before|after|unknown), `enforcement` "
+        "(reject|cap|truncate|warning|log|none), `limit_origin` "
+        "(constant|trusted_config|trusted_system|type_limit|attacker_controlled|unknown), "
+        "and whether it `dominates` the op (executes on EVERY path before the op). Examples: "
         "size_check (if len(x) > N: raise) caps request_size/input_length; "
         "count_limit caps element_count; depth_limit/recursion_limit caps "
         "recursion_depth; chunked_read_cap caps unbounded_read; "
         "decompress_limit caps decompressed_size; timeout caps loop/regex; "
-        "input_length_cap caps regex input. A bound is ONLY valid for the magnitude "
-        "it truly caps — a length check does NOT bound recursion depth.\n"
+        "input_length_cap caps regex/expensive-call input; arithmetic_limit caps "
+        "logical_size by rejecting overflow before assigning/reserving storage; rate_limit "
+        "caps request_frequency. A bound is ONLY valid for the magnitude it truly caps. "
+        "A check after costly work is post-hoc and invalid. A warning/log, an attacker-"
+        "selected threshold, or a huge nominal type maximum that still permits the dangerous "
+        "arithmetic is NOT a bound. A cached/precompiled evaluator removes per-request "
+        "regex_compile work; do not misreport the cache lookup itself as a bound.\n"
         "4. CONSUMPTION is PARAMETRIC. When a costly op's magnitude originates from "
         "one of THIS function's parameters, record the magnitude source as "
         "`param:<name>` so a caller can instantiate it. When it originates from a "
@@ -124,8 +149,9 @@ def _system_prompt(language):
         "   unknown:<id>             — fail-closed unknown external magnitude\n\n"
         "Be conservative and fail-closed: if unsure whether a quantity is "
         "attacker-controllable, treat it as a magnitude source; if unsure a bound "
-        "dominates the op or caps the right magnitude, set `dominates` false / do "
-        "NOT list that magnitude in `caps`."
+        "dominates the op, is before it, hard-enforces a trusted limit, or caps the right "
+        "magnitude, use unknown fields / set `dominates` false and do NOT attach it to "
+        "the costly operation."
     )
 
 
@@ -158,7 +184,10 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries):
         "  ],\n"
         '  "bounds": [\n'
         '    {"id": "B1", "bound_kind": "size_check", "expr": "<exact expr>", '
-        '"caps": ["request_size"], "dominates": true, "confidence": "high|medium|low"}\n'
+        '"caps": ["request_size"], "protects_op_ids": ["OP1"], '
+        '"placement": "before|after|unknown", "enforcement": "reject|cap|truncate|warning|log|none", '
+        '"limit_origin": "constant|trusted_config|trusted_system|type_limit|attacker_controlled|unknown", '
+        '"dominates": true, "confidence": "high|medium|low"}\n'
         "  ],\n"
         '  "call_sites": [\n'
         '    {"id": "C1", "callee": "<fn>", "call_expr": "<expr>", '
@@ -174,8 +203,13 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries):
         "}\n"
         "Rules: every magnitudes[].source uses param:/mag:/unknown: prefix. A bound "
         "appears in a costly op's flow ONLY via the `bounds` list on that magnitude, "
-        "referencing a bound id (e.g. \"B1\"); list a bound there only if it "
-        "genuinely dominates the op AND caps that magnitude. Mark request-derived "
+        "referencing a bound id (e.g. \"B1\"); list a bound there only if it is a "
+        "hard, trusted, pre-operation check that genuinely dominates that exact op and "
+        "caps that magnitude. `protects_op_ids` must name that op. Mark request-derived "
         "sizes/counts as magnitude sources even if assigned to an innocuously-named "
-        "variable. Recognize magnitude sources by pattern, not name."
+        "variable. In compiler or type-system code, treat source-controlled array extents, "
+        "byte sizes, offsets, and storage-slot arithmetic as logical_size inputs to "
+        "logical_allocation when they can drive unchecked or precision-losing resource "
+        "growth; warning-only checks are not bounds. Recognize magnitude sources by "
+        "pattern, not name."
     )

@@ -100,11 +100,14 @@ def _system_prompt(language):
         "but not expiry, password compared with ==). asserted_only = identity is taken from "
         "client-controlled input WITHOUT verification (e.g. user_id from request body, "
         "decode-without-verify, trusting an unsigned header).\n"
-        "   - dominates_all_paths: true if EVERY path to the protected op passes this event "
-        "first (returns/raises on failure BEFORE the op). If only on some branches, false.\n"
+        "   - protects_op_ids: only the protected operations gated by this event.\n"
+        "   - dominates_all_paths: evaluate PER listed operation: true when EVERY path to EACH "
+        "listed op passes this event first and failure returns/raises before that op. Separate "
+        "authentication branches may each be true for their own distinct op_ids.\n"
         "   - evidence: the exact statement.\n"
         "3. SESSION EVENTS: record session lifecycle facts. For EACH:\n"
-        "   - kind: establish (login creates a session/token) | regenerate (new session id "
+        "   - kind: establish (login creates a server-managed session with a session id) | "
+        "regenerate (new session id "
         "issued on privilege change) | set_expiry (timeout/exp set) | trust_client_id "
         "(a client-supplied session id is adopted without regeneration — FIXATION risk)\n"
         "   - evidence: the exact statement.\n"
@@ -113,7 +116,41 @@ def _system_prompt(language):
         "Record what is assumed and why. These are discharged up the call chain.\n"
         "5. ESTABLISHES: authentication events this function performs that it could offer to "
         "its CALLEES (e.g. it verifies login then calls a helper). List the event before each "
-        "internal call, if any.\n\n"
+        "internal call, if any.\n"
+        "6. RECOVERY IDENTITY EVENTS: password/account recovery is intentionally usable before "
+        "login, so bind account selection to the requested identity with application-level exact "
+        "or Unicode canonical+casefold equality, not database collation alone. Deliver reset "
+        "credentials only to the persisted identity from the selected account, never directly "
+        "to the submitted identity. List the exact protected op_ids each event protects. Emit "
+        "select_account ONLY in the function that actually compares/selects candidates. A caller "
+        "that invokes a summarized selection helper must not duplicate that decision as unknown; "
+        "it should report only its own delivery decision. Likewise, do not duplicate a callee's "
+        "already-reported protected operation merely because this function calls that callee.\n"
+        "7. CREDENTIAL CONTRACT EVENTS: for shared secrets or other credential material, record "
+        "provision/load/verify. Emit provision for a writer, load for a reader, and verify whenever "
+        "a presented credential is compared to loaded shared authenticator material. "
+        "contract_status is valid only when writer/reader representations agree, normal operation "
+        "succeeds, and every error sentinel is rejected before credential equality. Opening a file "
+        "in binary mode with an encoding argument is always an invalid load. Opening a file in "
+        "text mode with an encoding argument is valid. The third positional argument to Python open() "
+        "is buffering, not a Unix permission mode and not binary mode. Returning an error "
+        "sentinel from a loader is failure_mode=open unless every related verifier rejects that "
+        "sentinel before comparison; a verifier that can compare it is also open/invalid. A writer "
+        "is invalid when its representation is incompatible with the related loader. Use related "
+        "contract source when supplied. "
+        "These events are ONLY for material directly accepted by an authenticator across a "
+        "provision/load/verify boundary. Do NOT emit them for password-reset tokens, generic token "
+        "creation, password policy/confirmation checks, Unicode identity comparators, or ordinary "
+        "values merely because they are security-related. Omit the array when no such boundary is "
+        "implemented by this function.\n"
+        "8. SESSION-KEY RETIREMENT: when logout/flush retires a key, record whether the replacement "
+        "is absent/fresh or a reusable fixed value, and list the cleanup protects_op_ids discharged "
+        "by that retirement. A returned bearer/API token is NEVER by itself a server-session "
+        "establish event and does not require session-id regeneration or a session_events entry.\n"
+        "A helper whose clear authentication purpose is to return a boolean from a framework's "
+        "authenticate(user, credential) operation is a genuine delegated authentication event "
+        "when its true result gates the listed operation; do not mark it unknown merely because "
+        "the framework implementation is outside this extraction.\n\n"
         "Be precise about STRENGTH and DOMINANCE: the classic bugs are (a) a protected op "
         "with no dominating genuine authentication event (missing/asserted-only auth), "
         "(b) a login that establishes a session but never regenerates the id (fixation), "
@@ -125,7 +162,8 @@ def _system_prompt(language):
     )
 
 
-def _user_prompt(numbered_src, signature_line, language, callee_summaries, is_entrypoint):
+def _user_prompt(numbered_src, signature_line, language, callee_summaries, is_entrypoint,
+                 related_context=""):
     callee_ctx = ""
     if callee_summaries:
         callee_ctx = (
@@ -141,12 +179,19 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries, is_en
         "This function is called internally: an authentication obligation it cannot satisfy "
         "locally may be discharged by an ancestor caller (the checker resolves this top-down)."
     )
+    related_note = ""
+    if related_context:
+        related_note = (
+            "\n\nRelated authentication-contract functions. Use these only to understand "
+            "a shared credential/session contract; report facts for the function under "
+            "analysis only:\n" + related_context
+        )
     return (
         f"Programming language: {language}\n\n"
         f"{entry_note}\n\n"
         f"Function under analysis:\n{signature_line}\n"
         f"```{language.lower()}\n{numbered_src}\n```\n"
-        f"{callee_ctx}\n\n"
+        f"{callee_ctx}{related_note}\n\n"
         "Return EXACTLY ONE JSON object wrapped in [AUTHN_JSON] and [/AUTHN_JSON]:\n"
         "{\n"
         '  "protected_operations": [\n'
@@ -157,11 +202,34 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries, is_en
         '  "authentication_events": [\n'
         '    {"method": "password|token|jwt|session|mfa|api_key|oauth|unknown", '
         '"verifies_nl": "<what is verified>", "strength": "genuine|weak|asserted_only", '
-        '"dominates_all_paths": true, "evidence": "<exact stmt>"}\n'
+        '"dominates_all_paths": true, "protects_op_ids": ["<op id>"], '
+        '"evidence": "<exact stmt>"}\n'
         "  ],\n"
         '  "session_events": [\n'
         '    {"kind": "establish|regenerate|set_expiry|trust_client_id", '
         '"evidence": "<exact stmt>"}\n'
+        "  ],\n"
+        '  "recovery_events": [\n'
+        '    {"kind": "select_account|deliver_credential", '
+        '"requested_identity_expr": "<untrusted requested identity>", '
+        '"account_identity_expr": "<persisted account identity>", '
+        '"binding": "canonical_equivalent|exact_equivalent|backend_case_insensitive|'
+        'stored_identity|untrusted_input|unknown", "dominates_all_paths": true, '
+        '"failure_mode": "closed|open|unknown", "protects_op_ids": ["<op id>"], '
+        '"confidence": "high|medium|low", '
+        '"evidence": "<exact stmt>"}\n'
+        "  ],\n"
+        '  "credential_events": [\n'
+        '    {"kind": "provision|load|verify", "contract_status": "valid|invalid|unknown", '
+        '"failure_mode": "closed|open|unknown", "dominates_all_paths": true, '
+        '"protects_op_ids": ["<op id>"], '
+        '"confidence": "high|medium|low", "evidence": "<exact stmt>"}\n'
+        "  ],\n"
+        '  "session_key_events": [\n'
+        '    {"kind": "retire", "replacement": "absent|fresh_random|reusable_value|unknown", '
+        '"storage_cleared": true, "dominates_all_paths": true, '
+        '"protects_op_ids": ["<op id>"], '
+        '"confidence": "high|medium|low", "evidence": "<exact stmt>"}\n'
         "  ],\n"
         '  "obligations": [\n'
         '    {"requires_nl": "<what authentication is assumed of the caller/framework>", '

@@ -232,3 +232,19 @@ if not is_entrypoint and op_satisfied_by_context(op, propagated_contexts):
 ## 5. 局限与适用场景
 
 `authz` 最适合**框架式的 CRUD 风格 Web handler**（路由/RPC 入口 + ORM 资源访问），那里「被认证主体—资源 id—动作—守卫」的结构清晰、入口点明确。对于授权完全下沉到声明式中间件、网关或数据库行级安全策略的系统，函数局部视角受限，结果更多会落在 `NEEDS_REVIEW`，应配合人工复核使用。
+
+---
+
+## 6. 确定性验证守卫（v2）
+
+`authz.guarded_hoare.v2` 在 LLM 抽象和 reasoner 之间增加了 `src/authz_validation.py`。LLM 仍负责识别敏感操作及语义，但下列三类可由源码结构判定的前置条件不再信任模型自报的结论：
+
+- `absolute_authentication_lifetime`：认证会话必须有锚定到登录/认证时刻的绝对截止时间。每次请求向后移动的 idle/sliding timeout 不能替代绝对上限。验证器只接受将“当前时刻派生的 idle deadline”和“认证时刻派生的 deadline”取最早值的结构（或等价的绝对上限结构）。缺失时报告 `MISSING_ABSOLUTE_AUTHENTICATION_LIFETIME / CWE-306`。
+- `subject_object_binding`：按请求 id 获取的对象必须通过当前 project/tenant/account 作用域解析。框架参数转换钩子若先从作用域过滤的 query 中取对象，再把该对象注入 handler 参数，验证器会建立一个支配 handler 的 tenant guard；独立的 id-only lookup 不会被“用户已登录”或“用户可访问另一个 project”所 discharge。缺失/错绑时报告 `SUBJECT_OBJECT_BINDING_MISMATCH / CWE-639`。
+- `object_permission`：执行异步任务、job 或其他具体对象前，权限检查必须绑定到**实际被 dispatch 的对象**并先于 dispatch。对 wrapper/button A 的权限不能授权其关联对象 B。缺失或错绑时报告 `MISSING_OBJECT_PERMISSION` / `OBJECT_PERMISSION_BINDING_MISMATCH / CWE-863`。
+
+对于事务内的写入，验证器只在同一回滚边界内存在对象作用域复查、且失败会阻止提交时，才把该写入视为已授权。这个提交级授权不会传播到另一个被调度对象；调度对象仍需独立、同对象的 `object_permission`。
+
+三个条件分别求值，不能相互替代。一个 authenticated subject 因此不能掩盖 wrong-project 或 wrong-object；传播上下文也必须携带相同的 scope/object identity 才能 discharge。
+
+验证器还将 facts 绑定到函数和原始源码 digest，并把 schema 提升到 v2。旧 schema、源码变化后的 facts cache、模型伪造的 `_authz_validation` / `source_validation` guard 均 fail-closed 为 `ERROR`，而不会复用成 `SAFE`。结果序列化使用原始源码路径和提取器函数 token，使 pair runner 能严格执行 present/absent locus 语义；修复通过删除 endpoint 时，fixed side 必须保持该函数不存在，不能用其他 helper 的结果代替。

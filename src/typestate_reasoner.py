@@ -43,8 +43,11 @@ _PRECEDENCE = [ERROR, VULNERABLE, POLYMORPHIC, NEEDS_REVIEW, SAFE]
 EVENT_KINDS = {
     "CALL",
     "FS_CHECK", "FS_USE", "FS_ATOMIC_USE",
+    "FS_NOFOLLOW_GUARD", "FS_ACQUIRE",
     "CSRF_VALIDATE", "STATE_CHANGE",
+    "CONTENT_TYPE_CHECK", "JSON_PARSE",
     "TLS_VERIFY_DISABLE", "TLS_VERIFY_ENABLE", "TLS_HANDSHAKE_VERIFY", "NETWORK_USE",
+    "SSL_CONTEXT_CREATE", "CERT_DEFAULT_LOAD",
     "RESOURCE_OPEN", "RESOURCE_USE", "RESOURCE_CLOSE", "RESOURCE_ESCAPE",
     "AUTH_CHECK", "PRIVILEGED_ACTION",
 }
@@ -74,8 +77,11 @@ TYPESTATE_RULES = [
 
 FINDING_KINDS = {
     "TOCTOU_CHECK_THEN_USE": ("CWE-367", "high"),
+    "FS_UNSAFE_ACQUISITION": ("CWE-367", "high"),
     "CSRF_MISSING_VALIDATION": ("CWE-352", "high"),
+    "CONTENT_TYPE_MISSING_BEFORE_JSON_PARSE": ("CWE-352", "high"),
     "TLS_VERIFY_DISABLED_USE": ("CWE-295", "high"),
+    "TLS_DEFAULT_CERTS_WRONG_CONTEXT": ("CWE-295", "high"),
     "TLS_VERIFY_UNKNOWN": ("CWE-295", "medium"),
     "RESOURCE_LEAK": ("CWE-772", "medium"),
     "FILE_HANDLE_LEAK": ("CWE-775", "medium"),
@@ -90,8 +96,11 @@ FINDING_KINDS = {
 # which finding verdict each kind carries
 _KIND_VERDICT = {
     "TOCTOU_CHECK_THEN_USE": VULNERABLE,
+    "FS_UNSAFE_ACQUISITION": VULNERABLE,
     "CSRF_MISSING_VALIDATION": VULNERABLE,
+    "CONTENT_TYPE_MISSING_BEFORE_JSON_PARSE": VULNERABLE,
     "TLS_VERIFY_DISABLED_USE": VULNERABLE,
+    "TLS_DEFAULT_CERTS_WRONG_CONTEXT": VULNERABLE,
     "TLS_VERIFY_UNKNOWN": NEEDS_REVIEW,
     "RESOURCE_LEAK": VULNERABLE,
     "FILE_HANDLE_LEAK": VULNERABLE,
@@ -173,6 +182,15 @@ def _must_precede(req, trigger):
     return "no"
 
 
+def _dominates(req, trigger):
+    """A protocol guard is useful only when the abstraction proves dominance."""
+    if _unknown_cov(req) or _unknown_cov(trigger):
+        return "unknown"
+    if req.get("order", 0) >= trigger.get("order", 0):
+        return "no"
+    return "yes" if req.get("id") in (trigger.get("predecessors_must") or []) else "no"
+
+
 class _Findings:
     def __init__(self):
         self.items = []
@@ -227,6 +245,30 @@ def _check_toctou(facts, resources, F):
             F.add("TOCTOU_CHECK_THEN_USE", use, "toctou_check_then_use")
 
 
+def _check_guarded_protocol(facts, resources, guard_kind, trigger_kind, finding_kind, rule, F):
+    events = _ordered(facts.get("events"))
+    guards = [event for event in events if event.get("kind") == guard_kind]
+    for trigger in (event for event in events if event.get("kind") == trigger_kind and _reachable(event)):
+        if _unknown_cov(trigger):
+            F.add("UNKNOWN_TEMPORAL_ORDER", trigger, rule)
+            continue
+        unknown = False
+        for guard in guards:
+            relation = _same_resource(resources, guard.get("resource"), trigger.get("resource"))
+            if relation == "unknown":
+                unknown = True
+                continue
+            if relation == "yes" and _dominates(guard, trigger) == "yes":
+                break
+            if relation == "yes" and _dominates(guard, trigger) == "unknown":
+                unknown = True
+        else:
+            if unknown:
+                F.add("UNKNOWN_TEMPORAL_ORDER", trigger, rule)
+            else:
+                F.add(finding_kind, trigger, rule)
+
+
 def _ctx_has(propagated, kind, resource, coverage):
     """Whether a propagated context of `kind` covers `resource` at `coverage`."""
     for c in propagated or ():
@@ -242,6 +284,14 @@ def _check_required_before_trigger(facts, resources, rule, propagated, ctx, F):
     if rule["name"] == "csrf_validate_before_state_change":
         req_kind, trig_kind, context_kind = "CSRF_VALIDATE", "STATE_CHANGE", "csrf_validated"
         vuln_kind = "CSRF_MISSING_VALIDATION"
+        if any(event.get("kind") == "JSON_PARSE" and event.get("_source_validated") for event in events):
+            return
+        mutating = {"POST", "PUT", "PATCH", "DELETE"}
+        if facts.get("function_role") not in {"request_handler", "entrypoint"} and not any(
+            mutating.intersection(event.get("http_methods") or ())
+            for event in events if event.get("kind") == trig_kind
+        ):
+            return
     else:
         req_kind, trig_kind, context_kind = "AUTH_CHECK", "PRIVILEGED_ACTION", "auth_checked"
         vuln_kind = ("AUTHZ_MISSING_BEFORE_PRIVILEGED_ACTION"
@@ -350,6 +400,11 @@ def _check_lifecycle(facts, resources, F):
         if e.get("kind") not in life_kinds:
             continue
         rid = e.get("resource")
+        if resources.get(rid, {}).get("kind") in {
+            "filesystem_path", "http_request", "csrf_token", "tls_session", "tls_context",
+            "http_client", "principal", "security_context",
+        }:
+            continue
         cur = state.get(rid, "UNKNOWN")
         r = resources.get(rid, {})
         if _unknown_cov(e):
@@ -386,6 +441,11 @@ def _check_lifecycle(facts, resources, F):
         exits_by_res.setdefault(x.get("resource"), []).append(x)
     for rid, exits in exits_by_res.items():
         r = resources.get(rid, {})
+        if r.get("kind") in {
+            "filesystem_path", "http_request", "csrf_token", "tls_session", "tls_context",
+            "http_client", "principal", "security_context",
+        }:
+            continue
         # A resource is locally OWNED (subject to the must-close check) when it is
         # created inside this function: origin "local" OR "call_return" (e.g.
         # f = open(path) labels f as call_return). A param/global is the caller's.
@@ -446,12 +506,31 @@ def classify(facts, propagated_contexts=(), is_entrypoint=True):
     ctx = {"is_entrypoint": is_entrypoint}
     F = _Findings()
 
-    _check_toctou(facts, resources, F)
+    source_protocol = any(
+        event.get("_source_validated")
+        and event.get("kind") in {"JSON_PARSE", "CERT_DEFAULT_LOAD", "FS_ACQUIRE"}
+        for event in facts.get("events") or ()
+    )
+    if not source_protocol:
+        _check_toctou(facts, resources, F)
+    _check_guarded_protocol(
+        facts, resources, "CONTENT_TYPE_CHECK", "JSON_PARSE",
+        "CONTENT_TYPE_MISSING_BEFORE_JSON_PARSE", "content_type_before_json_parse", F,
+    )
+    _check_guarded_protocol(
+        facts, resources, "SSL_CONTEXT_CREATE", "CERT_DEFAULT_LOAD",
+        "TLS_DEFAULT_CERTS_WRONG_CONTEXT", "default_certs_only_for_internal_context", F,
+    )
+    _check_guarded_protocol(
+        facts, resources, "FS_NOFOLLOW_GUARD", "FS_ACQUIRE",
+        "FS_UNSAFE_ACQUISITION", "nofollow_or_reparse_before_acquisition", F,
+    )
     _check_tls(facts, resources, propagated_contexts, F)
-    _check_lifecycle(facts, resources, F)
-    for rule in TYPESTATE_RULES:
-        if rule["type"] == "required_before_trigger":
-            _check_required_before_trigger(facts, resources, rule, propagated_contexts, ctx, F)
+    if not source_protocol:
+        _check_lifecycle(facts, resources, F)
+        for rule in TYPESTATE_RULES:
+            if rule["type"] == "required_before_trigger":
+                _check_required_before_trigger(facts, resources, rule, propagated_contexts, ctx, F)
 
     verdict = SAFE
     for level in _PRECEDENCE:

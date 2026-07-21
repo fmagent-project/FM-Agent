@@ -27,6 +27,8 @@ Verdict precedence: ERROR > VULNERABLE > POLYMORPHIC > SANITIZED > SAFE.
 
 from config import TAINT_FAIL_CLOSED  # noqa: F401 (kept for parity / future toggles)
 
+from .taint_validation import validation_guard_coverage
+
 
 VULNERABLE = "VULNERABLE"
 SANITIZED = "SANITIZED"
@@ -132,15 +134,24 @@ def validate(facts):
     """
     if not facts or not isinstance(facts, dict):
         return "no valid taint abstraction"
-    for s in facts.get("taint_sources") or []:
+    sources = facts.get("taint_sources") or []
+    sinks = facts.get("sinks") or []
+    if not isinstance(sources, list) or not all(isinstance(s, dict) for s in sources):
+        return "malformed taint_sources"
+    if not isinstance(sinks, list) or not all(isinstance(k, dict) for k in sinks):
+        return "malformed sinks"
+    for s in sources:
         if s.get("source_kind") not in SOURCE_KINDS:
             return f"unknown source_kind: {s.get('source_kind')}"
-    for k in facts.get("sinks") or []:
+    for k in sinks:
         if k.get("sink_kind") not in SINK_KINDS:
             return f"unknown sink_kind: {k.get('sink_kind')}"
         if k.get("arg_context") not in ARG_CONTEXTS:
             return f"unknown arg_context: {k.get('arg_context')}"
-        for fl in k.get("flows") or []:
+        flows = k.get("flows") or []
+        if not isinstance(flows, list) or not all(isinstance(fl, dict) for fl in flows):
+            return f"malformed flows for sink: {k.get('id')}"
+        for fl in flows:
             ref = fl.get("source")
             if not _valid_source_ref(ref):
                 return f"malformed source ref: {ref}"
@@ -218,6 +229,10 @@ def has_valid_sanitizer(flow, sink, sanitizers_by_id):
     """A flow is cleared iff one of its sanitizers (high-confidence, known kind)
     endorses the sink's arg_context. Typed: html_escape never clears sql_param."""
     required = sink.get("arg_context")
+    # The typed context records that the database API binds this value outside
+    # query syntax; no separate value-transform sanitizer is needed.
+    if required == "sql_param":
+        return True
     for entry in flow.get("sanitizers") or []:
         z = _resolve_sanitizer(entry, sanitizers_by_id)
         if not z or not isinstance(z, dict):
@@ -230,7 +245,10 @@ def has_valid_sanitizer(flow, sink, sanitizers_by_id):
         # The endorsement must cover the sink's context. Honor both the
         # LLM-declared `endorses` list AND the narrow kind->context table; the
         # intersection (with required) decides.
-        declared = set(z.get("endorses") or [])
+        declared = {
+            context for context in (z.get("endorses") or [])
+            if isinstance(context, str)
+        } if isinstance(z.get("endorses"), (list, tuple, set, frozenset)) else set()
         allowed = SANITIZER_ENDORSES.get(kind, set())
         if required in (declared & allowed) or required in (allowed if not declared else set()):
             return True
@@ -288,12 +306,25 @@ def classify(facts, param_status=None):
             continue
 
         kind, cwe = finding_kind_for(sink.get("sink_kind"))
-        if all_sanitized:
+        guard_coverage = validation_guard_coverage(facts, sink)
+        local_default_guard = (
+            guard_coverage == "default"
+            and "_validation_guard_coverage" not in sink
+        )
+        if all_sanitized or guard_coverage == "must" or local_default_guard:
             saw_sanitized = True
+            guard_sanitized_by = sanitized_by or (
+                "validation_guard"
+                if guard_coverage == "must" or local_default_guard else None
+            )
             findings.append(_finding("SANITIZED", kind, cwe, sink,
-                                     sanitized_by=sanitized_by))
+                                      sanitized_by=guard_sanitized_by))
         elif concrete_vuln:
-            findings.append(_finding("VULNERABLE", kind, cwe, sink, source=vuln_source))
+            if guard_coverage == "default":
+                findings.append(_finding("POLYMORPHIC", "VALIDATION_GUARD_BYPASS", cwe,
+                                         sink, source=vuln_source))
+            else:
+                findings.append(_finding("VULNERABLE", kind, cwe, sink, source=vuln_source))
         elif param_vuln:
             findings.append(_finding("POLYMORPHIC", kind, cwe, sink, source=vuln_source))
 
@@ -321,6 +352,10 @@ def _finding(status, kind, cwe, sink, source=None, sanitized_by=None):
     site = sink.get("call_expr") or sink.get("callee") or sink.get("sink_kind")
     if status == "VULNERABLE":
         msg = f"{kind} ({cwe}): tainted {arg} reaches {sink.get('sink_kind')} sink at `{site}`."
+    elif kind == "VALIDATION_GUARD_BYPASS":
+        msg = (f"{kind} ({cwe}): {arg} reaches {sink.get('sink_kind')} sink at `{site}`; "
+               "a fail-closed validation guard covers the default call path, but a caller "
+               "can explicitly bypass it.")
     elif status == "POLYMORPHIC":
         msg = (f"{kind} ({cwe}): {arg} reaches {sink.get('sink_kind')} sink at `{site}` "
                f"and is unsanitized — vulnerable iff the caller passes tainted data.")
@@ -335,7 +370,7 @@ def _finding(status, kind, cwe, sink, source=None, sanitized_by=None):
 
 # --- composition helpers (bottom-up, mirrors IFC instantiate_callee) ----------
 
-def instantiate_flows(flows, param_to_actual_flows, call_id):
+def instantiate_flows(flows, param_to_actual_flows, call_id, sanitizer_id_map=None):
     """Substitute a callee's parametric flow sources with the caller's actual
     argument flows at a call site. Concrete callee sources become opaque tainted
     (renamed under the call id); missing args fail closed to tainted unknown.
@@ -343,7 +378,10 @@ def instantiate_flows(flows, param_to_actual_flows, call_id):
     out = []
     for flow in flows or []:
         src = flow.get("source", "")
-        extra_sani = list(flow.get("sanitizers") or [])
+        extra_sani = [
+            (sanitizer_id_map or {}).get(entry, entry) if isinstance(entry, str) else entry
+            for entry in (flow.get("sanitizers") or [])
+        ]
         if src.startswith("param:"):
             p = src[len("param:"):]
             actual = param_to_actual_flows.get(p)
@@ -361,10 +399,12 @@ def instantiate_flows(flows, param_to_actual_flows, call_id):
     return out
 
 
-def instantiate_sink(callee_sink, call_id, param_to_actual_flows):
+def instantiate_sink(callee_sink, call_id, param_to_actual_flows, sanitizer_id_map=None):
     """Re-anchor a callee sink at the caller, substituting param sources."""
     new = dict(callee_sink)
     new["id"] = f"{call_id}::{callee_sink.get('id', 'K')}"
-    new["flows"] = instantiate_flows(callee_sink.get("flows"), param_to_actual_flows, call_id)
+    new["flows"] = instantiate_flows(
+        callee_sink.get("flows"), param_to_actual_flows, call_id, sanitizer_id_map
+    )
     new["_via"] = call_id
     return new

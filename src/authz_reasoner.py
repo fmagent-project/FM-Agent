@@ -45,13 +45,52 @@ Finding sub-kinds (for VULNERABLE):
                                      paths (e.g. checked after the write).
 """
 
-from config import AUTHZ_FAIL_CLOSED
-
-
 VULNERABLE = "VULNERABLE"
 SAFE = "SAFE"
 NEEDS_REVIEW = "NEEDS_REVIEW"
 ERROR = "ERROR"
+
+REQUIRED_CHECKS = {
+    "authentication",
+    "absolute_authentication_lifetime",
+    "subject_object_binding",
+    "object_permission",
+}
+GUARD_KINDS = {
+    "ownership", "role", "tenant", "authentication", "permission", "other",
+}
+
+FINDING_CWES = {
+    "MISSING_AUTHENTICATION": "CWE-306",
+    "MISSING_ABSOLUTE_AUTHENTICATION_LIFETIME": "CWE-306",
+    "RESOURCE_BINDING_MISMATCH": "CWE-639",
+    "SUBJECT_OBJECT_BINDING_MISMATCH": "CWE-639",
+    "OBJECT_PERMISSION_BINDING_MISMATCH": "CWE-863",
+    "MISSING_OBJECT_PERMISSION": "CWE-863",
+    "ROLE_ONLY_GUARD_FOR_OBJECT_ACTION": "CWE-863",
+    "MISSING_AUTHORIZATION": "CWE-862",
+    "AUTHZ_AFTER_EFFECT": "CWE-862",
+}
+
+
+def validate(abstraction):
+    """Return an error for malformed security-critical fields, else None."""
+    if not isinstance(abstraction, dict) or not abstraction:
+        return "no valid authorization abstraction"
+    for key in ("sensitive_operations", "guards", "obligations", "establishes"):
+        values = abstraction.get(key) or []
+        if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
+            return f"{key} must be an array of objects"
+    for op in abstraction.get("sensitive_operations") or []:
+        checks = op.get("required_checks")
+        if checks is not None and (
+            not isinstance(checks, list) or any(check not in REQUIRED_CHECKS for check in checks)
+        ):
+            return "unknown required authorization check"
+    for guard in abstraction.get("guards") or []:
+        if guard.get("kind") not in GUARD_KINDS:
+            return f"unknown guard kind: {guard.get('kind')}"
+    return None
 
 
 def _norm(expr):
@@ -299,6 +338,72 @@ def _best_finding_kind(reasons):
     return "MISSING_AUTHORIZATION"
 
 
+def _required_check_result(check, op, guards):
+    """Evaluate one explicit pre-dispatch requirement over all local guards."""
+    op_scope = op.get("scope_id_expr") or op.get("resource_id_expr")
+    permission_object = op.get("permission_object_expr") or op.get("resource_id_expr")
+    saw_candidate = False
+    saw_wrong_binding = False
+    saw_late = False
+
+    for guard in guards:
+        kind = guard.get("kind")
+        if check in ("authentication", "absolute_authentication_lifetime"):
+            candidate = kind == "authentication"
+        elif check == "subject_object_binding":
+            candidate = kind in ("ownership", "tenant", "other")
+        else:
+            candidate = kind == "permission"
+        if not candidate:
+            continue
+        saw_candidate = True
+        if not guard.get("dominates_all_paths") and not _is_framework_guard(guard):
+            saw_late = True
+            continue
+        if not _guard_binds_subject(guard):
+            continue
+        if not _action_covers(guard.get("action_scope"), op.get("action")):
+            continue
+
+        if check == "authentication":
+            return True, None
+        if check == "absolute_authentication_lifetime":
+            if guard.get("absolute_lifetime_bound") is True:
+                return True, None
+            continue
+        expected = op_scope if check == "subject_object_binding" else permission_object
+        actual = guard.get("scope_id_expr") or guard.get("resource_id_expr")
+        if expected and actual and _key_covers(actual, expected):
+            return True, None
+        saw_wrong_binding = saw_wrong_binding or bool(actual)
+
+    if check == "absolute_authentication_lifetime":
+        return False, "missing_absolute_lifetime"
+    if check == "subject_object_binding":
+        return False, "scope_binding_mismatch" if saw_wrong_binding else "missing_scope_binding"
+    if check == "object_permission":
+        return False, "permission_binding_mismatch" if saw_wrong_binding else "missing_object_permission"
+    if saw_late:
+        return False, "not_dominating"
+    return False, "missing_authentication" if not saw_candidate else "authentication_unknown"
+
+
+def _required_finding_kind(reasons):
+    if "permission_binding_mismatch" in reasons:
+        return "OBJECT_PERMISSION_BINDING_MISMATCH"
+    if "missing_object_permission" in reasons:
+        return "MISSING_OBJECT_PERMISSION"
+    if "scope_binding_mismatch" in reasons or "missing_scope_binding" in reasons:
+        return "SUBJECT_OBJECT_BINDING_MISMATCH"
+    if "missing_absolute_lifetime" in reasons:
+        return "MISSING_ABSOLUTE_AUTHENTICATION_LIFETIME"
+    if "missing_authentication" in reasons or "authentication_unknown" in reasons:
+        return "MISSING_AUTHENTICATION"
+    if "not_dominating" in reasons:
+        return "AUTHZ_AFTER_EFFECT"
+    return "MISSING_AUTHORIZATION"
+
+
 def evaluate_local(abstraction):
     """Evaluate a single function's authorization abstraction in isolation.
 
@@ -331,6 +436,23 @@ def evaluate_local(abstraction):
     for op in ops:
         reasons = []
         discharged = False
+        if op.get("_source_authorized") is True:
+            op_results.append({"op": op, "discharged": True,
+                               "reasons": ["source_authorized"], "kind": None})
+            continue
+        required_checks = op.get("required_checks")
+        if required_checks:
+            for check in required_checks:
+                ok, reason = _required_check_result(check, op, guards)
+                if not ok and reason:
+                    reasons.append(reason)
+            discharged = not reasons
+            kind = None if discharged else _required_finding_kind(reasons)
+            if not discharged:
+                undischarged.append(op.get("op_id") or op.get("evidence") or "op")
+            op_results.append({"op": op, "discharged": discharged,
+                               "reasons": reasons, "kind": kind})
+            continue
         # Self-access: a resource keyed by the authenticated subject (e.g.
         # current_user.id) is inherently authorized — the id is not
         # attacker-controlled, so no separate ownership guard is required.
@@ -373,6 +495,35 @@ def op_satisfied_by_context(op, propagated_contexts):
     matching ownership/tenant guard (same resource id, covering action) discharges
     the op; a role/auth context discharges only non-object or admin ops.
     """
+    required = op.get("required_checks") or []
+    if required:
+        for check in required:
+            satisfied = False
+            expected = (
+                op.get("scope_id_expr") if check == "subject_object_binding"
+                else op.get("permission_object_expr") or op.get("resource_id_expr")
+            )
+            for ctx in propagated_contexts or ():
+                if not ctx.get("subject_bound"):
+                    continue
+                if not _action_covers(ctx.get("action"), op.get("action")):
+                    continue
+                kind = ctx.get("kind")
+                if check == "authentication" and kind == "authentication":
+                    satisfied = True
+                elif check == "absolute_authentication_lifetime" and \
+                        kind == "authentication" and ctx.get("absolute_lifetime_bound") is True:
+                    satisfied = True
+                elif check == "subject_object_binding" and kind in ("ownership", "tenant", "other"):
+                    satisfied = _key_covers(ctx.get("scope_id_expr") or ctx.get("resource_id_expr"), expected)
+                elif check == "object_permission" and kind == "permission":
+                    satisfied = _key_covers(ctx.get("resource_id_expr"), expected)
+                if satisfied:
+                    break
+            if not satisfied:
+                return False
+        return True
+
     op_id = _norm(op.get("resource_id_expr"))
     for ctx in propagated_contexts or ():
         if not ctx.get("subject_bound"):
@@ -382,7 +533,7 @@ def op_satisfied_by_context(op, propagated_contexts):
         c_id = _norm(ctx.get("resource_id_expr"))
         kind = ctx.get("kind")
         if op_id:
-            if kind in ("ownership", "tenant", "other") and c_id and c_id == op_id:
+            if kind in ("ownership", "tenant", "other") and c_id and _key_covers(c_id, op_id):
                 return True
             if kind in ("role", "authentication") and op.get("kind") == "admin":
                 return True
@@ -399,6 +550,10 @@ def classify(abstraction, is_entrypoint=True, propagated_contexts=()):
     if not abstraction or not isinstance(abstraction, dict):
         return {"verdict": ERROR, "findings": [],
                 "error": "no valid authorization abstraction (fail-closed)"}
+
+    error = validate(abstraction)
+    if error:
+        return {"verdict": ERROR, "findings": [], "error": error, "local": {}}
 
     local = evaluate_local(abstraction)
     if local.get("error"):
@@ -421,6 +576,7 @@ def classify(abstraction, is_entrypoint=True, propagated_contexts=()):
         real_undischarged = True
         findings.append({
             "kind": res["kind"] or "MISSING_AUTHORIZATION",
+            "cwe": FINDING_CWES.get(res["kind"] or "MISSING_AUTHORIZATION", "CWE-862"),
             "op": op,
             "message": _finding_message(res["kind"], op),
         })
@@ -447,6 +603,15 @@ def _finding_message(kind, op):
             f"{base} has no dominating authorization guard.",
         "MISSING_AUTHENTICATION":
             f"{base} performed with no authenticated subject and no guard.",
+        "MISSING_ABSOLUTE_AUTHENTICATION_LIFETIME":
+            f"{base} accepts a session without a dominating authentication-anchored "
+            f"absolute lifetime bound (a sliding idle timeout is insufficient).",
+        "SUBJECT_OBJECT_BINDING_MISMATCH":
+            f"IDOR: {base} is not proven to belong to the subject's enclosing scope.",
+        "OBJECT_PERMISSION_BINDING_MISMATCH":
+            f"{base} dispatches one object after checking permission on a different object.",
+        "MISSING_OBJECT_PERMISSION":
+            f"{base} is dispatched without a dominating permission check on that object.",
         "ROLE_ONLY_GUARD_FOR_OBJECT_ACTION":
             f"{base} is object-specific but only a role guard is present "
             f"(no per-object ownership check).",
@@ -462,12 +627,14 @@ def establishes_to_contexts(abstraction):
     out = []
     subj_present = _has_authenticated_subject(abstraction)
     for g in (abstraction.get("guards") or []):
-        if not g.get("dominates_all_paths"):
+        if not g.get("dominates_all_paths") and not _is_framework_guard(g):
             continue
         out.append({
             "resource_id_expr": g.get("resource_id_expr"),
+            "scope_id_expr": g.get("scope_id_expr"),
             "action": g.get("action_scope") or "any",
             "subject_bound": _guard_binds_subject(g) or subj_present,
             "kind": g.get("kind") or "other",
+            "absolute_lifetime_bound": g.get("absolute_lifetime_bound") is True,
         })
     return out

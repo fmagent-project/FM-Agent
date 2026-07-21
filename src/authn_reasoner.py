@@ -45,6 +45,11 @@ Finding sub-kinds (for VULNERABLE):
 """
 
 from config import AUTHN_FAIL_CLOSED  # noqa: F401 (kept for parity / future toggles)
+from src.authn_validation import (
+    authentication_contract_discharges,
+    authentication_contract_findings,
+    validate_security_facts,
+)
 
 
 VULNERABLE = "VULNERABLE"
@@ -70,6 +75,9 @@ def validate(abstraction):
     """Return an error string if malformed / out-of-enum, else None (fail-closed)."""
     if not abstraction or not isinstance(abstraction, dict):
         return "no valid authn abstraction"
+    err = validate_security_facts(abstraction)
+    if err:
+        return err
     for op in abstraction.get("protected_operations") or []:
         if op.get("kind") not in OP_KINDS:
             return f"unknown protected op kind: {op.get('kind')}"
@@ -167,13 +175,21 @@ def evaluate_local(abstraction):
     sessions = abstraction.get("session_events") or []
     obligations = abstraction.get("obligations") or []
 
-    genuine = _dominating_genuine_event(events)
-    weak = _dominating_weak_event(events)
-    unknown_dom = _dominating_unknown_event(events)
-    asserted_only = _has_asserted_only(events)
-
     op_results = []
     for op in ops:
+        op_id = op.get("op_id")
+        op_events = [
+            event for event in events
+            if not event.get("protects_op_ids") or op_id in event.get("protects_op_ids", [])
+        ]
+        genuine = _dominating_genuine_event(op_events)
+        weak = _dominating_weak_event(op_events)
+        unknown_dom = _dominating_unknown_event(op_events)
+        asserted_only = _has_asserted_only(op_events)
+        if authentication_contract_discharges(abstraction, op_id):
+            op_results.append({"op": op, "discharged": True, "kind": None,
+                               "dischargeable": False, "soft": False})
+            continue
         if genuine:
             op_results.append({"op": op, "discharged": True, "kind": None,
                                "dischargeable": False, "soft": False})
@@ -187,7 +203,11 @@ def evaluate_local(abstraction):
             # a dominating auth gate exists but its genuineness can't be confirmed
             # locally (delegates to an opaque helper) -> NEEDS_REVIEW, not a hard miss.
             kind, dischargeable, soft = "MISSING_AUTHENTICATION", False, True
-        elif not events and obligations:
+        elif op_events:
+            # An operation-specific local gate exists but does not dominate the
+            # operation. An ancestor cannot repair that local bypass path.
+            kind, dischargeable, soft = "MISSING_AUTHENTICATION", False, False
+        elif not op_events and obligations:
             # relies on a caller/framework: a caller may authenticate (top-down),
             # else it is an unconfirmable framework reliance -> NEEDS_REVIEW.
             kind, dischargeable, soft = "MISSING_AUTHENTICATION", True, True
@@ -210,7 +230,12 @@ def evaluate_local(abstraction):
             ev = next((s.get("evidence") for s in sessions if s.get("kind") == "establish"), None)
             session_findings.append({"kind": "INSUFFICIENT_SESSION_EXPIRATION", "evidence": ev})
 
-    return {"ops": op_results, "session_findings": session_findings, "error": False}
+    return {
+        "ops": op_results,
+        "session_findings": session_findings,
+        "contract_findings": authentication_contract_findings(abstraction),
+        "error": False,
+    }
 
 
 # --- top-down context ---------------------------------------------------------
@@ -288,6 +313,10 @@ def classify(abstraction, is_entrypoint=True, propagated_contexts=()):
         hard_defect = True
         findings.append({"kind": sf["kind"], "op": {},
                          "message": _finding_message(sf["kind"], None, sf.get("evidence"))})
+
+    for finding in local["contract_findings"]:
+        hard_defect = True
+        findings.append(finding)
 
     if hard_defect:
         verdict = VULNERABLE

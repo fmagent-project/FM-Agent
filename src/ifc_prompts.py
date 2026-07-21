@@ -40,9 +40,14 @@ _CHANNELS_DOC = (
     "      (e.g. `if secret < 0: raise`). Do NOT list a source merely because a generic\n"
     "      type/runtime error (TypeError, NullPointer, etc.) could occur — those depend on\n"
     "      the input's TYPE, not its secret value, and are not a value-dependent flow.\n"
+    "  - \"exception:message\": dependency of DETAIL included in an exception delivered\n"
+    "      to a caller/user. Catching an exception does not sanitize its text.\n"
+    "  - \"error:<destination>\": dependency of error detail stored in a framework message,\n"
+    "      response, flash, API result, CLI result, or other named destination.\n"
     "  - \"param:<name>.*\": dependency written INTO a mutable parameter/receiver attribute\n"
     "  - \"global:<name>\": dependency written into a global\n"
-    "  - \"io:<sink>\": dependency of an observable side effect (log/stdout/network/db)\n"
+    "  - \"io:<sink>\": dependency of a side effect (log/stdout/network/db). A trusted\n"
+    "      internal log is observability=internal; stdout/client-visible logs are external.\n"
     "  - \"termination\": dependency of whether the function terminates (loops/early exit).\n"
     "      Recorded for completeness only; out of scope for the leak verdict\n"
     "      (termination-insensitive non-interference).\n"
@@ -121,6 +126,23 @@ def _system_prompt(language):
         "it under \"declassifications\" with an anchor (the exact statement) and a reason. Do NOT "
         "use declassification to excuse releasing a full secret value. A declassification is a "
         "PROPOSAL for human review, not a pass.\n"
+        "7. EXTERNAL OBSERVABILITY IS PER SINK. Every output must include `sink_channel` "
+        "and `observability`. Use observability `external` only when an unauthorized actor, "
+        "API/UI/CLI client, stdout consumer, or public network peer can see it; use `internal` "
+        "for trusted operator telemetry; use `caller` for a return/raised value whose eventual "
+        "visibility depends on the caller. A caught exception is not safe if its detail reaches "
+        "an external message. Conversely, detailed internal exception logging alone is not a "
+        "public leak. Analyze simultaneous sinks independently.\n"
+        "8. ERROR CONTENT IS DISTINCT FROM ERROR CONTROL. `exception` describes whether an "
+        "error occurs; `exception:message` or `error:<destination>` describes error text/data. "
+        "A generic external error plus a detailed internal log has no High dependency on the "
+        "external sink. Do not transfer the internal log's detail to the generic response.\n"
+        "9. FOLLOW NESTED SECRET FIELDS THROUGH CONTAINER MUTATION. If a generic options/params "
+        "container can contain a password, token, private key, or another secret and is merged after "
+        "normal redaction/no-log registration, model the nested field as High and include the "
+        "downstream log/stdout/serialized invocation sinks only when the source or callee context "
+        "contains that path. A merge alone is not evidence of a sink. A fail-closed rejection before "
+        "the merge blocks that secret flow.\n"
     )
 
 
@@ -143,6 +165,8 @@ def _user_prompt(func, signature_line, language, callee_summaries):
         '  "inputs": {"param:<name>": "High|Low|Unknown", "global:<name>": "...", "receiver.<attr>": "..."},\n'
         '  "outputs": {\n'
         '     "<channel>": {"deps": ["param:<name>", "receiver.<attr>", "global:<g>", ...], "const": null,\n'
+        '                    "sink_channel": "return|exception_control|exception_message|error_detail|log|stdout|network|database|shared_state|parameter|unknown",\n'
+        '                    "observability": "external|caller|internal",\n'
         '                    "declass": [{"anchor": "<exact stmt>", "reason": "<why intended>"}]}\n'
         "  },\n"
         '  "notes": "<one-line summary of the dominant flow>"\n'
@@ -152,7 +176,9 @@ def _user_prompt(func, signature_line, language, callee_summaries):
         "read (e.g. `receiver.client_secret`, `receiver.base_url`) — never a bare `receiver`. "
         "Use \"const\":\"High\" only for a value that is intrinsically secret regardless of inputs "
         "(rare). Omit channels that do not occur. Include \"declass\" only for intentional, "
-        "anchored High->Low releases; otherwise use an empty list or omit it."
+        "anchored High->Low releases; otherwise use an empty list or omit it. Every output must "
+        "include a sink_channel and observability. Treat each external response and internal log "
+        "as a separate output even when both are produced in one exception handler."
     )
 
 

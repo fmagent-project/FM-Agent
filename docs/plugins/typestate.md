@@ -30,8 +30,11 @@ SPI 适配器见 `src/plugins/typestate.py`；通用 driver 见 `src/plugins/dri
 | Finding kind | CWE | 判定 | 含义 |
 |---|---|---|---|
 | `TOCTOU_CHECK_THEN_USE` | CWE-367 | VULNERABLE | 检查后非原子地使用，存在竞态 |
+| `FS_UNSAFE_ACQUISITION` | CWE-367 | VULNERABLE | 破坏性文件获取前缺少支配性的 no-follow/reparse 防护 |
 | `CSRF_MISSING_VALIDATION` | CWE-352 | VULNERABLE | 状态变更前缺少 CSRF 校验 |
+| `CONTENT_TYPE_MISSING_BEFORE_JSON_PARSE` | CWE-352 | VULNERABLE | JSON 解析前缺少支配性的 JSON Content-Type 门控 |
 | `TLS_VERIFY_DISABLED_USE` | CWE-295 | VULNERABLE | TLS 校验被关闭后仍发起网络使用 |
+| `TLS_DEFAULT_CERTS_WRONG_CONTEXT` | CWE-295 | VULNERABLE | 将系统默认 CA 加载到调用者提供的 SSL context |
 | `TLS_VERIFY_UNKNOWN` | CWE-295 | NEEDS_REVIEW | TLS 校验状态无法判定 |
 | `RESOURCE_LEAK` | CWE-772 | VULNERABLE | 资源在某条路径上未释放（泄漏） |
 | `FILE_HANDLE_LEAK` | CWE-775 | VULNERABLE | 文件句柄泄漏 |
@@ -101,7 +104,7 @@ def load_text(path):
 
 > **「一个坏事件不得在某个必需事件之前/缺少它而发生。」**
 
-`typestate` 把这句话落地成 **5 条内建属性规则**（`TYPESTATE_RULES`，`typestate_reasoner.py:59`），每条是一个小自动机：
+`typestate` 把这句话落地成 **5 条原有内建属性规则**与 **3 条来源校验协议**，每条都是一个小自动机：
 
 | name | type | CWE | context_kind |
 |---|---|---|---|
@@ -111,13 +114,23 @@ def load_text(path):
 | `resource_lifecycle` | `must_release` | CWE-772 | — |
 | `auth_before_privileged_action` | `required_before_trigger` | CWE-306 | `auth_checked` |
 
+三条来源校验协议分别是 `CONTENT_TYPE_CHECK → JSON_PARSE`（CWE-352）、
+`SSL_CONTEXT_CREATE → CERT_DEFAULT_LOAD`（CWE-295）和
+`FS_NOFOLLOW_GUARD → FS_ACQUIRE`（CWE-367）。这三条协议采用更严格的
+**支配关系**：guard 不仅要出现在 trigger 前面，其 id 还必须出现在 trigger 的
+`predecessors_must` 中。只出现 guard、顺序错误、或 guard 与使用之间没有支配证明，
+都不能抵消漏洞。
+
 **关键分工**：LLM **不写自动机**。它只发射「观察到的事件」，并映射到一套固定的**事件字母表**（`EVENT_KINDS`，`typestate_reasoner.py:43`）：
 
 ```
 CALL
 FS_CHECK / FS_USE / FS_ATOMIC_USE
+FS_NOFOLLOW_GUARD / FS_ACQUIRE
 CSRF_VALIDATE / STATE_CHANGE
+CONTENT_TYPE_CHECK / JSON_PARSE
 TLS_VERIFY_DISABLE / TLS_VERIFY_ENABLE / TLS_HANDSHAKE_VERIFY / NETWORK_USE
+SSL_CONTEXT_CREATE / CERT_DEFAULT_LOAD
 RESOURCE_OPEN / RESOURCE_USE / RESOURCE_CLOSE / RESOURCE_ESCAPE
 AUTH_CHECK / PRIVILEGED_ACTION
 ```
@@ -138,6 +151,21 @@ AUTH_CHECK / PRIVILEGED_ACTION
 
 - `_must_precede(req, trigger)`（`typestate_reasoner.py:159`）返回 `yes/no/unknown`：若 `req.id` 在 `trigger.predecessors_must` 里 → `yes`；若 `req.order >= trigger.order` → `no`；若 `req` 是 `must` 覆盖 → `yes`；若两者同属一个 `guarded` 守卫（`guard_id` 相等）→ `yes`；若任一为 `unknown` 覆盖 → `unknown`。
 - `_same_resource(resources, a, b)`（`typestate_reasoner.py:142`）返回 `yes/no/unknown`：id 相同 → `yes`；任一 `kind=="unknown"` 或缺 `canonical` → `unknown`；`canonical` 相等 → `yes`；否则 `no`。
+- `_dominates(req, trigger)` 对三条来源校验协议要求 `req.order < trigger.order` 且 `req.id ∈ trigger.predecessors_must`；仅有文本上“看起来在前面”的 guard 不算安全。
+
+### 2.6 来源校验边界
+
+`src/typestate_validation.py` 在 LLM JSON 解析后重新从函数源代码构造上述三类 guard/trigger
+事件。原始 LLM 返回中的这六种事件会先被删除，因此模型不能伪造一个
+`predecessors_must` 来把不安全代码判成 `SAFE`。校验器目前识别：
+
+- HTTP 请求 JSON 解析是否位于 `application/json` 或 `application/*+json` 条件块内；
+- `load_default_certs()` 是否只在未提供 `ssl_context`、且本函数已创建 context 的状态下执行；
+- 带 `O_TRUNC` 的 `os.open` 是否由同次获取的 `O_NOFOLLOW`，或先行且拒绝式的 Windows reparse 检查保护。
+
+校验结果按稳定资源 identity 关联；Unix/Windows 中同名 `_acquire` 的提取 token
+（例如 `_acquire_1` 与 `_acquire`）仍由插件结果原样保留，供 runner 结合 qualified name
+绑定，不能由另一个同名函数代替。
 
 ### 2.3 POLYMORPHIC 从哪来
 
@@ -292,6 +320,7 @@ LLM 返回一个 `[TYPESTATE_JSON]` 包裹的对象（schema 见 `typestate_prom
 - TOCTOU（函数内 + 调用拼接）。
 - TLS-verify-before-use。
 - CSRF-before-state-change（+ 自顶向下抵消）。
+- Content-Type-before-JSON-parse、SSL-context-before-default-CA-load、no-follow/reparse-before-acquire（来源校验且要求支配顺序）。
 - auth-before-privileged-action（+ 自顶向下抵消）。
 
 **v1 明确延后（deferred）**：

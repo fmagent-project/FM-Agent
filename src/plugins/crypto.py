@@ -23,6 +23,12 @@ from src.crypto_reasoner import (
     classify, instantiate_return_material,
     VULNERABLE, WEAK, POLYMORPHIC, NEEDS_REVIEW, SAFE, ERROR,
 )
+from src.crypto_validation import (
+    source_only_facts,
+    source_provenance_context,
+    source_rel_from_extracted,
+    validate_and_enrich,
+)
 from src.plugins.base import (
     AbstractionRequest,
     AnalysisPlugin,
@@ -94,13 +100,17 @@ class CryptoPlugin(AnalysisPlugin):
         return [
             {"role": "system", "content": _system_prompt(unit.id.language)},
             {"role": "user", "content": _user_prompt(
-                numbered, unit.signature_line, unit.id.language, callee_summaries)},
+                numbered, unit.signature_line, unit.id.language, callee_summaries,
+                source_provenance_context(unit))},
         ]
 
     def parse_abstraction_response(
         self, request: AbstractionRequest, raw_response: str
     ) -> Optional[FactEnvelope]:
         payload = _extract_crypto_json(raw_response)
+        if not isinstance(payload, dict):
+            return None
+        payload = validate_and_enrich(payload, request.function)
         if payload is None:
             return None
         return FactEnvelope(
@@ -216,8 +226,22 @@ class CryptoPlugin(AnalysisPlugin):
         propagated_contexts: Sequence = (),
     ) -> Verdict:
         if facts.status == "error" or not facts.payload:
+            derived = source_only_facts(context.function)
+            derived_result = classify(derived) if derived else None
+            if not derived_result or derived_result["verdict"] in {ERROR, NEEDS_REVIEW}:
+                return Verdict(plugin_name="crypto", verdict=ERROR, status="error",
+                               data={"error": "no valid crypto abstraction (fail-closed)"})
+            facts.payload = derived
+            facts.status = "partial"
+
+        # Facts caches intentionally survive interrupted runs. Revalidate at the
+        # checker boundary so stale/misleading LLM facts cannot bypass newer
+        # deterministic source semantics on resume.
+        payload = validate_and_enrich(facts.payload, context.function)
+        if payload is None:
             return Verdict(plugin_name="crypto", verdict=ERROR, status="error",
-                           data={"error": "no valid crypto abstraction (fail-closed)"})
+                           data={"error": "invalid crypto abstraction (fail-closed)"})
+        facts.payload = payload
 
         result = classify(facts.payload)
         verdict = result["verdict"]
@@ -241,3 +265,9 @@ class CryptoPlugin(AnalysisPlugin):
             findings=findings,
             data={"signature": facts.payload, "result_findings": result.get("findings", [])},
         )
+
+    def render_result(self, unit, facts, verdict, context):
+        result = super().render_result(unit, facts, verdict, context)
+        result["rel"] = source_rel_from_extracted(unit.id.rel)
+        result["function"] = unit.id.name
+        return result

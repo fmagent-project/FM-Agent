@@ -86,6 +86,17 @@ def _system_prompt(language):
         "   - resource_id_origin: where that id comes from (request param/path/body, "
         "parameter, derived from subject, constant).\n"
         "   - action: a verb (read/update/delete/list/...).\n"
+        "   - required_checks: list every independent precondition needed before this op: "
+        "authentication, absolute_authentication_lifetime, subject_object_binding, and/or "
+        "object_permission. Use absolute_authentication_lifetime for accepting/refreshing an "
+        "authenticated session: an idle/sliding timeout alone is not an absolute bound. Use "
+        "subject_object_binding when an object selected by an id must belong to the route's "
+        "project/tenant/account. Use object_permission for dispatching/running a concrete "
+        "job/action object. Omit only when the ordinary same-resource authorization model applies.\n"
+        "   - scope_id_expr: for subject_object_binding, the exact enclosing project/tenant/"
+        "account expression. permission_object_expr: for object_permission, the exact object "
+        "that will be dispatched. Use only these four exact required_checks tokens; never "
+        "invent a synonym or a fifth check kind.\n"
         "   - evidence: the exact statement.\n"
         "3. GUARD: an authorization check that, if it fails, blocks the operation. For EACH:\n"
         "   - predicate_nl: the check in words (e.g. 'invoice.owner_id == current_user.id', "
@@ -93,7 +104,9 @@ def _system_prompt(language):
         "   - subject: which principal it binds (e.g. current_user) or null.\n"
         "   - resource_type / resource_id_expr: which resource it constrains, if any.\n"
         "   - action_scope: which actions it authorizes (or 'any').\n"
-        "   - kind: ownership | role | tenant | authentication | other.\n"
+        "   - kind: ownership | role | tenant | authentication | permission | other. "
+        "A permission guard must name the concrete object whose permission is checked; a "
+        "permission on a wrapper/button does not authorize dispatch of its related job.\n"
         "   - dominates_all_paths: true if EVERY path to the sensitive operation passes "
         "this guard first (it returns/raises/aborts on failure BEFORE the op). If the guard "
         "is only on some branches, false.\n"
@@ -131,6 +144,14 @@ def _system_prompt(language):
         "resource_id_expr differs from (or is absent for) the sensitive op's resource_id_expr. "
         "If a guard checks one id but the op touches another, report BOTH ids faithfully — do "
         "not normalize them to look equal.\n"
+        "A route-scoped project and an object id are separate bindings: authentication to the "
+        "project does not prove that an independently loaded object belongs to that project. "
+        "Record the project/tenant expression in scope_id_expr on both the operation and the "
+        "query/filter guard. A conversion hook that resolves an object from a project-filtered "
+        "query before handler dispatch is a dominating tenant guard for that handler argument.\n"
+        "For session acceptance, distinguish an idle timeout that moves with activity from an "
+        "absolute deadline anchored to login/authentication time. Never claim an absolute bound "
+        "from a generic authenticated subject or timeout field alone.\n"
         "If the function performs NO sensitive operation, return empty sensitive_operations. "
         "When unsure whether something is sensitive or whether a guard dominates, be "
         "CONSERVATIVE (report the op as sensitive; report dominates_all_paths=false if not "
@@ -168,12 +189,15 @@ def _user_prompt(numbered_src, signature_line, language, callee_summaries, is_en
         '    {"op_id": "<short id>", "kind": "read|write|delete|admin|other", '
         '"resource_type": "<Type>", "resource_id_expr": "<expr>|null", '
         '"resource_id_origin": "request|param|subject|constant|unknown", '
-        '"action": "<verb>", "evidence": "<exact stmt>"}\n'
+        '"action": "<verb>", "required_checks": ["<check>", "..."], '
+        '"scope_id_expr": "<project/tenant expr>|null", '
+        '"permission_object_expr": "<dispatched object expr>|null", "evidence": "<exact stmt>"}\n'
         "  ],\n"
         '  "guards": [\n'
         '    {"predicate_nl": "<check>", "subject": "<expr>|null", '
         '"resource_type": "<Type>|null", "resource_id_expr": "<expr>|null", '
-        '"action_scope": "<verb|any>", "kind": "ownership|role|tenant|authentication|other", '
+        '"action_scope": "<verb|any>", "kind": "ownership|role|tenant|authentication|permission|other", '
+        '"scope_id_expr": "<project/tenant expr>|null", '
         '"source": "in_body|decorator|dependency_injection", '
         '"dominates_all_paths": true, "evidence": "<exact stmt>"}\n'
         "  ],\n"

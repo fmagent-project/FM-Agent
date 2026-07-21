@@ -1,32 +1,10 @@
-"""Typestate / temporal-protocol plugin: ordering-bug detection (TOCTOU, CSRF,
-TLS-verify-before-use, resource lifecycle, auth-before-action).
-
-The fifth plugin on the shared substrate. It uses BOTH composition directions
-(Oracle's design):
-  - BOTTOM-UP (like taint/crypto): a callee's exported events (e.g. it returns an
-    open resource, or it performs a STATE_CHANGE on a request param) are spliced
-    into the caller's ordered trace at the call site.
-  - TOP-DOWN (like authz): a required event (CSRF_VALIDATE / AUTH_CHECK) may be
-    performed by an ANCESTOR caller, so established contexts propagate from
-    entrypoints down the call graph to discharge a callee's required-before-
-    trigger obligation.
-
-Unlike taint/crypto there is NO data-flow sink: the bug is an ORDERING property
-checked by small built-in property automata.
-
-Verdicts: VULNERABLE / POLYMORPHIC / NEEDS_REVIEW / SAFE / ERROR.
-"""
+"""Typestate plugin adapter for temporal-protocol analysis."""
 
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Sequence
 
 from config import TYPESTATE_MODEL
-from src.typestate_prompts import _system_prompt, _user_prompt, _extract_typestate_json
-from src.typestate_reasoner import (
-    classify, summarize_facts, _combine_coverage, _ordered, _by_id,
-    VULNERABLE, POLYMORPHIC, NEEDS_REVIEW, SAFE, ERROR,
-)
 from src.plugins.base import (
     AbstractionRequest,
     AnalysisPlugin,
@@ -39,294 +17,211 @@ from src.plugins.base import (
     ResolvedCall,
     Verdict,
 )
+from src.typestate_prompts import _extract_typestate_json, _system_prompt, _user_prompt
+from src.typestate_reasoner import (
+    ERROR,
+    NEEDS_REVIEW,
+    POLYMORPHIC,
+    SAFE,
+    VULNERABLE,
+    _combine_coverage,
+    _ordered,
+    classify,
+    summarize_facts,
+)
+from src.typestate_validation import (
+    source_rel_from_extracted,
+    validate_and_enrich,
+)
 
 
-def _summarize_text(payload: dict, verdict: str, fn_name: str) -> str:
-    """Concise callee summary for caller prompts."""
+_AMBIENT_KINDS = {"csrf_validated", "auth_checked", "tls_verify_disabled"}
+
+
+def _freeze(value):
+    return tuple(sorted((key, value.get(key)) for key in ("kind", "resource", "coverage")))
+
+
+def _thaw(value):
+    return dict(value) if not isinstance(value, dict) else value
+
+
+def _summary_text(payload, verdict, name):
     if not payload:
-        return f"{fn_name}: (no typestate facts)"
-    s = summarize_facts(payload, verdict)
-    parts = []
-    for p in s.get("context_provides") or []:
-        parts.append(f"provides {p['kind']}({p['resource']})")
-    for r in s.get("context_requires") or []:
-        parts.append(f"requires {r['kind']}({r['resource']})")
-    for rr in s.get("return_resources") or []:
-        parts.append(f"returns {rr['state']} resource")
-    ev = s.get("exported_events") or []
-    if ev:
-        parts.append("events[" + ",".join(sorted({e["kind"] for e in ev})) + "]")
-    return f"{fn_name}: " + ("; ".join(parts) if parts else "(no caller-visible effects)")
+        return f"{name}: (no typestate facts)"
+    summary = summarize_facts(payload, verdict)
+    parts = [
+        *(f"provides {item['kind']}({item['resource']})" for item in summary.get("context_provides") or []),
+        *(f"requires {item['kind']}({item['resource']})" for item in summary.get("context_requires") or []),
+        *(f"returns {item['state']} resource" for item in summary.get("return_resources") or []),
+    ]
+    events = summary.get("exported_events") or []
+    if events:
+        parts.append("events[" + ",".join(sorted({event["kind"] for event in events})) + "]")
+    return f"{name}: " + ("; ".join(parts) if parts else "(no caller-visible effects)")
 
 
-def _freeze(d: dict):
-    return tuple(sorted((k, d.get(k)) for k in ("kind", "resource", "coverage")))
-
-
-def _thaw(fr):
-    return dict(fr) if not isinstance(fr, dict) else fr
+def _ambient_contexts(payload):
+    return [
+        _freeze({"kind": item["kind"], "resource": "*", "coverage": "must"})
+        for item in payload.get("ambient_contexts") or []
+        if item.get("coverage") == "must" and item.get("kind") in _AMBIENT_KINDS
+    ]
 
 
 class TypestatePlugin(AnalysisPlugin):
-    """Typestate / temporal-protocol plugin (ordering bugs)."""
-
     model = TYPESTATE_MODEL
     SCHEMA = "typestate.v1"
 
     @property
-    def metadata(self) -> PluginMetadata:
+    def metadata(self):
         return PluginMetadata(
             name="typestate",
             version="0.1.0",
             schema_version=self.SCHEMA,
-            supported_languages=("python", "javascript", "typescript", "java",
-                                 "go", "c", "cpp", "ruby", "php"),
+            supported_languages=("python", "javascript", "typescript", "java", "go", "c", "cpp", "ruby", "php"),
             verdicts=(VULNERABLE, POLYMORPHIC, NEEDS_REVIEW, SAFE, ERROR),
             requires_top_down_context=True,
             needs_entrypoint=True,
         )
 
-    # -- abstraction -----------------------------------------------------------
-
     def build_abstraction_prompt(self, request: AbstractionRequest) -> List[Dict[str, str]]:
         unit = request.function
-        numbered = "\n".join(
-            f"Line {i+1}: {ln}" for i, ln in enumerate(unit.source.splitlines())
-        )
-        callee_summaries = None
-        if request.callee_context:
-            callee_summaries = "\n".join(request.callee_context.values())
-        role_hint = "entrypoint" if request.context.is_entrypoint else "internal"
+        numbered = "\n".join(f"Line {index + 1}: {line}" for index, line in enumerate(unit.source.splitlines()))
+        callees = "\n".join(request.callee_context.values()) if request.callee_context else None
+        role = "entrypoint" if request.context.is_entrypoint else "internal"
         return [
             {"role": "system", "content": _system_prompt(unit.id.language)},
-            {"role": "user", "content": _user_prompt(
-                numbered, unit.signature_line, unit.id.language, callee_summaries, role_hint)},
+            {"role": "user", "content": _user_prompt(numbered, unit.signature_line, unit.id.language, callees, role)},
         ]
 
-    def parse_abstraction_response(
-        self, request: AbstractionRequest, raw_response: str
-    ) -> Optional[FactEnvelope]:
-        payload = _extract_typestate_json(raw_response)
+    def parse_abstraction_response(self, request, raw_response) -> Optional[FactEnvelope]:
+        payload = validate_and_enrich(_extract_typestate_json(raw_response), request.function)
         if payload is None:
             return None
-        return FactEnvelope(
-            plugin_name="typestate",
-            schema_version=self.SCHEMA,
-            function=request.function.id,
-            status="ok",
-            payload=payload,
-        )
+        return FactEnvelope("typestate", self.SCHEMA, request.function.id, "ok", payload)
 
-    def make_error_facts(self, request: AbstractionRequest, error: str) -> FactEnvelope:
+    def make_error_facts(self, request, error):
         return FactEnvelope(
-            plugin_name="typestate",
-            schema_version=self.SCHEMA,
-            function=request.function.id,
-            status="error",
-            payload=None,
+            "typestate",
+            self.SCHEMA,
+            request.function.id,
+            "error",
+            None,
             confidence=0.0,
             diagnostics=[Diagnostic(level="error", message=error)],
         )
 
-    # -- composition (bottom-up: splice callee exported events) ----------------
-
-    def summarize_for_caller(self, facts: FactEnvelope) -> str:
+    def summarize_for_caller(self, facts):
         if facts.status != "ok" or not facts.payload:
             return f"{facts.function.name}: (no typestate facts)"
-        verdict = (facts.payload.get("_verdict") or "")
-        return _summarize_text(facts.payload, verdict, facts.function.name)
+        return _summary_text(facts.payload, facts.payload.get("_verdict", ""), facts.function.name)
 
-    def compose_calls(
-        self,
-        caller_facts: FactEnvelope,
-        resolved_calls: Sequence[ResolvedCall],
-        context: DriverContext,
-    ) -> FactEnvelope:
-        """Splice each resolved callee's exported events into the caller's ordered
-        trace at the CALL site, mapping the callee's formal-param resources to the
-        caller's actual resources. This lets a callee that returns an open
-        resource, or performs a STATE_CHANGE on a passed-in request, surface in
-        the caller's automaton."""
+    def compose_calls(self, caller_facts, resolved_calls: Sequence[ResolvedCall], context):
         if caller_facts.status != "ok" or not caller_facts.payload:
             return caller_facts
         payload = dict(caller_facts.payload)
-        calls = {c.get("event_id"): c for c in (payload.get("calls") or [])}
-        callee_by_name = {}
-        for rc in resolved_calls:
-            cf = rc.callee_facts
-            if cf.status == "ok" and cf.payload:
-                callee_by_name[rc.call_site.callee_name] = cf.payload
-
-        if not callee_by_name:
+        calls = {call.get("event_id"): call for call in payload.get("calls") or []}
+        callees = {
+            resolved.call_site.callee_name: resolved.callee_facts.payload
+            for resolved in resolved_calls
+            if resolved.callee_facts.status == "ok" and resolved.callee_facts.payload
+        }
+        if not callees:
             return caller_facts
-
         events = _ordered(payload.get("events"))
-        new_events = list(events)
-        spliced = []
-        for ev in events:
-            if ev.get("kind") != "CALL":
+        new_events, spliced = list(events), []
+        for event in events:
+            if event.get("kind") != "CALL":
                 continue
-            call = calls.get(ev.get("id"))
-            callee_name = (call or {}).get("callee") or ev.get("callee")
-            cpayload = callee_by_name.get(callee_name)
-            if not cpayload:
+            call = calls.get(event.get("id")) or {}
+            callee_name = call.get("callee") or event.get("callee")
+            callee = callees.get(callee_name)
+            if not callee:
                 continue
-            summary = summarize_facts(cpayload, cpayload.get("_verdict", ""))
-            arg_map = (call or {}).get("arg_resources") or ev.get("arg_resources") or {}
-            ret_res = (call or {}).get("return_resource") or ev.get("return_resource")
-            base_order = ev.get("order", 0)
-            for i, ce in enumerate(summary.get("exported_events") or [], 1):
-                sym = ce.get("resource", "")
-                mapped_res = sym
-                if isinstance(sym, str) and sym.startswith("formal:"):
-                    formal = sym[len("formal:"):]
-                    mapped_res = arg_map.get(formal, sym)
-                elif sym == "return" and ret_res:
-                    mapped_res = ret_res
+            summary = summarize_facts(callee, callee.get("_verdict", ""))
+            arguments = call.get("arg_resources") or event.get("arg_resources") or {}
+            returned = call.get("return_resource") or event.get("return_resource")
+            for index, exported in enumerate(summary.get("exported_events") or [], 1):
+                resource = exported.get("resource", "")
+                if isinstance(resource, str) and resource.startswith("formal:"):
+                    resource = arguments.get(resource[len("formal:"):], resource)
+                elif resource == "return" and returned:
+                    resource = returned
                 new_events.append({
-                    "id": f"{ev.get('id')}:{ce.get('id')}",
-                    "order": base_order + i / 1000.0,
-                    "kind": ce.get("kind"),
-                    "resource": mapped_res,
-                    "operation": ce.get("operation"),
-                    "path_coverage": _combine_coverage(
-                        ev.get("path_coverage", "may"), ce.get("path_coverage", "may")),
-                    "predecessors_must": [], "control_depends_on": [],
-                    "atomicity": ce.get("atomicity", "not_applicable"),
-                    "tls_verify": ce.get("tls_verify", "not_applicable"),
+                    "id": f"{event.get('id')}:{exported.get('id')}",
+                    "order": event.get("order", 0) + index / 1000.0,
+                    "kind": exported.get("kind"),
+                    "resource": resource,
+                    "operation": exported.get("operation"),
+                    "path_coverage": _combine_coverage(event.get("path_coverage", "may"), exported.get("path_coverage", "may")),
+                    "predecessors_must": [],
+                    "control_depends_on": [],
+                    "atomicity": exported.get("atomicity", "not_applicable"),
+                    "tls_verify": exported.get("tls_verify", "not_applicable"),
                     "_via": callee_name,
                 })
-                spliced.append({"callee": callee_name, "kind": ce.get("kind"),
-                                "resource": mapped_res})
+                spliced.append({"callee": callee_name, "kind": exported.get("kind"), "resource": resource})
         if spliced:
-            payload["events"] = new_events
-            payload["_spliced"] = spliced
+            payload.update(events=new_events, _spliced=spliced)
             caller_facts.payload = payload
         return caller_facts
 
-    # -- top-down context (csrf/auth required event may be in an ancestor) -----
-
-    def initial_context(self, facts: FactEnvelope, context: DriverContext):
-        """Seed contexts this entrypoint establishes for callees: ambient
-        decorators (@csrf_protect, @login_required) and must CSRF/AUTH events."""
+    def initial_context(self, facts, context):
         if facts.status != "ok" or not facts.payload:
             return None
-        out = []
-        for a in facts.payload.get("ambient_contexts") or []:
-            if a.get("coverage") == "must" and a.get("kind") in (
-                    "csrf_validated", "auth_checked", "tls_verify_disabled"):
-                out.append({"kind": a["kind"], "resource": "*", "coverage": "must"})
-        s = summarize_facts(facts.payload, "")
-        for p in s.get("context_provides") or []:
-            out.append({"kind": p["kind"], "resource": "*", "coverage": "must"})
-        return tuple(_freeze(c) for c in out) if out else None
+        established = _ambient_contexts(facts.payload)
+        for item in summarize_facts(facts.payload, "").get("context_provides") or []:
+            established.append(_freeze({"kind": item["kind"], "resource": "*", "coverage": "must"}))
+        return tuple(established) if established else None
 
-    def propagate_context(
-        self,
-        caller_facts: FactEnvelope,
-        callee_facts: FactEnvelope,
-        call_site: CallSite,
-        caller_context,
-        context: DriverContext,
-    ):
-        """Pass the caller's established must-contexts down, plus any csrf/auth
-        the caller establishes before THIS call site."""
+    def propagate_context(self, caller_facts, callee_facts, call_site: CallSite, caller_context, context):
         established = list(caller_context) if caller_context else []
         if caller_facts.status == "ok" and caller_facts.payload:
-            ipayload = caller_facts.payload
-            for a in ipayload.get("ambient_contexts") or []:
-                if a.get("coverage") == "must" and a.get("kind") in (
-                        "csrf_validated", "auth_checked", "tls_verify_disabled"):
-                    established.append(_freeze({"kind": a["kind"], "resource": "*", "coverage": "must"}))
-            # any must CSRF/AUTH event that precedes the call site
-            call_order = None
-            for c in ipayload.get("calls") or []:
-                if c.get("callee") == call_site.callee_name:
-                    # find the matching CALL event's order
-                    for e in ipayload.get("events") or []:
-                        if e.get("id") == c.get("event_id"):
-                            call_order = e.get("order")
-                            break
+            payload = caller_facts.payload
+            established.extend(_ambient_contexts(payload))
+            event_id = next((call.get("event_id") for call in payload.get("calls") or [] if call.get("callee") == call_site.callee_name), None)
+            call_order = next((event.get("order") for event in payload.get("events") or [] if event.get("id") == event_id), None)
+            kinds = {"CSRF_VALIDATE": "csrf_validated", "AUTH_CHECK": "auth_checked"}
+            for event in _ordered(payload.get("events")):
+                if call_order is not None and event.get("order", 0) >= call_order:
                     break
-            for e in _ordered(ipayload.get("events")):
-                if call_order is not None and e.get("order", 0) >= call_order:
-                    break
-                if e.get("path_coverage") == "must":
-                    if e.get("kind") == "CSRF_VALIDATE":
-                        established.append(_freeze({"kind": "csrf_validated", "resource": "*", "coverage": "must"}))
-                    elif e.get("kind") == "AUTH_CHECK":
-                        established.append(_freeze({"kind": "auth_checked", "resource": "*", "coverage": "must"}))
-        merged = []
-        seen = set()
-        for fr in established:
-            if fr not in seen:
-                seen.add(fr)
-                merged.append(fr)
-        return tuple(merged) if merged else None
+                if event.get("path_coverage") == "must" and event.get("kind") in kinds:
+                    established.append(_freeze({"kind": kinds[event["kind"]], "resource": "*", "coverage": "must"}))
+        unique = list(dict.fromkeys(established))
+        return tuple(unique) if unique else None
 
     def merge_contexts(self, old, new):
-        """Join top-down contexts as a SINGLE unioned atom-set.
-
-        The verdict only depends on the UNION of distinct must-context atoms
-        reaching a function (check() flattens+unions them). The base default
-        dedups whole path-tuples by repr, so on a dense graph a node accumulates
-        combinatorially many distinct ordered tuples and the worklist never
-        reaches a fixpoint (a 9.5h hang was observed for the sibling authz
-        plugin at 272 entrypoints). Collapsing to one set of atoms bounds each
-        node by the finite universe of context atoms, so the fixpoint is reached
-        quickly — and is verdict-identical.
-        """
-        atoms = set()
-        for entry in list(old) + list(new):
-            for atom in entry:  # entry is a tuple of frozen atom-tuples
-                atoms.add(atom)
-        # Sort by repr: atom values may be None, so a direct sort would raise
-        # TypeError comparing None to str. repr is deterministic + None-safe.
+        atoms = {atom for entry in list(old) + list(new) for atom in entry}
         return [tuple(sorted(atoms, key=repr))] if atoms else []
 
-    # -- checker ---------------------------------------------------------------
-
-    def check(
-        self,
-        facts: FactEnvelope,
-        context: DriverContext,
-        propagated_contexts: Sequence = (),
-    ) -> Verdict:
+    def check(self, facts, context: DriverContext, propagated_contexts: Sequence = ()):
         if facts.status == "error" or not facts.payload:
-            return Verdict(plugin_name="typestate", verdict=ERROR, status="error",
-                           data={"error": "no valid typestate abstraction (fail-closed)"})
+            return Verdict("typestate", ERROR, status="error", data={"error": "no valid typestate abstraction (fail-closed)"})
+        facts.payload = validate_and_enrich(facts.payload, context.function)
+        if facts.payload is None:
+            return Verdict("typestate", ERROR, status="error", data={"error": "invalid typestate abstraction (fail-closed)"})
+        propagated = [
+            _thaw(item)
+            for entry in propagated_contexts or ()
+            for item in (entry if isinstance(entry, tuple) else (entry,))
+            if isinstance(item, (tuple, dict))
+        ]
+        result = classify(facts.payload, propagated_contexts=propagated, is_entrypoint=context.is_entrypoint)
+        facts.payload["_verdict"] = result["verdict"]
+        severities = {VULNERABLE: "high", POLYMORPHIC: "low", NEEDS_REVIEW: "info"}
+        findings = [Finding(
+            rule_id=f"typestate.{finding['kind'].lower()}",
+            title=finding["kind"],
+            message=finding.get("reason") or finding["kind"],
+            severity=severities.get(finding["verdict"], "info"),
+            function=facts.function,
+            data={key: finding.get(key) for key in ("verdict", "cwe", "rule", "resource", "evidence")},
+        ) for finding in result.get("findings", [])]
+        return Verdict("typestate", result["verdict"], findings=findings, data={"signature": facts.payload, "result_findings": result.get("findings", [])})
 
-        # Flatten propagated contexts (each entry is a tuple of frozen dicts).
-        flat = []
-        for entry in propagated_contexts or ():
-            if isinstance(entry, tuple):
-                for x in entry:
-                    flat.append(_thaw(x))
-            elif isinstance(entry, dict):
-                flat.append(entry)
-
-        result = classify(facts.payload, propagated_contexts=flat,
-                          is_entrypoint=context.is_entrypoint)
-        # stash verdict for caller summaries
-        if facts.payload is not None:
-            facts.payload["_verdict"] = result["verdict"]
-        verdict = result["verdict"]
-        findings: List[Finding] = []
-        sev_map = {VULNERABLE: "high", POLYMORPHIC: "low", NEEDS_REVIEW: "info"}
-        for f in result.get("findings", []):
-            findings.append(Finding(
-                rule_id=f"typestate.{f['kind'].lower()}",
-                title=f["kind"],
-                message=f.get("reason") or f["kind"],
-                severity=sev_map.get(f["verdict"], "info"),
-                function=facts.function,
-                data={"verdict": f["verdict"], "cwe": f.get("cwe"), "rule": f.get("rule"),
-                      "resource": f.get("resource"), "evidence": f.get("evidence")},
-            ))
-        return Verdict(
-            plugin_name="typestate",
-            verdict=verdict,
-            status="ok",
-            findings=findings,
-            data={"signature": facts.payload, "result_findings": result.get("findings", [])},
-        )
+    def render_result(self, unit, facts, verdict, context):
+        result = super().render_result(unit, facts, verdict, context)
+        result["rel"] = source_rel_from_extracted(unit.id.rel)
+        result["function"] = unit.id.name
+        return result

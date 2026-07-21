@@ -40,6 +40,10 @@ OP_KINDS = {
     "hash", "encrypt", "decrypt", "sign", "verify", "mac", "key_generation",
     "key_derivation", "random", "tls_config", "jwt_decode", "password_hash",
 }
+KEYED_OPERATION_KINDS = {
+    "encrypt", "decrypt", "sign", "verify", "mac", "key_generation",
+    "key_derivation", "jwt_decode",
+}
 KEY_PROVENANCE = {
     "hardcoded_literal", "from_csprng", "from_kdf", "from_password_no_kdf",
     "from_param", "from_config_or_env", "unknown",
@@ -111,14 +115,20 @@ def validate(facts):
     """Return an error string if malformed / out-of-enum, else None (fail-closed)."""
     if not facts or not isinstance(facts, dict):
         return "no valid crypto abstraction"
+    for field in ("crypto_operations", "verify_events", "returns", "red_flags", "calls"):
+        values = facts.get(field, [])
+        if not isinstance(values, list) or any(not isinstance(value, dict) for value in values):
+            return f"malformed crypto collection: {field}"
     for op in facts.get("crypto_operations") or []:
         if op.get("kind") not in OP_KINDS:
             return f"unknown crypto operation kind: {op.get('kind')}"
         key = op.get("key") or {}
-        if key.get("provenance") and key["provenance"] not in KEY_PROVENANCE:
+        if (op.get("kind") in KEYED_OPERATION_KINDS and key.get("provenance")
+                and key["provenance"] not in KEY_PROVENANCE):
             return f"unknown key provenance: {key.get('provenance')}"
         iv = op.get("iv_nonce") or {}
-        if iv.get("provenance") and iv["provenance"] not in IV_NONCE_PROVENANCE:
+        if (op.get("kind") in {"encrypt", "decrypt"} and iv.get("provenance")
+                and iv["provenance"] not in IV_NONCE_PROVENANCE):
             return f"unknown iv_nonce provenance: {iv.get('provenance')}"
     for ev in facts.get("verify_events") or []:
         if ev.get("status") and ev["status"] not in VERIFY_STATUS:
@@ -302,8 +312,8 @@ def _check_hash(op, F):
                   "hash algorithm unknown")
     elif purpose in (None, "unknown"):
         if alg in WEAK_HASHES:
-            F.add(NEEDS_REVIEW, "unknown_crypto_semantics", op.get("id"), op.get("evidence"),
-                  f"{alg} weak but purpose unclear")
+            F.add(WEAK, "weak_algorithm", op.get("id"), op.get("evidence"),
+                  f"{alg} is cryptographically weak; no non-security checksum purpose is established")
     # checksum_nonsecurity -> no finding
 
 
@@ -406,6 +416,8 @@ def _check_tls_config(op, F):
 
 
 def _check_jwt_decode(op, F):
+    _check_key(op, F)
+    _check_key_size(op, F)
     jwt = op.get("jwt") or {}
     if jwt.get("allows_none") is True:
         F.add(VULNERABLE, "jwt_none_or_signature_disabled", op.get("id"), op.get("evidence"),

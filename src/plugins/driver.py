@@ -317,7 +317,7 @@ def run_plugin(plugin: AnalysisPlugin, proj_dir: str, work_subdir: Optional[str]
 
     name = plugin.metadata.name
     work_subdir = work_subdir or f"fm_agent_{name}"
-    work_dir = os.path.join(proj_dir, work_subdir)
+    work_dir = os.path.abspath(os.path.join(proj_dir, work_subdir))
     results_dir = os.path.join(work_dir, results_subdir)
     trace_dir = os.path.join(work_dir, "trace")
     cache_dir = os.path.join(work_dir, _FACTS_CACHE_SUBDIR)
@@ -326,7 +326,9 @@ def run_plugin(plugin: AnalysisPlugin, proj_dir: str, work_subdir: Optional[str]
 
     if verbose:
         print(f"[{name}] Stage 1/4: scan + extract...")
-    units = callgraph.load_function_units(proj_dir, work_dir)
+    units = callgraph.load_function_units(
+        proj_dir, work_dir, excluded_root=work_dir
+    )
     if not units:
         print(f"[{name}] No functions extracted.")
         return {"total": 0, "results": []}

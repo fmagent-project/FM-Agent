@@ -37,14 +37,31 @@ _NAME_FIRST_LANGS = {"go"}
 
 # --- source scanning + extraction --------------------------------------------
 
-def scan_source_files(proj_dir: str) -> List[str]:
-    """Find supported source files under proj_dir (skip hidden/vendor dirs)."""
+def _absolute_path(path: str) -> str:
+    return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
+
+def _path_is_within(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath((_absolute_path(path), root)) == root
+    except ValueError:
+        return False
+
+
+def scan_source_files(proj_dir: str, excluded_root: Optional[str] = None) -> List[str]:
+    """Find supported source files, excluding one active plugin work tree."""
     source_exts = set(EXT_TO_LANG.keys())
+    excluded = _absolute_path(excluded_root) if excluded_root else None
+    if excluded and _path_is_within(proj_dir, excluded):
+        return []
     found = []
     for root, dirs, files in os.walk(proj_dir):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in
-                   {"node_modules", "__pycache__", "venv", ".venv",
-                    "fm_agent", "fm_agent_ifc", "fm_agent_authz"}]
+        dirs[:] = [
+            d for d in dirs
+            if not d.startswith(".")
+            and d not in {"node_modules", "__pycache__", "venv", ".venv"}
+            and not (excluded and _path_is_within(os.path.join(root, d), excluded))
+        ]
         for fname in files:
             ext = fname.rsplit(".", 1)[-1] if "." in fname else ""
             if ext in source_exts:
@@ -78,15 +95,38 @@ def write_minimal_phases(work_dir: str, proj_dir: str, source_files: Sequence[st
         json.dump(phases, f, indent=2)
 
 
-def collect_extracted(input_dir: str) -> List[Tuple[str, str]]:
+def _extracted_source_dir(source_file: str) -> str:
+    src_dir = os.path.dirname(os.path.normpath(source_file))
+    src_base = os.path.basename(source_file)
+    last_dot = src_base.rfind(".")
+    encoded = (
+        src_base[:last_dot] + "-" + src_base[last_dot + 1:]
+        if last_dot > 0 else src_base
+    )
+    return os.path.normpath(os.path.join(src_dir, encoded))
+
+
+def collect_extracted(
+    input_dir: str, source_files: Optional[Sequence[str]] = None
+) -> List[Tuple[str, str]]:
     """Return sorted list of (abs_path, rel_path) for extracted source files."""
+    allowed_dirs = (
+        {_extracted_source_dir(path) for path in source_files}
+        if source_files is not None else None
+    )
     out = []
     for root, _, files in os.walk(input_dir):
         for fname in files:
             ext = fname.rsplit(".", 1)[-1] if "." in fname else ""
             if ext in EXT_TO_LANG:
                 ap = os.path.join(root, fname)
-                out.append((ap, os.path.relpath(ap, input_dir)))
+                rel = os.path.relpath(ap, input_dir)
+                if (
+                    allowed_dirs is not None
+                    and os.path.normpath(os.path.dirname(rel)) not in allowed_dirs
+                ):
+                    continue
+                out.append((ap, rel))
     return sorted(out, key=lambda t: t[1])
 
 
@@ -179,6 +219,8 @@ def find_call_arg_lists(src: str, callee_name: str) -> List[List[str]]:
     """Return a list of argument-expression lists for each `callee_name(...)` call."""
     calls = []
     for m in re.finditer(rf"\b{re.escape(callee_name)}\s*\(", src):
+        if callee_name == "__init__" and m.start() > 0 and src[m.start() - 1] == ".":
+            continue
         i = m.end() - 1  # position of '('
         depth, j = 0, i
         while j < len(src):
@@ -189,10 +231,27 @@ def find_call_arg_lists(src: str, callee_name: str) -> List[List[str]]:
                 if depth == 0:
                     break
             j += 1
+        line_start = src.rfind("\n", 0, m.start()) + 1
+        prefix = src[line_start:m.start()]
+        remainder = src[j + 1:]
+        if _looks_like_declaration(prefix, remainder):
+            continue
         inner = src[i + 1: j]
         args = [a.strip() for a in _split_top_level(inner, ",")] if inner.strip() else []
         calls.append(args)
     return calls
+
+
+def _looks_like_declaration(line_prefix: str, remainder: str) -> bool:
+    if re.search(r"\b(?:def|function|func|fn)\b", line_prefix):
+        return True
+    # C-family extracted signatures have no declaration keyword. A type/name
+    # prefix followed by a body opener is a definition, not an invocation.
+    if remainder.lstrip().startswith("{") and not re.search(
+        r"[.=]|\b(?:return|if|for|while|switch|new)\b", line_prefix
+    ):
+        return bool(re.search(r"[A-Za-z_][A-Za-z0-9_]*\s+$", line_prefix))
+    return False
 
 
 # --- bottom-up ordering -------------------------------------------------------
@@ -204,32 +263,31 @@ def order_bottom_up(units: Sequence[FunctionUnit]) -> List[FunctionUnit]:
     topological sort; cycles fall back to original order. Mirrors
     ifc_main._order_bottom_up.
     """
-    names = {u.id.name for u in units}
-    deps: Dict[str, set] = {}
+    deps: Dict[FunctionId, List[FunctionId]] = {}
     for u in units:
-        called = set()
-        for other in names:
-            if other == u.id.name:
+        called = []
+        for other in units:
+            if other.id == u.id:
                 continue
-            if re.search(rf"\b{re.escape(base_name(other))}\s*\(", u.source):
-                called.add(other)
-        deps[u.id.name] = called
-    by_name = {u.id.name: u for u in units}
+            if find_call_arg_lists(u.source, other.id.base_name):
+                called.append(other.id)
+        deps[u.id] = called
+    by_id = {u.id: u for u in units}
     ordered, visited, temp = [], set(), set()
 
-    def visit(n: str) -> None:
-        if n in visited or n in temp:
+    def visit(function_id: FunctionId) -> None:
+        if function_id in visited or function_id in temp:
             return
-        temp.add(n)
-        for d in deps.get(n, ()):
-            if d in by_name:
-                visit(d)
-        temp.discard(n)
-        visited.add(n)
-        ordered.append(by_name[n])
+        temp.add(function_id)
+        for dependency in deps.get(function_id, ()):
+            if dependency in by_id:
+                visit(dependency)
+        temp.discard(function_id)
+        visited.add(function_id)
+        ordered.append(by_id[function_id])
 
     for u in units:
-        visit(u.id.name)
+        visit(u.id)
     return ordered
 
 
@@ -292,17 +350,19 @@ def build_program_index(units: Sequence[FunctionUnit]) -> ProgramIndex:
     )
 
 
-def load_function_units(proj_dir: str, work_dir: str) -> List[FunctionUnit]:
+def load_function_units(
+    proj_dir: str, work_dir: str, excluded_root: Optional[str] = None
+) -> List[FunctionUnit]:
     """Scan, extract, and load all functions of a project into FunctionUnits."""
     input_dir = os.path.join(work_dir, "extracted_functions")
-    source_files = scan_source_files(proj_dir)
+    source_files = scan_source_files(proj_dir, excluded_root=excluded_root)
     if not source_files:
         return []
     write_minimal_phases(work_dir, proj_dir, source_files)
     run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=False)
 
     units: List[FunctionUnit] = []
-    for ap, rel in collect_extracted(input_dir):
+    for ap, rel in collect_extracted(input_dir, source_files=source_files):
         with open(ap, "r", errors="replace") as f:
             src = f.read()
         language = lang_for(rel)

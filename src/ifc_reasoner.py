@@ -34,6 +34,7 @@ Cross-function (assume-guarantee, change-point B):
 """
 
 from config import IFC_FAIL_CLOSED
+from .ifc_validation import infer_observability, infer_sink_channel
 
 HIGH = "High"
 LOW = "Low"
@@ -130,7 +131,15 @@ def _classify_channel(spec, raw_labels):
     return LOW_STATUS, declassified
 
 
-def _is_low_observable_for(channel, raw_labels, is_entrypoint=True):
+def _has_explicit_high(spec, raw_labels):
+    if not isinstance(spec, dict):
+        return False
+    if spec.get("const") == HIGH:
+        return True
+    return any(raw_labels.get(source) == HIGH for source in spec.get("deps", []) or [])
+
+
+def _is_low_observable_for(channel, spec, raw_labels, is_entrypoint=True):
     """Whether a High value on this channel reaches a Low-observable EXTERNAL sink.
 
     Trust-boundary model (Task A precision fix):
@@ -152,6 +161,16 @@ def _is_low_observable_for(channel, raw_labels, is_entrypoint=True):
                                          which surface at the io sink or at the entrypoint.
       - termination                    : out of scope (termination-insensitive).
     """
+    if channel == "termination":
+        return False
+    sink_channel = (spec or {}).get("sink_channel") or infer_sink_channel(channel)
+    observability = (spec or {}).get("observability") or infer_observability(
+        channel, sink_channel
+    )
+    if observability == "internal":
+        return False
+    if observability == "external":
+        return True
     if channel.startswith("param:"):
         base = channel.split(".", 1)[0]
         dest = raw_labels.get(base)
@@ -160,9 +179,21 @@ def _is_low_observable_for(channel, raw_labels, is_entrypoint=True):
         if dest == LOW:
             return True
         return bool(IFC_FAIL_CLOSED)   # Unknown destination -> observable when fail-closed
-    if channel == "return" or channel == "exception":
+    if channel == "return" or channel == "exception" or channel.startswith("exception:"):
         return bool(is_entrypoint)     # caller-facing: external sink only at an entrypoint
-    return _is_low_observable(channel)
+    return bool(is_entrypoint) if observability == "caller" else _is_low_observable(channel)
+
+
+def _cwe_for(channel, spec):
+    declared = (spec or {}).get("cwe")
+    if declared in {"CWE-200", "CWE-209", "CWE-532"}:
+        return declared
+    sink = (spec or {}).get("sink_channel") or infer_sink_channel(channel)
+    if sink in {"error_detail", "exception_message"}:
+        return "CWE-209"
+    if sink == "log":
+        return "CWE-532"
+    return "CWE-200"
 
 
 def classify(signature, is_entrypoint=True):
@@ -196,15 +227,23 @@ def classify(signature, is_entrypoint=True):
     declassified_channels = []
 
     for channel, spec in outputs.items():
-        if not _is_low_observable_for(channel, raw_labels, is_entrypoint):
+        if not _is_low_observable_for(channel, spec, raw_labels, is_entrypoint):
             continue
         status, declassified = _classify_channel(spec, raw_labels)
         if status == LOW_STATUS:
+            continue
+        if declassified and not _has_explicit_high(spec, raw_labels):
+            # A proposal cannot manufacture a High flow from Unknown model
+            # speculation. Declassification review is reserved for confirmed
+            # High releases; source validation handles concrete disclosures.
             continue
         entry = {
             "channel": channel,
             "deps": (spec or {}).get("deps", []),
             "declass": (spec or {}).get("declass", []),
+            "sink_channel": (spec or {}).get("sink_channel") or infer_sink_channel(channel),
+            "observability": (spec or {}).get("observability"),
+            "cwe": _cwe_for(channel, spec),
         }
         if declassified:
             declassified_channels.append(entry)
@@ -284,7 +323,15 @@ def instantiate_callee(callee_sig, arg_binding):
                 if label_of(src) == HIGH:
                     label = HIGH
                     break
-        result[channel] = {"label": label, "declassified": bool(spec.get("declass"))}
+        sink_channel = spec.get("sink_channel") or infer_sink_channel(channel)
+        result[channel] = {
+            "label": label,
+            "declassified": bool(spec.get("declass")),
+            "sink_channel": sink_channel,
+            "observability": spec.get("observability") or infer_observability(
+                channel, sink_channel
+            ),
+        }
     return result
 
 
