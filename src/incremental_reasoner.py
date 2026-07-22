@@ -296,6 +296,51 @@ def _reapply_existing_specs(proj_dir, specs):
             f.write(header + "\n\n" + source.lstrip("\n"))
 
 
+def _current_function_identities(proj_dir, abs_path, lang_key, regex_functions):
+    """Map regex-detected names to the identifiers used by extraction.
+
+    ``extract_functions_from_file`` deliberately remains the source of the
+    old-vs-new body comparison below, because the base revision is available
+    only through ``git show``.  For the current revision, however, CodeGraph
+    can also provide the class-qualified identifiers used as extracted-file
+    names (for example, ``LocalStorage::Flush``).
+
+    Use those identifiers only when their source ranges match the regex
+    extraction one-for-one.  Falling back to the regex name on any mismatch
+    preserves the existing safe over-approximation instead of risking a missed
+    changed function.
+    """
+    if not regex_functions:
+        return {}
+
+    fallback = {name: name for name, _source in regex_functions}
+    spans, raw_lines = _function_spans(abs_path, lang_key, proj_dir)
+    if len(spans) != len(regex_functions):
+        logging.warning(
+            "Incremental change detection could not align CodeGraph and regex "
+            "functions for %s (%d vs %d); using unqualified names.",
+            abs_path, len(spans), len(regex_functions),
+        )
+        return fallback
+
+    identities = {}
+    for (regex_name, regex_source), (identifier, start, end) in zip(
+        regex_functions, spans
+    ):
+        span_source = "\n".join(
+            line.rstrip("\n").rstrip("\r") for line in raw_lines[start:end + 1]
+        ) + "\n"
+        if span_source != regex_source:
+            logging.warning(
+                "Incremental change detection could not align CodeGraph and regex "
+                "source for %s; using unqualified names.",
+                abs_path,
+            )
+            return fallback
+        identities[regex_name] = identifier
+    return identities
+
+
 def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     """
     Determine which functions changed between commit old_commit_id and the current working
@@ -308,12 +353,12 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     version using the same parser as extract.py, then compared by source text.
 
     Returns a dict mapping each changed file's absolute path to a dict with keys "added",
-    "removed", and "modified", each a sorted list of function names. Files with no
-    detectable function-level change are omitted; a file that did not exist at
-    old_commit_id reports all of its current functions under "added", and a file deleted
-    since old_commit_id reports all of its old functions under "removed". Raises
-    subprocess.CalledProcessError if proj_dir is not a git repository or old_commit_id is
-    not a valid commit.
+    "removed", and "modified", each a sorted list of function names. Current added and
+    modified functions use the class-qualified identifier written by extraction when
+    CodeGraph can be aligned with the regex result; removed functions retain their old
+    regex name because they have no current extracted file. Files with no detectable
+    function-level change are omitted. Raises subprocess.CalledProcessError if proj_dir
+    is not a git repository or old_commit_id is not a valid commit.
     """
     # Pathspecs limiting git to recognized source-file extensions (e.g. "*.py", "*.cpp").
     pathspecs = [f"*.{ext}" for ext in EXT_TO_LANG]
@@ -371,12 +416,20 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         if not lang_key:
             continue
 
-        # Working-tree functions (empty if the file was deleted).
+        # Working-tree functions (empty if the file was deleted). Keep the regex
+        # names for comparison against the base revision, then map each current
+        # name to CodeGraph's class-qualified extracted-file identifier when the
+        # two extractors agree on the exact source ranges.
         abs_path = os.path.abspath(os.path.join(proj_dir, rel_path))
         if os.path.exists(abs_path):
-            new_funcs = dict(extract_functions_from_file(abs_path, lang_key))
+            new_function_items = extract_functions_from_file(abs_path, lang_key)
+            new_funcs = dict(new_function_items)
+            current_identities = _current_function_identities(
+                proj_dir, abs_path, lang_key, new_function_items
+            )
         else:
             new_funcs = {}
+            current_identities = {}
 
         # Old-commit functions (empty for files that did not exist at old_commit_id).
         # A path can be absent from the base even when it is already tracked/staged in the
@@ -387,10 +440,14 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         else:
             old_funcs = _funcs_from_commit(rel_path, lang_key, ext)
 
-        added = sorted(n for n in new_funcs if n not in old_funcs)
+        added = sorted(
+            current_identities[n] for n in new_funcs if n not in old_funcs
+        )
         removed = sorted(n for n in old_funcs if n not in new_funcs)
         modified = sorted(
-            n for n in new_funcs if n in old_funcs and new_funcs[n] != old_funcs[n]
+            current_identities[n]
+            for n in new_funcs
+            if n in old_funcs and new_funcs[n] != old_funcs[n]
         )
         if added or removed or modified:
             result[abs_path] = {
