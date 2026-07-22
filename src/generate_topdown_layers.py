@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 from src.extract import EXT_TO_LANG, LANG_CONFIG
 from src.languages.registry import call_edges_all
-from src.file_utils import load_phases
 
 
 # ---------------------------------------------------------------------------
@@ -16,11 +15,10 @@ from src.file_utils import load_phases
 # ---------------------------------------------------------------------------
 
 def _load_phases(proj_dir):
-    """Load phases.json from the project root.
-
-    Thin wrapper around file_utils.load_phases for backward compatibility.
-    """
-    return load_phases(proj_dir)
+    """Load phases.json from the project root."""
+    phases_path = os.path.join(proj_dir, "phases.json")
+    with open(phases_path, "r") as f:
+        return json.load(f)
 
 
 # ---------------------------------------------------------------------------
