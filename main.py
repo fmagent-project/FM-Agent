@@ -17,7 +17,6 @@ from src.file_utils import (
     _get_incomplete_verification_files,
     _is_under_submodules,
     _ensure_resume_mode_compatible,
-    load_phases,
 )
 from src.verification import (
     _generate_all_bugs_validation_summary,
@@ -289,7 +288,9 @@ def run_pipeline(
         os.path.join(spec_prompts_dir, "file_utils.py"),
     )
 
-    phases_data = load_phases(work_dir)
+    phases_path = os.path.join(work_dir, "phases.json")
+    with open(phases_path, "r") as f:
+        phases_data = json.load(f)
 
     print("[Pipeline] Stage 4/6: Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
