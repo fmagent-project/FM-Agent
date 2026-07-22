@@ -30,6 +30,7 @@ from src.typestate_reasoner import (
     summarize_facts,
 )
 from src.typestate_validation import (
+    source_only_facts,
     source_rel_from_extracted,
     validate_and_enrich,
 )
@@ -197,7 +198,11 @@ class TypestatePlugin(AnalysisPlugin):
 
     def check(self, facts, context: DriverContext, propagated_contexts: Sequence = ()):
         if facts.status == "error" or not facts.payload:
-            return Verdict("typestate", ERROR, status="error", data={"error": "no valid typestate abstraction (fail-closed)"})
+            derived = source_only_facts(context.function)
+            if derived is None:
+                return Verdict("typestate", ERROR, status="error", data={"error": "no valid typestate abstraction (fail-closed)"})
+            facts.payload = derived
+            facts.status = "partial"
         facts.payload = validate_and_enrich(facts.payload, context.function)
         if facts.payload is None:
             return Verdict("typestate", ERROR, status="error", data={"error": "invalid typestate abstraction (fail-closed)"})

@@ -119,6 +119,15 @@ def validate(facts):
     """Return an error string if malformed / out-of-enum / over cap, else None."""
     if not facts or not isinstance(facts, dict):
         return "no valid typestate abstraction"
+    for field in (
+        "resources", "ambient_contexts", "entry_states", "events",
+        "exit_states", "calls", "uncertainties",
+    ):
+        items = facts.get(field)
+        if items is not None and not isinstance(items, list):
+            return f"{field} must be an array"
+        if any(not isinstance(item, dict) for item in (items or [])):
+            return f"{field} must contain objects"
     events = facts.get("events") or []
     if len(events) > MAX_EVENTS:
         return f"too many events ({len(events)} > {MAX_EVENTS})"
@@ -127,6 +136,8 @@ def validate(facts):
     for e in events:
         if e.get("kind") not in EVENT_KINDS:
             return f"unknown event kind: {e.get('kind')}"
+        if e.get("path_coverage") not in {"must", "may", "guarded", "unknown"}:
+            return f"unknown event path coverage: {e.get('path_coverage')}"
     return None
 
 

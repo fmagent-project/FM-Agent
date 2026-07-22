@@ -968,6 +968,13 @@ def _source_file_provision_contract(abstraction, tree, accesses, all_accesses, p
             for marker in markers
         )
     ]
+    if not protected:
+        credential_operations = [
+            operation for operation in abstraction.get("protected_operations") or []
+            if operation.get("op_id") and operation.get("kind") == "token_issue"
+        ]
+        if len(credential_operations) == 1:
+            protected = [credential_operations[0]["op_id"]]
     evidence = "; ".join(dict.fromkeys(write_evidence + lifecycle_evidence))
     return {
         "kind": "provision",

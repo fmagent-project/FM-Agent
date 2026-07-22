@@ -1,379 +1,182 @@
-# Crypto 插件：加密误用检测（Cryptographic API Misuse）
+# Crypto 插件：加密 API 误用
 
-> 插件总览见 [./README.md](./README.md)。
-> 同底座的其它插件：完整性污点 [./taint.md](./taint.md)、机密性信息流 [./ifc.md](./ifc.md)、访问控制 [./authz.md](./authz.md)。
-> 插件 SPI 架构见 [../plugin_architecture.md](../plugin_architecture.md)。
+> 插件索引：[./README.md](./README.md)
+> SPI 架构：[../plugin_architecture.md](../plugin_architecture.md)
 
-Crypto 是 FM-Agent 多理论分析底座上的**第四个**插件，风格上承袭 **CrySL**（一种加密 API 使用
-规约语言）。它复用了与前三个插件相同的通用技术：
+Crypto 采用 CrySL 风格的“操作 + 材料来源 + 时序”模型。LLM 提取逐函数 crypto signature，`src/crypto_reasoner.py` 用确定性规则表裁决；`src/crypto_validation.py` 对一小组 Python API 重验源码可判定事实。它不是通用密码学证明器，也不是 source-to-sink 污点分析：加密操作本身是 locus，verify-before-trust 是顺序/typestate 属性。
 
-> **LLM 产出模块化的、逐函数的自然语言抽象 →（一个不带 LLM 的）确定性纯 Python 检查器在该
-> 抽象上做裁决 → 结果自底向上跨函数组合。**
+## 1. 理论与 Finding Taxonomy
 
-但它面向的属性和前三个插件都不同：污点 / IFC 关注「数据从哪里流到哪里」，访问控制关注「调用前
-是否建立了守卫义务」，而 **加密误用关注的是「这一次加密操作本身用对了吗」**——算法选对了没？密钥
-从哪来？IV/nonce 每次都新鲜吗？验签结果在信任数据之前真的被检查了吗？
+CrySL 风格规则关注三类约束：
 
-本文档假定你已大致了解 SPI（`src/plugins/base.py`）与通用驱动（`src/plugins/driver.py`）。涉及
-的源码：
+1. 算法和参数：弱/废弃算法、ECB、key size、KDF cost。
+2. 材料 provenance：key、IV/nonce、salt、随机数来自 literal、参数、配置、KDF 还是 CSPRNG。
+3. 调用顺序：验证结果是否被检查并支配对数据的信任。
 
-- `src/crypto_prompts.py` —— LLM 抽象提示词，产出 `[CRYPTO_JSON] ... [/CRYPTO_JSON]`。
-- `src/crypto_validation.py` —— 以真实源码校验随机源、显式算法和密钥来源，覆盖导入常量与配置值。
-- `src/crypto_reasoner.py` —— 确定性检查器：算法表、provenance 枚举、逐操作决策表、verify-before-trust、组合实例化。
-- `src/plugins/crypto.py` —— SPI 适配器：自底向上的 return-provenance 解析、`check`。
+当前 reasoner 的 finding 如下：
 
----
+| Finding | CWE | 典型 verdict |
+|---|---|---|
+| `weak_algorithm` | CWE-327 | `WEAK` |
+| `broken_or_deprecated_cipher` | CWE-327 | `VULNERABLE` |
+| `ecb_mode` | CWE-327 | `VULNERABLE` |
+| `hardcoded_key_or_secret` | CWE-321/CWE-798 | `VULNERABLE` |
+| `static_or_reused_iv_nonce` | CWE-329/CWE-323 | `VULNERABLE` |
+| `predictable_randomness` | CWE-338 | `VULNERABLE` |
+| `insufficient_key_size` | CWE-326 | `WEAK`，但 AES <128 或 RSA <1024 时为 `VULNERABLE` |
+| `password_fast_hash` | CWE-916 | `VULNERABLE` |
+| `weak_kdf_parameters` | CWE-916 | `WEAK` |
+| `missing_password_salt` | CWE-759 | `VULNERABLE` |
+| `verify_not_checked` | CWE-347 | `VULNERABLE` |
+| `missing_ciphertext_authentication` | CWE-345/CWE-353 | encrypt-side CBC/CTR/CFB/OFB 明确无认证时为 `WEAK`；信任未认证解密明文时为 `VULNERABLE` |
+| `tls_verification_disabled` | CWE-295 | `VULNERABLE` |
+| `jwt_none_or_signature_disabled` | CWE-347 | `VULNERABLE` |
+| `unknown_crypto_semantics` | 无 | `NEEDS_REVIEW` |
+| `parametric_crypto_material` | 无 | `POLYMORPHIC` |
+| `exported_crypto_material` | 无 | `POLYMORPHIC` |
 
-## 1. 面向的攻击：它检测什么
+最终 verdict 按以下优先级取函数中最高一档：
 
-加密误用不是「算法被数学攻破」，而是「**程序员用错了原本正确的算法**」。检查器在
-`src/crypto_reasoner.py:75` 的 `FINDING_KINDS` 表里直接给出了它覆盖的问题类型与 CWE：
-
-| finding kind                       | 问题                                  | CWE              | 默认判级       |
-| ---------------------------------- | ------------------------------------- | ---------------- | -------------- |
-| `weak_algorithm`                   | 弱算法（MD5/SHA1 用于安全用途）       | CWE-327          | WEAK           |
-| `broken_or_deprecated_cipher`      | 已破/废弃密码（DES/3DES/RC4/RC2）     | CWE-327          | VULNERABLE     |
-| `ecb_mode`                         | ECB 模式                              | CWE-327          | VULNERABLE     |
-| `hardcoded_key_or_secret`          | 硬编码密钥/密钥字面量                 | CWE-321/CWE-798  | VULNERABLE     |
-| `static_or_reused_iv_nonce`        | 静态 / 复用的 IV/nonce                | CWE-329/CWE-323  | VULNERABLE     |
-| `predictable_randomness`           | 用不安全 PRNG 产生安全材料            | CWE-338          | VULNERABLE     |
-| `insufficient_key_size`            | 密钥长度不足                          | CWE-326          | WEAK           |
-| `password_fast_hash`               | 用快哈希存口令（而非慢 KDF）          | CWE-916          | VULNERABLE     |
-| `weak_kdf_parameters`              | KDF 迭代/cost 太低                    | CWE-916          | WEAK           |
-| `missing_password_salt`            | 口令哈希缺盐 / 盐复用                  | CWE-759          | VULNERABLE     |
-| `verify_not_checked`               | 签名/MAC/证书验证结果未被检查         | CWE-347          | VULNERABLE     |
-| `missing_ciphertext_authentication`| 密文缺认证（未认证就信任明文）        | CWE-345/CWE-353  | VULNERABLE     |
-| `tls_verification_disabled`        | 关闭 TLS 证书/主机名校验              | CWE-295          | VULNERABLE     |
-| `jwt_none_or_signature_disabled`   | JWT `alg=none` / 关闭签名校验         | CWE-347          | VULNERABLE     |
-| `unknown_crypto_semantics`         | 语义未知（fail-closed 兜底）          | （无）           | NEEDS_REVIEW   |
-| `parametric_crypto_material`       | 材料来自参数（调用者决定）            | （无）           | POLYMORPHIC    |
-| `exported_crypto_material`         | 导出了密钥形材料（在调用点兑现）      | （无）           | POLYMORPHIC    |
-
-### 一个最小的真实案例：AES-ECB + 硬编码密钥 vs AES-GCM
-
-```python
-# 易受攻击：ECB 模式 + 硬编码密钥 + 静态 IV
-def encrypt_bad(data: bytes) -> bytes:
-    key = b"0123456789abcdef"                      # 硬编码字面量密钥
-    cipher = Cipher(algorithms.AES(key), modes.ECB())  # ECB:相同明文块→相同密文块
-    enc = cipher.encryptor()
-    return enc.update(data) + enc.finalize()
-
-# 安全：AES-GCM + CSPRNG 密钥 + 每次新鲜的 nonce
-def encrypt_good(data: bytes) -> bytes:
-    key = AESGCM.generate_key(bit_length=256)      # 来自 CSPRNG
-    nonce = os.urandom(12)                          # 每次调用新鲜随机
-    return nonce + AESGCM(key).encrypt(nonce, data, None)
-```
-
-- `encrypt_bad` 命中 `ecb_mode`（VULNERABLE）和 `hardcoded_key_or_secret`（VULNERABLE）。
-- `encrypt_good` 用 AEAD 模式（GCM）、密钥来自 CSPRNG、nonce 每次新鲜随机 → SAFE。
-
-### 句法子类 vs 语义子类：本插件价值的分水岭
-
-注意上面两类发现的**确定性程度完全不同**，这条分界线在第 4 节会再次出现：
-
-- **句法子类（high-confidence pattern catch）**：ECB 模式、`alg=none`、`DES(...)` 这类。
-  它们几乎只看「调用了什么 API / 传了什么常量」，一个普通 linter / 正则就能高准确地抓到。
-  在 `_RED_FLAG_TO_FINDING`（`src/crypto_reasoner.py:455`）里，LLM 直接以 `red_flags` 标出这些
-  句法命中。
-- **语义子类（需要理解来源 / 时序）**：
-  - **IV/nonce 是否新鲜？**——同一个 `os.urandom(12)` 放在循环外（复用）还是循环内（每次新鲜）
-    含义截然相反。
-  - **密钥来自 CSPRNG 还是字面量？**——要追踪 `key` 这个变量到底从哪来。
-  - **验签结果在信任数据前被检查了吗？**——这是一个**时序 / typestate** 性质，不是看一行代码
-    能定的。
-
-LLM 的真正增量在**语义子类**；句法子类是「顺手也能报」，但并非它的核心价值。
-
----
-
-## 2. 理论原理：CrySL 风格的「操作 + provenance + 时序」
-
-### 2.1 CrySL：一条加密规则由三部分组成
-
-理论来源是 **CrySL**（Krüger et al., *CrySL: An Extensible Approach to Validating the Correct
-Usage of Cryptographic APIs*, ECOOP 2018）。一条 CrySL 规则刻画一个加密对象的**正确用法**，包含：
-
-1. **算法 / 模式约束（CONSTRAINTS）**：例如「AES 模式不得为 ECB」「RSA 密钥 ≥ 2048 位」。
-2. **顺序 typestate（ORDER）**：例如「`verify()` 必须在使用被验数据**之前**返回真」——这是一个
-   对操作**调用次序**的约束。
-3. **材料来源（PROVENANCE）**：例如「密钥必须来自 `generate_key()`，不能是字面量」。
-
-### 2.2 加密没有「sink」：操作本身就是 locus
-
-这是 Crypto 插件与 Taint 的关键区别（`crypto_prompts.py:6` 与 `crypto_reasoner.py:13` 都强调
-了这点）：**污点分析有「source → sink」的数据流**，漏洞在 sink 处兑现；而加密误用**没有**这种
-流——**加密操作本身就是判定的位点（the operation is the locus）**。一次 `AES(key).encrypt(...)`
-是对是错，取决于这次操作的算法、模式、密钥来源、nonce 来源，而不取决于密文「流到了哪」。
-
-verify-before-trust 则是一个**顺序 / typestate 性质**：不是「数据流到了危险的地方」，而是
-「验证这个动作有没有在信任之前发生、且其结果支配（dominate）了后续使用」。
-
-### 2.3 provenance 格（lattice）
-
-LLM 不猜，只**按代码证据**标注材料来源。检查器据此裁决。三个核心 provenance 枚举
-（`crypto_reasoner.py:43-55`）：
-
-**密钥 `KEY_PROVENANCE`：**
-
-| provenance              | 含义                                       | 检查器态度        |
-| ----------------------- | ------------------------------------------ | ----------------- |
-| `hardcoded_literal`     | 字面量密钥（`b"..."`）                     | VULNERABLE        |
-| `from_csprng`           | 来自 `os.urandom` / `secrets` / `generate_key` | 可接受        |
-| `from_kdf`              | 经 PBKDF2/scrypt/bcrypt/argon2/HKDF 派生   | 可接受            |
-| `from_password_no_kdf`  | 口令直接当密钥（无 KDF）                    | VULNERABLE        |
-| `from_param`            | 来自函数参数（调用者决定）                  | POLYMORPHIC       |
-| `from_config_or_env`    | 来自 `os.environ` / 配置                   | 可接受            |
-| `unknown`               | 看不出来                                   | NEEDS_REVIEW      |
-
-**IV/nonce `IV_NONCE_PROVENANCE`：**
-
-| provenance              | 含义                         | 检查器态度          |
-| ----------------------- | ---------------------------- | ------------------- |
-| `fresh_random_per_call` | 每次调用新鲜随机             | 可接受（需 CSPRNG） |
-| `constant_or_literal`   | 常量 / 字面量                | VULNERABLE          |
-| `reused_across_calls`   | 跨调用复用                   | VULNERABLE          |
-| `counter`               | 计数器                       | 需 `uniqueness_guarantee=true` 否则 NEEDS_REVIEW |
-| `from_param`            | 来自参数                     | POLYMORPHIC         |
-| `unknown`               | 看不出来                     | NEEDS_REVIEW        |
-
-**随机性来源 `RANDOMNESS_SOURCE`：** `csprng`（`secrets`/`os.urandom`）vs `insecure_prng`
-（`random.*`/`Math.random`/`java.util.Random`）vs `unknown` / `not_applicable`。
-
-### 2.4 源码校验边界：API 不能替材料背书
-
-LLM 抽象在进入 reasoner 前还要经过 `crypto_validation.validate_and_enrich`。该步骤不根据 CVE 编号或
-函数名下结论，而是解析当前函数和原始项目源码中的可判定事实：
-
-- `random.choice` 与 `secrets.choice` 的生成器家族以实际调用为准，能纠正 LLM 把二者写反的情况；
-- 同一函数有多个随机数或哈希调用时，源码调用与操作记录按 API 一一匹配，不能用一个安全调用覆盖另一个
-  不安全调用；对于 `hashlib`、标准随机数和 JWT 这类源码可判定 API，源码中不存在的陈旧操作记录会被移除；
-- `hashlib.md5` 的算法强度来自调用表达式，不来自函数是否恰好名为 `MD5`；
-- JWT 签名/验签的 key 表达式会沿局部赋值、模块常量和 `from ... import ...` 解析。仓库中的字符串
-  常量是 `hardcoded_literal`，配置/环境读取是 `from_config_or_env`，`os.urandom(...).hex()` 等仅改变表示
-  的编码仍保留 `from_csprng` 来源；
-- Ed25519 等现代 API 若仍使用源码字面量私钥，照样命中 CWE-321。API 名称从不提供“自动安全”豁免。
-
-校验器复制而不修改原始 LLM payload，并移除没有源码中验证操作支撑的 verify event；因此 HTTP
-状态检查之类的普通控制流不会被误当成密码学验签。
-
-### 2.5 POLYMORPHIC 从何而来
-
-当密钥或 IV 的 provenance 是 `from_param` 时，这个函数**自身无法定论**——安不安全取决于调用者传
-进来什么。检查器此时既不报 VULNERABLE 也不报 SAFE，而是判 **POLYMORPHIC**（`_check_key`
-`crypto_reasoner.py:203`，`_check_nonce_required` `:229`）：它是「参数化」的，真正的裁决推迟到
-调用点。这与 Taint 插件里参数化 sink 的 POLYMORPHIC 是同一个设计思想。
-
-### 2.6 Fail-closed：未知即保守
-
-凡是 LLM 标了 `unknown`（算法未知、provenance 未知、verify 支配关系未知），检查器一律判
-**NEEDS_REVIEW**，**绝不**默默判 SAFE（`crypto_prompts.py:104` 的 FAIL-CLOSED 指令 +
-检查器里大量 `unknown_crypto_semantics` 分支）。LLM 抽象失败、JSON 解析失败、枚举越界，则直接
-`ERROR`（`validate()` `crypto_reasoner.py:110`，`make_error_facts` `crypto.py:114`）。
-
-### 2.7 WEAK 与 VULNERABLE 的区别
-
-- **VULNERABLE**：实践中可被利用的明确误用——ECB、硬编码密钥、静态/复用 nonce、口令快哈希、
-  验签未检查、TLS 关校验、JWT none。
-- **WEAK**：弱但不一定即刻可利用——例如 MD5/SHA1 用于一般「安全」用途（非口令存储）、RSA 密钥
-  在 1024~2048 之间、PBKDF2 迭代数 < 100000、bcrypt cost < 10。
-
-显式 MD5/SHA1 且没有证据证明用途是 `checksum_nonsecurity` 时判为 WEAK；只有明确的非安全校验和
-用途才豁免。评测标签与语义分类可能冲突，例如 CVE-2021-39182 的官方标签是 CWE-326，而本插件对
-MD5 的语义发现仍是 CWE-327。官方值作为 evaluation metadata 保留，由评测层做家族匹配，不能反向
-覆盖检测器的 finding，也不能诱导出针对某个 CVE 的特判。
-
-裁决取**优先级最高**的那一档（`_PRECEDENCE` `crypto_reasoner.py:34`）：
-
-```
+```text
 ERROR > VULNERABLE > WEAK > POLYMORPHIC > NEEDS_REVIEW > SAFE
 ```
 
----
+### 最小例子
 
-## 3. 插件运行流程（与 SPI 集成）
+```python
+def encrypt_bad(data):
+    key = b"0123456789abcdef"
+    return Cipher(algorithms.AES(key), modes.ECB()).encryptor().update(data)
 
-### 3.1 LLM 抽象步：产出 `[CRYPTO_JSON]`
+def encrypt_good(data):
+    key = AESGCM.generate_key(bit_length=256)
+    nonce = os.urandom(12)
+    return nonce + AESGCM(key).encrypt(nonce, data, None)
+```
 
-`build_abstraction_prompt`（`crypto.py:86`）给每行源码编号，拼上系统提示词
-（`_system_prompt`）与用户提示词（`_user_prompt`），并把已分析的 callee 摘要注入
-`callee_context`。LLM 返回一个包在 `[CRYPTO_JSON] ... [/CRYPTO_JSON]` 里的 JSON 对象，由
-`_extract_crypto_json`（`crypto_prompts.py:40`）抽出。其骨架（`crypto_prompts.py:128` schema）：
+若 signature 准确记录这些操作，前者会因 ECB 和 hardcoded key 为 `VULNERABLE`；后者的 GCM、CSPRNG key 和 fresh nonce 不触发规则。这里的“若”很重要：当前 Python source validator 不独立解析一般 AES/Cipher 调用，主要依赖模型为这类 API 建立 operation facts。
+
+## 2. Model Facts Schema
+
+提示词要求 `[CRYPTO_JSON] ... [/CRYPTO_JSON]`：
 
 ```json
 {
   "schema_version": "crypto_v1",
+  "function": {"name": "encrypt", "params": ["data"], "language": "python"},
+  "calls": [],
+  "returns": [],
   "crypto_operations": [
     {"id": "op_1", "kind": "encrypt", "purpose": "security",
-     "algorithm": "AES", "mode": "ECB",
-     "key": {"provenance": "hardcoded_literal", "length_bits": 128,
-             "source": {"kind": "literal"}, "evidence": "key = b'0123...'"},
-     "iv_nonce": {"provenance": "constant_or_literal", "randomness_source": "not_applicable"},
-     "evidence": "Cipher(algorithms.AES(key), modes.ECB())"}
+     "library": "cryptography", "api": "AESGCM.encrypt", "algorithm": "AES", "mode": "GCM",
+     "key": {"provenance": "from_csprng", "length_bits": 256, "source": {"kind": "csprng"}},
+     "iv_nonce": {"provenance": "fresh_random_per_call", "randomness_source": "csprng"},
+     "authenticity": {"provided_by": "aead"}, "evidence": "AESGCM(key).encrypt(...)"}
   ],
-  "verify_events": [
-    {"id": "verify_1", "verify_kind": "signature",
-     "status": "not_checked", "evidence": "sig = sign(...); use(payload)"}
-  ],
-  "returns": [
-    {"id": "ret_1", "material_kind": "key", "provenance": "hardcoded_literal",
-     "source": {"kind": "literal"}, "evidence": "return b'0123...'"}
-  ],
-  "red_flags": [
-    {"kind": "ecb_mode", "operation_id": "op_1", "evidence": "modes.ECB()", "reason": "ECB"}
-  ]
+  "verify_events": [],
+  "red_flags": [],
+  "notes": []
 }
 ```
 
-提示词关键约束：LLM **只报事实与证据，不下判决**；按**代码证据**（不是变量名）认 provenance；
-看不出来的一律写 `unknown`（`crypto_prompts.py:104`）。
+reasoner 严格校验集合形状、operation kind、相关 operation 上已提供的 key/IV provenance，以及已提供的 verify status：
 
-### 3.2 `check`：表驱动逐操作规则 + verify-before-trust
+- operation kind：`hash|encrypt|decrypt|sign|verify|mac|key_generation|key_derivation|random|tls_config|jwt_decode|password_hash`。
+- key provenance：`hardcoded_literal|from_csprng|from_kdf|from_password_no_kdf|from_param|from_config_or_env|unknown`。
+- IV/nonce provenance：`fresh_random_per_call|constant_or_literal|reused_across_calls|counter|from_param|unknown|not_applicable`。
+- randomness source：schema 提示为 `csprng|insecure_prng|unknown|not_applicable`，但 `validate()` 当前没有统一校验此字段。
+- verify status：`checked_and_dominates_use|checked_but_does_not_dominate_use|not_checked|ignored_or_swallowed|unknown`。
 
-`check`（`crypto.py:212`）把 payload 交给 `classify`（`crypto_reasoner.py:471`），后者：
+schema 是宽松的：`schema_version` 的值、function/purpose/source 子字段以及许多缺失字段不会被 `validate()` 拒绝；`CryptoPlugin.check()` 也不比较 envelope schema 或 payload schema。缺失字段不总会生成 `NEEDS_REVIEW`。例如没有 key provenance、非安全用途的 random、以及某些没有足够字段的 operation 可能不触发 finding。因此“unknown 会在对应规则分支保守处理”是准确说法，“任何未知或缺失都绝不 SAFE”则不是当前实现保证。
 
-1. 对每个 `crypto_operation`，按 `kind` 走 `_OP_DISPATCH`（`crypto_reasoner.py:437`）分派到对应
-   检查器：`_check_encrypt` / `_check_decrypt` / `_check_hash` / `_check_password_hash` /
-   `_check_key_derivation` / `_check_random` / `_check_sign_or_mac` / `_check_tls_config` /
-   `_check_jwt_decode` / `_check_key`。算法名先经 `_norm`（`:96`）规范化（大写、去库前缀、去
-   标点，`AES.MODE_GCM → GCM`），再查 `BROKEN_CIPHERS` / `WEAK_HASHES` / `AEAD_MODES` /
-   `DENIED_MODES` 等表。
-2. 对每个 `verify_event` 调 `_check_verify_event`（`:425`）：只有 `checked_and_dominates_use`
-   放行；`not_checked` / `ignored_or_swallowed` / `checked_but_does_not_dominate_use` 一律
-   `verify_not_checked`（VULNERABLE）；`unknown` → NEEDS_REVIEW。
-3. 处理 `returns` 中导出的密钥形材料（POLYMORPHIC，见 3.3）。
-4. 收编 LLM 直接给出的 `red_flags`（去重后补进发现）。
-5. 按 `_PRECEDENCE` 取最高档作为裁决。
+## 3. Model 与 Python Source Validation 的边界
 
-### 3.3 `compose_calls`：自底向上把 callee 的 return-provenance 兑现到调用者
+### 模型仍然负责什么
 
-加密事实大多是**操作局部**的，唯一的跨函数情形是：**密钥/IV 材料经一个辅助函数的返回值流进
-调用者**。这就是 `compose_calls`（`crypto.py:132`）要解决的。
+模型负责一般 crypto API 识别、算法/模式、purpose、nonce freshness、KDF 参数、TLS 配置、AEAD trust 时序、自定义 wrapper 语义和跨语言事实。reasoner 只按收到的结构裁决，不回读源码证明这些一般事实。
 
-辅助函数 `make_key()` 若返回一个硬编码密钥，它**自身**只是 POLYMORPHIC（它只是「导出了密钥形
-材料」，并没有在本地把它当密钥用——见 `classify` 里对 `returns` 的处理 `crypto_reasoner.py:493`
-和提示词末尾 `crypto_prompts.py:188` 的明确要求）。但**一旦调用者把这个返回值当密钥用**，调用者
-就该是 VULNERABLE。
+`from_config_or_env` 在规则表中是“可接受 provenance”，只表示不是仓库内 literal；它不证明运行时 secret 足够随机、未使用默认值或安全存储。类似地，现代 API 名称不会覆盖已知 hardcoded provenance。
 
-机制：调用者的 `op.key`（或 `op.iv_nonce`）若 `source.kind == "call_return"`，
-`compose_calls` 会：
+### Python validator 实际识别的 API
 
-1. 从 `resolved_calls` 收集每个 callee 的 `returns[]`（仅 status=ok 的）。
-2. 找到对应 callee 的返回材料，调 `instantiate_return_material`（`crypto_reasoner.py:527`）把
-   callee 的 return-provenance 解析进调用者的材料：
-   - `hardcoded_literal` / `from_csprng` / `from_kdf` 等**直接透传**；
-   - 若 callee 返回的是 `from_param`，再顺着调用者实参（`actual_args`）的 `source_kind` 继续
-     解析（`literal → hardcoded_literal`，`param → from_param`，`config_or_env →
-     from_config_or_env`，否则 `unknown`）。
-3. 对 `iv_nonce` 还要把「密钥风格」的 provenance 词汇映射到 IV 词汇（`hardcoded_literal →
-   constant_or_literal`，`crypto.py:189`）。
+`validate_and_enrich` 只在 language 为 Python 时运行 AST source correction，范围主要是：
 
-解析后的材料写回 `op`，调用者再跑 `check` 时就会基于**真实来源**判级。
+- 标准/常见随机 API：`os.urandom`、`secrets.*`、`get_random_bytes`、`uuid.uuid4` 和 `random.SystemRandom()` 归为 CSPRNG；模块级 `random.choice/random/randint/...` 归为 insecure PRNG。
+- 显式 `hashlib` 调用：识别 MD2/MD4/MD5/SHA 系列、SHA3 和 BLAKE2，并以调用表达式覆盖模型 algorithm。`checksum_nonsecurity` 或 `password_storage` purpose 只有在函数名/源码存在相应语义词时保留，否则改为 `unknown`。
+- PyJWT 风格 `jwt.encode`/`jwt.decode`：读取显式 algorithm(s)，沿本地赋值、同模块常量、项目内 `from ... import ...` 常量、对象属性赋值、配置/环境读取和 `.hex()` 编码追踪 key provenance。
 
-### 3.4 端到端示例
+它不会独立验证一般 AES/DES/RSA/TLS/KDF API，也不会为所有语言提供同等 source proof。源码定位还依赖 `fm_agent_crypto/extracted_functions` 的目录约定；无法定位原始模块时，跨模块常量与 import provenance 不可用。
 
-把几类典型函数串起来看（编号与 issue 描述对齐）：
+### correction 的具体行为
 
-```python
-# f1: AES-ECB —— VULNERABLE / ecb_mode
-def f1(data, key):
-    return Cipher(algorithms.AES(key), modes.ECB()).encryptor().update(data)
+- validator 深拷贝 payload，不修改调用者传入的原始 dict。
+- 同函数多个已识别 call 优先按完整 API、再按 terminal method、最后按同 kind 的首个未使用 operation 配对。该匹配是启发式，不是稳定的 source location identity。
+- 对 random/hash/JWT 这类 source-decidable operation，源码不存在的旧记录会删除；识别到的 hash/JWT 可补建 operation，security/token 语义明确的 random 也可补建。
+- Python payload 的 `red_flags` 总是清空，structured operation rules 才拥有 verdict，避免模型 red flag 覆盖源码 correction。非 Python payload 不做这一步，模型 red flags 仍会被 reasoner 接受。
+- internal callee proxy operation 若只是复述 `calls[]` 中的调用且没有对应已识别源码 API，会被删除，避免把 callee 操作重复算作 caller 本地操作。
+- 没检测到 JWT decode 时，所有 model `verify_events` 会被清空；检测到 JWT decode 时，现有 verify events 才会保留。validator 不独立证明任意 signature/MAC/certificate verify event 的控制流支配关系。
 
-# f2: 硬编码密钥 —— VULNERABLE / hardcoded_key_or_secret
-def f2(data):
-    key = b"0123456789abcdef"
-    nonce = os.urandom(12)
-    return AESGCM(key).encrypt(nonce, data, None)
+与 authz 不同，crypto facts 没有 source digest、validator version marker 或 stale-schema 拒绝。`check()` 会在每次 replay 重新运行 source correction，所以已识别 Python API 的旧 facts 可被改正；validator 范围外的陈旧 model facts仍可能保留。
 
-# f5: 用 MD5 存口令 —— VULNERABLE / password_fast_hash
-def f5(password):
-    return hashlib.md5(password.encode()).hexdigest()
+## 4. Reasoner 规则的实际边界
 
-# f6: AES-GCM + 新鲜 nonce + CSPRNG 密钥 —— SAFE
-def f6(data):
-    key = AESGCM.generate_key(bit_length=256)
-    nonce = os.urandom(12)
-    return AESGCM(key).encrypt(nonce, data, None)
+### Key 与 nonce provenance
 
-# f8a: 辅助函数返回硬编码密钥 —— 自身 POLYMORPHIC
-def f8a():
-    return b"0123456789abcdef"
+- hardcoded key -> `VULNERABLE`；password without KDF -> `VULNERABLE`；parameter -> `POLYMORPHIC`；显式 `unknown` -> `NEEDS_REVIEW`。
+- fresh nonce 还要求 randomness source 不是 insecure/unknown；counter 必须有 `uniqueness_guarantee=true`；parameter nonce -> `POLYMORPHIC`。
+- `not_applicable` 只适合不需要 nonce 的情况。对 AEAD 或 CBC/CTR/CFB/OFB encrypt，如果 provenance 缺失/unknown 会进入 `NEEDS_REVIEW`。
 
-# f8b: 用 f8a 的返回值当密钥 —— 经组合后 VULNERABLE
-def f8b(data):
-    key = f8a()
-    nonce = os.urandom(12)
-    return AESGCM(key).encrypt(nonce, data, None)
-```
+### Hash、KDF 与参数
 
-- **f1 VULNERABLE**：`_check_encrypt` 见 `mode == ECB ∈ DENIED_MODES` → `ecb_mode`。
-  （`key` 来自参数会另报 POLYMORPHIC，但 VULNERABLE 优先级更高，裁决 = VULNERABLE。）
-- **f2 VULNERABLE**：`key.provenance = hardcoded_literal` → `hardcoded_key_or_secret`。
-- **f5 VULNERABLE**：`kind=hash` 且 `purpose=password_storage`，`MD5 ∈ FAST_PASSWORD_HASHES`
-  → `password_fast_hash`（`_check_hash` `crypto_reasoner.py:293`）。
-- **f6 SAFE**：GCM ∈ `AEAD_MODES`，nonce `fresh_random_per_call` + CSPRNG，密钥
-  `from_csprng` → 无发现 → SAFE。
-- **f8a POLYMORPHIC**：它只在 `returns` 里导出了 `material_kind=key, provenance=hardcoded_literal`，
-  本地没把它当密钥用 → `exported_crypto_material`（POLYMORPHIC）。它的 callee 摘要形如：
+MD5/SHA1 等弱 hash：明确 `checksum_nonsecurity` 时豁免；security purpose 为 `WEAK`；当前 hash checker 对 unknown purpose 也会给 `WEAK`，因为没有非安全用途证据。password storage 使用 fast hash 为 `VULNERABLE`。
 
-  ```json
-  {"returns": [{"id": "ret_1", "material_kind": "key",
-                "provenance": "hardcoded_literal", "source": {"kind": "literal"}}]}
-  ```
+PBKDF2 iteration <100000、bcrypt cost <10 为 `WEAK`；参数缺失时相关分支为 `NEEDS_REVIEW`。这些是当前硬编码阈值，不是动态标准或库版本策略。
 
-- **f8b VULNERABLE（经组合）**：分析 f8b 时，它的 `op.key.source.kind == "call_return"`（指向
-  f8a）。`compose_calls` 取出 f8a 的 `returns`，`instantiate_return_material` 把
-  `hardcoded_literal` 透传进 f8b 的 `key.provenance`。f8b 再跑 `check` →
-  `hardcoded_key_or_secret`（VULNERABLE）。硬编码密钥的危害在**调用点兑现**，组合发生在调用边上。
+### Verify-before-trust
 
----
+`checked_and_dominates_use` 放行；not checked、ignored/swallowed 或不支配 trusted use 为 `VULNERABLE`；显式 unknown 为 `NEEDS_REVIEW`。但该结论依赖保留下来的 model verify event，Python validator 目前只用 JWT decode 是否存在作为保留门槛，不执行通用 CFG dominance proof。
 
-## 4. 我们的方案 vs 传统（非 LLM）方案
+## 5. Bottom-up Composition
 
-传统加密误用 / 密钥泄露检测的代表：
+Crypto 不运行 top-down pass。`compose_calls` 只处理 caller operation 的 `key` 或 `iv_nonce`，且 material `source.kind == "call_return"` 的情况：
 
-- **CrySL / CogniCrypt_SAST**：把 CrySL 规则**编译**成一个流敏感的 typestate 分析（底层用
-  IDEal 求解器），按规则检查算法约束、调用顺序、材料来源。
-- **CryptoGuard**：针对 Java 的一组数据流 slice 规则，专攻硬编码密钥、ECB、静态 IV 等。
-- **Semgrep crypto rules**：句法 / 轻量数据流的规则集。
-- **密钥扫描器（GitGuardian / TruffleHog）**：用熵 + 正则专扫硬编码 secret。
+1. 从 resolved callee 的 `returns[]` 取得第一个同 material kind 的记录；没有同 kind 时会退到第一个 return。
+2. 非 `from_param` provenance 直接返回；`from_param` 依据 `calls[].actual_args[].source_kind` 映射 literal、param、config/env，否则为 unknown。
+3. key provenance 直接写回。IV 只接受 IV vocabulary；hardcoded key-style provenance 映射为 `constant_or_literal`，其他不在 IV vocabulary 的值变成 `unknown`。
 
-### 我们的优势
+helper 仅返回 hardcoded key-shaped material时，本地是 `exported_crypto_material / POLYMORPHIC`；caller 真正把它作为 key 使用后才变为 `hardcoded_key_or_secret / VULNERABLE`。当前组合不处理 arbitrary field、random-token use、多个同名 callee 的精确区分或复杂表达式数据流，且 callee 解析存在“唯一 callee”fallback，因此只能称为窄的 return-provenance 实例化。
 
-- **语义识别 provenance，无需手写 CrySL 规则**。「这个 IV 是不是复用了？这个密钥是不是来自
-  CSPRNG？」——LLM 直接按代码语义判断，不必为每条规则写 CrySL `ENSURES`/`REQUIRES`。
-- **天然处理 verify-before-trust 的时序**。「验签结果在使用被验数据之前被检查并支配了吗」本是
-  典型的 typestate 性质，LLM 读代码即可识别非支配情形（结果被忽略、异常被吞、失败路径继续往下
-  走），无需把它编码成显式 typestate 自动机。
-- **跨库 / 跨框架，无需逐 API 规约**。不依赖针对每个加密库手写的 API 模型，自研封装也能读懂。
-- **模块化组合**：逐函数抽象 + 自底向上 return-provenance 实例化，天然跨函数复用 callee 事实。
+## 6. Fallback、ERROR 与 NEEDS_REVIEW
 
-### 我们的劣势（需诚实对待）
+driver 对不可解析 JSON 或 validation 返回 `None` 的响应重试；调用异常或重试耗尽生成 `status="error"` facts。
 
-- **句法命中其实 linter 更划算**。ECB、`alg=none`、`DES(...)` 这类**句法子类**，一个正则 /
-  Semgrep 规则又快又准，LLM 在这里只是**徒增成本**——本插件的真正增量在语义子类（见 §1）。
-- **provenance 藏在封装背后 → NEEDS_REVIEW**。若密钥/IV 经过多层 wrapper、动态分发、配置注入，
-  LLM 看不穿来源就只能 fail-closed 判 NEEDS_REVIEW，需要人工接力。
-- **KDF 参数充分性依赖库默认值**。PBKDF2 迭代数、bcrypt cost 若没写在代码里（用了库默认），LLM
-  未必看得到，检查器只能判 NEEDS_REVIEW（`_check_password_hash` 里 `iterations is None` 的分支）。
-- **用途歧义（purpose ambiguity）**。MD5 用作 ETag / 去重键并非漏洞。检查器靠 `purpose`
-  字段区分（`checksum_nonsecurity` 不报；`unknown` 转 NEEDS_REVIEW），但这个用途判断本身落在
-  LLM 身上——它若误判用途，结论也会随之偏。
-- **不可靠（unsound）**：基于 LLM 抽象，没有可靠性保证，会漏报。
+Crypto 的 `check()` 有一个 authn/authz 不具备的 source-only fallback：
 
-**句法 vs 语义的价值切分要说清楚**：在句法子类上，传统 linter 更便宜、更可靠；本插件的价值集中
-在**语义子类**（来源追踪、新鲜性、验签时序）和**跨函数组合**上。
+- 仅对 validator 能从 Python source 自行补出的已识别 random/hash/JWT operation 构造 `crypto_v1` facts。
+- 只有 source-derived classification 既不是 `ERROR` 也不是 `NEEDS_REVIEW` 才采用，并把 facts status 改为 `partial`。因此一个明确的 insecure random 可在 LLM 失败后仍为 `VULNERABLE`，一个明确的 CSPRNG token 或可判定安全 hash 也可能为 `SAFE`。
+- 没有已识别 operation，或 source-only facts 仍需要 review 时，保持 `ERROR`。
 
----
+正常 facts 在 `check()` 边界也会重做 Python correction。结构/enum malformed 会成为 `ERROR`；规则分支中的显式 unknown 通常成为 `NEEDS_REVIEW`；参数化材料成为 `POLYMORPHIC`。评测 registry 把 `VULNERABLE` 和 `WEAK` 计入 positive，`POLYMORPHIC`、`NEEDS_REVIEW`、`ERROR` 仍按 fail-closed flagged 处理，只有 `SAFE` 属于 negative。
 
-## 5. 局限与适用场景
+## 7. Focused Tests 与 CVE 示例
 
-- **适用**：在大型 / 陌生 / 多语言混杂代码库上做加密误用的**广撒网式初筛**；识别 POLYMORPHIC
-  的「密钥/IV 工厂」辅助函数，提示「调用点才是危险所在」；确认 AEAD + 新鲜 nonce + CSPRNG 密钥
-  这类**正向安全事实**（SAFE 是可被肯定的）。
-- **不适用 / 慎用**：作为合规级别的 sound 证明；依赖它的「无报告」断言代码加密无误（unsound，
-  会漏）；判断 KDF 参数是否够强（依赖看不见的库默认值）；以及在纯句法误用上替代更便宜的 linter。
+`tests/test_crypto_validation_guards.py` 覆盖当前实现边界：
 
-把 Crypto 插件当作一个**会读语义、能跨函数组合、失败即保守**的加密误用探针——它的结论是有用的
-线索与正向佐证，但句法层面交给 linter 更划算，最终安全结论仍需人工复核。
+- insecure/CSPRNG random correction、多个随机调用配对和 red-flag 清空；
+- imported/module/config/env/object-attribute/CSPRNG-encoding 的 JWT key provenance；
+- modern signing API 不豁免 hardcoded key，JWT decode 也检查 key provenance；
+- `hashlib.md5` 从调用而非函数名识别，unsupported checksum claim 被纠正，源码已删除的 stale operation 被移除；
+- malformed collections -> `ERROR`，cache replay 重新 correction；
+- LLM error 在 source semantics 足够时采用 partial fallback，不足时保持 `ERROR`。
+
+`eval/securebench_corpus.json` 当前声明：
+
+- `CVE-2023-48224 / CWE-338`：`generate_id_verification_code`。
+- `CVE-2025-55449 / CWE-321`：`generate_jwt` 与 `auth_middleware`。
+- `CVE-2021-39182 / CWE-326`：`MD5`，fixed expectation 为 absent。
+
+focused tests 还固定了语义 CWE 与官方评测标签可以不同：MD5 finding 仍是 `CWE-327`，evaluation metadata 不覆盖 reasoner finding；pair runner 可按 CWE family 和 locus 规则评分。以上只说明 manifest、reasoner 和 runner 的当前契约，不宣称单个测试证明完整 CVE exploit 或所有修复版本。
+
+## 8. 适用边界
+
+Crypto 适合对多语言代码做加密误用初筛，并对 Python `random`/`secrets`、`hashlib` 和 PyJWT 的若干事实增加源码约束。它不适合作为合规级 sound proof，也不能用 `SAFE` 断言仓库没有密码学缺陷。一般 cipher mode、nonce lifetime、自定义 wrapper、verify dominance 和 purpose 仍高度依赖模型 facts；纯句法问题通常应同时使用更便宜、更完整的 linter 或专用 crypto analyzer。

@@ -922,7 +922,7 @@ class IfcExternalObservabilityTests(unittest.TestCase):
         }, "main")
 
         self.assertEqual("SECURE", classify(facts.payload)["verdict"])
-        self.assertEqual(["param:params"], facts.payload["outputs"]["return"]["deps"])
+        self.assertEqual([], facts.payload["outputs"]["return"]["deps"])
 
     def test_guard_removes_embedded_rejected_field_alias(self):
         source = """def main():
@@ -943,6 +943,31 @@ class IfcExternalObservabilityTests(unittest.TestCase):
 
         self.assertNotIn("receiver.api_secret_in_options", facts.payload["inputs"])
         self.assertEqual("SECURE", classify(facts.payload)["verdict"])
+
+    def test_guard_removes_unreported_receiver_ghost_but_keeps_source_reference(self):
+        guarded = """def target():
+    if 'api_secret' in self.options['params']:
+        raise ValueError('sensitive options are not accepted')
+    self.options.update(self.options['params'])
+"""
+        payload = {
+            "inputs": {"param:self.options.params": LOW},
+            "outputs": {"return": {
+                "deps": ["param:self.options.params", "receiver.ghost"],
+                "const": None,
+                "sink_channel": "return",
+                "observability": "caller",
+            }},
+            "notes": "",
+        }
+
+        cleaned = _parse(guarded, payload, "target")
+        referenced = _parse(guarded + "    return self.ghost\n", payload, "target")
+
+        self.assertEqual([], cleaned.payload["outputs"]["return"]["deps"])
+        self.assertEqual("SECURE", classify(cleaned.payload)["verdict"])
+        self.assertIn("receiver.ghost", referenced.payload["outputs"]["return"]["deps"])
+        self.assertEqual("LEAK", classify(referenced.payload)["verdict"])
 
     def test_external_database_error_detail_is_cwe_209(self):
         source = """def edit(self, item):
@@ -1024,6 +1049,24 @@ class IfcExternalObservabilityTests(unittest.TestCase):
         result = classify(facts.payload)
 
         self.assertEqual("SECURE", result["verdict"])
+
+    def test_implicit_none_return_clears_model_return_dependency(self):
+        source = """def target(value):
+    consume(value)
+"""
+        facts = _parse(source, {
+            "inputs": {"param:value": HIGH},
+            "outputs": {"return": {
+                "deps": ["param:value"],
+                "const": None,
+                "sink_channel": "return",
+                "observability": "caller",
+            }},
+        }, "target")
+
+        self.assertEqual([], facts.payload["outputs"]["return"]["deps"])
+        self.assertEqual(LOW, facts.payload["outputs"]["return"]["const"])
+        self.assertEqual("SECURE", classify(facts.payload)["verdict"])
 
     def test_generic_method_messages_and_constant_returns_override_model_noise(self):
         source = """def add(self, item, raise_exception=False):

@@ -167,6 +167,7 @@ def source_only_fallback(source: str):
     _enrich_internal_persistence(signature, tree)
     _enrich_constant_exception_control(signature)
     _enrich_constant_return(signature, tree)
+    _ground_receiver_dependencies(signature, tree)
     if signature["outputs"]:
         return signature
     return None
@@ -534,12 +535,40 @@ def _references_rejected_field(source: str, rejected: Mapping) -> bool:
 
 
 def _references_receiver_field(tree: ast.AST, dependency: str) -> bool:
-    field = _field_name(dependency)
+    if not dependency.startswith("receiver."):
+        return False
+    suffix = _dependency_expr(dependency)[len("self."):]
+    expected = {f"self.{suffix}", f"cls.{suffix}"}
     return any(
-        (isinstance(node, ast.Attribute) and node.attr == field)
-        or (isinstance(node, ast.Name) and node.id == field)
+        (expression := _canonical_expr(node)) in expected
+        or any(expression.startswith(candidate + ".") for candidate in expected)
         for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
     )
+
+
+def _ground_receiver_dependencies(signature: dict, tree: ast.AST) -> None:
+    """Remove model receiver facts that are not rooted at self/cls in source."""
+    candidates = {
+        name for name in signature["inputs"] if name.startswith("receiver.")
+    }
+    candidates.update(
+        dependency
+        for spec in signature["outputs"].values()
+        for dependency in spec.get("deps", [])
+        if dependency.startswith("receiver.")
+    )
+    unsupported = {
+        dependency for dependency in candidates
+        if not _references_receiver_field(tree, dependency)
+    }
+    for dependency in unsupported:
+        signature["inputs"].pop(dependency, None)
+    for spec in signature["outputs"].values():
+        spec["deps"] = [
+            dependency for dependency in spec.get("deps", [])
+            if dependency not in unsupported
+        ]
 
 
 def _enrich_nested_secret_bypass(signature: dict, tree: ast.AST) -> None:
@@ -593,7 +622,7 @@ def _enrich_nested_secret_bypass(signature: dict, tree: ast.AST) -> None:
                     dep for dep in spec.get("deps", [])
                     if not (
                         dep.startswith("receiver.")
-                        and signature["inputs"].get(dep) == UNKNOWN
+                        and signature["inputs"].get(dep, UNKNOWN) == UNKNOWN
                         and not _references_receiver_field(tree, dep)
                     )
                 ]
@@ -778,7 +807,7 @@ def _enrich_error_channels(signature: dict, tree: ast.AST) -> None:
 
 def _enrich_constant_return(signature: dict, tree: ast.AST) -> None:
     returns = [node for node in ast.walk(tree) if isinstance(node, ast.Return)]
-    if not returns or not all(
+    if returns and not all(
         node.value is None or isinstance(node.value, ast.Constant)
         for node in returns
     ):
@@ -787,6 +816,8 @@ def _enrich_constant_return(signature: dict, tree: ast.AST) -> None:
         spec for channel, spec in signature["outputs"].items()
         if channel == "return" or spec.get("sink_channel") == "return"
     ]
+    if not returns and not return_specs:
+        return
     if not return_specs:
         _set_output(signature, "return", [], "return", "caller", replace=True)
         return_specs = [signature["outputs"]["return"]]

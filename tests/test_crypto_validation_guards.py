@@ -508,6 +508,29 @@ class CryptoPluginValidationTests(unittest.TestCase):
 
         self.assertIsNone(parsed)
 
+    def test_parser_retries_null_return_entry_and_cached_summary_does_not_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "app.py"
+            source.write_text("def f():\n    return 1\n")
+            request = _request(root, "app.py", "f", "def f():\n    return 1\n")
+            payload = _facts({
+                "id": "op_1", "kind": "hash", "purpose": "checksum_nonsecurity",
+                "algorithm": "SHA256", "evidence": "hash(data)",
+            })
+            payload["returns"] = [None]
+            plugin = CryptoPlugin()
+
+            parsed = plugin.parse_abstraction_response(
+                request, "[CRYPTO_JSON]" + json.dumps(payload) + "[/CRYPTO_JSON]"
+            )
+            cached = FactEnvelope(
+                "crypto", "crypto_v1", request.function.id, "ok", payload
+            )
+
+        self.assertIsNone(parsed)
+        self.assertIn("ops[hash]", plugin.summarize_for_caller(cached))
+
     def test_result_uses_original_source_identity_for_stock_runner(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

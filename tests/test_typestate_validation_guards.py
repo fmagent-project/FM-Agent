@@ -8,13 +8,14 @@ import unittest
 from src.plugins.base import (
     AbstractionRequest,
     DriverContext,
+    FactEnvelope,
     FunctionId,
     FunctionUnit,
     ProgramIndex,
 )
 from src.plugins import callgraph
 from src.plugins.typestate import TypestatePlugin
-from src.typestate_reasoner import SAFE, VULNERABLE, classify
+from src.typestate_reasoner import ERROR, SAFE, VULNERABLE, classify
 from src.typestate_validation import source_rel_from_extracted
 
 
@@ -440,6 +441,61 @@ class TypestateSourceValidationTests(unittest.TestCase):
         )
 
         self.assertIsNone(parsed)
+
+    def test_non_object_event_is_rejected_before_composition(self):
+        payload = _facts([])
+        payload["events"] = ["not an event"]
+
+        self.assertIsNone(_parse("def target():\n    return None\n", payload))
+
+    def test_unknown_path_coverage_is_error_not_safe(self):
+        payload = _facts([
+            _event(
+                "change", 1, "STATE_CHANGE", "request",
+                path_coverage="sometimes",
+            )
+        ], [_resource("request", "http_request", "request", "param")])
+
+        self.assertEqual(ERROR, classify(payload)["verdict"])
+
+    def test_llm_error_uses_source_only_guarded_protocols_but_not_unknown_code(self):
+        tls_vulnerable = """def wrap(sock, ssl_context=None):
+    context = ssl_context
+    if context is None:
+        context = create_urllib3_context()
+    if hasattr(context, "load_default_certs"):
+        context.load_default_certs()
+    return context.wrap_socket(sock)
+"""
+        tls_fixed = tls_vulnerable.replace(
+            'if hasattr(context, "load_default_certs"):',
+            'if ssl_context is None and hasattr(context, "load_default_certs"):',
+        )
+        fs_vulnerable = """def _acquire(self):
+    flags = os.O_RDWR | os.O_CREAT | os.O_TRUNC
+    return os.open(self.lock_file, flags, self._context.mode)
+"""
+        fs_fixed = fs_vulnerable.replace(
+            "os.O_TRUNC", "os.O_TRUNC | os.O_NOFOLLOW"
+        )
+
+        for source, expected in (
+            (tls_vulnerable, VULNERABLE),
+            (tls_fixed, SAFE),
+            (fs_vulnerable, VULNERABLE),
+            (fs_fixed, SAFE),
+            ("def target():\n    return None\n", ERROR),
+        ):
+            with self.subTest(expected=expected, source=source):
+                request = _request(source)
+                facts = FactEnvelope(
+                    "typestate", "typestate.v1", request.function.id,
+                    "error", None,
+                )
+
+                verdict = TypestatePlugin().check(facts, request.context)
+
+                self.assertEqual(expected, verdict.verdict)
 
     def test_extracted_result_path_maps_to_original_stock_runner_locus(self):
         self.assertEqual(

@@ -17,6 +17,7 @@ SOURCE_EVENT_KINDS = {
     "FS_NOFOLLOW_GUARD",
     "FS_ACQUIRE",
 }
+SOURCE_PROTOCOL_TRIGGERS = {"JSON_PARSE", "CERT_DEFAULT_LOAD", "FS_ACQUIRE"}
 
 
 def source_rel_from_extracted(rel):
@@ -611,13 +612,23 @@ def validate_and_enrich(facts, function):
     """Replace security guard claims with events derived from function source."""
     if not isinstance(facts, dict):
         return None
+    for field in (
+        "resources", "ambient_contexts", "entry_states", "events",
+        "exit_states", "calls", "uncertainties",
+    ):
+        value = facts.get(field)
+        if value is not None and (
+            not isinstance(value, list)
+            or any(not isinstance(item, dict) for item in value)
+        ):
+            return None
     enriched = copy.deepcopy(facts)
     events = enriched.get("events")
     if not isinstance(events, list):
         return None
     enriched["events"] = []
     for event in events:
-        if not isinstance(event, dict) or event.get("kind") in SOURCE_EVENT_KINDS:
+        if event.get("kind") in SOURCE_EVENT_KINDS:
             continue
         operation = str(event.get("operation", "")).lower()
         left = operation.split("=", 1)[0].strip()
@@ -682,3 +693,27 @@ def validate_and_enrich(facts, function):
         enriched["exit_states"] = []
         enriched["calls"] = []
     return enriched
+
+
+def source_only_facts(function):
+    """Build facts only when source validation recognizes a complete protocol."""
+    facts = validate_and_enrich({
+        "schema_version": "typestate.v1",
+        "function": function.id.name,
+        "function_role": "internal_helper",
+        "language": function.id.language,
+        "resources": [],
+        "ambient_contexts": [],
+        "entry_states": [],
+        "events": [],
+        "exit_states": [],
+        "calls": [],
+        "uncertainties": [],
+    }, function)
+    if facts and any(
+        event.get("_source_validated")
+        and event.get("kind") in SOURCE_PROTOCOL_TRIGGERS
+        for event in facts.get("events") or ()
+    ):
+        return facts
+    return None

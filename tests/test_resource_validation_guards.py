@@ -14,9 +14,11 @@ from src.plugins.base import (
 from src.plugins.resource import ResourcePlugin
 from src.resource_reasoner import BOUNDED, SAFE, VULNERABLE, classify
 from src.resource_validation import (
+    RESOURCE_VALIDATION_VERSION,
     iteration_magnitudes_for_call,
     rejecting_guard_for_call,
     returned_parameter_bounds,
+    source_digest,
     source_operation_line,
 )
 
@@ -85,8 +87,8 @@ def _guard(
     }
 
 
-def _request(source="consume(count)", rel="target.py", name="target"):
-    function_id = FunctionId(rel, name, name, "python")
+def _request(source="consume(count)", rel="target.py", name="target", language="python"):
+    function_id = FunctionId(rel, name, name, language)
     unit = FunctionUnit(function_id, source, source.splitlines()[0])
     program = ProgramIndex(
         functions={function_id: unit},
@@ -124,8 +126,8 @@ class ResourceBaselineCharacterizationTests(unittest.TestCase):
 
 
 class ResourceValidationGuardTests(unittest.TestCase):
-    def _parse(self, source, facts):
-        request = _request(source)
+    def _parse(self, source, facts, language="python"):
+        request = _request(source, language=language)
         parsed = ResourcePlugin().parse_abstraction_response(
             request, "[RESOURCE_JSON]" + json.dumps(facts) + "[/RESOURCE_JSON]"
         )
@@ -1363,6 +1365,78 @@ class ResourceValidationGuardTests(unittest.TestCase):
         self.assertEqual(VULNERABLE, result["verdict"])
         self.assertEqual("CWE-770", result["findings"][0]["cwe"])
 
+    def test_source_regex_compile_derives_pattern_magnitude_when_model_omits_it(self):
+        source = """def target(pattern):
+    return pattern_to_regex(pattern)
+"""
+        facts = _facts(
+            op_kind="regex_compile", magnitude_kind="input_length",
+            arg_expr="pattern",
+        )
+        facts["params"] = ["pattern"]
+        facts["magnitude_sources"] = []
+        facts["costly_ops"] = []
+        request = _request(source)
+        plugin = ResourcePlugin()
+        parsed = plugin.parse_abstraction_response(
+            request, "[RESOURCE_JSON]" + json.dumps(facts) + "[/RESOURCE_JSON]"
+        )
+
+        verdict = plugin.check(parsed, request.context)
+
+        self.assertEqual(["len(pattern)"], [
+            item["expr"] for item in parsed.payload["magnitude_sources"]
+        ])
+        self.assertEqual(VULNERABLE, verdict.verdict)
+
+    def test_rust_scalar_parse_and_precompiled_match_ignore_expensive_call_claims(self):
+        source = """fn target(server_name: &str, entries: &[Regex]) -> bool {
+    if Ipv4Addr::from_str(server_name).is_ok() { return true; }
+    entries.iter().any(|entry| entry.is_match(server_name))
+}
+"""
+        facts = _facts(
+            op_kind="expensive_call", magnitude_kind="input_length",
+            arg_expr="server_name",
+        )
+        facts["costly_ops"] = [
+            {
+                **facts["costly_ops"][0],
+                "id": "parse",
+                "callee": "<Ipv4Addr::from_str>::call",
+                "call_expr": "Ipv4Addr::from_str(server_name)",
+            },
+            {
+                **facts["costly_ops"][0],
+                "id": "match",
+                "callee": "Regex::is_match",
+                "call_expr": "entry.is_match(server_name)",
+            },
+        ]
+
+        parsed = self._parse(source, facts, language="rust")
+
+        self.assertEqual([], parsed["costly_ops"])
+
+    def test_raw_unknown_flow_does_not_make_opaque_call_expensive(self):
+        source = """def target(request):
+    return authenticate(request)
+"""
+        facts = _facts(
+            op_kind="expensive_call", magnitude_kind="request_size",
+            arg_expr="request",
+        )
+        facts["costly_ops"][0].update(
+            callee="authenticate",
+            call_expr="authenticate(request)",
+            magnitudes=[{"source": "unknown:request", "bounds": []}],
+        )
+
+        parsed = self._parse(source, facts)
+
+        self.assertEqual([], parsed["costly_ops"][0]["magnitudes"])
+        self.assertEqual(SAFE, classify(parsed)["verdict"])
+
     def test_source_derived_regex_compile_inherits_rejecting_length_bound(self):
         source = """def target(pattern):
     if len(pattern) > MAX_PATTERN_LENGTH:
@@ -1842,6 +1916,37 @@ def target(type_info):
         )
 
         self.assertNotIn("_validated_bound", parsed.payload["costly_ops"][0])
+
+    def test_raw_llm_cannot_forge_source_validation_marker(self):
+        request = _request("def target(count):\n    return None\n")
+        facts = _facts()
+        facts["costly_ops"][0].update(callee="bytes", call_expr="bytes(count)")
+        facts["_resource_validated"] = RESOURCE_VALIDATION_VERSION
+        facts["_resource_source_digest"] = source_digest(request.function)
+
+        parsed = ResourcePlugin().parse_abstraction_response(
+            request, "[RESOURCE_JSON]" + json.dumps(facts) + "[/RESOURCE_JSON]"
+        )
+
+        self.assertEqual([], parsed.payload["costly_ops"])
+
+    def test_cached_source_facts_are_revalidated_after_source_change(self):
+        old_request = _request("def target(count):\n    return bytes(count)\n")
+        facts = _facts()
+        facts["costly_ops"][0].update(callee="bytes", call_expr="bytes(count)")
+        parsed = ResourcePlugin().parse_abstraction_response(
+            old_request, "[RESOURCE_JSON]" + json.dumps(facts) + "[/RESOURCE_JSON]"
+        )
+        new_request = _request("def target(count):\n    return None\n")
+
+        verdict = ResourcePlugin().check(parsed, new_request.context)
+
+        self.assertEqual(SAFE, verdict.verdict)
+        self.assertEqual([], parsed.payload["costly_ops"])
+        self.assertEqual(
+            source_digest(new_request.function),
+            parsed.payload["_resource_source_digest"],
+        )
 
     def test_prompt_requires_hard_pre_sink_limits_and_logical_arithmetic(self):
         system, user = ResourcePlugin().build_abstraction_prompt(_request())

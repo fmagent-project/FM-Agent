@@ -264,6 +264,18 @@ class AuthnPatchSemanticsTests(unittest.TestCase):
             ["op_1", "op_2"], parsed.payload["credential_events"][0]["protects_op_ids"]
         )
 
+        coarse = json.loads(json.dumps(facts))
+        coarse["protected_operations"] = [coarse["protected_operations"][0]]
+        coarse["protected_operations"][0]["evidence"] = "def target() -> None:"
+        parsed = plugin.parse_abstraction_response(
+            request,
+            "[AUTHN_JSON]" + json.dumps(coarse) + "[/AUTHN_JSON]",
+        )
+        self.assertEqual(
+            ["op_1"], parsed.payload["credential_events"][0]["protects_op_ids"]
+        )
+        self.assertEqual(SAFE, classify(parsed.payload)["verdict"])
+
         vulnerable_source = fixed_source.replace(
             "open(ssfile, 'w', 0o660, encoding='UTF-8')",
             "open(ssfile, 'wb', 0o660)",

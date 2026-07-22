@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Sequence
 from config import CRYPTO_MODEL
 from src.crypto_prompts import _system_prompt, _user_prompt, _extract_crypto_json
 from src.crypto_reasoner import (
-    classify, instantiate_return_material,
+    classify, instantiate_return_material, validate,
     VULNERABLE, WEAK, POLYMORPHIC, NEEDS_REVIEW, SAFE, ERROR,
 )
 from src.crypto_validation import (
@@ -49,10 +49,15 @@ def _summarize(payload: dict, fn_name: str) -> str:
         return f"{fn_name}: (no crypto facts)"
     parts = []
     for ret in payload.get("returns") or []:
+        if not isinstance(ret, dict):
+            continue
         mk = ret.get("material_kind")
         if mk in {"key", "iv_nonce", "random_token"}:
             parts.append(f"returns {mk}={ret.get('provenance')}")
-    ops = payload.get("crypto_operations") or []
+    ops = [
+        operation for operation in (payload.get("crypto_operations") or [])
+        if isinstance(operation, dict)
+    ]
     if ops:
         kinds = ",".join(sorted({o.get("kind", "op") for o in ops}))
         parts.append(f"ops[{kinds}]")
@@ -111,7 +116,7 @@ class CryptoPlugin(AnalysisPlugin):
         if not isinstance(payload, dict):
             return None
         payload = validate_and_enrich(payload, request.function)
-        if payload is None:
+        if payload is None or validate(payload) is not None:
             return None
         return FactEnvelope(
             plugin_name="crypto",
@@ -154,13 +159,15 @@ class CryptoPlugin(AnalysisPlugin):
         if caller_facts.status != "ok" or not caller_facts.payload:
             return caller_facts
         payload = dict(caller_facts.payload)
+        if validate(payload) is not None:
+            return caller_facts
         caller_calls = payload.get("calls") or []
 
         # callee_name -> returns[] (only callees that produced ok facts)
         callee_returns: Dict[str, list] = {}
         for rc in resolved_calls:
             cf = rc.callee_facts
-            if cf.status == "ok" and cf.payload:
+            if cf.status == "ok" and cf.payload and validate(cf.payload) is None:
                 callee_returns[rc.call_site.callee_name] = cf.payload.get("returns") or []
         if not callee_returns:
             return caller_facts

@@ -155,6 +155,20 @@ def validate(facts):
             ref = fl.get("source")
             if not _valid_source_ref(ref):
                 return f"malformed source ref: {ref}"
+    for field in ("taint_bindings", "return_flows"):
+        holders = facts.get(field) or []
+        if not isinstance(holders, list) or any(
+            not isinstance(holder, dict) for holder in holders
+        ):
+            return f"malformed {field}"
+        for holder in holders:
+            flows = holder.get("flows") or []
+            if not isinstance(flows, list) or any(
+                not isinstance(flow, dict)
+                or not _valid_source_ref(flow.get("source"))
+                for flow in flows
+            ):
+                return f"malformed flows for {field}"
     return None
 
 
@@ -382,6 +396,12 @@ def instantiate_flows(flows, param_to_actual_flows, call_id, sanitizer_id_map=No
             (sanitizer_id_map or {}).get(entry, entry) if isinstance(entry, str) else entry
             for entry in (flow.get("sanitizers") or [])
         ]
+        if not isinstance(src, str):
+            out.append({
+                "source": f"unknown:{call_id}:malformed_source",
+                "sanitizers": extra_sani,
+            })
+            continue
         if src.startswith("param:"):
             p = src[len("param:"):]
             actual = param_to_actual_flows.get(p)

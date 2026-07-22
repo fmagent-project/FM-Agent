@@ -35,6 +35,7 @@ from src.resource_validation import (
     iteration_magnitudes_for_call,
     rejecting_guard_for_call,
     returned_parameter_bounds,
+    source_digest,
     source_operation_line,
     source_rel_from_extracted,
     validate_and_enrich,
@@ -115,6 +116,10 @@ class ResourcePlugin(AnalysisPlugin):
         payload = _extract_resource_json(raw_response)
         if payload is None or not isinstance(payload, dict):
             return None
+        payload = {
+            key: value for key, value in payload.items()
+            if not str(key).startswith("_")
+        }
         costly_ops = payload.get("costly_ops")
         if isinstance(costly_ops, list):
             payload = dict(payload)
@@ -293,7 +298,11 @@ class ResourcePlugin(AnalysisPlugin):
             return Verdict(plugin_name="resource", verdict=ERROR, status="error",
                            data={"error": "no valid resource abstraction (fail-closed)"})
 
-        if facts.payload.get("_resource_validated") != RESOURCE_VALIDATION_VERSION:
+        if (
+            facts.payload.get("_resource_validated") != RESOURCE_VALIDATION_VERSION
+            or facts.payload.get("_resource_source_digest")
+            != source_digest(context.function)
+        ):
             facts.payload = validate_and_enrich(facts.payload, context.function)
         param_status = self._seed_param_status(facts, context)
         result = classify(facts.payload, param_status=param_status)

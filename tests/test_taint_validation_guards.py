@@ -9,6 +9,7 @@ from src.taint_reasoner import (
     TAINTED,
     VULNERABLE,
     classify,
+    instantiate_flows,
 )
 from src.taint_validation import validation_guard_coverage_for_call
 from src.plugins.base import (
@@ -623,6 +624,22 @@ class TaintValidationGuardTests(unittest.TestCase):
         facts = _facts([])
         facts["sinks"] = {"K1": "not a sink list"}
         self.assertEqual("ERROR", classify(facts)["verdict"])
+
+    def test_null_return_flow_retries_and_cached_composition_fails_closed(self):
+        facts = _facts([])
+        facts["return_flows"] = [{"flows": [{"source": None}]}]
+
+        parsed = TaintPlugin().parse_abstraction_response(
+            _abstraction_request(), json.dumps(facts)
+        )
+        composed = instantiate_flows(
+            facts["return_flows"][0]["flows"], {}, "call_1"
+        )
+
+        self.assertIsNone(parsed)
+        self.assertEqual(
+            "unknown:call_1:malformed_source", composed[0]["source"]
+        )
 
     def test_composed_default_call_is_sanitized_when_bypass_parameter_is_omitted(self):
         # Given / When

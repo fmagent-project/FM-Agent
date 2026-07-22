@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import re
 import textwrap
 from collections.abc import Mapping, Sequence
@@ -42,7 +43,7 @@ KNOWN_OPERATION_KINDS = frozenset({
     "recursion", "loop", "collection_build", "expensive_call",
     "regex_compile", "logical_allocation",
 })
-RESOURCE_VALIDATION_VERSION = 16
+RESOURCE_VALIDATION_VERSION = 19
 
 
 def source_rel_from_extracted(rel: str) -> str:
@@ -58,11 +59,19 @@ def source_rel_from_extracted(rel: str) -> str:
     return (path.parent.parent / (encoded[:-len(suffix)] + "." + extension)).as_posix()
 
 
+def source_digest(unit) -> str:
+    """Bind cached source-derived facts to the function that produced them."""
+    return hashlib.sha256((getattr(unit, "source", "") or "").encode()).hexdigest()
+
+
 def validate_and_enrich(facts, unit):
     """Replace model guesses that source syntax can settle deterministically."""
     if not isinstance(facts, Mapping):
         return facts
-    if facts.get("_resource_validated") == RESOURCE_VALIDATION_VERSION:
+    if (
+        facts.get("_resource_validated") == RESOURCE_VALIDATION_VERSION
+        and facts.get("_resource_source_digest") == source_digest(unit)
+    ):
         return copy.deepcopy(facts)
 
     out = {
@@ -105,6 +114,7 @@ def validate_and_enrich(facts, unit):
     out["_resource_cached"] = _has_cache_decorator(tree)
     out["_resource_exact_extents"] = _has_exact_extent_allocation(tree)
     out["_resource_validated"] = RESOURCE_VALIDATION_VERSION
+    out["_resource_source_digest"] = source_digest(unit)
     return out
 
 
@@ -183,6 +193,11 @@ def _normalize_operation(op, source, language, tree):
     if kind == "expensive_call" and re.search(
         r"(?:^|\.|::)(?:from_str|int|float|bool|str|split|rsplit)$",
         callee, re.I,
+    ):
+        return None
+    if kind == "expensive_call" and language.lower() == "rust" and (
+        re.search(r"(?:^|::|\.)from_str\b", call, re.I)
+        or re.search(r"\.is_match\s*\(", call, re.I)
     ):
         return None
     if kind == "expensive_call" and _is_non_recipient_delivery_operation(op):
@@ -670,6 +685,20 @@ def _derive_regex_compile_operations(facts, tree):
         parameter = aliases.get(argument_expr, argument_expr)
         source = _source_for_expression(sources, argument_expr, aliases)
         if parameter in parameters:
+            if source is None:
+                used_ids = {item["id"] for item in sources}
+                source_id = f"SRC_REGEX_MAG_{len(sources) + 1}"
+                while source_id in used_ids:
+                    source_id += "_"
+                source = {
+                    "id": source_id,
+                    "magnitude_kind": "input_length",
+                    "expr": f"len({parameter})",
+                    "introduced_by": "source regex pattern parameter",
+                    "confidence": "high",
+                }
+                facts.setdefault("magnitude_sources", []).append(source)
+                sources.append(source)
             flow = {
                 "source": "param:" + parameter, "bounds": [],
                 "magnitude_kind": "input_length",
@@ -1089,6 +1118,8 @@ def _flow_has_cost_support(record, flow, sources):
     if record.get("op_kind") != "expensive_call":
         return True
     reference = flow.get("source")
+    if isinstance(reference, str) and reference.startswith("unknown:"):
+        return False
     if not isinstance(reference, str) or not reference.startswith("mag:"):
         return True
     source = sources.get(reference[4:])

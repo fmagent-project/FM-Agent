@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Sequence
 from config import TAINT_MODEL
 from src.taint_prompts import _system_prompt, _user_prompt, _extract_taint_json
 from src.taint_reasoner import (
-    classify, instantiate_sink, instantiate_flows,
+    classify, instantiate_sink, instantiate_flows, validate,
     VULNERABLE, SANITIZED, POLYMORPHIC, SAFE, ERROR,
 )
 from src.taint_validation import (
@@ -1142,6 +1142,8 @@ class TaintPlugin(AnalysisPlugin):
                 if isinstance(sink, dict) else sink
                 for sink in sinks
             ]
+        if validate(payload) is not None:
+            return None
         return FactEnvelope(
             plugin_name="taint",
             schema_version=self.SCHEMA,

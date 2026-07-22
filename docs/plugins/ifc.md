@@ -1,406 +1,307 @@
 # IFC 插件：信息流控制（Information Flow Control）
 
 > 插件总览见 [./README.md](./README.md)。
-> 设计动机与改动地图见 [../ifc_design.md](../ifc_design.md)。
+> 设计动机见 [../ifc_design.md](../ifc_design.md)。
 > 插件 SPI 架构见 [../plugin_architecture.md](../plugin_architecture.md)。
 
-IFC 是 FM-Agent 多理论分析底座上的**第一个、也是参考实现**插件。它把 FM-Agent 的通用技
-术——「LLM 产出**模块化的、逐函数的**自然语言抽象，一个**确定性**的纯 Python 检查器（不
-带 LLM）在该抽象上做裁决，结果自底向上跨函数组合」——具体落到**机密性（confidentiality）/
-信息流泄露**这一安全属性上。
+IFC 插件分析机密性：敏感值是否到达外部可观测出口。它沿用 FM-Agent 的基本分工：LLM 为
+单个函数提取参数化依赖事实，`src/ifc_validation.py` 用源码能够确定的事实校正其中一小部分，
+`src/ifc_reasoner.py` 再以确定性规则给出裁决。该实现是 bug finder，不是非干涉证明器。
 
-本文档假定你已经大致了解 SPI（`src/plugins/base.py`）和通用驱动（`src/plugins/driver.py`）。
-下面按「检测什么 → 理论原理 → 运行流程 → 与传统方案对比 → 局限」展开。
-
----
-
-## 1. 面向的攻击：它检测什么
-
-IFC 检测的是**机密性泄露**：私密数据（secret）经由某条信息流，到达了一个**公开侧 / 可观测
-的出口（Low-observable sink）**。这些出口在代码里非常常见：
-
-- 日志（`logger.debug(...)`）
-- HTTP 响应、网络发送
-- 写入全局变量 / 共享状态
-- 函数返回值（当函数是对外入口时，返回值就跨过了信任边界）
-
-### 一个最小的真实案例
-
-```python
-class ApiClient:
-    def __init__(self, client_id, client_secret):
-        self.client_id = client_id          # 公开标识
-        self.client_secret = client_secret  # 私密凭据
-
-    def _debug_request(self, url):
-        # 看似无害的调试日志，却把 client_secret 写进了日志文件
-        logger.debug("calling %s with id=%s secret=%s",
-                     url, self.client_id, self.client_secret)
-```
-
-`self.client_secret` 是机密（High），`logger.debug(...)` 是一个公开可观测的出口
-（`io:log`，Low）。这条 `High → Low` 的流就是一次泄露。
-
-另一个经典形态是把数据库口令拼进返回的连接串（DSN）：
-
-```python
-class DBClient:
-    def build_dsn(self):
-        # db_password 是 High；返回值若被对外暴露/记录就是泄露
-        return f"postgres://{self.user}:{self.db_password}@{self.host}/{self.db}"
-```
-
-### 为什么这件事重要、为什么朴素检查会漏
-
-1. **隐式流（implicit flow）**。泄露不一定是「把 secret 直接打印出来」。下面的代码没有任何
-   一行「碰」了 `secret` 的内容，却通过**控制流**把它泄露了出去：
-
-   ```python
-   if secret_bit:        # 分支条件依赖 secret
-       public_out = 1
-   else:
-       public_out = 0
-   # public_out 的取值完全由 secret_bit 决定 → 1 bit 泄露
-   ```
-
-   基于「字符串里是否出现了某个变量」的朴素 grep/污点匹配看不到这种流。
-
-2. **跨函数（cross-function）**。`build_dsn()` 自己可能只是「返回一个字符串」，看起来无害；
-   真正的泄露发生在**调用方**把这个返回值丢进了日志或响应。单函数视角会漏掉端到端的路径。
-
-IFC 插件同时覆盖这两类：隐式流由 LLM 在阅读完整函数体时自然推理，跨函数流由驱动的自底向上
-组合 + 参数化流签名的实例化来串联。
+本文以当前实现为准，重点区分三件事：提示词要求模型报告什么、源码校正器实际能够证明什么、
+检查器最终如何裁决。
 
 ---
 
-## 2. 理论原理
+## 1. 安全属性与抽象
 
-### 2.1 非干涉性（Non-interference, Goguen–Meseguer 1982）
+### 1.1 非干涉与二级格
 
-机密性的形式化定义是**非干涉性**：
+非干涉性的经典表述是：若两次执行的 Low 输入相同，则 Low 攻击者可见的输出也应相同，而不应
+随 High 输入变化。违反这一条件意味着存在可观测的 `High -> Low` 信息流。
 
-> 把输入分成 High（私密）与 Low（公开）两部分。如果**任意两次执行，只要 Low 输入相同，
-> Low 输出就必然相同**（与 High 输入怎么变无关），则该程序对 Low 攻击者满足非干涉性。
+插件采用二级格 `Low < High`，并允许模型把尚不能确定的输入标成 `Unknown`。在依赖求值时，
+`Unknown` 默认按 High 处理；但未知的形式参数会被单独归为调用方相关的条件流，从而产生
+`POLYMORPHIC`，而不是立即产生 `LEAK`。
 
-直觉上：一个只能观测 Low 的攻击者，无法通过观测 Low 输出反推出任何 High 输入的信息。
-**违反非干涉性 = 存在一条 `High → Low` 流 = 泄露。**
+每个函数的核心抽象是参数化流签名：
 
-### 2.2 二级安全格（High/Low lattice）
+```text
+输出通道 <- 输入源集合
+```
 
-第一期使用最小的二级格：`Low < High`，join 规则 `join(High, 任意) = High`。这是
-Bell–LaPadula「no read up / no write down」机密性方向的格。代码里见
-`src/ifc_reasoner.py`：
+例如 `identity(x)` 的 `return` 依赖 `param:x`。依赖集合记录来源，不把输出直接写死为 High 或
+Low，因此调用点可以用实参标签实例化被调用函数。这个抽象近似非干涉所关心的依赖关系，但 LLM
+可能漏流或误标，不能据此声称分析是 sound 的。
+
+### 1.2 显式流与隐式流
+
+`src/ifc_prompts.py` 要求模型把数据依赖和控制依赖都写入 `deps`。例如：
 
 ```python
-HIGH = "High"
-LOW  = "Low"
-UNKNOWN = "Unknown"   # 第三个「待定」标签，确定性检查器把它 fail-closed 成 High
+if secret_bit:
+    public_out = 1
+else:
+    public_out = 0
 ```
 
-`UNKNOWN` 不是格里的真实元素，而是「LLM 拿不准这个输入是否敏感」时的标记。
-`_normalize_label()` 在 `IFC_FAIL_CLOSED=True`（默认）下把 `Unknown` 折叠成 `High`——
-**宁可误报，不可漏报**。
+`public_out` 应依赖 `secret_bit`。提示词还覆盖循环、提前返回、异常、`break` 和 `continue` 下的
+控制依赖。这里的隐式流识别由模型完成；确定性校正器没有自行构建 CFG 或 pc-label 栈，因此
+“提示词要求覆盖”不等于“实现保证覆盖”。
 
-### 2.3 关键降维：2-safety hyperproperty → 逐函数参数化依赖分析
+### 1.3 输入与输出事实
 
-非干涉性本质是一个 **2-safety 超属性（hyperproperty）**：它谈的是「两次执行之间的关系」，
-而不是单次执行的性质。传统验证它需要 **self-composition**（把程序和自己的一份拷贝拼起来，
-再交给 SMT 证明），代价很高。
-
-IFC 插件做了一个关键降维：
-
-> 把「Low 输出是否依赖 High 输入」重写成「**每条输出通道依赖哪些输入源**」的依赖分析。
-
-也就是说，每个函数被抽象成一张**参数化流签名（parametric flow signature）**：
-
-```
-输出通道(channel)  ←  它所依赖的输入源集合(deps)
-```
-
-注意 `deps` 列的是**输入源**（`param:x`、`receiver.client_secret`、`global:g`），**不是**
-写死的 High/Low。这就是「参数化」的含义：`identity(x)` 的返回值依赖 `{param:x}`，
-**无论 x 本身是不是机密**。正因如此，跨函数组合才是 sound 的——调用方用**自己实际传入的实
-参标签**去实例化被调用方的签名（assume-guarantee）。依赖分析天然**模块化、可组合**，于是 2-
-safety 被降到了单函数级别，正好嫁接到 FM-Agent 的自底向上调用链上。
-
-### 2.4 隐式流如何被纳入
-
-prompt（`src/ifc_prompts.py:_system_prompt`）显式要求 LLM 把隐式流计入 `deps`：
-
-> 「如果一个值是在某个 `if/loop/early-return/exception` 之下被赋值或被产生的，而那个守卫
-> （guard）依赖某个输入，那么这个值也依赖该输入。`break/continue/return/throw` 在守卫之下
-> 也会污染受影响的通道。」
-
-因为 LLM 一次看到**整个函数体**，嵌套控制流是在它「脑内」整体推理的，FM-Agent 不需要像传
-统数据流分析那样跨基本块维护 pc-label 栈（对 break/continue/异常/提前返回都很难维护正确）。
-
-### 2.5 降密（Declassification）：唯一的逃生口
-
-有些 `High → Low` 流是**有意且语义必需**的，例如口令校验返回一个「匹配/不匹配」的 1-bit、
-发布一个单向哈希。这类流通过 `declass` 字段标注（带 `anchor` 锚点语句 + `reason` 理由）。
-
-关键安全约束：**降密只是「提议」，绝不自动放行**。它仅适用于已明确标为 High 的源，不能用
-Unknown 推测凭空制造降密审查。有效提议产生一个独立的 `DECLASSIFIED` 裁决，
-强制人工复核。这避免了「LLM 既推断标签又自判降密，把任何泄露都洗成『有意降密』」的循环
-论证（见 `../ifc_design.md` §5 风险 1）。
-
-### 2.6 五种裁决（verdict）
-
-`classify()`（`src/ifc_reasoner.py`）在确定性地评估每条 Low-observable 通道后给出：
-
-| verdict | 含义 |
-|---|---|
-| `LEAK` | 某条 Low-observable 通道因**真正的 High 源**（命名/策略判定为 High 的参数、High 全局、`const:High`，或未声明的全局/接收者）变成了 High，且未被降密。**确认泄露**。 |
-| `DECLASSIFIED` | 该 `High → Low` 流被带锚点的降密提议覆盖。**待人工复核**，不是放行。 |
-| `POLYMORPHIC` | 某条 Low-observable 通道变 High **仅仅因为一个 `Unknown` 标签的参数（`param:*`）**。是否真泄露取决于调用方实际传入什么，单看本函数无法判定——留待调用点用 `instantiate_callee()` 解析。`identity(x)` 这类纯透传不会被误报成 LEAK，正是靠它。 |
-| `SECURE` | 所有 Low-observable 通道都是 Low。 |
-| `ERROR` | 没有有效流签名（fail-closed：**绝不静默判成 SECURE**）。 |
-
----
-
-## 3. 插件运行流程（与 FM-Agent / SPI 集成）
-
-### 3.1 生命周期总览
-
-通用驱动 `src/plugins/driver.py:run_plugin()` 是理论无关的，它对 IFC 插件
-（`src/plugins/ifc.py:IfcPlugin`）的调用顺序如下：
-
-```
-Stage 1  扫描 + 抽取函数              callgraph.load_function_units
-Stage 2  构建调用图                   callgraph.build_program_index
-         自底向上排序（callee 先于 caller）   callgraph.order_bottom_up
-Stage 3  对每个函数（自底向上）：
-           a. 收集已分析 callee 的摘要   plugin.summarize_for_caller
-           b. build_abstraction_prompt → LLM（带重试/fail-closed）
-           c. parse_abstraction_response → FactEnvelope
-           d. compose_calls            实例化 callee 签名于各调用点
-Stage 4  对每个函数：
-           plugin.check(...)          → 确定性 classify() → Verdict
-           plugin.render_result(...)  → 写 <func>.json
-         plugin.render_summary(...)   → summary.json
-```
-
-IFC 的 `metadata` 声明 `needs_entrypoint=True`（检查器把入口函数的返回值当外部出口），
-`requires_top_down_context=False`（IFC 是纯自底向上，不需要自顶向下的上下文 worklist）。
-支持语言：python / javascript / typescript / go / java / c / cpp / rust / cuda / arkts。
-
-### 3.2 LLM 抽象步：参数化流签名 [FLOW_JSON]
-
-`build_abstraction_prompt()` 给函数源码逐行编号，注入已分析 callee 的摘要，调用
-`ifc_prompts._system_prompt / _user_prompt`。LLM 必须返回**唯一一个**用
-`[FLOW_JSON] ... [/FLOW_JSON]` 包裹的 JSON 对象。`_extract_flow_json()` 负责抽取；抽取
-失败时驱动追加一轮「格式纠正」对话并重试，最多 `MAX_IFC_ITER`（默认 5）次，仍失败则
-`make_error_facts()` 产出 `status="error"` 的 fail-closed facts。
-
-JSON 的 schema（来自 `ifc_prompts._user_prompt`）：
+模型返回一个 `[FLOW_JSON] ... [/FLOW_JSON]` 对象，主要结构如下：
 
 ```json
 {
   "inputs": {
     "param:<name>": "High|Low|Unknown",
-    "global:<name>": "...",
-    "receiver.<attr>": "..."
+    "global:<name>": "High|Low|Unknown",
+    "receiver.<attr>": "High|Low|Unknown"
   },
   "outputs": {
     "<channel>": {
-      "deps": ["param:<name>", "receiver.<attr>", "global:<g>"],
+      "deps": ["param:<name>", "receiver.<attr>", "global:<name>"],
       "const": null,
       "sink_channel": "return|exception_control|exception_message|error_detail|log|stdout|network|database|shared_state|parameter|unknown",
       "observability": "external|caller|internal",
-      "declass": [{"anchor": "<exact stmt>", "reason": "<why intended>"}]
+      "declass": [{"anchor": "<statement>", "reason": "<reason>"}]
     }
   },
-  "notes": "<one-line summary of the dominant flow>"
+  "notes": "<summary>"
 }
 ```
 
-输出通道（channel）的取值约定（`_CHANNELS_DOC`）：
+提示词要求接收者属性和命名容器字段分别建模，例如 `self.client_secret` 对应
+`receiver.client_secret`，`request["password"]` 对应 `param:request.password`。这能减少“一个敏感
+字段污染整个对象”的误报，但字段拆分仍依赖模型，确定性代码只对下文列出的少量 Python 模式做
+补充。
 
-- `return` — 返回值的依赖
-- `exception` — **是否**抛异常的依赖（仅当异常是基于某个源的**值**抛出时才记，如
-  `if secret < 0: raise`；纯类型/运行时错误不算值依赖流）
-- `exception:message` — 交给 caller/用户的异常文本或细节依赖
-- `error:<destination>` — 写入 framework message、HTTP/API/UI/CLI 错误结果的细节依赖
-- `param:<name>.*` — 写进某个可变参数/接收者属性的依赖
-- `global:<name>` — 写进某个全局的依赖
-- `io:<sink>` — 副作用（log/stdout/network/db）的依赖；是否公开由 `observability` 独立决定
-- `termination` — 是否终止的依赖。**仅为完整性记录，不计入泄露裁决**
-  （termination-insensitive 非干涉性）
+---
 
-prompt 里有三条「load-bearing」的拆分规则，直接决定精度：
+## 2. 可观测性与裁决
 
-1. **接收者属性逐属性**：`self.client_secret` → `receiver.client_secret`（High），
-   `self.base_url` → `receiver.base_url`（Low）。**绝不**塌成一个 `receiver` 整体，
-   也不让一个机密属性污染整个 `self`。
-2. **容器字段逐字段**：`request.get("password")` → `param:request.password`（High），
-   即便 `request` 本身是 Low。Low 容器不掩盖敏感字段，敏感字段也不污染整个容器。
-3. **标签从命名推断**：`password/secret/token/key/hash/ssn/credential` → High；
-   `id/name/url/host/port/path/timeout/count/index/flag` → Low；拿不准 → `Unknown`。
+### 2.1 `observability` 的操作语义
 
-每个输出还必须声明两个正交字段：`sink_channel` 描述出口类型，`observability` 描述该出口的
-信任边界。`external` 表示未授权 actor、API/UI/CLI 客户端、stdout 消费者或公网 peer 可见；
-`caller` 表示仅传播给直接调用者，直到入口边界才成为公开出口；`internal` 表示可信运维日志或
-内部状态，本身不构成公开泄露。同一个 `except` 中的通用外部错误与详细内部日志必须建成两条
-独立输出：内部日志的 High 依赖不能污染已经脱敏的外部错误；反过来，`catch` 本身也不会清除
-随后复制到外部 message 的异常细节。
+`sink_channel` 描述出口种类，`observability` 描述信任边界；真正决定是否检查的是
+`src/ifc_reasoner.py` 的 `_is_low_observable_for()`：
 
-`src/ifc_validation.py` 对 LLM JSON 做 fail-closed 结构校验并补充 Python 源码可确定的事实：
-异常细节是否进入客户端消息或抛出的异常文本，以及通用 options 容器是否在正常 redaction
-注册之后把嵌套敏感字段合并到已有模型或本地源码证明的日志/stdout 出口；框架对象把自己的
-参数状态经 `exit_json` 序列化到 stdout 也属于源码可确定的外部出口。单独的 merge 或 logger
-语法不能凭空创建出口、流或 trust boundary；固定代码在合并前 fail-closed 拒绝、删除或用
-常量覆盖敏感字段时，不再生成该 High 字段流。保护状态按每次 merge 和每个敏感字段分别计算，
-因此只清除已确定处理的字段，仍未处理的敏感字段继续流向外部出口。无依赖的常量
-`exception_control` 表示每次运行都相同的异常发生事实，不携带 High 信息，源码规范化为 Low。
+| `observability` | 实际语义 |
+|---|---|
+| `external` | 不论函数是否入口，均作为 Low 可观测出口。 |
+| `internal` | 不作为公开出口，单独不会触发泄露。 |
+| `caller` | 通常只在入口函数处成为外部出口；参数写入另有目标标签规则。 |
 
-### 3.3 解析与组合
+更具体地说：
 
-`parse_abstraction_response()` 把 JSON 包进 `FactEnvelope(payload=signature)`。
+- `return`、`exception`、`exception:*` 的 caller 可见事实只在入口处检查；内部 helper 的返回或抛出
+  首先是传播事实。
+- `param:<name>.*` 写入只有在目标参数为 Low 时才是 Low 出口；目标为 High 时不是泄露，目标未知时
+  由 `IFC_FAIL_CLOSED` 决定，默认按可观测处理。
+- 其他 `caller` 通道只在入口处检查。
+- `termination` 明确不参与裁决；当前属性是 termination-insensitive non-interference，不覆盖时间、
+  终止、缓存等隐蔽信道。
+- 缺少新字段的旧签名会调用 `infer_sink_channel()` 和 `infer_observability()`。旧 `return`/异常默认
+  为 `caller`，参数写入默认 `caller`，其他旧副作用默认 `external`，而不是按名字猜成可信内部日志。
 
-`compose_calls()` 是 IFC 的组合算子。它按调用顺序遍历每个已解析的 callee，用
-`_arg_label()` 把调用点的**实参表达式**翻译成 caller 上下文中的标签：
+插件还施加两个 Python 特例。普通 Python 方法即使被调用图列为入口，`check()` 也会把其入口标志
+关闭；另一方面，如果某方法的所有调用方都存在同名多候选分派，caller 可见的异常控制/异常消息会
+保守提升为 external。二者都是当前调用图近似的补丁，不是通用对象分派语义。
 
-- 字符串/数字字面量 → `Low`
-- 裸的 caller 参数名 → 该参数在 caller 里的标签
-- 其它（复杂表达式）→ `Unknown`（保守）
+`src/ifc_validation.py` 会把本函数中经常规 ORM session 执行的数据库持久化输出改为 `internal`。
+它不会因为看见 logger 调用就自行创建日志出口，也不会自行判定日志配置究竟公开还是内部；日志
+出口及其可观测性仍主要来自模型事实。
 
-然后调用 `instantiate_callee(callee_sig, binding)`：把 callee 形参源替换成实参标签，
-逐通道求值，得到「该调用点观测到的」callee 输出标签。结果记到 caller payload 的
-`_callee_resolutions` 里。
+### 2.2 通道标签与五种裁决
 
-`instantiate_callee()` 保留 callee 的 `sink_channel` 与 `observability`。除
-`_callee_resolutions` 审计记录外，`compose_calls()` 还把 callee 的 `external` 和 `caller`
-sink 实例化到 caller 的确定性输出集合，因此 caller 不会因为自己的 LLM 签名漏写 callee
-side effect 而被误判安全。`internal` sink 不会被提升成 external；同名候选不明确时保留全部
-候选义务，`caller` sink 仍只在最终入口边界成为公开出口。
+检查器对每个可观测通道求依赖标签并区分：
 
-### 3.4 确定性检查器与信任边界
+- `genuine_high`：`const:High`、明确标为 High 的依赖，或未声明/未知的非参数来源。
+- `conditional`：只由未知或未声明的 `param:*` 造成，需调用方实例化。
+- `low`：没有上述依赖。
 
-`check()` 在 `status=="error"` 或 payload 为空时直接判 `ERROR`（fail-closed）；否则调用
-`classify(payload, is_entrypoint=context.is_entrypoint)`。
+函数级裁决优先级为：
 
-信任边界由 `_is_low_observable_for()` 决定一条通道是否真的到达**外部** Low 出口：
-
-- `observability=external` — 无论函数是否入口都是真正外部出口。
-- `observability=internal` — 可信内部日志/状态不是公开出口，不能单独触发泄露。
-- `observability=caller` — 仅在函数到达入口边界时成为外部出口。
-- 未带新字段的旧 `io:*` / `global:*` — 为兼容和 fail-closed 仍按外部出口处理。
-- `param:<name>.*`（写进参数）— 仅当目标参数是 **Low** 时才算外部出口（写进 High 参数没问题）。
-- `return` / `exception` — **仅当函数是入口（`is_entrypoint=True`）**才算外部出口；此时返回值
-  跨过信任边界流向外部世界（如 HTTP handler 的响应）。若函数有内部调用方，返回值只是
-  「传播」，由调用方通过 `instantiate_callee` 决定，**不在本函数独立计为泄露**——这消除了
-  「把 secret 返回给自己可信调用方」这一类主导性误报。
-- `termination` — out of scope。
-
-公开 error detail 映射为 CWE-209，公开日志泄露映射为 CWE-532，其余敏感信息暴露映射为
-CWE-200；跨 caller 边界暴露详细自定义异常时使用更宽泛的 CWE-200。
-
-随后 `_classify_channel()` 区分 `genuine_high`（命名 High 参数 / High 全局 / `const:High` /
-未声明的非参数源）、`conditional`（`Unknown` 的参数源）与 `low`，最终聚合成 verdict：
-有 genuine 违规 → `LEAK`；否则有降密 → `DECLASSIFIED`；否则有 conditional → `POLYMORPHIC`；
-否则 `SECURE`。`render_gaps()` 为 `LEAK/DECLASSIFIED/POLYMORPHIC` 产出
-`{high_sources, unknown_params, leaking_channel, flow_deps, declass_note, notes}`。
-
-### 3.5 端到端实例
-
-回到 §1 的 DSN 例子。被调用方 `build_dsn` 的 LLM 流签名：
-
-```json
-{
-  "inputs": {
-    "receiver.user": "Low",
-    "receiver.db_password": "High",
-    "receiver.host": "Low",
-    "receiver.db": "Low"
-  },
-  "outputs": {
-    "return": {
-      "deps": ["receiver.user", "receiver.db_password", "receiver.host", "receiver.db"],
-      "const": null
-    }
-  },
-  "notes": "returns a DSN string embedding db_password"
-}
+```text
+LEAK > DECLASSIFIED > POLYMORPHIC > SECURE
 ```
 
-- 若 `build_dsn` **是入口**：`return` 是外部出口；`deps` 含 `receiver.db_password`（非参数、
-  High）→ `genuine_high` → **LEAK**。
-- 若 `build_dsn` **有内部调用方**：`return` 不是独立出口，`classify` 跳过该通道 → 本函数
-  孤立看是 `SECURE`，泄露留待调用方处理。
+无有效签名则由插件返回 `ERROR`。各裁决含义如下：
 
-调用方 `handle_debug_db`：
+| 裁决 | 含义 |
+|---|---|
+| `LEAK` | 至少一个外部可观测通道有未降密的 genuine High 流。 |
+| `DECLASSIFIED` | 没有更高优先级泄露，且至少一个已确认 High 的可观测流带降密提议。 |
+| `POLYMORPHIC` | 没有前两类结果，但至少一个出口只依赖调用方尚未确定的参数。 |
+| `SECURE` | 在当前签名、源码校正和入口判断下未发现上述出口。 |
+| `ERROR` | 签名缺失或结构无效；不能当作安全。 |
+
+错误详情默认映射到 CWE-209，日志泄露映射到 CWE-532，其他信息暴露映射到 CWE-200。签名可以在
+这三个值中声明 `cwe`；其他声明不会覆盖默认映射。
+
+### 2.3 错误内容与错误控制
+
+异常是否发生和异常携带什么文本是不同通道：
+
+- `exception` / `exception_control` 表示异常发生事实。
+- `exception:message` / `exception_message` 表示向 caller 传播的异常详情。
+- `error:<destination>` / `error_detail` 表示外部 message、response 等错误详情。
+
+Python 源码校正器会跟踪 caught exception、`sys.exc_info()` 及其简单赋值传播，重建外部 message 和
+抛出异常文本的依赖。详细内部日志与固定外部错误会保持两个出口：内部日志不会污染固定外部文本，
+但 catch 本身也不会清除随后复制到外部文本的异常详情。无依赖的 `const:High` 异常控制会被归一为
+Low，因为无条件发生的异常在每次执行中相同。
+
+---
+
+## 3. Python 源码校正与 fallback
+
+### 3.1 `validate_and_enrich()` 的边界
+
+每次解析模型响应以及最终 `check()` 前，插件都会运行 `validate_and_enrich()`。它会：
+
+- 校验 inputs、outputs、标签、sink、observability 和基础字段形状；非法值使签名无效。
+- 丢弃模型伪造的 `callee:*` 输出和以下划线开头的内部字段；只有组合阶段生成的事实可在复核时保留。
+- 对可解析的 Python 源码做有限校正，包括固定返回、异常详情、常规 Low 字段、session 持久化和嵌套
+  敏感字段 merge。
+
+这些源码规则不是通用符号执行。非 Python 源码或 Python AST 解析失败时，仅保留结构校验和模型
+事实，不会获得这些校正。
+
+### 3.2 source-only fallback
+
+模型重试耗尽时，`IfcPlugin.make_error_facts()` 会调用 `source_only_fallback()`。fallback 不是“把
+未知全部判 High”，也不是完整 IFC 分析；它只在 Python AST 能独立结算至少一个输出事实时返回
+`status="ok"`，当前来源包括：
+
+- 下节描述的嵌套敏感 merge 到本地可确认 stdout/序列化出口；
+- 可从异常/错误文本赋值或抛出语句确定的错误详情；
+- 全部 return 都是常量或 `None` 时的 Low return。
+- 函数没有显式 `return` 时，Python 的隐式 `None` 也建立 Low return；模型不能为该 return
+  保留参数依赖。
+
+若源码没有产生任何这类输出，例如普通的 `return value + 1`，fallback 返回 `None`，插件保留
+`status="error"` 并最终裁决 `ERROR`。因此 fallback 的 `SECURE` 只表示源码规则已经结算了它所创建
+的那些通道，不表示其他潜在流已被证明不存在。
+
+### 3.3 nested sensitive merge
+
+源码校正器专门处理一类“通用 options 容器绕过正常敏感字段注册/脱敏”的 Python 模式。它识别的
+merge 很窄：
+
+- `target.update(target.<generic-container>)`，其中嵌套字段名类似 `params`、`options`、`extra`、
+  `config`、`settings`、`kwargs`；
+- 遍历这类容器的 `.items()` 并写入 subscript 目标。
+
+merge 本身不创建泄露。校正器只有在以下证据之一存在时才把未解决的敏感来源加入出口：
+
+- 模型已有一个非 internal 输出，其依赖确实跟踪该 merge 的源或目标；
+- AST 在 merge 之后看见 `print`/`pprint` 输出目标，或看见同一接收者通过 `exit_json` 序列化其合并后
+  的状态。
+
+若模型没有给出具体敏感字段，校正器可引入形如 `param:options.extra.<sensitive>` 的合成 High 源。
+若模型给出了多个具体 High 字段，则保护按每次 merge、每个字段分别计算：只删除已被证明阻断的
+字段，其他字段仍流向已有出口。
+
+当前认可的阻断也很窄：敏感字符串字段的 membership 检查必须支配 merge，命中路径必须终止；或
+字段必须在 merge 前被 `pop`、`del`、赋常量覆盖。merge 后处理、只在条件分支中处理、处理另一个
+字段，或赋一个非常量“sanitize”结果都不会被当成已阻断。该规则不证明任意 redaction helper 的
+语义。
+
+Python source validation 还会统一校验模型的 `receiver.*` facts：只有 AST 中存在精确的
+`self.<field>` 或 `cls.<field>` receiver-rooted 引用时，该 input/dependency 才保留。模型把其他对象的
+同名属性、本地同名变量或完全不存在的字段写成 receiver fact 时，不论标签是 High、Low、Unknown
+还是漏声明 input，都会从 inputs 和 outputs 中删除。源码真实读取的 receiver 字段仍保留并按
+fail-closed 处理；该规则不把 callee 的 receiver 状态自动绑定到 caller 对象。
+
+---
+
+## 4. 跨函数组合及其限制
+
+驱动自底向上分析函数。`IfcPlugin.compose_calls()` 对已解析 callee 调用
+`instantiate_callee()`，把 callee 形参源替换为调用点标签：
+
+- 字符串和数值字面量是 Low；
+- 裸 caller 参数名使用 caller 签名中的原始标签；
+- 其他表达式是 Unknown；缺失绑定再回退到 callee 自己的输入标签。
+
+实例化结果保留 `sink_channel`、`observability` 和一个降密布尔值。非 internal 的 callee 输出会被
+折叠为 caller 中的合成 `callee:*` 输出；High/Unknown 的区别在此会折叠成 `const:High`，因此这是
+保守义务传播，不是完整依赖替换。
+
+当前组合有以下重要限制：
+
+- Python 中会用 AST 确认函数体确有该调用；函数声明或注释中的同名文本不会产生组合。其他语言只
+  使用已有调用图结果，没有同等 AST 复核。
+- 实参标签器只精确处理字面量和裸参数。属性、索引、运算和调用表达式均为 Unknown。
+- callee 的 global/receiver 来源不会绑定到 caller 的具体对象状态。
+- internal callee 输出不会提升为 external。
+- Python 的 caller-visible `return` 只有在 caller 直接 `return callee(...)` 时才确定性提升；若先
+  赋值再使用，组合器不传播该 return，需依赖 caller 的 LLM 签名描述后续流。
+- 同名多候选会保留每个候选的合成义务并加候选后缀，但候选解析仍是基于名称的近似。
+- callee facts 无效时该调用被跳过，不会合成一个“未知 callee 泄露”通道。
+
+因此，“自底向上组合”不应被解释为任意表达式、别名、动态分派和对象状态上的完备跨过程 IFC。
+
+### 一个精确的组合例子
 
 ```python
-def handle_debug_db(client):
-    dsn = client.build_dsn()
-    logger.debug(dsn)        # io:log 出口
+def emit(value):
+    print(value)
+
+def caller(secret):
+    emit(secret)
 ```
 
-驱动在分析 `handle_debug_db` 时，prompt 里已带入 callee 摘要
-`build_dsn: return<-{receiver.user,receiver.db_password,receiver.host,receiver.db}`。
-LLM 因此知道 `dsn` 携带 `receiver.db_password`，产出：
+若 callee 签名把 `io:stdout` 标成 `external` 且依赖 `param:value`，caller 签名把
+`param:secret` 标成 High，裸参数绑定会把 callee stdout 实例化为 High，并在 caller 中形成
+`callee:emit:io:stdout` 泄露。
 
-```json
-{
-  "inputs": {},
-  "outputs": {
-    "io:log": {"deps": ["receiver.db_password"], "const": null}
-  },
-  "notes": "logs a DSN that embeds the DB password"
-}
+反之，下面的 return 不会由组合器单独提升：
+
+```python
+value = load_secret()
+return False
 ```
 
-`io:log` 永远是外部出口，`receiver.db_password` 是 genuine High → `classify()` 判
-**LEAK**，`render_gaps` 给出 `leaking_channel="io:log"`、`high_sources=["receiver.db_password"]`。
-同时 `compose_calls` 在 `_callee_resolutions` 记下：`build_dsn` 在此调用点的 `return` 解析为
-`{"label": "High"}`，作为平行佐证。
+因为 callee return 没有被 caller 直接返回；如果 `value` 随后进入日志，必须由 caller 自身签名报告
+该依赖。
 
 ---
 
-## 4. 我们的方案 vs 传统非 LLM 的 IFC
+## 5. 降密（Declassification）
 
-### 传统方案
+降密用于表达有意释放，例如口令比较的一位结果。提示词要求每个提议带精确 `anchor` 和 `reason`，
+并禁止用它掩盖完整秘密释放。
 
-- **类型系统 IFC（JFlow / Jif、FlowCaml）**：把安全标签做进类型系统，编译期强制非干涉性。
-  需要**源码标注**（给每个变量/字段写 label）+ 一个**专用编译器**。
-- **self-composition + SMT**：把程序与拷贝拼接，用 SMT 求解器证明 2-safety。精确但重，难
-  扩展到大型真实代码。
-- **静态污点分析（taint engines）**：source→sink 可达性。工程上可用，但通常**漏隐式流**，
-  且 source/sink 规则要人工配置。
+确定性检查器的实际规则更简单，必须准确理解：
 
-### 我们的 LLM 方案的优点
+- 非空 `declass` 列表即视为存在提议；结构校验只确认它是列表，当前不验证每个 anchor/reason 的内容
+  或源码支配关系。
+- 提议只有在通道含 `const:High` 或某个原始标签明确为 High 的依赖时，才进入 `DECLASSIFIED`。
+- 只有 Unknown/未声明来源而没有显式 High 的提议不会制造降密审查；当前实现会跳过该通道。测试中
+  Unknown receiver 加降密提议因此得到 `SECURE`，而同一 receiver 明确为 High 时得到
+  `DECLASSIFIED`。
+- 组合只传播“callee 存在降密”这一布尔事实，并生成通用的 callee 降密说明，不保留原提议的完整
+  anchor/reason。
+- 若同一函数另有未降密 genuine High 泄露，函数级结果仍是 `LEAK`。
 
-- **零源码标注**：不需要给代码加 label，不需要专用编译器。标签由 LLM 从**命名/类型/领域上
-  下文**推断（`client_secret`→High，`base_url`→Low）。
-- **天然捕捉隐式流**：LLM 整体阅读函数体，控制流依赖在「脑内」就被算进 `deps`，无需维护
-  pc-label 栈。
-- **直接作用于未改动的真实代码**，且**跨多种语言**（Python/JS/TS/Go/Java/C/C++/Rust/CUDA/ArkTS）。
-- **模块化、可组合**：参数化流签名 + assume-guarantee 让跨函数追踪自底向上自动成立。
-
-### 我们的方案的缺点（务必诚实）
-
-- **不 sound（不健全）**：LLM 可能给错标签或漏掉一条流。这是一个 **bug-finder（找 bug 的
-  工具），不是 verifier（证明器）**——「没报 LEAK」**不等于**「证明安全」。
-- **依赖模型能力**：弱模型会幻觉、误标，结论可信度随之下降（见 README 的模型选择建议）。
-- **格太粗**：只有 High/Low 两级，无法表达多级机密或区室化（compartment）策略。
-- **复合字段分解仍有缺口**：尽管 prompt 强制「逐属性/逐字段」拆分，真实世界里仍会漏。一个
-  实测的 `requests` 库 CVE 漏报就是：凭据被嵌进了一个 **dict 里某个 proxy URL** 中，整个
-  dict/URL 被当成了 Low，未能把内嵌的 credential 拆成独立 High 源（对应函数层级里的
-  `sessions-py/rebuild_proxies.py` 一类）。深层嵌套结构里的机密字段是当前最薄弱的一环。
-- **确定性兜底是「保守」而非「正确」**：`Unknown` 一律 fail-closed 成 High，会带来误报
-  （这正是 `POLYMORPHIC` 这一档存在的原因——把「调用方才能定」的情况隔离出来）。
+`DECLASSIFIED` 是人工复核信号，不是自动安全证明。尤其由于 anchor 尚未被确定性验证，复核者必须
+确认释放量、目的、接收者和源码位置确实符合策略。
 
 ---
 
-## 5. 局限与适用场景
+## 6. 适用范围与局限
 
-**第一期只保证 termination-insensitive non-interference。** 明确 out-of-scope 的隐蔽信道：
-时间信道、终止信道、缓存信道；异常信道仅在「基于值抛出」时才计入。不要误以为它能挡住所有
-泄露。
+适合使用 IFC 插件的场景包括：凭据进入日志/stdout/响应、异常详情外泄、嵌套 options 绕过脱敏，
+以及简单参数绑定下的跨函数泄露候选。
 
-**适合用它**：在大型、未标注、多语言的真实代码库里**快速找出**机密性泄露的候选点（凭据进
-日志/响应/DSN、隐式流泄露、跨函数泄露路径），尤其作为人工 review 前的高召回筛子。
+使用时应保留以下边界：
 
-**不要用它**：当作泄露不存在的**证明**，或作为合规性/认证级别的安全保证。`SECURE` 仅代表
-「在 LLM 推断的标签与依赖下未发现违规」，`DECLASSIFIED` 永远需要人工复核，`POLYMORPHIC`
-需要结合调用点判断，`ERROR` 表示分析未能完成（fail-closed，不可当安全）。
+- `SECURE` 只表示当前模型事实和有限源码校正下未发现违规，不是非干涉证明。
+- 隐式流、深层字段和复杂表达式主要依赖模型，可能漏报。
+- 二级格不能表达多级机密、区室和主体授权策略。
+- termination、timing、cache 等隐蔽信道不在范围内。
+- Python 有额外 AST 校正；列为支持语言不意味着其他语言享有相同源码语义。
+- `DECLASSIFIED` 必须人工复核，`POLYMORPHIC` 需要调用点信息，`ERROR` 不能按安全处理。
