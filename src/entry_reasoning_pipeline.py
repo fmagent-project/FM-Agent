@@ -253,6 +253,7 @@ def run_entry_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
+    plugin_config=None,
     all_bugs=False,
 ):
     """Run the entry-point-scoped reasoning pipeline.
@@ -316,6 +317,7 @@ def run_entry_pipeline(
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=only_spec,
+            plugin_config=plugin_config,
             all_bugs=all_bugs,
         )
     finally:
@@ -465,6 +467,7 @@ def _run_entry_pipeline_inner(
     one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
+    plugin_config=None,
     all_bugs=False,
 ):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
@@ -513,6 +516,7 @@ def _run_entry_pipeline_inner(
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=only_spec,
+            plugin_config=plugin_config,
             all_bugs=all_bugs,
         )
     finally:

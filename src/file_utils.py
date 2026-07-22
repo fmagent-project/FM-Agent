@@ -285,6 +285,23 @@ def _json_file_is_valid(path):
         return False
 
 
+def load_phases(work_dir):
+    """Load and validate phases.json from work_dir.
+
+    Returns the parsed phases data dict.
+    Raises RuntimeError with a clear message when phases.json is missing or
+    invalid JSON, so every downstream stage gets a consistent failure.
+    """
+    phases_path = os.path.join(work_dir, "phases.json")
+    if not _json_file_is_valid(phases_path):
+        raise RuntimeError(
+            "fm_agent/phases.json is missing or invalid. "
+            "Please re-run the generate_phase_plan stage to produce a valid phases.json."
+        )
+    with open(phases_path, "r") as f:
+        return json.load(f)
+
+
 def _get_phase_files(phases_data, phase_num, input_dir):
     """Return relative paths of extracted function files for a given phase."""
     phase = next(p for p in phases_data["phases"] if p["phase"] == phase_num)
