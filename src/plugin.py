@@ -1,55 +1,91 @@
-"""FM-Agent plugin loading, validation, and execution."""
+"""FM-Agent plugin loading and Python hook validation."""
 
+import importlib.util
+import inspect
 import json
-import os
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from types import ModuleType
+from typing import Callable, Dict, List, Optional, get_type_hints
 
 
 @dataclass
 class PluginStageConfig:
-    """Configuration for a single pipeline stage modification."""
+    """Configuration and resolved Python hooks for one pipeline stage."""
 
     type: str = ""  # "pass", "replace", or "modify"
-    replace_cmd: Optional[str] = None
-    input_md: Optional[str] = None  # relative to plugin root
-    output_process: Optional[str] = None
+    replace_function: Optional[str] = None
+    input_function: Optional[str] = None
+    output_function: Optional[str] = None
+    replace_hook: Optional[Callable] = field(default=None, repr=False)
+    input_hook: Optional[Callable] = field(default=None, repr=False)
+    output_hook: Optional[Callable] = field(default=None, repr=False)
 
     @staticmethod
     def from_dict(data: dict) -> "PluginStageConfig":
         return PluginStageConfig(
             type=data.get("type", ""),
-            replace_cmd=data.get("replace_cmd"),
-            input_md=data.get("input_md"),
-            output_process=data.get("output_process"),
+            replace_function=data.get("replace_function"),
+            input_function=data.get("input_function"),
+            output_function=data.get("output_function"),
         )
 
     def validated(self) -> List[str]:
-        """Return a list of validation error strings (empty = valid)."""
+        """Return configuration errors before resolving Python functions."""
         errors = []
         if self.type not in ("pass", "replace", "modify"):
             errors.append(
                 "stage type must be 'pass', 'replace', or 'modify', "
                 f"got '{self.type}'"
             )
-        if self.type == "replace" and not self.replace_cmd:
-            errors.append("type=replace requires 'replace_cmd'")
-        if (
-            self.type == "modify"
-            and not self.input_md
-            and not self.output_process
-        ):
-            errors.append(
-                "type=modify requires at least one of 'input_md' or 'output_process'"
-            )
+            return errors
+
+        function_fields = {
+            "replace_function": self.replace_function,
+            "input_function": self.input_function,
+            "output_function": self.output_function,
+        }
+        for field_name, function_name in function_fields.items():
+            if function_name is not None and (
+                not isinstance(function_name, str) or not function_name.strip()
+            ):
+                errors.append(f"'{field_name}' must be a non-empty string")
+
+        if errors:
+            return errors
+
+        if self.type == "pass":
+            declared = [
+                name for name, value in function_fields.items() if value is not None
+            ]
+            if declared:
+                errors.append(
+                    "type=pass cannot declare Python functions: "
+                    + ", ".join(declared)
+                )
+        elif self.type == "replace":
+            if not self.replace_function:
+                errors.append("type=replace requires 'replace_function'")
+            if self.input_function or self.output_function:
+                errors.append(
+                    "type=replace cannot declare "
+                    "'input_function' or 'output_function'"
+                )
+        elif self.type == "modify":
+            if self.replace_function:
+                errors.append("type=modify cannot declare 'replace_function'")
+            if not self.input_function and not self.output_function:
+                errors.append(
+                    "type=modify requires at least one of "
+                    "'input_function' or 'output_function'"
+                )
+
         return errors
 
 
 @dataclass
 class PluginConfig:
-    """Parsed plugin.json with resolved plugin root path."""
+    """Parsed plugin.json with resolved plugin root path and stage hooks."""
 
     name: str
     version: str
@@ -61,52 +97,133 @@ class PluginConfig:
         return self.stages.get(stage_name)
 
 
-def _resolve_command(cmd: str, plugin_root: Path) -> str:
-    """Rewrite relative file paths in *cmd* to absolute paths under *plugin_root*.
+def _load_plugin_module(
+    plugin_dir: Path, plugin_name: str
+) -> Optional[ModuleType]:
+    """Load ``<plugin_dir>/plugin.py``, returning None after a clear error."""
+    module_path = plugin_dir / "plugin.py"
+    if not module_path.is_file():
+        print(f"Invalid plugin '{plugin_name}': plugin.py not found")
+        return None
 
-    Each whitespace-delimited token in *cmd* is checked: if ``plugin_root / token``
-    points to an existing file, the token is replaced with its absolute path.
-    Tokens starting with ``/``, ``$``, or ``-`` are left unchanged.
-    """
-    tokens = cmd.split()
-    resolved = []
-    for token in tokens:
-        if token.startswith("/") or token.startswith("$"):
-            resolved.append(token)
-            continue
-        candidate = plugin_root / token
-        if candidate.is_file():
-            resolved.append(str(candidate))
-        else:
-            resolved.append(token)
-    return " ".join(resolved)
-
-
-def run_plugin_command(
-    cmd: str, plugin_root: Path, proj_dir: str, label: str = ""
-) -> None:
-    """Execute a plugin bash command with ``check=True`` so failure stops the pipeline.
-
-    Relative file paths in *cmd* are resolved under *plugin_root*. The command runs
-    in *proj_dir* with ``FM_AGENT_PLUGIN_ROOT`` set to the plugin root.
-    """
-    resolved = _resolve_command(cmd, plugin_root)
-    env = dict(os.environ, FM_AGENT_PLUGIN_ROOT=str(plugin_root))
-    try:
-        subprocess.run(resolved, shell=True, check=True, cwd=proj_dir, env=env)
-    except subprocess.CalledProcessError as e:
-        label_prefix = f"Plugin {label}: " if label else ""
+    safe_name = "".join(
+        character if character.isalnum() else "_" for character in plugin_name
+    )
+    module_name = f"_fm_agent_plugin_{safe_name}"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
         print(
-            f"[Pipeline] ERROR: {label_prefix}command exited with code {e.returncode}: "
-            f"{resolved}"
+            f"Invalid plugin '{plugin_name}': could not create an import "
+            f"specification for '{module_path}'"
         )
-        raise
+        return None
+
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        print(
+            f"Invalid plugin '{plugin_name}': failed to import plugin.py — {exc}"
+        )
+        return None
+
+    return module
+
+
+def _validate_hook_signature(
+    function: Callable,
+    function_name: str,
+    parameter_types: List[object],
+    return_type: object,
+) -> List[str]:
+    """Validate positional parameters and resolved type annotations."""
+    signature = inspect.signature(function)
+    parameters = list(signature.parameters.values())
+    if len(parameters) != len(parameter_types):
+        return [
+            f"function '{function_name}' must accept {len(parameter_types)} "
+            f"parameter(s), got {len(parameters)}"
+        ]
+
+    try:
+        type_hints = get_type_hints(function)
+    except Exception as exc:
+        return [
+            f"function '{function_name}' has invalid type annotations: {exc}"
+        ]
+
+    errors = []
+    for parameter, expected_type in zip(parameters, parameter_types):
+        if parameter.kind not in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            errors.append(
+                f"function '{function_name}' parameter '{parameter.name}' "
+                "must be positional"
+            )
+            continue
+
+        actual_type = type_hints.get(parameter.name, inspect.Signature.empty)
+        if actual_type != expected_type:
+            errors.append(
+                f"function '{function_name}' parameter '{parameter.name}' "
+                f"must be annotated as {expected_type}, got {actual_type}"
+            )
+
+    actual_return = type_hints.get("return", inspect.Signature.empty)
+    if actual_return != return_type:
+        errors.append(
+            f"function '{function_name}' must return {return_type}, "
+            f"got {actual_return}"
+        )
+
+    return errors
+
+
+def _bind_stage_hooks(
+    stage: PluginStageConfig, module: ModuleType
+) -> List[str]:
+    """Resolve JSON function names and validate their interfaces."""
+    errors = []
+    hook_specs = (
+        ("replace_function", "replace_hook", [list[str], str], list[str]),
+        ("input_function", "input_hook", [str], type(None)),
+        ("output_function", "output_hook", [str], type(None)),
+    )
+
+    for function_field, hook_field, parameter_types, return_type in hook_specs:
+        function_name = getattr(stage, function_field)
+        if function_name is None:
+            continue
+
+        function = getattr(module, function_name, None)
+        if function is None:
+            errors.append(
+                f"function '{function_name}' declared by '{function_field}' "
+                "is missing from plugin.py"
+            )
+            continue
+        if not callable(function):
+            errors.append(
+                f"'{function_name}' declared by '{function_field}' is not callable"
+            )
+            continue
+
+        signature_errors = _validate_hook_signature(
+            function, function_name, parameter_types, return_type
+        )
+        errors.extend(signature_errors)
+        if not signature_errors:
+            setattr(stage, hook_field, function)
+
+    return errors
 
 
 def _validate_plugin_json_content(
-    plugin_dir: Path, name: str, data: dict
+    plugin_dir: Path, name: str, data: dict, module: ModuleType
 ) -> Optional[PluginConfig]:
-    """Validate the content of a parsed plugin.json; returns PluginConfig or None."""
+    """Validate parsed plugin.json and bind its declared Python functions."""
     plugin_name = data.get("name", "")
     if plugin_name != name:
         print(
@@ -132,22 +249,17 @@ def _validate_plugin_json_content(
                 "must be a JSON object"
             )
             return None
+
         stage = PluginStageConfig.from_dict(stage_data)
         errors = stage.validated()
+        if not errors:
+            errors.extend(_bind_stage_hooks(stage, module))
         if errors:
-            for err in errors:
+            for error in errors:
                 print(
-                    f"Invalid plugin '{name}': stage '{stage_name}' — {err}"
+                    f"Invalid plugin '{name}': stage '{stage_name}' — {error}"
                 )
             return None
-        if stage.type == "modify" and stage.input_md:
-            input_path = plugin_dir / stage.input_md
-            if not input_path.is_file():
-                print(
-                    f"Invalid plugin '{name}': stage '{stage_name}' — "
-                    f"input_md '{stage.input_md}' not found in plugin directory"
-                )
-                return None
         stages[stage_name] = stage
 
     return PluginConfig(
@@ -159,11 +271,7 @@ def _validate_plugin_json_content(
 
 
 def validate_plugin(plugin_dir: Path) -> Optional[PluginConfig]:
-    """Validate a single plugin directory.
-
-    Returns a ``PluginConfig`` if the plugin is valid, otherwise ``None``
-    (after printing validation errors to stdout).
-    """
+    """Validate one plugin directory and resolve its declared Python hooks."""
     name = plugin_dir.name
     plugin_json = plugin_dir / "plugin.json"
     plugin_config_json = plugin_dir / "plugin.config.json"
@@ -182,25 +290,22 @@ def validate_plugin(plugin_dir: Path) -> Optional[PluginConfig]:
         with open(plugin_json, "r") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        print(
-            f"Invalid plugin '{name}': failed to parse plugin.json — {exc}"
-        )
+        print(f"Invalid plugin '{name}': failed to parse plugin.json — {exc}")
         return None
 
     if not isinstance(data, dict):
-        print(
-            f"Invalid plugin '{name}': plugin.json must be a JSON object"
-        )
+        print(f"Invalid plugin '{name}': plugin.json must be a JSON object")
         return None
 
-    return _validate_plugin_json_content(plugin_dir, name, data)
+    module = _load_plugin_module(plugin_dir, name)
+    if module is None:
+        return None
+
+    return _validate_plugin_json_content(plugin_dir, name, data, module)
 
 
 def load_plugins(plugins_dir: Path) -> Dict[str, PluginConfig]:
-    """Scan *plugins_dir* for subdirectories, validate each, return valid plugins.
-
-    Invalid plugins are printed with their error reason and skipped.
-    """
+    """Scan *plugins_dir*, validate each subdirectory, and return valid plugins."""
     if not plugins_dir.is_dir():
         return {}
 
