@@ -152,7 +152,7 @@ FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无�
 ## 快速开始
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
 ```
 
 | 参数 | 描述 |
@@ -166,8 +166,19 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
+| `--plugin NAME` | 为本次运行启用 `plugins/` 目录中的插件。 |
+| `--list-plugin` | 列出 `plugins/` 目录中的有效插件并退出；不需要提供 `proj_dir`。 |
 
 `proj_dir` 必须是一个 git 仓库。
+
+如需在不运行流水线的情况下查看可用插件：
+
+```bash
+uv run python main.py --list-plugin
+```
+
+插件配置、Stage 3 模式和 Python Hook 开发方式请参阅
+[插件开发文档](docs/plugins_zh.md)。
 
 如需在不修改 FM-Agent 内置提示词的情况下提供项目特定领域知识，可传入一个或多个 Markdown 文件：
 
