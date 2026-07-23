@@ -31,8 +31,10 @@ It then:
 - merges the matching provider entry into the detected OpenCode config file
 - previews the target files, requests confirmation, backs up existing files, and writes atomically
 
-The wizard never prints the API key in plain text and never writes it into
-`opencode.json`; the generated provider always references `{env:LLM_API_KEY}`.
+The wizard never prints the API key in plain text. It writes the key to
+`.env` for FM-Agent and to a private local key file in the OpenCode config
+directory for standalone OpenCode; the generated provider references that file
+via `{file:/absolute/path/to/key}`.
 
 `fm-agent.toml` (committed, non-secret):
 
@@ -89,7 +91,9 @@ overrides) is the single source of truth for FM-Agent itself.
 
 The configuration wizard still syncs a matching provider entry into your
 OpenCode config file so standalone `opencode run` usage can stay aligned with
-FM-Agent, but FM-Agent itself does not depend on that file at runtime.
+FM-Agent. That standalone config points `apiKey` at a private key file in the
+same OpenCode config directory, so users do not need to export `LLM_API_KEY`
+manually.
 
 The generated block is equivalent to:
 
@@ -100,7 +104,7 @@ The generated block is equivalent to:
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "https://openrouter.ai/api/v1",
-        "apiKey": "{env:LLM_API_KEY}"
+        "apiKey": "{file:/home/you/.config/opencode/fm-agent-opencode-api-key}"
       },
       "models": { "anthropic/claude-sonnet-4.6": {} }
     }

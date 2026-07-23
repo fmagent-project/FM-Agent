@@ -60,6 +60,7 @@ class WizardPaths:
     env_path: Path
     toml_path: Path
     opencode_config_path: Path
+    opencode_secret_path: Path
 
 
 def adapter_for_api_style(api_style: ApiStyle) -> str:
@@ -93,8 +94,6 @@ def validate_input(config: LLMConfigInput) -> None:
 
 def detect_opencode_config_path(home: Path | None = None) -> Path:
     home = home or Path.home()
-    if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "opencode" / "opencode.json"
     if os.name == "nt":
         appdata = os.environ.get("APPDATA")
         if appdata:
@@ -107,11 +106,13 @@ def detect_opencode_config_path(home: Path | None = None) -> Path:
 
 
 def default_paths(project_root: Path) -> WizardPaths:
+    opencode_config_path = detect_opencode_config_path()
     return WizardPaths(
         project_root=project_root,
         env_path=project_root / ".env",
         toml_path=project_root / "fm-agent.toml",
-        opencode_config_path=detect_opencode_config_path(),
+        opencode_config_path=opencode_config_path,
+        opencode_secret_path=opencode_config_path.with_name("fm-agent-opencode-api-key"),
     )
 
 
@@ -123,12 +124,12 @@ def mask_secret(secret: str) -> str:
     return "*" * (len(secret) - 4) + secret[-4:]
 
 
-def build_provider_entry(config: LLMConfigInput) -> dict:
+def build_provider_entry(config: LLMConfigInput, opencode_secret_path: Path) -> dict:
     return {
         "npm": adapter_for_api_style(config.api_style),
         "options": {
             "baseURL": config.base_url,
-            "apiKey": "{env:LLM_API_KEY}",
+            "apiKey": f"{{file:{opencode_secret_path}}}",
         },
         "models": {
             config.model_id: {},
@@ -237,7 +238,12 @@ def _remove_trailing_commas(text: str) -> str:
     return "".join(out)
 
 
-def merge_opencode_config(existing: dict, config: LLMConfigInput) -> dict:
+def merge_opencode_config(
+    existing: dict,
+    config: LLMConfigInput,
+    *,
+    opencode_secret_path: Path,
+) -> dict:
     merged = deepcopy(existing)
     if "$schema" not in merged:
         merged["$schema"] = SCHEMA_URL
@@ -268,7 +274,7 @@ def merge_opencode_config(existing: dict, config: LLMConfigInput) -> dict:
         )
     options = dict(options)
     options["baseURL"] = config.base_url
-    options["apiKey"] = "{env:LLM_API_KEY}"
+    options["apiKey"] = f"{{file:{opencode_secret_path}}}"
     merged_entry["options"] = options
 
     models = merged_entry.get("models")
@@ -419,6 +425,8 @@ def validate_generated_state(
     config: LLMConfigInput,
     merged_opencode: dict,
     updated_toml: str,
+    *,
+    opencode_secret_path: Path,
 ) -> None:
     validate_input(config)
     json.dumps(merged_opencode)
@@ -438,6 +446,11 @@ def validate_generated_state(
         raise ConfigWizardError(
             "Generated OpenCode adapter does not match the selected API protocol."
         )
+    options = entry.get("options")
+    if not isinstance(options, dict) or options.get("apiKey") != f"{{file:{opencode_secret_path}}}":
+        raise ConfigWizardError(
+            "Generated OpenCode config does not reference the saved key file."
+        )
     models = entry.get("models")
     if not isinstance(models, dict) or config.model_id not in models:
         raise ConfigWizardError(
@@ -445,12 +458,17 @@ def validate_generated_state(
         )
 
 
-def backup_file(path: Path, now: datetime | None = None) -> Path | None:
+def backup_file(
+    path: Path,
+    now: datetime | None = None,
+    *,
+    private: bool = False,
+) -> Path | None:
     if not path.exists():
         return None
     now = now or datetime.now()
     suffix = now.strftime("%Y%m%d-%H%M%S")
-    if path.name == ".env":
+    if private:
         backup_dir = Path(tempfile.gettempdir()) / "fm-agent-config-backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_dir.chmod(0o700)
@@ -502,6 +520,7 @@ def _preview(config: LLMConfigInput, paths: WizardPaths) -> str:
             f"  - {paths.toml_path}",
             f"  - {paths.env_path}",
             f"  - {paths.opencode_config_path}",
+            f"  - {paths.opencode_secret_path}",
         ]
     )
 
@@ -527,17 +546,26 @@ def apply_configuration(
     merged_opencode = merge_opencode_config(
         parse_existing_opencode_config(opencode_text),
         config,
+        opencode_secret_path=paths.opencode_secret_path,
     )
     if validate:
-        validate_generated_state(config, merged_opencode, updated_toml)
+        validate_generated_state(
+            config,
+            merged_opencode,
+            updated_toml,
+            opencode_secret_path=paths.opencode_secret_path,
+        )
 
     backups = [
         (paths.toml_path, backup_file(paths.toml_path)),
-        (paths.env_path, backup_file(paths.env_path)),
+        (paths.env_path, backup_file(paths.env_path, private=True)),
         (paths.opencode_config_path, backup_file(paths.opencode_config_path)),
+        (paths.opencode_secret_path, backup_file(paths.opencode_secret_path, private=True)),
     ]
     atomic_write(paths.toml_path, updated_toml)
     atomic_write(paths.env_path, updated_env)
+    atomic_write(paths.opencode_secret_path, config.api_key + "\n")
+    paths.opencode_secret_path.chmod(0o600)
     atomic_write(
         paths.opencode_config_path,
         json.dumps(merged_opencode, indent=2, ensure_ascii=False) + "\n",
