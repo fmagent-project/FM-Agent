@@ -198,7 +198,7 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 
 默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
 
-使用 `--only-spec` 可以在生成行为规约后即停止，跳过推理与 Bug 验证阶段。它会为每个函数生成 `[SPEC]` 块，而不在验证上花费时间，适用于只需要规约、或希望先审阅规约再运行完整分析的场景。该参数不能与 `--incremental` 一起使用，因为增量模式本质上是一个推理/Bug 验证流程。
+使用 `--only-spec` 可以在生成行为规约后即停止，跳过推理与 Bug 验证阶段。它会为每个函数生成相邻的 `.spec.json` 和 `.info.json` 元数据文件，而不在验证上花费时间，适用于只需要规约、或希望先审阅规约再运行完整分析的场景。该参数不能与 `--incremental` 一起使用，因为增量模式本质上是一个推理/Bug 验证流程。
 
 ```bash
 uv run python main.py <proj_dir> --only-spec
@@ -229,7 +229,7 @@ Extra-edge 字段规则：
 - `caller.callsite_names`：源码 callsite 函数名。源码中包含这些 callsite 的函数都会作为 caller，补一条到 `callee.fqn` 的边。可以为空。
   - `caller.fqn` 和 `caller.callsite_names` 至少有一个非空。
 - `callee.fqn`：单个 callee 的精确 FQN。
-- `callee.info_names`：可选，用于匹配生成的 `[INFO]` 块里指代该 callee 的名字。它只用于 `[INFO]` 匹配和传递调用者期望。
+- `callee.info_names`：可选，用于匹配生成的 `.info.json` 中指代该 callee 的条目。它只用于 `.info.json` 匹配和传递调用者期望。
 
 
 ### 增量模式
