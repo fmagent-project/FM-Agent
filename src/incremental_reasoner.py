@@ -718,6 +718,7 @@ def run_incremental_pipeline(
     input_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
     extra_call_edges = load_call_edges(extra_call_edges_path)
+    extract_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
 
     _setup_incremental_logging(work_dir)
     staged_knowledge = stage_domain_knowledge_files(
@@ -821,7 +822,13 @@ def run_incremental_pipeline(
     # stale index would yield boundaries for the old code. try_codegraph_init rebuilds by
     # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
     try_codegraph_init(proj_dir)
-    run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
+    run_extraction(
+        proj_dir,
+        work_dir=work_dir,
+        force=True,
+        verbose=True,
+        plugin_stage=extract_stage,
+    )
     logging.info("  -> function sources re-extracted; metadata sidecars retained.")
 
     # 5. Collect changed functions by comparing against the old version of functions in commit_id
