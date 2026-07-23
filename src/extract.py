@@ -4,9 +4,11 @@ import re
 import sys
 import shutil
 import logging
+import tempfile
+from contextlib import contextmanager
 
 from src.file_utils import is_file_ready, _is_test_file
-from src.languages.codegraph import canonicalize
+from src.languages.codegraph import canonicalize, try_codegraph_init
 from src.languages.registry import batch_extract_all, function_spans_for_file
 
 LANG_CONFIG = {
@@ -676,7 +678,146 @@ def _function_spans(filepath, lang_key, proj_dir=None):
     return spans, raw_lines
 
 
-def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
+def _run_modify_hook(hook, function_name, file_path):
+    """Run one file modification hook and enforce its runtime contract."""
+    try:
+        result = hook(str(file_path))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Plugin function '{function_name}' failed for '{file_path}': {exc}"
+        ) from exc
+
+    if result is not None:
+        raise RuntimeError(
+            f"Plugin function '{function_name}' must return None, "
+            f"got {type(result).__name__}"
+        )
+
+    if not os.path.isfile(file_path):
+        raise RuntimeError(
+            f"Plugin function '{function_name}' removed or replaced "
+            f"the required file '{file_path}'"
+        )
+
+
+@contextmanager
+def _plugin_input_project(proj_dir, sources, plugin_stage):
+    """Yield the original project or an input-hook-modified temporary copy."""
+    if plugin_stage is None or plugin_stage.input_hook is None:
+        yield proj_dir
+        return
+
+    with tempfile.TemporaryDirectory(prefix="fm-agent-plugin-input-") as temp_dir:
+        staged_proj = os.path.join(temp_dir, "project")
+        shutil.copytree(
+            proj_dir,
+            staged_proj,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(".git", ".codegraph", "fm_agent"),
+        )
+
+        for src_rel, _, _ in sources:
+            staged_path = os.path.join(staged_proj, src_rel)
+            _run_modify_hook(
+                plugin_stage.input_hook,
+                plugin_stage.input_function,
+                staged_path,
+            )
+
+        try_codegraph_init(staged_proj, force=True)
+        yield staged_proj
+
+
+def _run_replace_extraction(
+    sources, output_base, plugin_stage, force=False, verbose=False
+):
+    """Run a replacement hook and copy validated outputs into Stage 3."""
+    source_paths = [
+        os.path.abspath(source_path) for _, source_path, _ in sources
+    ]
+
+    with tempfile.TemporaryDirectory(prefix="fm-agent-plugin-output-") as temp_dir:
+        plugin_output = os.path.abspath(
+            os.path.join(temp_dir, "extracted_functions")
+        )
+        os.makedirs(plugin_output, exist_ok=True)
+
+        try:
+            returned_paths = plugin_stage.replace_hook(
+                source_paths,
+                plugin_output,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' failed: {exc}"
+            ) from exc
+
+        if not isinstance(returned_paths, list):
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "must return list[str]"
+            )
+        if not returned_paths:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "must return at least one output file"
+            )
+
+        written = 0
+        skipped = 0
+        seen_paths = set()
+
+        for returned_path in returned_paths:
+            if not isinstance(returned_path, str):
+                raise RuntimeError(
+                    f"Plugin function '{plugin_stage.replace_function}' "
+                    "must return only string paths"
+                )
+
+            absolute_path = os.path.abspath(returned_path)
+            if not os.path.isfile(absolute_path):
+                raise RuntimeError(
+                    "Plugin replacement output does not exist or is not a file: "
+                    f"'{absolute_path}'"
+                )
+            if os.path.commonpath([plugin_output, absolute_path]) != plugin_output:
+                raise RuntimeError(
+                    "Plugin replacement output must remain under "
+                    f"'{plugin_output}': '{absolute_path}'"
+                )
+
+            normalized_path = os.path.normcase(os.path.normpath(absolute_path))
+            if normalized_path in seen_paths:
+                raise RuntimeError(
+                    "Plugin replacement returned duplicate output path "
+                    f"'{absolute_path}'"
+                )
+            seen_paths.add(normalized_path)
+
+            relative_path = os.path.relpath(absolute_path, plugin_output)
+            destination = os.path.join(output_base, relative_path)
+            if (
+                not force
+                and os.path.exists(destination)
+                and is_file_ready(destination)
+            ):
+                if verbose:
+                    print(f"  SKIP (specced): {destination}")
+                skipped += 1
+                continue
+
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            shutil.copy2(absolute_path, destination)
+            written += 1
+            if verbose:
+                print(f"  WRITE: {destination}")
+
+    return written, skipped
+
+
+def run_extraction(
+    proj_dir, work_dir=None, force=False, verbose=False, plugin_stage=None
+):
     """Run function extraction on a project directory.
 
     Reads phases.json from work_dir (or proj_dir), extracts functions from
@@ -694,12 +835,6 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     with open(phases_path, 'r') as f:
         phases_data = json.load(f)
 
-    registry_funcs, registry_langs = batch_extract_all(proj_dir)
-    registry_funcs = {
-        os.path.normcase(os.path.normpath(path)): funcs
-        for path, funcs in registry_funcs.items()
-    }
-
     # Build source file list from phases.json
     source_files = []
     for phase in phases_data.get("phases", []):
@@ -710,8 +845,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     output_base = os.path.join(work_dir, "extracted_functions")
     written = 0
     skipped = 0
-    errors = []
-
+    sources = []
     for src_rel in source_files:
         # Skip test files
         if _is_test_file(src_rel):
@@ -720,7 +854,7 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             continue
 
         src_path = os.path.join(proj_dir, src_rel)
-        if not os.path.exists(src_path):
+        if not os.path.isfile(src_path):
             logging.warning(f"Source file not found: {src_path}")
             continue
 
@@ -731,52 +865,97 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             logging.warning(f"Unsupported file extension '.{ext}' for {src_rel}, skipping.")
             continue
 
-        # Compute output directory: replace last dot in filename with hyphen
-        src_dir = os.path.dirname(src_rel)
-        src_base = os.path.basename(src_rel)
-        last_dot = src_base.rfind('.')
-        if last_dot > 0:
-            dir_name = src_base[:last_dot] + '-' + src_base[last_dot + 1:]
-        else:
-            dir_name = src_base
-        out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
+        sources.append((src_rel, src_path, lang_key))
 
-        registry_key = os.path.normcase(os.path.normpath(src_path))
-        if registry_key in registry_funcs:
-            funcs = registry_funcs[registry_key]
-        else:
-            funcs = extract_functions_from_file(src_path, lang_key)
-        if not funcs:
-            logging.warning(f"No functions extracted from {src_rel}")
-            continue
+    if plugin_stage is not None and plugin_stage.type == "pass":
+        if os.path.isdir(output_base):
+            for _, _, files in os.walk(output_base):
+                for file_name in files:
+                    extension = file_name.rsplit('.', 1)[-1] if '.' in file_name else ''
+                    if extension in EXT_TO_LANG:
+                        skipped += 1
 
-        os.makedirs(out_dir, exist_ok=True)
+        if skipped == 0:
+            raise RuntimeError(
+                "Plugin stage 'extract_functions' type=pass requires existing "
+                "extracted function files"
+            )
+        registry_langs = set()
 
-        for func_name, func_source in funcs:
-            # A class-qualified identifier ("LocalStorage::Flush") is written as a
-            # single flat file that keeps the "::" in its name
-            # ("LocalStorage::Flush.ext"). generate_topdown_layers._file_to_fqn
-            # rebuilds the FQN by joining the path components with "::", so the "::"
-            # already inside the filename yields "...-cpp::LocalStorage::Flush",
-            # matching the call-edge FQNs. A bare name (free function, or the regex
-            # fallback which cannot know classes) has no "::" and is written the same
-            # way. ":" is a legal filename character on Linux/macOS (this pipeline
-            # does not target Windows extraction). _safe_filename keeps the "::",
-            # maps "/" -> "_", and falls back to "_function" for empty names.
-            out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
+    elif plugin_stage is not None and plugin_stage.type == "replace":
+        written, skipped = _run_replace_extraction(
+            sources,
+            output_base,
+            plugin_stage,
+            force=force,
+            verbose=verbose,
+        )
+        registry_langs = set()
 
-            # Skip only when the file already has both [SPEC] and [INFO] blocks
-            if not force and os.path.exists(out_file) and is_file_ready(out_file):
-                if verbose:
-                    print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
-                skipped += 1
-                continue
+    else:
+        with _plugin_input_project(proj_dir, sources, plugin_stage) as source_root:
+            registry_funcs, registry_langs = batch_extract_all(source_root)
+            registry_funcs = {
+                os.path.normcase(os.path.normpath(path)): funcs
+                for path, funcs in registry_funcs.items()
+            }
 
-            with open(out_file, 'w') as f:
-                f.write(func_source)
-            written += 1
-            if verbose:
-                print(f"  WRITE: {os.path.relpath(out_file, proj_dir)}")
+            for src_rel, _, lang_key in sources:
+                src_path = os.path.join(source_root, src_rel)
+
+                # Compute output directory: replace last dot in filename with hyphen
+                src_dir = os.path.dirname(src_rel)
+                src_base = os.path.basename(src_rel)
+                last_dot = src_base.rfind('.')
+                if last_dot > 0:
+                    dir_name = src_base[:last_dot] + '-' + src_base[last_dot + 1:]
+                else:
+                    dir_name = src_base
+                out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
+
+                registry_key = os.path.normcase(os.path.normpath(src_path))
+                if registry_key in registry_funcs:
+                    funcs = registry_funcs[registry_key]
+                else:
+                    funcs = extract_functions_from_file(src_path, lang_key)
+                if not funcs:
+                    logging.warning(f"No functions extracted from {src_rel}")
+                    continue
+
+                os.makedirs(out_dir, exist_ok=True)
+
+                for func_name, func_source in funcs:
+                    # A class-qualified identifier ("LocalStorage::Flush") is written as a
+                    # single flat file that keeps the "::" in its name
+                    # ("LocalStorage::Flush.ext"). generate_topdown_layers._file_to_fqn
+                    # rebuilds the FQN by joining the path components with "::", so the "::"
+                    # already inside the filename yields "...-cpp::LocalStorage::Flush",
+                    # matching the call-edge FQNs. A bare name (free function, or the regex
+                    # fallback which cannot know classes) has no "::" and is written the same
+                    # way. ":" is a legal filename character on Linux/macOS (this pipeline
+                    # does not target Windows extraction). _safe_filename keeps the "::",
+                    # maps "/" -> "_", and falls back to "_function" for empty names.
+                    ext = src_rel.rsplit('.', 1)[-1] if '.' in src_rel else ''
+                    out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
+
+                    # Skip only when the file already has both [SPEC] and [INFO] blocks
+                    if not force and os.path.exists(out_file) and is_file_ready(out_file):
+                        if verbose:
+                            print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
+                        skipped += 1
+                        continue
+
+                    with open(out_file, 'w') as f:
+                        f.write(func_source)
+                    if plugin_stage is not None and plugin_stage.output_hook is not None:
+                        _run_modify_hook(
+                            plugin_stage.output_hook,
+                            plugin_stage.output_function,
+                            out_file,
+                        )
+                    written += 1
+                    if verbose:
+                        print(f"  WRITE: {os.path.relpath(out_file, proj_dir)}")
 
     print(f"Extraction complete: {written} written, {skipped} skipped.")
 
