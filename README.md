@@ -155,7 +155,7 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--domain-knowledge FILE ...] [--submodule PATH [PATH ...]]
 ```
 
 | Argument                    | Description                                                                                     |
@@ -168,8 +168,19 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--sub
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
+| `--plugin NAME`             | Enable a plugin from `plugins/` for this run. |
+| `--list-plugin`             | List valid plugins from `plugins/` and exit; `proj_dir` is not required. |
 
 `proj_dir` must be a git repository.
+
+To list available plugins without running the pipeline:
+
+```bash
+uv run python main.py --list-plugin
+```
+
+For plugin configuration, Stage 3 modes, and Python hook development, see
+[Plugin Development](docs/plugins.md).
 
 To provide project-specific domain knowledge without editing FM-Agent's built-in prompts, pass one or more Markdown files:
 
