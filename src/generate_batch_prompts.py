@@ -84,15 +84,6 @@ def parse_layers_spec(layers_spec: str) -> Tuple[int, int]:
     return start, end
 
 
-def _detect_comment_prefix(content: str) -> Optional[str]:
-    """Find the comment prefix by locating a line containing [SPEC] and extracting its prefix."""
-    for line in content.splitlines():
-        idx = line.find("[SPEC]")
-        if idx != -1:
-            return line[:idx].rstrip()
-    return None
-
-
 def _spec_json_path(filepath: Path) -> Path:
     """Return the spec sidecar next to one extracted function file."""
     return Path(str(filepath) + ".spec.json")
