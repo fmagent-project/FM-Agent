@@ -340,7 +340,9 @@ def _enumerate_source_files(proj_dir):
     return sorted(source_files)
 
 
-def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edges=None):
+def _select_functions_by_source(
+    proj_dir, entry_func, end_funcs, extra_call_edges=None, plugin_stage=None
+):
     """Select the functions reachable from entry_func, grouped by source file.
 
     Extracts a throwaway copy of proj_dir with the very machinery the main
@@ -382,7 +384,12 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
             json.dump({"phases": [phase]}, f)
 
         try_codegraph_init(sel_dir)
-        run_extraction(sel_dir, work_dir=work_dir, force=True)
+        run_extraction(
+            sel_dir,
+            work_dir=work_dir,
+            force=True,
+            plugin_stage=plugin_stage,
+        )
 
         phase_files = _collect_phase_files(work_dir, phase)
         if not phase_files:
@@ -468,11 +475,13 @@ def _run_entry_pipeline_inner(
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
     extra_call_edges = load_call_edges(extra_call_edges_path)
+    extract_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
     all_by_source, keep_by_source = _select_functions_by_source(
         proj_dir,
         entry_func,
         end_funcs,
         extra_call_edges=extra_call_edges,
+        plugin_stage=extract_stage,
     )
 
     # 2. Copy the sources into a separate run directory, then trim that copy.

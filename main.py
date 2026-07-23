@@ -230,6 +230,7 @@ def run_pipeline(
     # Stage 2: generate domain context (input: phases.json → domain context files)
     phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
     context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
+    extract_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
     plugin_root = plugin_config.root if plugin_config else None
 
     print("[Pipeline] Stage 1/6: Generating phase plan...")
@@ -261,7 +262,13 @@ def run_pipeline(
     # force=False on resume preserves already-specced extracted files; on a fresh
     # run fm_agent/ was just wiped so it is equivalent to force=True.
     print("[Pipeline] Stage 3/6: Extracting functions from source files...")
-    run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
+    run_extraction(
+        proj_dir,
+        work_dir=work_dir,
+        force=not resume,
+        verbose=True,
+        plugin_stage=extract_stage,
+    )
 
     # Copy system_prompt.md to spec_prompts/system_prompt.md
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
