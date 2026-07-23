@@ -765,7 +765,8 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             # maps "/" -> "_", and falls back to "_function" for empty names.
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
 
-            # Skip only when the file already has both [SPEC] and [INFO] blocks
+            # Skip only when the extracted file already has valid .spec.json and
+            # .info.json sidecars.
             if not force and os.path.exists(out_file) and is_file_ready(out_file):
                 if verbose:
                     print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")

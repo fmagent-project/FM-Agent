@@ -274,7 +274,7 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
         callees_map/callers_map contain only within-phase edges.
         all_callees_map contains callees from any phase.
         edge_aliases_map maps callee -> caller -> supplemental callee labels
-        that may appear in a caller's [INFO] block.
+        that may appear as callee names in a caller's .info.json sidecar.
     """
     # Build FQN mappings
     fqn_map = {}  # filepath -> fqn
