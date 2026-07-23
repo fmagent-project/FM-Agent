@@ -96,13 +96,18 @@ def detect_opencode_config_path(home: Path | None = None) -> Path:
     home = home or Path.home()
     if os.name == "nt":
         appdata = os.environ.get("APPDATA")
-        if appdata:
-            return Path(appdata) / "opencode" / "opencode.json"
-        return home / "AppData" / "Roaming" / "opencode" / "opencode.json"
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    if xdg:
-        return Path(xdg) / "opencode" / "opencode.json"
-    return home / ".config" / "opencode" / "opencode.json"
+        config_dir = (
+            Path(appdata) / "opencode"
+            if appdata
+            else home / "AppData" / "Roaming" / "opencode"
+        )
+    else:
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        config_dir = Path(xdg) / "opencode" if xdg else home / ".config" / "opencode"
+    jsonc = config_dir / "opencode.jsonc"
+    if jsonc.exists():
+        return jsonc
+    return config_dir / "opencode.json"
 
 
 def default_paths(project_root: Path) -> WizardPaths:
@@ -447,7 +452,10 @@ def validate_generated_state(
             "Generated OpenCode adapter does not match the selected API protocol."
         )
     options = entry.get("options")
-    if not isinstance(options, dict) or options.get("apiKey") != f"{{file:{opencode_secret_path}}}":
+    if (
+        not isinstance(options, dict)
+        or options.get("apiKey") != f"{{file:{opencode_secret_path}}}"
+    ):
         raise ConfigWizardError(
             "Generated OpenCode config does not reference the saved key file."
         )
@@ -477,9 +485,16 @@ def backup_file(
     else:
         backup = path.with_name(f"{path.name}.bak.{suffix}")
     shutil.copy2(path, backup)
-    if path.name == ".env":
+    if private or path.name == ".env":
         backup.chmod(0o600)
     return backup
+
+
+def secret_path_for_provider(config: LLMConfigInput, opencode_config_path: Path) -> Path:
+    safe_provider_id = re.sub(r"[^A-Za-z0-9._-]+", "_", config.provider_id).strip("._-")
+    if not safe_provider_id:
+        safe_provider_id = "provider"
+    return opencode_config_path.with_name(f"fm-agent-opencode-api-key.{safe_provider_id}")
 
 
 def atomic_write(path: Path, text: str) -> None:
@@ -505,6 +520,7 @@ def _read_text_if_exists(path: Path) -> str:
 
 
 def _preview(config: LLMConfigInput, paths: WizardPaths) -> str:
+    secret_path = secret_path_for_provider(config, paths.opencode_config_path)
     return "\n".join(
         [
             "FM-Agent LLM configuration",
@@ -520,7 +536,7 @@ def _preview(config: LLMConfigInput, paths: WizardPaths) -> str:
             f"  - {paths.toml_path}",
             f"  - {paths.env_path}",
             f"  - {paths.opencode_config_path}",
-            f"  - {paths.opencode_secret_path}",
+            f"  - {secret_path}",
         ]
     )
 
@@ -540,32 +556,33 @@ def apply_configuration(
             f"fm-agent.toml not found at {paths.toml_path}; refusing to guess a new project config."
         )
     opencode_text = _read_text_if_exists(paths.opencode_config_path)
+    opencode_secret_path = secret_path_for_provider(config, paths.opencode_config_path)
 
     updated_env = update_env_text(env_text, config.api_key)
     updated_toml = update_fm_agent_toml_text(toml_text, config)
     merged_opencode = merge_opencode_config(
         parse_existing_opencode_config(opencode_text),
         config,
-        opencode_secret_path=paths.opencode_secret_path,
+        opencode_secret_path=opencode_secret_path,
     )
     if validate:
         validate_generated_state(
             config,
             merged_opencode,
             updated_toml,
-            opencode_secret_path=paths.opencode_secret_path,
+            opencode_secret_path=opencode_secret_path,
         )
 
     backups = [
         (paths.toml_path, backup_file(paths.toml_path)),
         (paths.env_path, backup_file(paths.env_path, private=True)),
         (paths.opencode_config_path, backup_file(paths.opencode_config_path)),
-        (paths.opencode_secret_path, backup_file(paths.opencode_secret_path, private=True)),
+        (opencode_secret_path, backup_file(opencode_secret_path, private=True)),
     ]
     atomic_write(paths.toml_path, updated_toml)
     atomic_write(paths.env_path, updated_env)
-    atomic_write(paths.opencode_secret_path, config.api_key + "\n")
-    paths.opencode_secret_path.chmod(0o600)
+    atomic_write(opencode_secret_path, config.api_key + "\n")
+    opencode_secret_path.chmod(0o600)
     atomic_write(
         paths.opencode_config_path,
         json.dumps(merged_opencode, indent=2, ensure_ascii=False) + "\n",

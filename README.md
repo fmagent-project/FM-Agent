@@ -136,8 +136,8 @@ The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubu
 FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so
 you do not need to hand-edit `~/.config/opencode/opencode.json` for the model
 or key. The configuration wizard above can still keep that file synchronized for
-standalone OpenCode usage by writing the API key to a private local key file in
-the OpenCode config directory (see [docs/config_llm.md](docs/config_llm.md)).
+standalone OpenCode usage by writing the API key to a private provider-specific
+key file in the OpenCode config directory (see [docs/config_llm.md](docs/config_llm.md)).
 
 **Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready, and if necessary, specify how to run test cases in `md/bug_validator.md`. If you do not specify, the agent will autonomously decide the execution method.
 
