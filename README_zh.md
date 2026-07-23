@@ -165,7 +165,7 @@ FM-Agent 会将这些文件暂存到 `fm_agent/spec_prompts/domain_context/user_
 uv run python main.py <proj_dir> --bug-validator prompts/compiler_bug_validator.md
 ```
 
-该文件会替代内置 `md/bug_validator.md` 的验证指令。FM-Agent 仍会在每个 Bug 验证提示词中加入当前 Bug ID、目标验证结果，以及通过 `--domain-knowledge` 提供的领域知识。
+该文件会替代内置 `md/bug_validator.md` 的验证指令。`--bug-validator` 的相对路径以启动 FM-Agent 命令时的当前目录为基准，而不是以 `proj_dir` 为基准。FM-Agent 仍会在每个 Bug 验证提示词中加入当前 Bug ID、目标验证结果，以及通过 `--domain-knowledge` 提供的领域知识。
 
 使用 `--submodule` 可以把完整运行或增量运行限制到指定项目子目录：
 

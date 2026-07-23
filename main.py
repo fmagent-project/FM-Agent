@@ -73,24 +73,12 @@ def _get_pending_batches(batches, proj_dir):
     return pending
 
 
-def _resolve_bug_validator_path(raw_path, proj_dir, fallback_base_dir=None):
-    """Resolve and validate a custom bug-validator prompt path."""
+def _resolve_bug_validator_path(raw_path):
+    """Resolve a custom bug-validator prompt path from the launch directory."""
     if not raw_path:
         return None
 
-    expanded = os.path.expanduser(raw_path)
-    if os.path.isabs(expanded):
-        candidates = [expanded]
-    else:
-        candidates = [os.path.join(proj_dir, expanded)]
-        if fallback_base_dir:
-            candidates.append(os.path.join(fallback_base_dir, expanded))
-
-    path = next(
-        (candidate for candidate in candidates if os.path.exists(candidate)),
-        candidates[0],
-    )
-    path = os.path.abspath(path)
+    path = os.path.abspath(os.path.expanduser(raw_path))
 
     if not os.path.isfile(path):
         raise ValueError(
@@ -678,11 +666,7 @@ if __name__ == "__main__":
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
     try:
-        bug_validator_path = _resolve_bug_validator_path(
-            args.bug_validator,
-            proj_dir=proj_dir,
-            fallback_base_dir=os.getcwd(),
-        )
+        bug_validator_path = _resolve_bug_validator_path(args.bug_validator)
     except ValueError as exc:
         parser.error(str(exc))
     try:

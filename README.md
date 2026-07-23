@@ -188,6 +188,8 @@ uv run python main.py <proj_dir> --bug-validator prompts/compiler_bug_validator.
 ```
 
 The selected file replaces the built-in `md/bug_validator.md` instructions.
+Relative `--bug-validator` paths are resolved from the directory where
+FM-Agent is launched, not from `proj_dir`.
 FM-Agent still adds the current bug ID, target verification result, and any
 `--domain-knowledge` files to each generated bug-validation prompt.
 
