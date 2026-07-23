@@ -499,6 +499,10 @@ def main() -> int:
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    current_batch_paths = {out_path for out_path, _ in write_targets}
+    for existing_path in output_dir.glob("batch_*.txt"):
+        if existing_path not in current_batch_paths:
+            existing_path.unlink()
     for out_path, content in write_targets:
         out_path.write_text(content)
     for out_path in stale_targets:
