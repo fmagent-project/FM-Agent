@@ -253,6 +253,7 @@ def run_entry_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
+    bug_validator_path=None,
     plugin_config=None,
     all_bugs=False,
 ):
@@ -317,6 +318,7 @@ def run_entry_pipeline(
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=only_spec,
+            bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
             all_bugs=all_bugs,
         )
@@ -467,6 +469,7 @@ def _run_entry_pipeline_inner(
     one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
+    bug_validator_path=None,
     plugin_config=None,
     all_bugs=False,
 ):
@@ -516,6 +519,7 @@ def _run_entry_pipeline_inner(
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=only_spec,
+            bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
             all_bugs=all_bugs,
         )

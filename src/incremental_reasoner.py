@@ -680,6 +680,7 @@ def run_incremental_pipeline(
     submodules=None,
     one_phase=False,
     extra_call_edges_path=None,
+    bug_validator_path=None,
     plugin_config=None,
     all_bugs=False,
 ):
@@ -734,6 +735,7 @@ def run_incremental_pipeline(
             submodules=submodules,
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
+            bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
             all_bugs=all_bugs,
         )
@@ -881,6 +883,7 @@ def run_incremental_pipeline(
         proj_dir, work_dir, changed_functions, updated_spec_files,
         submodules=submodules,
         all_bugs=all_bugs,
+        bug_validator_path=bug_validator_path,
     )
     if all_bugs:
         buggy_files, confirmed_bug_count = buggy_files
@@ -1989,6 +1992,7 @@ def _update_specs_for_intent(
 
 def _verify_incremental_functions(
     proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None,
+    bug_validator_path=None,
     all_bugs=False,
 ):
     """
@@ -2111,7 +2115,12 @@ def _verify_incremental_functions(
         )
 
         def _validate_candidate(function_rel, target_rel):
-            _validate_single_bug(target_rel, proj_dir, work_dir)
+            _validate_single_bug(
+                target_rel,
+                proj_dir,
+                work_dir,
+                bug_validator_path=bug_validator_path,
+            )
             return function_rel, target_rel
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -2148,7 +2157,12 @@ def _verify_incremental_functions(
             os.path.relpath(output_dir, proj_dir),
             os.path.splitext(rel)[0] + ".json",
         )
-        _validate_single_bug(result_json_rel, proj_dir, work_dir)
+        _validate_single_bug(
+            result_json_rel,
+            proj_dir,
+            work_dir,
+            bug_validator_path=bug_validator_path,
+        )
         return rel
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:

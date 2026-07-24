@@ -114,7 +114,7 @@ The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubu
 
 FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so you do not need to hand-edit `~/.config/opencode/opencode.json` for the model or key (see [docs/config_llm.md](docs/config_llm.md)).
 
-**Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready, and if necessary, specify how to run test cases in `md/bug_validator.md`. If you do not specify, the agent will autonomously decide the execution method.
+**Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready. If project-specific validation instructions are needed, provide them with `--bug-validator`; otherwise, the agent will decide how to execute the tests.
 
 ## Configuration
 
@@ -155,7 +155,7 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FILE ...] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
 ```
 
 | Argument                    | Description                                                                                     |
@@ -165,6 +165,7 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
 | `--all-bugs`                | Continue reasoning after a mismatch and report every candidate. Full and incremental modes validate each candidate; entry mode does not run bug validation. |
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
+| `--bug-validator FILE`       | Use a custom Markdown prompt for bug validation instead of the built-in `md/bug_validator.md`. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
@@ -179,6 +180,19 @@ uv run python main.py <proj_dir> --domain-knowledge docs/invariants.md docs/prot
 ```
 
 FM-Agent stages these files under `fm_agent/spec_prompts/domain_context/user_knowledge/` for the current run. You can also set `FM_AGENT_DOMAIN_KNOWLEDGE` to an `os.pathsep`-separated list of Markdown files.
+
+To customize how candidate bugs are tested, pass a Markdown file with
+`--bug-validator`:
+
+```bash
+uv run python main.py <proj_dir> --bug-validator prompts/compiler_bug_validator.md
+```
+
+The selected file replaces the built-in `md/bug_validator.md` instructions.
+Relative `--bug-validator` paths are resolved from the directory where
+FM-Agent is launched, not from `proj_dir`.
+FM-Agent still adds the current bug ID, target verification result, and any
+`--domain-knowledge` files to each generated bug-validation prompt.
 
 Use `--submodule` to limit a full or incremental run to selected project subdirectories:
 
@@ -297,7 +311,7 @@ Default-mode summary behavior is unchanged.
 ## Important Notes
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
-2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For reusable framework behavior, customize the built-in prompts; for example, if you are reasoning about a compiler, modify `md/bug_validator.md` to instruct the agent to compare outputs against a reference implementation (e.g., GCC).
+2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For project-specific bug-validation procedures, use `--bug-validator` instead of editing the built-in prompt; for example, a compiler-specific validator can instruct the agent to compare outputs against a reference implementation such as GCC.
 3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
 
 ## Citation
