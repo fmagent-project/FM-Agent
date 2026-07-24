@@ -3,6 +3,12 @@ import json
 import re
 
 
+_READY_MARKER_RE = re.compile(
+    r"^\s*(?P<prefix>//+|#+|--+|%+)\s*\[(?P<section>SPEC|INFO)\]\s*$"
+)
+_READY_SECTION_ORDER = ("SPEC", "SPEC", "INFO", "INFO")
+
+
 def _write_file_names(file_names, output_path):
     """Write sorted, de-duplicated file names to output_path."""
     file_names = sorted(dict.fromkeys(file_names))
@@ -28,24 +34,45 @@ def collect_file_names(input_dir, output_path="file_list.json"):
 
 
 def is_file_ready(file_path):
-    """Check if a file has [SPEC] ... [SPEC] and [INFO] ... [INFO] headers."""
+    """Return whether a file starts with complete SPEC and INFO comment blocks."""
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path, "r", encoding="utf-8-sig") as f:
             content = f.read()
     except (OSError, UnicodeDecodeError):
         return False
 
-    lines = content.splitlines()
-    spec_count = 0
-    info_count = 0
+    expected_index = 0
+    comment_prefix = None
+    before_header = True
 
-    for line in lines:
-        if '[SPEC]' in line:
-            spec_count += 1
-        if '[INFO]' in line:
-            info_count += 1
+    for line in content.splitlines():
+        if before_header and not line.strip():
+            continue
 
-    return spec_count >= 2 and info_count >= 2
+        marker = _READY_MARKER_RE.fullmatch(line)
+        if before_header:
+            if marker is None or marker.group("section") != "SPEC":
+                return False
+            before_header = False
+
+        if marker is None:
+            if line.strip() and not line.lstrip().startswith(comment_prefix):
+                return False
+            continue
+
+        if comment_prefix is None:
+            comment_prefix = marker.group("prefix")
+        elif marker.group("prefix") != comment_prefix:
+            return False
+
+        if marker.group("section") != _READY_SECTION_ORDER[expected_index]:
+            return False
+
+        expected_index += 1
+        if expected_index == len(_READY_SECTION_ORDER):
+            return True
+
+    return False
 
 
 # Directories that typically contain test code

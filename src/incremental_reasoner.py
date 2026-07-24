@@ -1559,9 +1559,10 @@ def _collect_caller_context(fqn, callers_map, file_map, edge_aliases_map=None):
 def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
                             developer_intent, callee_names, source, caller_context):
     """
-    Ask opencode to generate a brand-new [SPEC] (and, when the function has callees, [INFO])
-    block from scratch for a function that has no existing specification — e.g. a function
-    freshly added by the modification.
+    Ask opencode to generate brand-new [SPEC] and [INFO] blocks from scratch for a function
+    that has no existing specification — e.g. a function freshly added by the modification.
+    Functions without callees still receive the full ``[INFO] / (no callees) / [INFO]``
+    sentinel required by the full-run format and :func:`is_file_ready`.
 
     Mirrors the full run's spec generation (run_pipeline Stage 6) but for a single function:
     opencode reads the project's spec format rules (fm_agent/spec_prompts/system_prompt.md),
@@ -1621,7 +1622,16 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
             "list the names of the callees you recorded.\n"
         )
     else:
-        info_step = f"{info_step_number}. This function has no callees, so produce no [INFO] block.\n"
+        info_step = (
+            f"{info_step_number}. This function has no callees. Produce the COMPLETE no-callee "
+            "[INFO] block below, markers included, with every line prefixed by the comment "
+            "prefix exactly as shown:\n"
+            f"   {comment_prefix} [INFO]\n"
+            f"   {comment_prefix} (no callees)\n"
+            f"   {comment_prefix} [INFO]\n"
+            '   Set "info_updated" to true, put this complete block in "new_info", and set '
+            '"updated_callees" to [].\n'
+        )
 
     prompt_content = (
         "# Generate Function Specification\n\n"
@@ -1648,7 +1658,7 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
         '   - "spec_updated": boolean — true when you produced a [SPEC] block.\n'
         '   - "new_spec": string — the full [SPEC] block.\n'
         '   - "info_updated": boolean — true when you produced an [INFO] block.\n'
-        '   - "new_info": string — the full [INFO] block, or "" if none.\n'
+        '   - "new_info": string — the full [INFO] block (required even when there are no callees).\n'
         '   - "updated_callees": array of callee name strings recorded in [INFO], or [].\n'
         "   Write ONLY that JSON file; do not modify any other project files.\n"
     )
@@ -1916,9 +1926,21 @@ def _update_specs_for_intent(
         # Stage 2 (serial): write the new spec files and queue downward callees — no LLM, fast.
         # Kept serial so the shared to_check / changed_spec_files sets need no locking.
         queued_callees = 0
+        written = []
         for plan in applied:
+            with open(plan["fpath"], "rb") as f:
+                previous_content = f.read()
             with open(plan["fpath"], "w") as f:
                 f.write(plan["write_content"])
+            if not is_file_ready(plan["fpath"]):
+                with open(plan["fpath"], "wb") as f:
+                    f.write(previous_content)
+                logging.error(
+                    "Incremental SPEC write failed the final readiness check; restored %s",
+                    plan["fpath"],
+                )
+                continue
+            written.append(plan)
             changed_spec_files.add(os.path.relpath(plan["fpath"], extracted_dir))
             if plan["info_updated"]:
                 for callee_fqn in _resolve_callee_fqns(
@@ -1929,7 +1951,7 @@ def _update_specs_for_intent(
                         queued_callees += 1
         logging.info(
             "    [specs] round %d: %d spec(s) rewritten, %d callee(s) queued for propagation.",
-            round_num, len(applied), queued_callees,
+            round_num, len(written), queued_callees,
         )
 
         # Stage 3 (concurrent): upward reconciliation. Each function whose [SPEC] changed needs
@@ -1938,7 +1960,7 @@ def _update_specs_for_intent(
         # sit above the batch in top-down order and are never themselves in the batch, so their
         # files don't collide with the Stage 2 writes.
         caller_updates = {}  # caller_fqn -> list of (callee_name, callee_new_spec)
-        for plan in applied:
+        for plan in written:
             callee_name = plan["fqn"].split("::")[-1]
             for caller_fqn in sorted(callers_map.get(plan["fqn"], ())):
                 caller_updates.setdefault(caller_fqn, []).append((callee_name, plan["new_spec"]))
