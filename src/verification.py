@@ -254,7 +254,7 @@ def streaming_reasoner(
                             # No function got a spec at all – this is an error
                             logging.warning(
                                 f"Spec generation process(es) exited (codes {exit_codes}) "
-                                f"but no files received [SPEC]/[INFO] markers."
+                                f"but no .spec.json/.info.json sidecar pairs were created."
                             )
                         else:
                             # Some functions are missing specs; leave them pending for retry.

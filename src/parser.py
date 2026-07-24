@@ -1,8 +1,5 @@
+import json
 import re
-
-
-_SECTION_MARKER_RE = re.compile(r'^\s*(?:(?://+|#+|--+|%+)\s*)?\[(SPEC|INFO)\]\s*$')
-_SPLIT_MARKER_RE = re.compile(r'^\s*\[SPLIT\]\s*$', re.MULTILINE)
 
 
 class FunctionSpecMap(dict):
@@ -25,61 +22,37 @@ class FunctionSpecMap(dict):
         return "\n\n".join(formatted_entries)
 
 
-def _strip_section_comment_prefix(line):
-    return re.sub(r'^(\s*)(?://+|#+|--+|%+)\s?', r'\1', line)
+def format_spec_for_reasoner(spec):
+    """Rebuild reasoner-facing spec text from one .spec.json object."""
+    return (
+        f"{spec.get('signature', '')}\n\n"
+        f"Pre-condition:\n{spec.get('pre_condition', '')}\n\n"
+        f"Post-condition:\n{spec.get('post_condition', '')}"
+    )
 
 
-def _extract_marked_section(lines, marker):
-    start_idx = None
-    end_idx = None
-    collected_lines = []
-
-    for index, line in enumerate(lines):
-        marker_match = _SECTION_MARKER_RE.match(line)
-        if marker_match and marker_match.group(1) == marker:
-            if start_idx is None:
-                start_idx = index
-            else:
-                end_idx = index
-                break
-            continue
-
-        if start_idx is not None and end_idx is None:
-            collected_lines.append(_strip_section_comment_prefix(line))
-
-    section_text = '\n'.join(collected_lines).strip() if end_idx is not None else ""
-    return section_text, start_idx, end_idx
+def _load_sidecar_json(file_path, suffix):
+    """Read one JSON sidecar next to file_path, or return None when unavailable."""
+    try:
+        with open(f"{file_path}{suffix}", "r", encoding="utf-8") as file:
+            return json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
-def _extract_function_name(signature_line):
-    match = re.search(r'([A-Za-z_][A-Za-z0-9_]*)\s*\(', signature_line)
-    return match.group(1) if match else None
-
-
-def _parse_info_section(section_text):
-    if not section_text.strip() or section_text.strip() == "(no callees)":
-        return FunctionSpecMap()
-
+def format_info_for_reasoner(info):
+    """Rebuild the existing FunctionSpecMap from one .info.json object."""
     knowledge_map = FunctionSpecMap()
-    entries = _SPLIT_MARKER_RE.split(section_text)
 
-    for entry in entries:
-        entry = entry.strip()
-        if not entry:
-            continue
-
-        entry_lines = [line.rstrip() for line in entry.splitlines() if line.strip()]
-        if not entry_lines:
-            continue
-
-        function_name = _extract_function_name(entry_lines[0])
-        if function_name is None:
-            continue
-
+    for callee in info.get("callees", []):
+        callee_spec = (
+            f"Pre-condition: {callee.get('pre_condition', '')}\n"
+            f"Post-condition: {callee.get('post_condition', '')}"
+        )
         knowledge_map.add_entry(
-            function_name,
-            entry_lines[0],
-            '\n'.join(entry_lines[1:]).strip(),
+            callee.get("name", ""),
+            callee.get("signature", ""),
+            callee_spec,
         )
 
     return knowledge_map
@@ -156,31 +129,22 @@ def _remove_func_comments(code):
 
 def parse_input_function(file_path):
     """
-    Parse a file with three parts:
-    1. func: remaining lines after the closing [INFO] block, with comments removed
-    2. nl_spec: lines between two standalone [SPEC] marker lines
-    3. knowledge: a map from function name to spec parsed from the [INFO] block
-    
+    Parse an extracted source file and its adjacent JSON metadata sidecars.
+
+    1. func: complete source file, with comments removed
+    2. nl_spec: reasoner-facing text rebuilt from .spec.json
+    3. knowledge: a map from .info.json callee entries
+
     Returns:
         tuple: (func, nl_spec, knowledge)
     """
     with open(file_path, 'r') as file:
-        content = file.read()
+        func = file.read()
 
-    lines = content.splitlines()
-
-    nl_spec, _, spec_end_idx = _extract_marked_section(lines, "SPEC")
-    knowledge_text, _, info_end_idx = _extract_marked_section(lines, "INFO")
-    knowledge = _parse_info_section(knowledge_text)
-
-    # func: after the closing [INFO] marker if present, else after [SPEC], else all
-    func = ""
-    if info_end_idx is not None:
-        func = '\n'.join(lines[info_end_idx + 1:]).lstrip('\n')
-    elif spec_end_idx is not None:
-        func = '\n'.join(lines[spec_end_idx + 1:]).lstrip('\n')
-    else:
-        func = content
+    spec = _load_sidecar_json(file_path, ".spec.json")
+    info = _load_sidecar_json(file_path, ".info.json")
+    nl_spec = format_spec_for_reasoner(spec) if spec else ""
+    knowledge = format_info_for_reasoner(info) if info else FunctionSpecMap()
 
     func = _remove_func_comments(func)
 
