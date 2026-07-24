@@ -97,8 +97,8 @@ the API key in `.env` plus a private local key file for standalone OpenCode, and
 without requiring you to hand-edit JSON.
 If you choose `auto`, `codex-cli`, or `claude-cli` in the wizard, it updates the
 backend in the active FM-Agent TOML file and clears stale non-secret LLM
-overrides from the project `.env`; no API key or OpenCode provider setup is
-needed.
+overrides from the project `.env`. Any model and effort values found there are
+first retained in the TOML; no API key or OpenCode provider setup is needed.
 
 If you prefer to edit files manually, put your API key in `.env` (gitignored,
 loaded automatically via python-dotenv); every other setting has a committed
@@ -159,7 +159,8 @@ or key. The configuration wizard above can still keep that file synchronized for
 standalone OpenCode usage by writing the API key to a private provider-specific
 key file under your user state/config directory (see [docs/config_llm.md](docs/config_llm.md)).
 If you already use `OPENCODE_CONFIG`, the wizard updates that file instead of
-the default global path.
+the default global path. It also honors `OPENCODE_CONFIG_DIR`, using that
+directory's `opencode.jsonc` when present or its `opencode.json` otherwise.
 
 **Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready, and if necessary, specify how to run test cases in `md/bug_validator.md`. If you do not specify, the agent will autonomously decide the execution method.
 

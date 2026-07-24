@@ -34,7 +34,9 @@ It then:
 
 When you select `auto`, `codex-cli`, or `claude-cli`, the wizard updates
 `backend` in the active FM-Agent TOML file and removes non-secret legacy LLM
-overrides from the project `.env`. This prevents an old
+overrides from the project `.env`. Before removal, any `.env` `LLM_MODEL` and
+`LLM_EFFORT` values are migrated to the TOML so the selected local backend keeps
+using the same model and reasoning-effort preference. This prevents an old
 `FM_AGENT_MODEL_BACKEND=opencode` (including `export` form) from taking
 precedence over the selected local backend. These local CLI backends use their
 own authentication, so the wizard does not ask for an API key or modify the
@@ -83,8 +85,9 @@ The wizard never prints the API key in plain text. It writes the key to
 user's own state/config directory for standalone OpenCode; the generated
 provider references that file via `{file:/absolute/path/to/key}`.
 If `OPENCODE_CONFIG` is set, the wizard uses that config file path instead of
-the default global location, but the secret file still stays outside the
-worktree.
+the default global location. Otherwise, if `OPENCODE_CONFIG_DIR` is set, it
+uses `opencode.jsonc` from that directory when present, or `opencode.json`.
+The secret file still stays outside the worktree.
 
 If `FM_AGENT_CONFIG` is set in the launching shell or project `.env`, both the
 wizard and the `set` command update that TOML path, using the same path
@@ -144,6 +147,8 @@ Set it only to a value accepted by the selected CLI and model.
 
 In this mode `LLM_API_KEY`, `LLM_API_BASE_URL`, and
 `OPENCODE_MODEL_PROVIDER` are not required for model access.
+The startup environment check also skips OpenCode-only API key and plugin checks
+for these local CLI backends.
 
 ## The OpenCode provider (generated automatically)
 

@@ -113,20 +113,14 @@ def validate_llm_setting(key: str, value: str) -> None:
     """Validate one non-secret [llm] setting accepted by the lightweight CLI."""
     if key not in _LLM_TOML_KEYS:
         raise ConfigWizardError(f"Unsupported LLM setting: {key}")
-    if key in {"name", "provider"} and not value.strip():
-        label = "Model ID" if key == "name" else "Provider ID"
-        raise ConfigWizardError(f"{label} must not be empty.")
+    if key == "provider" and not value.strip():
+        raise ConfigWizardError("Provider ID must not be empty.")
     if key == "base_url":
         validate_base_url(value.strip())
     elif key == "backend" and value not in _BACKENDS:
         supported = ", ".join(_BACKENDS)
         raise ConfigWizardError(
             f"Backend must be one of: {supported}; got: {value!r}"
-        )
-    elif key == "effort" and value not in _EFFORTS:
-        supported = ", ".join(repr(item) for item in _EFFORTS)
-        raise ConfigWizardError(
-            f"Effort must be one of: {supported}; got: {value!r}"
         )
     elif key == "api_style":
         adapter_for_api_style(value)  # type: ignore[arg-type]
@@ -136,6 +130,11 @@ def detect_opencode_config_path(home: Path | None = None) -> Path:
     custom_config = os.environ.get("OPENCODE_CONFIG")
     if custom_config:
         return Path(custom_config).expanduser()
+    custom_config_dir = os.environ.get("OPENCODE_CONFIG_DIR")
+    if custom_config_dir:
+        config_dir = Path(custom_config_dir).expanduser()
+        jsonc = config_dir / "opencode.jsonc"
+        return jsonc if jsonc.exists() else config_dir / "opencode.json"
     home = home or Path.home()
     if os.name == "nt":
         appdata = os.environ.get("APPDATA")
@@ -518,6 +517,20 @@ def remove_legacy_llm_env_overrides(text: str) -> tuple[str, tuple[str, ...]]:
     return "".join(new_lines), tuple(removed)
 
 
+def local_backend_toml_updates(env_path: Path, backend: str) -> dict[str, str]:
+    """Keep local CLI model choices when migrating dotenv settings into TOML."""
+    validate_llm_setting("backend", backend)
+    dotenv_settings = dotenv_values(env_path)
+    updates = {"backend": backend}
+    for env_key, toml_key in (("LLM_MODEL", "name"), ("LLM_EFFORT", "effort")):
+        value = dotenv_settings.get(env_key)
+        if value is not None:
+            updates[toml_key] = value
+    for key, value in updates.items():
+        validate_llm_setting(key, value)
+    return updates
+
+
 def live_llm_environment_overrides() -> tuple[str, ...]:
     """Return real process overrides; the wizard must not alter its caller's shell."""
     return tuple(name for name in _LLM_ENV_KEYS if name in os.environ)
@@ -890,6 +903,7 @@ def _preview_local_backend_configuration(
     backend: str,
     paths: WizardPaths,
     removed_overrides: tuple[str, ...],
+    toml_updates: dict[str, str],
 ) -> str:
     lines = [
         "FM-Agent local CLI backend configuration",
@@ -908,6 +922,19 @@ def _preview_local_backend_configuration(
                 f"shadow the selected backend: {', '.join(removed_overrides)}",
             ]
         )
+        migrated = [
+            f"{key}: {value!r}"
+            for key, value in toml_updates.items()
+            if key in {"name", "effort"}
+        ]
+        if migrated:
+            lines.extend(
+                [
+                    "",
+                    "The local CLI model settings retained from .env will be written to TOML:",
+                    *[f"  - {item}" for item in migrated],
+                ]
+            )
     else:
         lines.extend(
             [
@@ -928,13 +955,13 @@ def apply_local_backend_configuration(
     backend: str,
     paths: WizardPaths,
 ) -> tuple[list[tuple[Path, Path | None]], tuple[str, ...]]:
-    validate_llm_setting("backend", backend)
     toml_text = _read_text_if_exists(paths.toml_path)
     if not toml_text:
         raise ConfigWizardError(
             f"fm-agent.toml not found at {paths.toml_path}; refusing to guess a new project config."
         )
-    updated_toml = update_llm_settings_toml_text(toml_text, {"backend": backend})
+    toml_updates = local_backend_toml_updates(paths.env_path, backend)
+    updated_toml = update_llm_settings_toml_text(toml_text, toml_updates)
     try:
         tomllib.loads(updated_toml)
     except tomllib.TOMLDecodeError as exc:  # Defensive: the text editor should preserve TOML.
@@ -958,7 +985,15 @@ def run_local_backend_configuration(project_root: Path, backend: str) -> int:
     _updated_env, removed_overrides = remove_legacy_llm_env_overrides(
         _read_text_if_exists(paths.env_path)
     )
-    print(_preview_local_backend_configuration(backend, paths, removed_overrides))
+    toml_updates = local_backend_toml_updates(paths.env_path, backend)
+    print(
+        _preview_local_backend_configuration(
+            backend,
+            paths,
+            removed_overrides,
+            toml_updates,
+        )
+    )
     print()
     warn_live_llm_environment_overrides()
     if live_llm_environment_overrides():
