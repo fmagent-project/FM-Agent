@@ -240,12 +240,18 @@ def _ensure_resume_mode_compatible(output_dir, all_bugs):
         return
     for root, _dirs, files in os.walk(output_dir):
         for filename in files:
-            if (
-                not filename.endswith(".json")
-                or re.search(r"\.bug-\d{3}\.json$", filename)
-            ):
+            if not filename.endswith(".json"):
                 continue
             result_path = os.path.join(root, filename)
+            if re.search(r"\.bug-\d{3}\.json$", filename):
+                if not all_bugs:
+                    raise ResumeModeMismatchError(
+                        "Cannot resume an all-bugs workspace in default mode. "
+                        "Re-run with --resume --all-bugs, or omit --resume to "
+                        "start a fresh default run. "
+                        f"Existing candidate: {result_path}"
+                    )
+                continue
             try:
                 with open(result_path, "r", encoding="utf-8") as f:
                     result = json.load(f)
