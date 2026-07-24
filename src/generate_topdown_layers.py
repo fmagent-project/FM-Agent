@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from src.extract import EXT_TO_LANG, LANG_CONFIG
+from src.file_utils import _is_metadata_sidecar
 from src.languages.registry import call_edges_all
 
 
@@ -56,7 +57,7 @@ def _collect_phase_files(proj_dir, phase_data):
             for root, _dirs, fnames in os.walk(func_dir):
                 for fname in fnames:
                     fpath = os.path.join(root, fname)
-                    if os.path.isfile(fpath):
+                    if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
                         results.append((fpath, module_name))
 
     return results
@@ -273,7 +274,7 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
         callees_map/callers_map contain only within-phase edges.
         all_callees_map contains callees from any phase.
         edge_aliases_map maps callee -> caller -> supplemental callee labels
-        that may appear in a caller's [INFO] block.
+        that may appear as callee names in a caller's .info.json sidecar.
     """
     # Build FQN mappings
     fqn_map = {}  # filepath -> fqn

@@ -204,7 +204,7 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 
 By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
 
-Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces the `[SPEC]` blocks for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
+Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces adjacent `.spec.json` and `.info.json` metadata files for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
 
 ```bash
 uv run python main.py <proj_dir> --only-spec
@@ -235,7 +235,7 @@ Extra-edge field rules:
 - `caller.callsite_names`: source callsite function names. Any function containing these callsites becomes a caller and gets an edge to `callee.fqn`. It may be empty.
   - At least one of `caller.fqn` and `caller.callsite_names` must be non-empty.
 - `callee.fqn`: exact FQN for a single callee.
-- `callee.info_names`: optional names used to match generated `[INFO]` entries for this callee. They are only used for `[INFO]` matching and passing caller expectations.
+- `callee.info_names`: optional names used to match callee entries in generated `.info.json` files. They are only used for `.info.json` matching and passing caller expectations.
 
 ### Incremental Mode
 
