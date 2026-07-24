@@ -303,6 +303,64 @@ def _normalized_relative_path(proj_dir, path):
     return os.path.normcase(os.path.normpath(relative_path))
 
 
+def _normalized_function_source(source):
+    """Normalize line endings before comparing extractor output."""
+    return source.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _bare_function_name(identifier):
+    """Return the unqualified tail, ignoring either extractor's dedup suffix."""
+    bare = re.split(r"::|\.", identifier)[-1]
+    return re.sub(r"_\d+$", "", bare)
+
+
+def _codegraph_legacy_coverage(proj_dir, codegraph_functions, file_languages):
+    """Check that CodeGraph covers every function the legacy extractor sees.
+
+    CodeGraph can legitimately contain *additional* functions, such as an inline
+    C++ member that the legacy extractor skips. It is only safe to bypass the
+    legacy path when every legacy-visible function has an ordered CodeGraph match
+    with the same bare name and source. A missing match means CodeGraph is
+    incomplete for this file, so callers must use the legacy fallback instead.
+    """
+    coverage = {}
+    for rel_path, lang_key in file_languages.items():
+        rel_key = _normalized_relative_path(proj_dir, rel_path)
+        abs_path = os.path.join(proj_dir, rel_path)
+        if not os.path.exists(abs_path):
+            # Added or removed files only have functions on one side of the
+            # comparison; an absent file is therefore an expected empty map.
+            coverage[rel_key] = True
+            continue
+        legacy_functions = extract_functions_from_file(abs_path, lang_key)
+        codegraph_items = list(codegraph_functions.get(rel_key, {}).items())
+        codegraph_index = 0
+
+        for legacy_name, legacy_source in legacy_functions:
+            legacy_body = _normalized_function_source(legacy_source)
+            legacy_bare_name = _bare_function_name(legacy_name)
+            while codegraph_index < len(codegraph_items):
+                identifier, codegraph_source = codegraph_items[codegraph_index]
+                codegraph_index += 1
+                if (
+                    _bare_function_name(identifier) == legacy_bare_name
+                    and _normalized_function_source(codegraph_source) == legacy_body
+                ):
+                    break
+            else:
+                logging.warning(
+                    "CodeGraph does not cover legacy-extracted function %s in %s; "
+                    "using legacy comparison for this file.",
+                    legacy_name,
+                    rel_path,
+                )
+                coverage[rel_key] = False
+                break
+        else:
+            coverage[rel_key] = True
+    return coverage
+
+
 def _codegraph_functions_by_file(proj_dir, lang_keys):
     """Return CodeGraph's ``{relative path: {identifier: source}}`` mapping.
 
@@ -323,7 +381,7 @@ def _codegraph_functions_by_file(proj_dir, lang_keys):
     return result
 
 
-def _codegraph_functions_at_revision(proj_dir, revision, lang_keys):
+def _codegraph_functions_at_revision(proj_dir, revision, file_languages):
     """Index ``revision`` in a temporary worktree and return its functions.
 
     CodeGraph indexes real files rather than ``git show`` output. A linked
@@ -355,6 +413,7 @@ def _codegraph_functions_at_revision(proj_dir, revision, lang_keys):
             return None
 
         try_codegraph_init(worktree_dir)
+        lang_keys = set(file_languages.values())
         functions = _codegraph_functions_by_file(worktree_dir, lang_keys)
         if functions is None:
             logging.warning(
@@ -362,7 +421,11 @@ def _codegraph_functions_at_revision(proj_dir, revision, lang_keys):
                 "to legacy extraction.",
                 revision,
             )
-        return functions
+            return None
+        coverage = _codegraph_legacy_coverage(
+            worktree_dir, functions, file_languages
+        )
+        return functions, coverage
     finally:
         if created:
             subprocess.run(
@@ -428,22 +491,36 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     # Erlang intentionally remains on its existing extraction path: its ELP
     # integration has different project and tooling requirements. Every other
     # changed language gets a CodeGraph comparison when both indexes are usable.
-    codegraph_langs = {
-        EXT_TO_LANG[rel_path.rsplit(".", 1)[-1]]
+    file_languages = {
+        rel_path: EXT_TO_LANG[rel_path.rsplit(".", 1)[-1]]
         for rel_path in files
         if "." in rel_path
         and rel_path.rsplit(".", 1)[-1] in EXT_TO_LANG
-        and EXT_TO_LANG[rel_path.rsplit(".", 1)[-1]] != "erlang"
     }
+    codegraph_file_languages = {
+        rel_path: lang_key
+        for rel_path, lang_key in file_languages.items()
+        if lang_key != "erlang"
+    }
+    codegraph_langs = set(codegraph_file_languages.values())
     current_codegraph = (
         _codegraph_functions_by_file(proj_dir, codegraph_langs)
         if codegraph_langs else None
     )
-    baseline_codegraph = (
-        _codegraph_functions_at_revision(proj_dir, old_commit_id, codegraph_langs)
-        if current_codegraph is not None and codegraph_langs
-        else None
+    current_coverage = (
+        _codegraph_legacy_coverage(
+            proj_dir, current_codegraph, codegraph_file_languages
+        )
+        if current_codegraph is not None else None
     )
+    baseline_codegraph = None
+    baseline_coverage = None
+    if current_codegraph is not None and codegraph_file_languages:
+        baseline_result = _codegraph_functions_at_revision(
+            proj_dir, old_commit_id, codegraph_file_languages
+        )
+        if baseline_result is not None:
+            baseline_codegraph, baseline_coverage = baseline_result
 
     def _path_exists_in_commit(rel_path):
         """Return whether rel_path exists at old_commit_id without reading its contents."""
@@ -484,8 +561,8 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
             lang_key != "erlang"
             and current_codegraph is not None
             and baseline_codegraph is not None
-            and (not current_exists or rel_key in current_codegraph)
-            and (not old_exists or rel_key in baseline_codegraph)
+            and (not current_exists or current_coverage.get(rel_key, False))
+            and (not old_exists or baseline_coverage.get(rel_key, False))
         )
 
         if use_codegraph:
