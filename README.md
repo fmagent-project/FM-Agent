@@ -53,7 +53,7 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 ### Requirements
 
 - Ubuntu (22.04 LTS, 24.04 LTS is tested)
-- Python 3.10
+- Python 3.12
 - pip >= 23
 - [openai](https://pypi.org/project/openai/) 2.15.0
 - [OpenCode](https://github.com/opencode-ai/opencode) 1.4.6
@@ -84,7 +84,7 @@ The following macOS environment has been tested with the install script:
 
 Set the LLM API key used by both FM-Agent and OpenCode. We recommend [OpenRouter](https://openrouter.ai/): FM-Agent invokes LLMs concurrently, and OpenRouter is generous on RPM (requests per minute) and TPM (tokens per minute) — but any compatible provider works.
 
-Create a `.env` file in the project root (FM-Agent loads it automatically via python-dotenv). Copy the template and fill in your key:
+Put your API key in `.env` (gitignored, loaded automatically via python-dotenv); every other setting has a committed default in `fm-agent.toml`. Copy the template:
 
 ```bash
 cp .env.example .env
@@ -92,18 +92,11 @@ cp .env.example .env
 ```
 
 ```bash
-# .env
+# .env  (secret only)
 LLM_API_KEY=your-api-key-here
-LLM_API_BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=anthropic/claude-sonnet-4.6
-LLM_EFFORT=
-FM_AGENT_MODEL_BACKEND=opencode
-OPENCODE_MODEL_PROVIDER=openrouter
-# Optional: os.pathsep-separated Markdown files with project/domain knowledge
-FM_AGENT_DOMAIN_KNOWLEDGE=
 ```
 
-See [docs/config_llm.md](docs/config_llm.md) for OpenCode provider configuration and optional prompt-cache setup.
+Non-secret settings — model, endpoint, backend, provider, etc. — live in `fm-agent.toml` under `[llm]`. Edit them there for a permanent change. To override without touching the committed file — e.g. on a git clone you update with `git pull` — set the matching environment variable in `.env` or your shell. Precedence is `env > .env > fm-agent.toml`; because `.env` wins over the toml, a stale value there overrides a later toml edit, so check `.env` first if a change isn't taking effect. See [docs/config_llm.md](docs/config_llm.md) for details and OpenCode provider setup.
 
 Then, all of the above dependencies (except Ubuntu and Python) can be installed via the provided script:
 
@@ -119,35 +112,13 @@ Erlang support is optional because its toolchain is not needed for other languag
 
 The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
 
-(Optional) If needed, you can manually set the default LLM model and API key of OpenCode in its configuration file.
+FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so you do not need to hand-edit `~/.config/opencode/opencode.json` for the model or key (see [docs/config_llm.md](docs/config_llm.md)).
 
-**Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready, and if necessary, specify how to run test cases in `md/bug_validator.md`. If you do not specify, the agent will autonomously decide the execution method.
+**Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready. If project-specific validation instructions are needed, provide them with `--bug-validator`; otherwise, the agent will decide how to execute the tests.
 
 ## Configuration
 
-Key parameters can be adjusted in [config.py](config.py).
-
-| Parameter                       | Default                        | Description                                                  |
-| ------------------------------- | ------------------------------ | ------------------------------------------------------------ |
-| `LLM_MODEL`                     | `anthropic/claude-sonnet-4.6`  | Default model used as the fallback for all task-specific model settings |
-| `OPENCODE_SETUP_MODEL`          | `LLM_MODEL`                    | Model used by OpenCode for codebase understanding, phase planning, and domain context generation |
-| `OPENCODE_SPEC_MODEL`           | `LLM_MODEL`                    | Model used by OpenCode for batch behavioral spec generation  |
-| `OPENCODE_BUG_VALIDATION_MODEL` | `LLM_MODEL`                    | Model used by OpenCode to validate `MISMATCH` results with probe scripts and bug reports |
-| `REASONER_POST_CONDITION_MODEL` | `LLM_MODEL`                    | Model used by direct llm calls to generate block post-conditions |
-| `REASONER_SPEC_CHECK_MODEL`     | `LLM_MODEL`                    | Model used by direct llm calls to check whether actual post-conditions violate specs |
-| `OPENCODE_MODEL_PROVIDER`       | `openrouter`                   | OpenCode provider prefix used when invoking `opencode run --model <prefix>/<model>` |
-| `LLM_API_KEY`                   | (env)                          | LLM API key for FM-Agent's direct calls |
-| `LLM_API_BASE_URL`              | `https://openrouter.ai/api/v1` | LLM API base URL for FM-Agent's direct calls |
-| `LLM_EFFORT`                    | unset                          | Optional reasoning effort passed to `codex exec` or `claude -p`; leave empty to omit the effort flag |
-| `FM_AGENT_MODEL_BACKEND`        | `opencode`                     | Model backend. Use `auto`, `codex-cli`, or `claude-cli` to bypass OpenCode and use local CLI authentication |
-| `FM_AGENT_DOMAIN_KNOWLEDGE`     | unset                          | Optional `os.pathsep`-separated Markdown files with user-provided domain knowledge |
-| `GRANULARITY`                   | `40`                           | Minimum number of lines per code block when splitting a function for block-by-block reasoning |
-| `MAX_WORKERS`                   | `10`                           | Maximum number of concurrent worker threads for reasoning and bug validation |
-| `MAX_SPC_ITER`                  | `5`                            | Maximum number of retries/iterations for FM-Agent's direct LLM verification calls (post-condition and spec checks) |
-| `OPENCODE_MAX_RETRIES`          | `5`                            | Maximum retry attempts for a failed OpenCode pipeline stage |
-| `OPENCODE_TIMEOUT_SECONDS`      | `1800`                         | Hard timeout (in seconds) for a single `opencode run` subprocess; on expiry the child is killed and the call is retried |
-| `ELP_COMMAND`                    | `elp`                          | ELP executable or command used for Erlang function and call-graph analysis |
-| `ELP_TIMEOUT_SECONDS`            | `180`                          | Timeout for ELP initialization, indexing, and individual LSP requests |
+Settings live in [`fm-agent.toml`](fm-agent.toml) (with inline comments); each can also be overridden by its environment variable. See [docs/configuration.md](docs/configuration.md) for the full reference of every parameter, default, and description.
 
 (Optional) FM-Agent uses oh-my-openagent plugin to enhance OpenCode. The comment-checker hook built into this plugin should be disabled, otherwise it may intercept every comment block that FM-Agent writes, which are specifications of functions. It may force the agent to waste tokens justifying or removing them.
 You can open your oh-my-openagent config file (typically ~/.config/opencode/oh-my-openagent.json) and add disabled_hooks:
@@ -184,7 +155,7 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
 ```
 
 | Argument                    | Description                                                                                     |
@@ -193,6 +164,7 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--sub
 | `--resume`                  | Continue a previous, interrupted run instead of starting over                                   |
 | `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
+| `--bug-validator FILE`       | Use a custom Markdown prompt for bug validation instead of the built-in `md/bug_validator.md`. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
@@ -207,6 +179,19 @@ uv run python main.py <proj_dir> --domain-knowledge docs/invariants.md docs/prot
 ```
 
 FM-Agent stages these files under `fm_agent/spec_prompts/domain_context/user_knowledge/` for the current run. You can also set `FM_AGENT_DOMAIN_KNOWLEDGE` to an `os.pathsep`-separated list of Markdown files.
+
+To customize how candidate bugs are tested, pass a Markdown file with
+`--bug-validator`:
+
+```bash
+uv run python main.py <proj_dir> --bug-validator prompts/compiler_bug_validator.md
+```
+
+The selected file replaces the built-in `md/bug_validator.md` instructions.
+Relative `--bug-validator` paths are resolved from the directory where
+FM-Agent is launched, not from `proj_dir`.
+FM-Agent still adds the current bug ID, target verification result, and any
+`--domain-knowledge` files to each generated bug-validation prompt.
 
 Use `--submodule` to limit a full or incremental run to selected project subdirectories:
 
@@ -299,7 +284,7 @@ A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results w
 ## Important Notes
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
-2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For reusable framework behavior, customize the built-in prompts; for example, if you are reasoning about a compiler, modify `md/bug_validator.md` to instruct the agent to compare outputs against a reference implementation (e.g., GCC).
+2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For project-specific bug-validation procedures, use `--bug-validator` instead of editing the built-in prompt; for example, a compiler-specific validator can instruct the agent to compare outputs against a reference implementation such as GCC.
 3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
 
 ## Citation

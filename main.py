@@ -45,6 +45,29 @@ def _clean_previous_run(work_dir):
         shutil.rmtree(work_dir)
 
 
+def _resolve_bug_validator_path(raw_path):
+    """Resolve a custom bug-validator prompt path from the launch directory."""
+    if not raw_path:
+        return None
+
+    path = os.path.abspath(os.path.expanduser(raw_path))
+    if not os.path.isfile(path):
+        raise ValueError(
+            "--bug-validator must point to a file: "
+            f"{raw_path}"
+        )
+
+    try:
+        with open(path, "r"):
+            pass
+    except OSError as exc:
+        raise ValueError(
+            f"--bug-validator file is not readable: {exc}"
+        ) from exc
+
+    return path
+
+
 def _normalize_submodules(proj_dir, submodules):
     """Return validated project-relative submodule directories."""
     if not submodules:
@@ -91,6 +114,8 @@ def run_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
+    bug_validator_path=None,
+    plugin_config=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -130,10 +155,16 @@ def run_pipeline(
 
     # Stage 1: generate phase.json (input: target code → phases.json)
     # Stage 2: generate domain context (input: phases.json → domain context files)
+    phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
+    context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
+    plugin_root = plugin_config.root if plugin_config else None
+
     print("[Pipeline] Stage 1/6: Generating phase plan...")
     _run_generate_phases(
         proj_dir, work_dir, script_dir, resume=resume,
         submodules=submodules,
+        plugin_stage=phase_stage,
+        plugin_root=plugin_root,
     )
 
     phases_modified = _post_process_phases(
@@ -144,7 +175,14 @@ def run_pipeline(
     )
 
     print("[Pipeline] Stage 2/6: Generating domain context...")
-    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=resume and not phases_modified)
+    _run_generate_domain_context(
+        proj_dir,
+        work_dir,
+        script_dir,
+        resume=resume and not phases_modified,
+        plugin_stage=context_stage,
+        plugin_root=plugin_root,
+    )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
     # run_extraction (Stage 3) and generate_topdown_layers (Stage 5) read from it.
@@ -212,6 +250,7 @@ def run_pipeline(
         resume=resume,
         extra_call_edges=extra_call_edges,
         only_spec=only_spec,
+        bug_validator_path=bug_validator_path,
     )
 
     # Print confirmed bug count (skipped in only-spec mode, which runs no
@@ -235,10 +274,12 @@ if __name__ == "__main__":
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
-              "[--end-func PATH ...] [--extra-edge FILE] [--only-spec]",
+              "[--end-func PATH ...] [--extra-edge FILE] "
+              "[--bug-validator FILE] [--only-spec] "
+              "[--list-plugin] [--plugin NAME]",
         description="Run the FM agent pipeline on a project directory.",
     )
-    parser.add_argument("proj_dir", help="path to the project directory")
+    parser.add_argument("proj_dir", nargs="?", help="path to the project directory")
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -310,13 +351,67 @@ if __name__ == "__main__":
         help="optional JSON file, or directory of JSON files, containing "
         "supplemental caller->callee edges.",
     )
+    parser.add_argument(
+        "--bug-validator",
+        metavar="FILE",
+        default=None,
+        help="use a custom Markdown prompt for bug validation instead of "
+        "the built-in md/bug_validator.md",
+    )
+    parser.add_argument(
+        "--list-plugin",
+        action="store_true",
+        help="list all valid plugins found under the plugins/ directory and exit.",
+    )
+    parser.add_argument(
+        "--plugin",
+        metavar="NAME",
+        default=None,
+        help="load and activate the named plugin from the plugins/ directory.",
+    )
     args = parser.parse_args()
+
+    if args.list_plugin:
+        from pathlib import Path
+        from src.plugin import load_plugins
+        plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
+        plugins = load_plugins(Path(plugins_dir))
+        if not plugins:
+            print("No valid plugins found.")
+        else:
+            print(f"{'Plugin':<30} {'Version':<12} Stages")
+            print("-" * 65)
+            for name, plugin in plugins.items():
+                stage_names = ", ".join(plugin.stages.keys()) if plugin.stages else "(none)"
+                print(f"{name:<30} {plugin.version:<12} {stage_names}")
+        sys.exit(0)
+
+    plugin_config = None
+    if args.plugin:
+        if not args.proj_dir:
+            parser.error("the following arguments are required when --plugin is used: proj_dir")
+        from pathlib import Path
+        from src.plugin import load_plugins
+        plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
+        plugins = load_plugins(Path(plugins_dir))
+        if args.plugin not in plugins:
+            print(f"[Pipeline] ERROR: Plugin '{args.plugin}' not found or invalid.")
+            sys.exit(1)
+        plugin_config = plugins[args.plugin]
+        print(f"[Pipeline] Loaded plugin '{plugin_config.name}' v{plugin_config.version}")
+
+    if not args.proj_dir:
+        parser.error("the following arguments are required: proj_dir")
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
     extra_call_edges_path = args.extra_edge
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
+    try:
+        bug_validator_path = _resolve_bug_validator_path(args.bug_validator)
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
@@ -361,6 +456,8 @@ if __name__ == "__main__":
             one_phase=args.one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=args.only_spec,
+            bug_validator_path=bug_validator_path,
+            plugin_config=plugin_config,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -419,6 +516,8 @@ if __name__ == "__main__":
                     submodules=submodules,
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
+                    bug_validator_path=bug_validator_path,
+                    plugin_config=plugin_config,
                 )
             else:
                 run_pipeline(
@@ -429,6 +528,8 @@ if __name__ == "__main__":
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     only_spec=args.only_spec,
+                    bug_validator_path=bug_validator_path,
+                    plugin_config=plugin_config,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is

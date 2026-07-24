@@ -17,6 +17,8 @@ import sqlite3
 import subprocess
 from collections import defaultdict
 
+from config import settings
+
 
 _SAFE_REPLACE = str.maketrans({"/": "_"})
 _UNSAFE = set("/")
@@ -100,6 +102,7 @@ def _bare_function_name(name: str) -> str:
     - Simple identifier: ``"my_func"`` -> ``"my_func"``
     - Qualified name: ``"ns::Cls::method"`` -> ``"method"``
     - Go pointer receiver: ``"(*T).Method"`` -> ``"Method"``
+    - C++ operator overload: ``"Vec::operator=="`` -> ``"operator=="``
     - Function-pointer: ``"(*func)(type *param)"`` -> ``"func"``
     - Pointer return: ``"*func_name(...)"`` -> ``"func_name"``
     - this-dot: ``"this.onClick"`` -> ``"onClick"``
@@ -109,7 +112,33 @@ def _bare_function_name(name: str) -> str:
     if not name:
         return ""
 
-    m = re.search(r'(?:[:\.)])(\w+)$', name)
+    tail = name
+    if "::" in tail:
+        tail = tail.rsplit("::", 1)[1].lstrip()
+    elif "." in tail:
+        tail = tail.rsplit(".", 1)[1].lstrip()
+
+    if tail.startswith("operator"):
+        rest = tail[len("operator"):].lstrip()
+        if rest.startswith("[]"):
+            return "operator[]"
+        if rest.startswith("()"):
+            return "operator()"
+        if re.fullmatch(r'new(?:\s*\[\s*\])?', rest):
+            return "operator new[]" if "[" in rest else "operator new"
+        if re.fullmatch(r'delete(?:\s*\[\s*\])?', rest):
+            return "operator delete[]" if "[" in rest else "operator delete"
+
+        symbol = []
+        for ch in rest:
+            if ch in "+-*/%&|^~!=<>,":
+                symbol.append(ch)
+            else:
+                break
+        if symbol:
+            return "operator" + "".join(symbol)
+
+    m = re.search(r'(?:^|::|\.)(\w+)$', name)
     if m:
         return m.group(1)
     m = re.match(r'\(\s*\*\s*(\w+)\s*\)', name)
@@ -428,6 +457,46 @@ class CodeGraphExtractor:
         return dict(result)
 
 
+def _codegraph_cmd() -> str:
+    """Return the codegraph executable to invoke.
+
+    ``install.sh`` installs the pinned fork build (from ``fm-agent.toml``'s
+    ``[codegraph]``) into ``bin_dir`` (default ``~/.local/bin``); we invoke it
+    from that same configured location. Invoking it by absolute path — rather than
+    a bare ``codegraph`` resolved via PATH — uses the pinned build even when that
+    directory is not on PATH (the macOS default) and cannot be shadowed by a
+    different/older codegraph earlier on PATH. Falls back to a bare ``codegraph``
+    when the pinned build is absent, so an externally provided one still works; a
+    missing binary then becomes the regex-extractor fallback in the caller.
+    """
+    bin_dir = os.path.expanduser(settings.codegraph.bin_dir)
+    local = os.path.join(bin_dir, "codegraph")
+    return local if os.access(local, os.X_OK) else "codegraph"
+
+
+def _warn_on_codegraph_version_mismatch(cmd: str) -> None:
+    """Warn (never fail) when the codegraph about to run is not the version pinned
+    in ``fm-agent.toml``'s ``[codegraph].version`` — e.g. a stale build shadowing
+    it. install.sh is what guarantees the pinned version; this is a runtime heads-up.
+    """
+    want = settings.codegraph.version.strip().removeprefix("v")
+    if not want:
+        return
+    try:
+        got = subprocess.run(
+            [cmd, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return
+    if got and got != want:
+        logging.warning(
+            "codegraph %r does not match the pinned %r "
+            "(fm-agent.toml [codegraph].version); re-run install.sh to update.",
+            got,
+            want,
+        )
+
+
 def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     """Build the codegraph index for proj_dir with `codegraph init`.
 
@@ -458,9 +527,11 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
         print("[Pipeline] Rebuilding codegraph index for current working tree...")
     else:
         print("[Pipeline] Building codegraph index...")
+    cmd = _codegraph_cmd()
+    _warn_on_codegraph_version_mismatch(cmd)
     try:
         result = subprocess.run(
-            ["codegraph", "init"], cwd=proj_dir, capture_output=True, text=True
+            [cmd, "init"], cwd=proj_dir, capture_output=True, text=True
         )
     except FileNotFoundError:
         return  # codegraph not installed

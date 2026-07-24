@@ -112,6 +112,7 @@ def _run_spec_generation_batch(
 def run_spec_generation_and_verification(
     proj_dir, work_dir, input_dir, output_dir, script_dir, spec_prompts_dir,
     phases_data, resume=False, extra_call_edges=None, only_spec=False,
+    bug_validator_path=None,
 ):
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
@@ -199,6 +200,7 @@ def run_spec_generation_and_verification(
                                 spec_procs=None,
                                 already_processed=all_processed | layer_processed,
                                 resume=resume,
+                                bug_validator_path=bug_validator_path,
                             )
                             layer_processed.update(newly_processed)
                     break
@@ -242,6 +244,7 @@ def run_spec_generation_and_verification(
                             spec_procs=spec_futures,
                             already_processed=all_processed | layer_processed,
                             resume=resume,
+                            bug_validator_path=bug_validator_path,
                         )
                         layer_processed.update(newly_processed)
 
@@ -291,4 +294,3 @@ def run_spec_generation_and_verification(
         # Mark all files from this phase as processed for subsequent phases
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
-

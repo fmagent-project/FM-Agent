@@ -61,7 +61,18 @@ def _spec_task_exit_code(handle):
     return None
 
 
-def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, work_dir=None, poll_interval=2, spec_procs=None, already_processed=None, resume=False):
+def streaming_reasoner(
+    input_dir,
+    output_dir,
+    file_list=None,
+    proj_dir=None,
+    work_dir=None,
+    poll_interval=2,
+    spec_procs=None,
+    already_processed=None,
+    resume=False,
+    bug_validator_path=None,
+):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
     if work_dir is None:
         work_dir = proj_dir
@@ -149,7 +160,12 @@ def streaming_reasoner(input_dir, output_dir, file_list=None, proj_dir=None, wor
                                 os.path.splitext(rel)[0] + ".json",
                             )
                             vf = executor.submit(
-                                _validate_single_bug, result_json_rel, proj_dir, work_dir, resume
+                                _validate_single_bug,
+                                result_json_rel,
+                                proj_dir,
+                                work_dir,
+                                resume=resume,
+                                bug_validator_path=bug_validator_path,
                             )
                             validation_futures[vf] = (fpath, rel_path, result_json_rel, completed_count)
                             logging.info(f"Submitted validation: {fpath}")
@@ -327,7 +343,13 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     return file_path, output["verdict"]
 
 
-def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False):
+def _validate_single_bug(
+    result_json_rel,
+    proj_dir,
+    work_dir=None,
+    resume=False,
+    bug_validator_path=None,
+):
     """Validate a single MISMATCH result by running opencode with a per-file prompt."""
     if work_dir is None:
         work_dir = proj_dir
@@ -344,8 +366,12 @@ def _validate_single_bug(result_json_rel, proj_dir, work_dir=None, resume=False)
     bug_id = os.path.splitext(parts)[0].replace(os.sep, "--").replace("/", "--")
     function_id = function_id_from_result_path(result_json_rel)
 
-    # Read the base bug_validator.md
-    base_md_path = os.path.join(script_dir, "md", "bug_validator.md")
+    # Read either the user-selected validator or the built-in default.
+    base_md_path = (
+        bug_validator_path
+        if bug_validator_path
+        else os.path.join(script_dir, "md", "bug_validator.md")
+    )
     with open(base_md_path, "r") as f:
         base_content = f.read()
 

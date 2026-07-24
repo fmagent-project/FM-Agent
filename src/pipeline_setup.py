@@ -266,6 +266,7 @@ def _deduplicate_phases(phases_dir):
     for phase in sorted(data["phases"], key=lambda p: p["phase"]):
         for module in phase["modules"]:
             original = module["source_files"]
+
             deduped = []
             for sf in original:
                 if sf not in seen:
@@ -620,10 +621,70 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
     )
 
 
+def _phase_plan_schema_errors(phases_path):
+    """Return human-readable schema errors for phases.json."""
+    try:
+        with open(phases_path, "r") as f:
+            data = json.load(f)
+    except OSError as exc:
+        return [f"phases.json could not be read: {exc}"]
+    except json.JSONDecodeError as exc:
+        return [f"phases.json is not valid JSON: {exc}"]
+
+    if not isinstance(data, dict):
+        return ["the top-level value must be an object"]
+
+    phases = data.get("phases")
+    if not isinstance(phases, list):
+        return ['top-level field "phases" must be an array']
+
+    errors = []
+    for phase_index, phase in enumerate(phases):
+        phase_path = f"phases[{phase_index}]"
+        if not isinstance(phase, dict):
+            errors.append(f"{phase_path} must be an object")
+            continue
+
+        modules = phase.get("modules")
+        if not isinstance(modules, list):
+            errors.append(f"{phase_path}.modules must be an array")
+            continue
+
+        for module_index, module in enumerate(modules):
+            module_path = f"{phase_path}.modules[{module_index}]"
+            if not isinstance(module, dict):
+                errors.append(f"{module_path} must be an object")
+                continue
+
+            module_name = module.get("name", "")
+            context = (
+                f"{module_path} ({module_name!r})"
+                if module_name
+                else module_path
+            )
+
+            if "source_files" not in module:
+                errors.append(f"{context}.source_files is missing")
+                continue
+
+            source_files = module["source_files"]
+            if not isinstance(source_files, list):
+                errors.append(f"{context}.source_files must be an array")
+                continue
+
+            for source_index, source_file in enumerate(source_files):
+                if not isinstance(source_file, str):
+                    errors.append(
+                        f"{context}.source_files[{source_index}] must be a string"
+                    )
+
+    return errors
+
+
 def _phase_plan_complete(work_dir):
-    """Return True only if phases.json exists and is valid JSON."""
+    """Return True only if phases.json exists and matches the required schema."""
     phases_path = os.path.join(work_dir, "phases.json")
-    return _json_file_is_valid(phases_path)
+    return not _phase_plan_schema_errors(phases_path)
 
 
 def _domain_context_complete(work_dir):
@@ -840,16 +901,51 @@ def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
 
 
 def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
-                         resume=False, submodules=None):
+                         resume=False, submodules=None, plugin_stage=None,
+                         plugin_root=None):
     """Stage 1: generate phase.json — input target code, output phases.json."""
+    if plugin_stage is not None:
+        if plugin_stage.type == "pass":
+            print("[Pipeline] Stage 1/6: Plugin stage 'generate_phase_plan' type=pass, skipping.")
+            return
+        if plugin_stage.type == "replace":
+            print("[Pipeline] Stage 1/6: Plugin stage 'generate_phase_plan' type=replace, running plugin command.")
+            from .plugin import run_plugin_command
+            run_plugin_command(plugin_stage.replace_cmd, plugin_root, proj_dir, label="generate_phase_plan")
+            return
+
     phases_json = os.path.join(work_dir, "phases.json")
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
 
+    phase_plan_errors = (
+        _phase_plan_schema_errors(phases_json)
+        if os.path.exists(phases_json)
+        else []
+    )
     _resume_skip = resume and _phase_plan_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
-    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
+    if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.input_md:
+        workflow_src = str(plugin_root / plugin_stage.input_md)
+        workflow_dst = os.path.join(work_dir, "workflow_generate_phases.md")
+        shutil.copy2(workflow_src, workflow_dst)
+        user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
+        if user_knowledge_paths:
+            with open(workflow_dst, "a") as _f:
+                _f.write(
+                    "\n---\n\n"
+                    "## User-Provided Domain Knowledge\n\n"
+                    "The user supplied extra Markdown files with domain knowledge for this run. "
+                    "Read these files before writing `phases.json` and the generated domain "
+                    "context files. Use them only as contextual knowledge about intended "
+                    "behavior, terminology, business rules, data encodings, and invariants; "
+                    "do NOT include these Markdown files as project source files in "
+                    "`phases.json`, and do NOT edit or summarize them in place.\n\n"
+                    f"{format_domain_knowledge_bullets(user_knowledge_paths)}\n"
+                )
+    else:
+        _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -883,6 +979,19 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                       f"regenerate or overwrite work that is already done. {fm_reminder} {submodule_reminder}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
+        if phase_plan_errors:
+            formatted_errors = "\n".join(
+                f"- {error}" for error in phase_plan_errors
+            )
+            schema_repair_prompt = (
+                "IMPORTANT: The existing fm_agent/phases.json is valid JSON or "
+                "partially generated, but it does not match the required schema. "
+                "Read the project source files and repair these problems:\n"
+                f"{formatted_errors}\n"
+                "Do not use an empty source_files array merely to satisfy the schema. "
+                "Use an empty array only when the module genuinely owns no source files."
+            )
+            prompt = f"{prompt}\n\n{schema_repair_prompt}"
         prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_generate_phases.md")
         command = build_llm_cli_command(
             model=OPENCODE_SETUP_MODEL,
@@ -909,7 +1018,14 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 1 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        if os.path.exists(phases_json):
+        phase_plan_errors = (
+            _phase_plan_schema_errors(phases_json)
+            if os.path.exists(phases_json)
+            else ["phases.json is missing"]
+        )
+
+        phase_plan_ready = False
+        if not phase_plan_errors:
             if submodules:
                 phase_plan_ready = _phases_cover_current_sources(
                     phases_json, proj_dir, submodules
@@ -920,16 +1036,22 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                     or _phases_cover_current_sources(phases_json, proj_dir)
                 )
             else:
-                phase_plan_ready = _json_file_is_valid(phases_json)
-            if phase_plan_ready:
-                break
+                phase_plan_ready = True
+        if phase_plan_ready:
+            break
 
         failure = "update phases.json" if is_incremental else "produce phases.json"
-        missing = (
-            "phases.json was not updated"
-            if is_incremental
-            else "phases.json missing or invalid"
-        )
+        if phase_plan_errors:
+            missing = (
+                "phases.json schema validation failed: "
+                + "; ".join(phase_plan_errors)
+            )
+        else:
+            missing = (
+                "phases.json was not updated"
+                if is_incremental
+                else "phases.json missing or invalid"
+            )
         if attempt < OPENCODE_MAX_RETRIES:
             delay = 10
             print(
@@ -945,6 +1067,11 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                 f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
             )
             sys.exit(1)
+
+    if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.output_process:
+        print("[Pipeline] Stage 1/6: Running plugin post-process for generate_phase_plan...")
+        from .plugin import run_plugin_command
+        run_plugin_command(plugin_stage.output_process, plugin_root, proj_dir, label="generate_phase_plan post-process")
 
 
 def _post_process_phases(proj_dir, work_dir, required_source_files=None,
@@ -996,15 +1123,43 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
     return phases_modified
 
 
-def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
+def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
+                                 plugin_stage=None, plugin_root=None):
     """Stage 2: generate domain context — input phases.json, output domain context
     files for each phase.
     """
+    if plugin_stage is not None:
+        if plugin_stage.type == "pass":
+            print("[Pipeline] Stage 2/6: Plugin stage 'generate_domain_context' type=pass, skipping.")
+            return
+        if plugin_stage.type == "replace":
+            print("[Pipeline] Stage 2/6: Plugin stage 'generate_domain_context' type=replace, running plugin command.")
+            from .plugin import run_plugin_command
+            run_plugin_command(plugin_stage.replace_cmd, plugin_root, proj_dir, label="generate_domain_context")
+            return
+
     _resume_skip = resume and _domain_context_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 2/6: RESUME — domain context files found, skipping domain context generation.")
 
-    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
+    if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.input_md:
+        workflow_src = str(plugin_root / plugin_stage.input_md)
+        workflow_dst = os.path.join(work_dir, "workflow_generate_domain_context.md")
+        shutil.copy2(workflow_src, workflow_dst)
+        user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
+        if user_knowledge_paths:
+            with open(workflow_dst, "a") as _f:
+                _f.write(
+                    "\n---\n\n"
+                    "## User-Provided Domain Knowledge\n\n"
+                    "The user supplied extra Markdown files with domain knowledge for this run. "
+                    "Read these files before writing the domain context files. "
+                    "Use them only as contextual knowledge about intended "
+                    "behavior, terminology, business rules, data encodings, and invariants.\n\n"
+                    f"{format_domain_knowledge_bullets(user_knowledge_paths)}\n"
+                )
+    else:
+        _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -1073,17 +1228,29 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
             )
             sys.exit(1)
 
+    if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.output_process:
+        print("[Pipeline] Stage 2/6: Running plugin post-process for generate_domain_context...")
+        from .plugin import run_plugin_command
+        run_plugin_command(plugin_stage.output_process, plugin_root, proj_dir, label="generate_domain_context post-process")
+
 
 def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                        resume=False, required_source_files=None,
-                       submodules=None, one_phase=False):
+                       submodules=None, one_phase=False,
+                       plugin_config=None):
     """Run generate-phases, post-process, and generate-domain-context stages.
 
     Backward-compatible wrapper that calls the three sub-stages in sequence.
     """
-    _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental, resume, submodules)
+    phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
+    context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
+    plugin_root = plugin_config.root if plugin_config else None
+
+    _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental, resume, submodules,
+                         plugin_stage=phase_stage, plugin_root=plugin_root)
     phases_modified = _post_process_phases(proj_dir, work_dir, required_source_files, submodules, one_phase=one_phase)
-    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume and not phases_modified)
+    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume and not phases_modified,
+                                 plugin_stage=context_stage, plugin_root=plugin_root)
 
     if not _setup_outputs_complete(work_dir):
         print(
