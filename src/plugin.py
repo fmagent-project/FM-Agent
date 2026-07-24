@@ -1,11 +1,19 @@
 """FM-Agent plugin loading, validation, and execution."""
 
+import importlib.util
+import inspect
 import json
 import os
-import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from types import ModuleType
+from typing import Dict, List, Optional, get_args, get_origin
+
+
+# ---------------------------------------------------------------------------
+# Plugin data models
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -13,17 +21,13 @@ class PluginStageConfig:
     """Configuration for a single pipeline stage modification."""
 
     type: str = ""  # "pass", "replace", or "modify"
-    replace_cmd: Optional[str] = None
-    input_md: Optional[str] = None  # relative to plugin root
-    output_process: Optional[str] = None
+    input_md: Optional[str] = None  # relative to plugin root; optional for modify
 
     @staticmethod
     def from_dict(data: dict) -> "PluginStageConfig":
         return PluginStageConfig(
             type=data.get("type", ""),
-            replace_cmd=data.get("replace_cmd"),
             input_md=data.get("input_md"),
-            output_process=data.get("output_process"),
         )
 
     def validated(self) -> List[str]:
@@ -34,79 +38,185 @@ class PluginStageConfig:
                 "stage type must be 'pass', 'replace', or 'modify', "
                 f"got '{self.type}'"
             )
-        if self.type == "replace" and not self.replace_cmd:
-            errors.append("type=replace requires 'replace_cmd'")
-        if (
-            self.type == "modify"
-            and not self.input_md
-            and not self.output_process
-        ):
-            errors.append(
-                "type=modify requires at least one of 'input_md' or 'output_process'"
-            )
         return errors
 
 
 @dataclass
 class PluginConfig:
-    """Parsed plugin.json with resolved plugin root path."""
+    """Parsed plugin.json with resolved plugin root path and loaded module."""
 
     name: str
     version: str
     root: Path
     stages: Dict[str, PluginStageConfig] = field(default_factory=dict)
+    module: Optional[ModuleType] = None
 
     def get_stage(self, stage_name: str) -> Optional[PluginStageConfig]:
-        """Return the stage config for *stage_name*, or None if not configured."""
         return self.stages.get(stage_name)
 
+    # ── invoke helpers ─────────────────────────────────────────────
 
-def _resolve_command(cmd: str, plugin_root: Path) -> str:
-    """Rewrite relative file paths in *cmd* to absolute paths under *plugin_root*.
+    def invoke_replace(
+        self, stage_name: str, input_files: List[str], context: dict
+    ) -> List[str]:
+        fn = getattr(self.module, f"replace_{stage_name}")
+        return fn(input_files, context)
 
-    Each whitespace-delimited token in *cmd* is checked: if ``plugin_root / token``
-    points to an existing file, the token is replaced with its absolute path.
-    Tokens starting with ``/``, ``$``, or ``-`` are left unchanged.
+    def invoke_modify_input(self, stage_name: str, input_file: str) -> None:
+        fn = getattr(self.module, f"modify_{stage_name}_input")
+        fn(input_file)
+
+    def invoke_modify_output(
+        self, stage_name: str, output_files: List[str]
+    ) -> None:
+        fn = getattr(self.module, f"modify_{stage_name}_output")
+        fn(output_files)
+
+
+# ---------------------------------------------------------------------------
+# Function signature validation (inspect-based)
+# ---------------------------------------------------------------------------
+
+# Stage name → (param_types_tuple, return_type)
+_REPLACE_SPEC: Dict[str, tuple] = {
+    "generate_phase_plan": (
+        (List[str], dict),
+        List[str],
+    ),
+    "generate_domain_context": (
+        (List[str], dict),
+        List[str],
+    ),
+}
+
+_MODIFY_SPEC: Dict[str, tuple] = {
+    "generate_phase_plan": (
+        (str,),
+        (List[str],),
+    ),
+    "generate_domain_context": (
+        (str,),
+        (List[str],),
+    ),
+}
+
+
+def _types_match(actual, expected) -> bool:
+    """Compare two type annotations robustly across typing variants.
+
+    Handles ``list[str]`` vs ``typing.List[str]``, ``None`` vs ``type(None)``,
+    and nested generics.
     """
-    tokens = cmd.split()
-    resolved = []
-    for token in tokens:
-        if token.startswith("/") or token.startswith("$"):
-            resolved.append(token)
-            continue
-        candidate = plugin_root / token
-        if candidate.is_file():
-            resolved.append(str(candidate))
-        else:
-            resolved.append(token)
-    return " ".join(resolved)
+    origin_a = get_origin(actual)
+    origin_e = get_origin(expected)
+
+    # None vs NoneType
+    if actual is type(None) and expected is type(None):
+        return True
+    if actual is None and expected is type(None):
+        return True
+    if actual is type(None) and expected is None:
+        return True
+
+    # Resolve None originating from bare type(None) annotation
+    if actual is type(None):
+        actual = None
+    if expected is type(None):
+        expected = None
+
+    if (origin_a or actual) != (origin_e or expected):
+        return False
+    if origin_a is not None and origin_e is not None:
+        return get_args(actual) == get_args(expected)
+    return True
 
 
-def run_plugin_command(
-    cmd: str, plugin_root: Path, proj_dir: str, label: str = ""
-) -> None:
-    """Execute a plugin bash command with ``check=True`` so failure stops the pipeline.
+def _check_fn(module, fn_name: str, param_types: tuple, return_type) -> List[str]:
+    """Validate a single plugin function's signature.
 
-    Relative file paths in *cmd* are resolved under *plugin_root*. The command runs
-    in *proj_dir* with ``FM_AGENT_PLUGIN_ROOT`` set to the plugin root.
+    Checks: existence → callable → inspectable → param count → param types → return type.
+    Returns a list of error strings (empty on success).
     """
-    resolved = _resolve_command(cmd, plugin_root)
-    env = dict(os.environ, FM_AGENT_PLUGIN_ROOT=str(plugin_root))
+    errors: List[str] = []
+
+    fn = getattr(module, fn_name, None)
+    if fn is None:
+        return [f"  {fn_name}: function not found"]
+    if not callable(fn):
+        return [f"  {fn_name}: is not callable"]
+
     try:
-        subprocess.run(resolved, shell=True, check=True, cwd=proj_dir, env=env)
-    except subprocess.CalledProcessError as e:
-        label_prefix = f"Plugin {label}: " if label else ""
-        print(
-            f"[Pipeline] ERROR: {label_prefix}command exited with code {e.returncode}: "
-            f"{resolved}"
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        return [f"  {fn_name}: cannot inspect signature"]
+
+    params = list(sig.parameters.values())
+    if len(params) != len(param_types):
+        errors.append(
+            f"  {fn_name}: expected {len(param_types)} parameter(s), "
+            f"got {len(params)}"
         )
-        raise
+
+    for i, param in enumerate(params):
+        if i >= len(param_types):
+            break
+        ann = param.annotation
+        if ann is inspect.Parameter.empty:
+            errors.append(
+                f"  {fn_name}: parameter '{param.name}' missing type annotation"
+            )
+        elif not _types_match(ann, param_types[i]):
+            errors.append(
+                f"  {fn_name}: parameter '{param.name}' type mismatch "
+                f"(expected {param_types[i]}, got {ann})"
+            )
+
+    if sig.return_annotation is inspect.Signature.empty:
+        errors.append(f"  {fn_name}: missing return type annotation")
+    elif not _types_match(sig.return_annotation, return_type):
+        errors.append(
+            f"  {fn_name}: return type mismatch "
+            f"(expected {return_type}, got {sig.return_annotation})"
+        )
+
+    return errors
+
+
+def _validate_stage_functions(
+    module: ModuleType, stages: Dict[str, PluginStageConfig]
+) -> List[str]:
+    """Check that every stage declared in plugin.json has matching functions."""
+    errors: List[str] = []
+
+    for stage_name, config in stages.items():
+        if config.type == "replace":
+            spec = _REPLACE_SPEC.get(stage_name)
+            if spec is not None:
+                errors += _check_fn(
+                    module, f"replace_{stage_name}", spec[0], spec[1]
+                )
+        elif config.type == "modify":
+            spec = _MODIFY_SPEC.get(stage_name)
+            if spec is not None:
+                errors += _check_fn(
+                    module, f"modify_{stage_name}_input", spec[0], type(None)
+                )
+                errors += _check_fn(
+                    module, f"modify_{stage_name}_output", spec[1], type(None)
+                )
+        # pass: nothing to validate
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Plugin loading
+# ---------------------------------------------------------------------------
 
 
 def _validate_plugin_json_content(
     plugin_dir: Path, name: str, data: dict
 ) -> Optional[PluginConfig]:
-    """Validate the content of a parsed plugin.json; returns PluginConfig or None."""
     plugin_name = data.get("name", "")
     if plugin_name != name:
         print(
@@ -119,7 +229,7 @@ def _validate_plugin_json_content(
         print(f"Invalid plugin '{name}': 'version' field is missing or empty")
         return None
 
-    stages = {}
+    stages: Dict[str, PluginStageConfig] = {}
     stages_data = data.get("stages", {})
     if not isinstance(stages_data, dict):
         print(f"Invalid plugin '{name}': 'stages' must be a JSON object")
@@ -158,11 +268,47 @@ def _validate_plugin_json_content(
     )
 
 
+def _load_plugin_module(plugin_dir: Path, name: str) -> Optional[ModuleType]:
+    """Import ``plugin.py`` from *plugin_dir* and return the module object.
+
+    Returns None after printing errors when the file is missing or unimportable.
+    """
+    plugin_py = plugin_dir / "plugin.py"
+    if not plugin_py.is_file():
+        print(
+            f"Invalid plugin '{name}': plugin.py not found — "
+            "every plugin must include a plugin.py file"
+        )
+        return None
+
+    module_name = f"fm_agent_plugin_{name}"
+    spec = importlib.util.spec_from_file_location(module_name, str(plugin_py))
+    if spec is None or spec.loader is None:
+        print(
+            f"Invalid plugin '{name}': could not create module spec "
+            f"for {plugin_py}"
+        )
+        return None
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        print(
+            f"Invalid plugin '{name}': plugin.py raised an error during import: {exc}"
+        )
+        del sys.modules[module_name]
+        return None
+
+    return module
+
+
 def validate_plugin(plugin_dir: Path) -> Optional[PluginConfig]:
     """Validate a single plugin directory.
 
-    Returns a ``PluginConfig`` if the plugin is valid, otherwise ``None``
-    (after printing validation errors to stdout).
+    Checks plugin.json, imports plugin.py, and validates function signatures.
+    Returns a ``PluginConfig`` if valid, otherwise ``None``.
     """
     name = plugin_dir.name
     plugin_json = plugin_dir / "plugin.json"
@@ -193,18 +339,32 @@ def validate_plugin(plugin_dir: Path) -> Optional[PluginConfig]:
         )
         return None
 
-    return _validate_plugin_json_content(plugin_dir, name, data)
+    config = _validate_plugin_json_content(plugin_dir, name, data)
+    if config is None:
+        return None
+
+    module = _load_plugin_module(plugin_dir, name)
+    if module is None:
+        return None
+
+    func_errors = _validate_stage_functions(module, config.stages)
+    if func_errors:
+        print(
+            f"Invalid plugin '{name}': function signature errors:\n"
+            + "\n".join(func_errors)
+        )
+        return None
+
+    config.module = module
+    return config
 
 
 def load_plugins(plugins_dir: Path) -> Dict[str, PluginConfig]:
-    """Scan *plugins_dir* for subdirectories, validate each, return valid plugins.
-
-    Invalid plugins are printed with their error reason and skipped.
-    """
+    """Scan *plugins_dir* for subdirectories, validate each, return valid plugins."""
     if not plugins_dir.is_dir():
         return {}
 
-    plugins = {}
+    plugins: Dict[str, PluginConfig] = {}
     for entry in sorted(plugins_dir.iterdir()):
         if not entry.is_dir():
             continue
