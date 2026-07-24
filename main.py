@@ -15,6 +15,7 @@ from src.file_utils import (
     _json_file_is_valid,
     _get_incomplete_verification_files,
     _is_under_submodules,
+    load_phases,
 )
 from src.verification import streaming_reasoner
 from src.extract import run_extraction, EXT_TO_LANG
@@ -71,30 +72,6 @@ def _get_pending_batches(batches, proj_dir):
                 pending.append(batch)
                 break
     return pending
-
-
-def _resolve_bug_validator_path(raw_path):
-    """Resolve a custom bug-validator prompt path from the launch directory."""
-    if not raw_path:
-        return None
-
-    path = os.path.abspath(os.path.expanduser(raw_path))
-
-    if not os.path.isfile(path):
-        raise ValueError(
-            "--bug-validator must point to a file: "
-            f"{raw_path}"
-        )
-
-    try:
-        with open(path, "r"):
-            pass
-    except OSError as exc:
-        raise ValueError(
-            f"--bug-validator file is not readable: {exc}"
-        ) from exc
-
-    return path
 
 
 def _normalize_submodules(proj_dir, submodules):
@@ -212,7 +189,6 @@ def run_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
-    bug_validator_path=None,
     plugin_config=None,
 ):
     if not os.path.isdir(proj_dir):
@@ -262,6 +238,7 @@ def run_pipeline(
         proj_dir, work_dir, script_dir, resume=resume,
         submodules=submodules,
         plugin_stage=phase_stage, plugin_root=plugin_root,
+        plugin_config=plugin_config,
     )
 
     phases_modified = _post_process_phases(
@@ -273,7 +250,8 @@ def run_pipeline(
 
     print("[Pipeline] Stage 2/6: Generating domain context...")
     _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=resume and not phases_modified,
-                                 plugin_stage=context_stage, plugin_root=plugin_root)
+                                 plugin_stage=context_stage, plugin_root=plugin_root,
+                                 plugin_config=plugin_config)
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
     # run_extraction (Stage 3) and generate_topdown_layers (Stage 5) read from it.
@@ -305,9 +283,7 @@ def run_pipeline(
         os.path.join(spec_prompts_dir, "file_utils.py"),
     )
 
-    phases_path = os.path.join(work_dir, "phases.json")
-    with open(phases_path, "r") as f:
-        phases_data = json.load(f)
+    phases_data = load_phases(work_dir)
 
     print("[Pipeline] Stage 4/6: Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
@@ -415,7 +391,6 @@ def run_pipeline(
                                 spec_procs=None,
                                 already_processed=all_processed | layer_processed,
                                 resume=resume,
-                                bug_validator_path=bug_validator_path,
                             )
                             layer_processed.update(newly_processed)
                     break
@@ -459,7 +434,6 @@ def run_pipeline(
                             spec_procs=spec_futures,
                             already_processed=all_processed | layer_processed,
                             resume=resume,
-                            bug_validator_path=bug_validator_path,
                         )
                         layer_processed.update(newly_processed)
 
@@ -531,8 +505,7 @@ if __name__ == "__main__":
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
-              "[--end-func PATH ...] [--extra-edge FILE] "
-              "[--bug-validator FILE] [--only-spec] "
+              "[--end-func PATH ...] [--extra-edge FILE] [--only-spec] "
               "[--list-plugin] [--plugin NAME]",
         description="Run the FM agent pipeline on a project directory.",
     )
@@ -609,13 +582,6 @@ if __name__ == "__main__":
         "supplemental caller->callee edges.",
     )
     parser.add_argument(
-        "--bug-validator",
-        metavar="FILE",
-        default=None,
-        help="use a custom Markdown prompt for bug validation instead of "
-        "the built-in md/bug_validator.md",
-    )
-    parser.add_argument(
         "--list-plugin",
         action="store_true",
         help="list all valid plugins found under the plugins/ directory and exit.",
@@ -666,10 +632,6 @@ if __name__ == "__main__":
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
     try:
-        bug_validator_path = _resolve_bug_validator_path(args.bug_validator)
-    except ValueError as exc:
-        parser.error(str(exc))
-    try:
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
         parser.error(str(exc))
@@ -713,7 +675,6 @@ if __name__ == "__main__":
             one_phase=args.one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=args.only_spec,
-            bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
         )
         end_time = time.time()
@@ -773,7 +734,6 @@ if __name__ == "__main__":
                     submodules=submodules,
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
-                    bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
                 )
             else:
@@ -785,7 +745,6 @@ if __name__ == "__main__":
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     only_spec=args.only_spec,
-                    bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
                 )
             # Record the commit that was processed. Written after the pipeline since
