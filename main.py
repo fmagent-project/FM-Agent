@@ -165,6 +165,7 @@ def run_pipeline(
         submodules=submodules,
         plugin_stage=phase_stage,
         plugin_root=plugin_root,
+        plugin_config=plugin_config,
     )
 
     phases_modified = _post_process_phases(
@@ -182,6 +183,7 @@ def run_pipeline(
         resume=resume and not phases_modified,
         plugin_stage=context_stage,
         plugin_root=plugin_root,
+        plugin_config=plugin_config,
     )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
