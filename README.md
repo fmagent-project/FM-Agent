@@ -94,6 +94,8 @@ It previews the changes, backs up existing files, updates `fm-agent.toml`, store
 the API key in `.env` plus a private local key file for standalone OpenCode, and syncs the matching OpenCode provider entry in
 `~/.config/opencode/opencode.json` (or the platform-equivalent config path)
 without requiring you to hand-edit JSON.
+If you choose `auto`, `codex-cli`, or `claude-cli` in the wizard, it only updates
+the backend in `fm-agent.toml`; no API key or OpenCode provider setup is needed.
 
 If you prefer to edit files manually, put your API key in `.env` (gitignored,
 loaded automatically via python-dotenv); every other setting has a committed
@@ -118,6 +120,18 @@ toml, a stale value there overrides a later toml edit, so check `.env` first if
 a change isn't taking effect. The wizard removes the common legacy LLM override
 keys from `.env` for you. See [docs/config_llm.md](docs/config_llm.md) for
 details and OpenCode provider setup.
+
+To change just one non-secret LLM setting without manually editing the file,
+use the configuration command. For example, select the local Codex CLI backend:
+
+```bash
+uv run python src/configure_llm.py set --backend codex-cli
+```
+
+It previews and backs up `fm-agent.toml`, then changes only the setting(s) you
+pass. The command also supports `--name`, `--provider`, `--base-url`,
+`--effort`, and `--api-style`; see [docs/config_llm.md](docs/config_llm.md) for
+the complete syntax.
 
 Then, all of the above dependencies (except Ubuntu and Python) can be installed via the provided script:
 

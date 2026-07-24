@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import hashlib
 import os
@@ -42,6 +43,9 @@ class ConfigWizardError(RuntimeError):
 
 
 ApiStyle = Literal["openai", "anthropic"]
+_BACKENDS = ("opencode", "auto", "codex-cli", "claude-cli")
+_EFFORTS = ("", "low", "medium", "high")
+_LLM_TOML_KEYS = ("name", "provider", "base_url", "backend", "effort", "api_style")
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,30 @@ def validate_input(config: LLMConfigInput) -> None:
         raise ConfigWizardError("API key must not be empty.")
     validate_base_url(config.base_url.strip())
     adapter_for_api_style(config.api_style)
+    validate_llm_setting("backend", config.backend)
+
+
+def validate_llm_setting(key: str, value: str) -> None:
+    """Validate one non-secret [llm] setting accepted by the lightweight CLI."""
+    if key not in _LLM_TOML_KEYS:
+        raise ConfigWizardError(f"Unsupported LLM setting: {key}")
+    if key in {"name", "provider"} and not value.strip():
+        label = "Model ID" if key == "name" else "Provider ID"
+        raise ConfigWizardError(f"{label} must not be empty.")
+    if key == "base_url":
+        validate_base_url(value.strip())
+    elif key == "backend" and value not in _BACKENDS:
+        supported = ", ".join(_BACKENDS)
+        raise ConfigWizardError(
+            f"Backend must be one of: {supported}; got: {value!r}"
+        )
+    elif key == "effort" and value not in _EFFORTS:
+        supported = ", ".join(repr(item) for item in _EFFORTS)
+        raise ConfigWizardError(
+            f"Effort must be one of: {supported}; got: {value!r}"
+        )
+    elif key == "api_style":
+        adapter_for_api_style(value)  # type: ignore[arg-type]
 
 
 def detect_opencode_config_path(home: Path | None = None) -> Path:
@@ -322,7 +350,12 @@ def _quote_toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def update_fm_agent_toml_text(text: str, config: LLMConfigInput) -> str:
+def update_llm_settings_toml_text(text: str, updates: dict[str, str]) -> str:
+    if not updates:
+        raise ConfigWizardError("Provide at least one LLM setting to update.")
+    for key, value in updates.items():
+        validate_llm_setting(key, value)
+
     try:
         loaded = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -332,13 +365,7 @@ def update_fm_agent_toml_text(text: str, config: LLMConfigInput) -> str:
     if loaded and not isinstance(loaded, dict):
         raise ConfigWizardError("Existing fm-agent.toml must decode to a table/object.")
 
-    target = {
-        "name": _quote_toml_string(config.model_id),
-        "provider": _quote_toml_string(config.provider_id),
-        "base_url": _quote_toml_string(config.base_url),
-        "backend": _quote_toml_string(config.backend),
-        "api_style": _quote_toml_string(config.api_style),
-    }
+    target = {key: _quote_toml_string(value) for key, value in updates.items()}
 
     lines = text.splitlines(keepends=True)
     if not lines:
@@ -387,6 +414,19 @@ def update_fm_agent_toml_text(text: str, config: LLMConfigInput) -> str:
             new_lines.append(f"{key:<9} = {value}\n")
 
     return "".join(new_lines)
+
+
+def update_fm_agent_toml_text(text: str, config: LLMConfigInput) -> str:
+    return update_llm_settings_toml_text(
+        text,
+        {
+            "name": config.model_id,
+            "provider": config.provider_id,
+            "base_url": config.base_url,
+            "backend": config.backend,
+            "api_style": config.api_style,
+        },
+    )
 
 
 def update_env_text(text: str, api_key: str) -> str:
@@ -490,10 +530,34 @@ def backup_file(
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_dir.chmod(0o700)
         path_slug = str(path.parent.resolve()).strip(os.sep).replace(os.sep, "_") or "project"
-        backup = backup_dir / f"{path_slug}__{path.name}.bak.{suffix}"
+        backup_base = backup_dir / f"{path_slug}__{path.name}.bak.{suffix}"
     else:
-        backup = path.with_name(f"{path.name}.bak.{suffix}")
-    shutil.copy2(path, backup)
+        backup_base = path.with_name(f"{path.name}.bak.{suffix}")
+
+    # Reserve a distinct destination before copying so rapid or concurrent
+    # configuration changes never overwrite an earlier backup.
+    mode = 0o600 if private or path.name == ".env" else 0o644
+    attempt = 0
+    while True:
+        backup = (
+            backup_base
+            if attempt == 0
+            else backup_base.with_name(f"{backup_base.name}.{attempt}")
+        )
+        try:
+            fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        except FileExistsError:
+            attempt += 1
+            continue
+        else:
+            os.close(fd)
+            break
+
+    try:
+        shutil.copy2(path, backup)
+    except Exception:
+        backup.unlink(missing_ok=True)
+        raise
     if private or path.name == ".env":
         backup.chmod(0o600)
     return backup
@@ -649,9 +713,27 @@ def _prompt_yes_no(prompt: str, default: bool = True) -> bool:
     raise ConfigWizardError("Please answer yes or no.")
 
 
-def prompt_for_config() -> tuple[LLMConfigInput, bool]:
-    print("FM-Agent LLM configuration")
+def _prompt_backend() -> str:
     print()
+    print("Model backend:")
+    print("  1. OpenCode")
+    print("  2. Auto-detect local Codex or Claude CLI")
+    print("  3. Codex CLI")
+    print("  4. Claude CLI")
+    selected = _prompt("Select", "1")
+    backends = {
+        "1": "opencode",
+        "2": "auto",
+        "3": "codex-cli",
+        "4": "claude-cli",
+    }
+    try:
+        return backends[selected]
+    except KeyError as exc:
+        raise ConfigWizardError("Backend selection must be 1, 2, 3, or 4.") from exc
+
+
+def prompt_for_config() -> tuple[LLMConfigInput, bool]:
     provider_id = _prompt("Provider ID", "openrouter")
     provider_name = _prompt("Provider name", provider_id.title())
     print()
@@ -688,7 +770,18 @@ def prompt_for_config() -> tuple[LLMConfigInput, bool]:
 
 
 def run_wizard(project_root: Path) -> int:
+    print("FM-Agent LLM configuration")
+    backend = _prompt_backend()
+    if backend != "opencode":
+        print()
+        print(
+            "Local CLI backends use their own authentication; no API key or OpenCode "
+            "provider configuration is required."
+        )
+        return run_llm_settings_update(project_root, {"backend": backend})
+
     paths = default_paths(project_root)
+    print()
     config, validate = prompt_for_config()
     print()
     print(_preview(config, paths))
@@ -709,9 +802,127 @@ def run_wizard(project_root: Path) -> int:
     return 0
 
 
-def main() -> int:
+def _preview_llm_settings_update(updates: dict[str, str], toml_path: Path) -> str:
+    labels = {
+        "name": "Model ID",
+        "provider": "Provider ID",
+        "base_url": "Base URL",
+        "backend": "Backend",
+        "effort": "Reasoning effort",
+        "api_style": "API protocol",
+    }
+    settings = [f"{labels[key]}: {value!r}" for key, value in updates.items()]
+    return "\n".join(
+        [
+            "FM-Agent LLM settings update",
+            "",
+            *settings,
+            "",
+            "Only the following file will be updated:",
+            f"  - {toml_path}",
+            "",
+            "This command does not change .env or the standalone OpenCode config.",
+        ]
+    )
+
+
+def apply_llm_settings_update(
+    updates: dict[str, str],
+    toml_path: Path,
+) -> Path | None:
+    toml_text = _read_text_if_exists(toml_path)
+    if not toml_text:
+        raise ConfigWizardError(
+            f"fm-agent.toml not found at {toml_path}; refusing to guess a new project config."
+        )
+    updated_toml = update_llm_settings_toml_text(toml_text, updates)
     try:
-        return run_wizard(Path(__file__).resolve().parents[1])
+        tomllib.loads(updated_toml)
+    except tomllib.TOMLDecodeError as exc:  # Defensive: the text editor should preserve TOML.
+        raise ConfigWizardError("Generated fm-agent.toml is invalid TOML.") from exc
+
+    backup = backup_file(toml_path)
+    atomic_write(toml_path, updated_toml)
+    return backup
+
+
+def run_llm_settings_update(
+    project_root: Path,
+    updates: dict[str, str],
+    *,
+    assume_yes: bool = False,
+) -> int:
+    toml_path = project_root / "fm-agent.toml"
+    print(_preview_llm_settings_update(updates, toml_path))
+    print()
+    if not assume_yes and not _prompt_yes_no("Continue?", default=True):
+        print("Aborted.")
+        return 1
+
+    backup = apply_llm_settings_update(updates, toml_path)
+    print(f"Updated {toml_path}")
+    if backup is not None:
+        print(f"Backed up {toml_path} -> {backup}")
+    return 0
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Configure FM-Agent's LLM provider or update individual LLM settings."
+    )
+    subcommands = parser.add_subparsers(dest="command")
+    set_parser = subcommands.add_parser(
+        "set",
+        help="update only the specified non-secret [llm] settings in fm-agent.toml",
+    )
+    set_parser.add_argument("--name", help="LLM model ID (LLM_MODEL)")
+    set_parser.add_argument("--provider", help="OpenCode provider ID (OPENCODE_MODEL_PROVIDER)")
+    set_parser.add_argument("--base-url", dest="base_url", help="API base URL (LLM_API_BASE_URL)")
+    set_parser.add_argument(
+        "--backend",
+        choices=_BACKENDS,
+        help="model backend: opencode, auto, codex-cli, or claude-cli",
+    )
+    set_parser.add_argument(
+        "--effort",
+        choices=_EFFORTS,
+        help="reasoning effort: empty, low, medium, or high",
+    )
+    set_parser.add_argument(
+        "--api-style",
+        dest="api_style",
+        choices=("openai", "anthropic"),
+        help="OpenCode adapter API style",
+    )
+    set_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="write without asking for confirmation",
+    )
+    args = parser.parse_args(argv)
+    if args.command == "set":
+        updates = {
+            key: getattr(args, key)
+            for key in _LLM_TOML_KEYS
+            if getattr(args, key) is not None
+        }
+        if not updates:
+            set_parser.error("provide at least one setting to update")
+        args.updates = updates
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = _parse_args(argv)
+        project_root = Path(__file__).resolve().parents[1]
+        if args.command == "set":
+            return run_llm_settings_update(
+                project_root,
+                args.updates,
+                assume_yes=args.yes,
+            )
+        return run_wizard(project_root)
     except KeyboardInterrupt:
         print("\nAborted.")
         return 1

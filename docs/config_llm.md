@@ -15,6 +15,7 @@ uv run python src/configure_llm.py
 
 The wizard prompts for:
 
+- model backend (`opencode`, `auto`, `codex-cli`, or `claude-cli`)
 - provider id
 - provider display name
 - API protocol (`openai`-compatible or `anthropic`-compatible)
@@ -30,6 +31,42 @@ It then:
 - removes the common legacy LLM override keys from `.env` so they no longer shadow the toml
 - merges the matching provider entry into the detected OpenCode config file
 - previews the target files, requests confirmation, backs up existing files, and writes atomically
+
+When you select `auto`, `codex-cli`, or `claude-cli`, the wizard only updates
+`backend` in `fm-agent.toml`. These local CLI backends use their own
+authentication, so the wizard does not ask for an API key or modify `.env`, the
+private key file, or the OpenCode configuration.
+
+## Change one setting without rerunning the wizard
+
+Use the same script's `set` command to update only the non-secret `[llm]`
+setting(s) named on the command line. It previews the change, asks for
+confirmation, backs up `fm-agent.toml`, and writes it atomically. It does not
+change `.env`, the API key file, or the standalone OpenCode configuration.
+
+For example, switch FM-Agent to a local Codex CLI backend without touching the
+provider setup:
+
+```bash
+uv run python src/configure_llm.py set --backend codex-cli
+```
+
+The supported flags map directly to the six non-secret LLM settings:
+
+```bash
+uv run python src/configure_llm.py set \
+  --name "anthropic/claude-sonnet-4.6" \
+  --provider openrouter \
+  --base-url "https://openrouter.ai/api/v1" \
+  --backend opencode \
+  --effort "" \
+  --api-style openai
+```
+
+Any subset of those flags is valid. Add `--yes` for non-interactive use after
+you have reviewed the values. The accepted backend values are `opencode`,
+`auto`, `codex-cli`, and `claude-cli`; accepted API styles are `openai` and
+`anthropic`; effort is empty, `low`, `medium`, or `high`.
 
 Backups of `.env`, prior OpenCode key files, and OpenCode configuration files
 are placed in a user-private backup directory, since an existing OpenCode

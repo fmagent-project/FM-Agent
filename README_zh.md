@@ -90,6 +90,7 @@ uv run python src/configure_llm.py
 ```
 
 该向导会先展示预览、备份已有文件，然后更新 `fm-agent.toml`、把 API 密钥写入 `.env` 和供独立 OpenCode 使用的私有本地密钥文件，并同步对应的 OpenCode provider 到 `~/.config/opencode/opencode.json`（或当前平台上的等价路径），无需手写 JSON。
+若在向导中选择 `auto`、`codex-cli` 或 `claude-cli`，则只会更新 `fm-agent.toml` 中的 backend；本地 CLI 使用自身认证，不需要 API 密钥或 OpenCode provider 配置。
 
 如果你更希望手动编辑文件，可以复制模板：
 
@@ -104,6 +105,14 @@ LLM_API_KEY=your-api-key-here
 ```
 
 非密钥配置——模型、endpoint、backend、provider 等——在 `fm-agent.toml` 的 `[llm]` 段，直接改它是永久生效的做法。若不想动这个被 git 跟踪的文件（比如你是 git clone、之后会 `git pull` 更新），可以用对应的环境变量覆盖，写在 `.env` 或 shell 里即可。优先级为 `env > .env > fm-agent.toml`；由于 `.env` 会盖过 toml，残留的旧值会覆盖你后来对 toml 的修改——所以改了 toml 不生效时，先检查 `.env`。向导会顺手清理常见的旧 LLM 覆盖变量。详情及 OpenCode provider 配置见 [docs/config_llm.md](docs/config_llm.md)。
+
+如需只修改某一项非密钥 LLM 配置，无需手动编辑文件。例如，将模型后端切换到本地 Codex CLI：
+
+```bash
+uv run python src/configure_llm.py set --backend codex-cli
+```
+
+该命令会预览并备份 `fm-agent.toml`，只修改命令中指定的配置项。它还支持 `--name`、`--provider`、`--base-url`、`--effort` 和 `--api-style`；完整语法见 [docs/config_llm.md](docs/config_llm.md)。
 
 上述所有依赖（Ubuntu 和 Python 除外）均可通过以下脚本一键安装：
 
