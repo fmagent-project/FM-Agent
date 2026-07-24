@@ -257,7 +257,8 @@ _LANGUAGE_EXPERTISE = {
 
 
 def _check_post_implies_spec(block, post_condition, spec_post_condition, knowledge, language,
-                             trace_dir=None, trace_meta=None):
+                             trace_dir=None, trace_meta=None,
+                             include_counterexample=False):
     info_str = f"\nAdditional context:\n{knowledge}" if knowledge else ""
     lang_expertise = _LANGUAGE_EXPERTISE.get(language.lower(), f"You are an expert in logic, formal verification, and {language} programming. ")
     messages = [
@@ -351,9 +352,15 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             if has_violation:
                 stmts = stmts or "(unable to extract)"
                 reason = reason or "(unable to extract)"
-                return False, stmts, post_condition, reason
+                result = (False, stmts, post_condition, reason)
+                if include_counterexample:
+                    return result + (parsed_result["counterexample"],)
+                return result
             else:
-                return True, None, None, None
+                result = (True, None, None, None)
+                if include_counterexample:
+                    return result + (None,)
+                return result
         messages = messages + [
             {"role": "assistant", "content": response or ""},
             {

@@ -54,7 +54,15 @@ from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import try_codegraph_init
-from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
+from .verification import (
+    EXT_TO_LANG as _VERIFY_EXT_TO_LANG,
+    _generate_all_bugs_validation_summary,
+    _generate_validation_summary,
+    _validate_single_bug,
+    _validation_status,
+    _validation_targets,
+    _verify_single_file,
+)
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -504,6 +512,7 @@ def run_incremental_pipeline(
     extra_call_edges_path=None,
     bug_validator_path=None,
     plugin_config=None,
+    all_bugs=False,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -558,6 +567,7 @@ def run_incremental_pipeline(
             extra_call_edges_path=extra_call_edges_path,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            all_bugs=all_bugs,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -695,13 +705,25 @@ def run_incremental_pipeline(
     buggy_files = _verify_incremental_functions(
         proj_dir, work_dir, changed_functions, updated_spec_files,
         submodules=submodules,
+        all_bugs=all_bugs,
         bug_validator_path=bug_validator_path,
     )
+    if all_bugs:
+        buggy_files, confirmed_bug_count = buggy_files
+    else:
+        confirmed_bug_count = len(buggy_files)
     logging.info("=" * 70)
-    logging.info(
-        "INCREMENTAL PIPELINE DONE: bug validation confirmed bugs in %d function(s).",
-        len(buggy_files),
-    )
+    if all_bugs:
+        logging.info(
+            "INCREMENTAL PIPELINE DONE: bug validation confirmed %d bug(s) in %d function(s).",
+            confirmed_bug_count,
+            len(buggy_files),
+        )
+    else:
+        logging.info(
+            "INCREMENTAL PIPELINE DONE: bug validation confirmed bugs in %d function(s).",
+            len(buggy_files),
+        )
     for bf in buggy_files:
         logging.info("  - %s", bf)
     logging.info("=" * 70)
@@ -1825,6 +1847,7 @@ def _update_specs_for_intent(
 def _verify_incremental_functions(
     proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None,
     bug_validator_path=None,
+    all_bugs=False,
 ):
     """
     Step 10: re-run the verification stage (reasoner + bug validation) on only the functions
@@ -1884,7 +1907,7 @@ def _verify_incremental_functions(
         ]
     if not file_list:
         logging.info("    [verify] no functions require re-verification.")
-        return []
+        return ([], 0) if all_bugs else []
     logging.info("    [verify] running reasoner on %d function(s)...", len(file_list))
 
     # Drop stale verification results so the reasoner re-runs rather than reusing the cached
@@ -1902,7 +1925,14 @@ def _verify_incremental_functions(
     def _verify(rel):
         fpath = os.path.join(extracted_dir, rel)
         language = _VERIFY_EXT_TO_LANG.get(os.path.splitext(fpath)[1], "C")
-        _, verdict = _verify_single_file(fpath, extracted_dir, output_dir, language, work_dir=work_dir)
+        _, verdict = _verify_single_file(
+            fpath,
+            extracted_dir,
+            output_dir,
+            language,
+            work_dir=work_dir,
+            all_bugs=all_bugs,
+        )
         return rel, verdict
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -1919,7 +1949,57 @@ def _verify_incremental_functions(
 
     logging.info("    [verify] reasoner reported %d MISMATCH(es) (candidate bugs).", len(mismatches))
     if not mismatches:
-        return []
+        return ([], 0) if all_bugs else []
+
+    if all_bugs:
+        validation_targets = []
+        for rel in mismatches:
+            primary_rel = os.path.join(
+                os.path.relpath(output_dir, proj_dir),
+                os.path.splitext(rel)[0] + ".json",
+            )
+            validation_targets.extend(
+                (rel, target_rel)
+                for target_rel in _validation_targets(primary_rel, proj_dir, True)
+            )
+
+        logging.info(
+            "    [verify] validating %d candidate bug(s) with opencode...",
+            len(validation_targets),
+        )
+
+        def _validate_candidate(function_rel, target_rel):
+            _validate_single_bug(
+                target_rel,
+                proj_dir,
+                work_dir,
+                bug_validator_path=bug_validator_path,
+            )
+            return function_rel, target_rel
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(_validate_candidate, function_rel, target_rel): (
+                    function_rel,
+                    target_rel,
+                )
+                for function_rel, target_rel in validation_targets
+            }
+            for future in concurrent.futures.as_completed(futures):
+                function_rel, target_rel = futures[future]
+                try:
+                    future.result()
+                except Exception:
+                    logging.exception("Bug validation failed for %s", target_rel)
+
+        _generate_all_bugs_validation_summary(work_dir)
+        confirmed_functions = set()
+        confirmed_bug_count = 0
+        for function_rel, target_rel in validation_targets:
+            if _validation_status(target_rel, work_dir) == "confirmed":
+                confirmed_functions.add(function_rel)
+                confirmed_bug_count += 1
+        return sorted(confirmed_functions), confirmed_bug_count
 
     # Bug validation: the reasoner's MISMATCH is only a candidate bug, so validate each one
     # with opencode (_validate_single_bug writes work_dir/bug_validation/<bug_id>.result.json

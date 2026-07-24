@@ -255,6 +255,7 @@ def run_entry_pipeline(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    all_bugs=False,
 ):
     """Run the entry-point-scoped reasoning pipeline.
 
@@ -267,9 +268,9 @@ def run_entry_pipeline(
          the unrelated functions and source files from that copy. ``proj_dir``
          itself is never modified.
       3. Invoke the standard ``run_pipeline`` directly on the run directory:
-         because only the related functions remain, it naturally specs, reasons
-         about, and bug-validates exactly that set, writing results to
-         ``<run_dir>/fm_agent/``.
+         because only the related functions remain, it naturally specs and
+         reasons about exactly that set, writing results to ``<run_dir>/fm_agent/``.
+         Entry reasoning intentionally does not perform bug validation.
       4. Copy the generated ``fm_agent/`` workspace back into ``proj_dir`` and
          discard the run directory. The copy-back runs even when the pipeline
          fails, so partial results are preserved, and any stray edits the
@@ -288,6 +289,8 @@ def run_entry_pipeline(
             ``entry_func`` is selected.
         resume: forwarded directly to the standard pipeline.
         one_phase: forwarded directly to the standard pipeline.
+        all_bugs: report every mismatch candidate while keeping entry-mode bug
+            validation disabled.
         extra_call_edges_path: optional file containing supplemental caller/callee
             edges used for entry reachability and later top-down layer generation.
     """
@@ -317,6 +320,7 @@ def run_entry_pipeline(
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            all_bugs=all_bugs,
         )
     finally:
         clear_test_file_exemptions()
@@ -467,6 +471,7 @@ def _run_entry_pipeline_inner(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    all_bugs=False,
 ):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
@@ -516,6 +521,7 @@ def _run_entry_pipeline_inner(
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            all_bugs=all_bugs,
         )
     finally:
         # 4. Copy the generated fm_agent/ back into proj_dir, then discard the
@@ -529,13 +535,16 @@ def _run_entry_pipeline_inner(
 
     # Report the bug count: the number of MISMATCH verdicts the reasoner wrote
     # into fm_agent/logic_verification_results/.
-    mismatches = _count_mismatches(os.path.join(work_dir, "logic_verification_results"))
+    mismatches = _count_mismatches(
+        os.path.join(work_dir, "logic_verification_results"),
+        all_bugs=all_bugs,
+    )
     print(f"[EntryPipeline] Bugs (mismatches): {mismatches}")
 
     print(f"[EntryPipeline] Done. Results in {work_dir}.")
 
 
-def _count_mismatches(results_dir):
+def _count_mismatches(results_dir, all_bugs=False):
     """Count MISMATCH verdicts in a logic_verification_results/ tree.
 
     Each function's verdict is a JSON file nested under per-module directories;
@@ -549,8 +558,12 @@ def _count_mismatches(results_dir):
                 continue
             try:
                 with open(os.path.join(root, fname), "r") as f:
-                    if json.load(f).get("verdict") == "MISMATCH":
-                        count += 1
+                    result = json.load(f)
+                if all_bugs:
+                    if result.get("all_bugs") is True:
+                        count += result.get("bug_count", 0)
+                elif result.get("verdict") == "MISMATCH":
+                    count += 1
             except (OSError, ValueError):
                 continue
     return count

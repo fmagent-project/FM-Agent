@@ -155,7 +155,7 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
 ```
 
 | Argument                    | Description                                                                                     |
@@ -163,6 +163,7 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug
 | `proj_dir`                  | Directory of codebase that you want to check correctness                                        |
 | `--resume`                  | Continue a previous, interrupted run instead of starting over                                   |
 | `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
+| `--all-bugs`                | Continue reasoning after a mismatch and report every candidate. Full and incremental modes validate each candidate; entry mode does not run bug validation. |
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
 | `--bug-validator FILE`       | Use a custom Markdown prompt for bug validation instead of the built-in `md/bug_validator.md`. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
@@ -202,7 +203,29 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 
 `--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`, but not with `--entry-func`.
 
-By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work.
+Use `--all-bugs` with full, incremental, or entry-point analysis:
+
+```bash
+uv run python main.py <proj_dir> --all-bugs
+uv run python main.py <proj_dir> --incremental intent.md --all-bugs
+uv run python main.py <proj_dir> --entry-func src::main --all-bugs
+```
+
+The option is off by default. When enabled, FM-Agent continues through later
+reasoning checkpoints and writes one standard mismatch result per candidate.
+Full and incremental modes validate each candidate independently. Entry-point
+reasoning reports the candidates and their count but intentionally does not run
+bug validation.
+
+For a result such as `path/to/function.json`, all-bugs candidates are written
+beside it as `path/to/function.bug-001.json`, `bug-002.json`, and so on. The
+primary result records `bug_count` and `reasoning_complete`. Resume treats a
+complete primary result as the reasoning checkpoint and only reruns candidate
+validations that do not yet have a terminal result. If reasoning stopped partway
+through, FM-Agent clears that function's intermediate candidates and validations
+and reruns the function without disturbing completed functions.
+
+By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work. Resume with the same reasoning mode: an all-bugs workspace requires `--resume --all-bugs`; default-mode resume rejects it so existing candidates and validation records are not mixed with legacy output.
 
 Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces adjacent `.spec.json` and `.info.json` metadata files for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
 
@@ -279,7 +302,11 @@ Each confirmed or investigated bug produces a Markdown report containing:
 | Probe Script | The full test script used to confirm the bug |
 | Probe Output | Raw stdout from executing the probe script |
 
-A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results with counts of total reported, confirmed, not confirmed bugs.
+A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results
+with counts of total reported, confirmed, not confirmed bugs. In `--all-bugs`
+mode, the summary additionally reports pending candidates; a missing, corrupt,
+or non-terminal validation is pending instead of disappearing from the totals.
+Default-mode summary behavior is unchanged.
 
 ## Important Notes
 

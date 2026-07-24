@@ -7,7 +7,9 @@ from src.file_utils import (
     _write_file_names,
     _json_file_is_valid,
     _is_under_submodules,
+    _ensure_resume_mode_compatible,
 )
+from src.verification import _generate_all_bugs_validation_summary
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
@@ -116,6 +118,7 @@ def run_pipeline(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    all_bugs=False,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -143,6 +146,8 @@ def run_pipeline(
             resume = False
     else:
         _clean_previous_run(work_dir)
+    if resume and not only_spec:
+        _ensure_resume_mode_compatible(output_dir, all_bugs)
     os.makedirs(work_dir, exist_ok=True)
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
@@ -251,11 +256,17 @@ def run_pipeline(
         extra_call_edges=extra_call_edges,
         only_spec=only_spec,
         bug_validator_path=bug_validator_path,
+        all_bugs=all_bugs,
     )
 
     # Print confirmed bug count (skipped in only-spec mode, which runs no
     # reasoning or bug validation).
     if not only_spec:
+        if all_bugs:
+            # A resumed run may find every function and candidate validation
+            # already complete, so no watcher runs to refresh the persistent
+            # summary. Rebuild it from the current terminal records here.
+            _generate_all_bugs_validation_summary(work_dir)
         summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
         if os.path.exists(summary_path):
             with open(summary_path, "r") as f:
@@ -273,6 +284,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
+              "[--all-bugs] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
               "[--end-func PATH ...] [--extra-edge FILE] "
               "[--bug-validator FILE] [--only-spec] "
@@ -284,8 +296,9 @@ if __name__ == "__main__":
         "--resume",
         action="store_true",
         help="continue a previous run in <proj_dir>/fm_agent instead of wiping it: "
-        "keeps phases.json, generated specs, and existing verification results; "
-        "only does the remaining work.",
+             "keeps phases.json, generated specs, and existing verification results; "
+             "only does the remaining work. Repeat --all-bugs when resuming an "
+             "all-bugs run.",
     )
     parser.add_argument(
         "--incremental",
@@ -303,6 +316,12 @@ if __name__ == "__main__":
         "--one-phase",
         action="store_true",
         help="Put all planned source files into a single analysis phase.",
+    )
+    parser.add_argument(
+        "--all-bugs",
+        action="store_true",
+        help="continue reasoning after mismatches and report every candidate; "
+        "full and incremental modes validate each candidate.",
     )
     parser.add_argument(
         "--only-spec",
@@ -458,6 +477,7 @@ if __name__ == "__main__":
             only_spec=args.only_spec,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            all_bugs=args.all_bugs,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -518,6 +538,7 @@ if __name__ == "__main__":
                     extra_call_edges_path=extra_call_edges_path,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
+                    all_bugs=args.all_bugs,
                 )
             else:
                 run_pipeline(
@@ -530,6 +551,7 @@ if __name__ == "__main__":
                     only_spec=args.only_spec,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
+                    all_bugs=args.all_bugs,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is

@@ -2,7 +2,12 @@ import config
 from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL
 from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
-from .file_utils import is_file_ready
+from .file_utils import (
+    _all_bugs_candidate_paths,
+    _ensure_resume_result_mode,
+    _terminal_validation_is_valid,
+    is_file_ready,
+)
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
 from .llm_client import build_llm_cli_command
 from .domain_knowledge import (
@@ -13,6 +18,7 @@ from .domain_knowledge import (
 import os
 import re
 import json
+import glob
 import time
 import logging
 import subprocess
@@ -72,6 +78,7 @@ def streaming_reasoner(
     already_processed=None,
     resume=False,
     bug_validator_path=None,
+    all_bugs=False,
 ):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
     if work_dir is None:
@@ -137,7 +144,14 @@ def streaming_reasoner(
                         submitted.add(file_path)
                         language = EXT_TO_LANG.get(ext, "C")
                         future = executor.submit(
-                            _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume
+                            _verify_single_file,
+                            file_path,
+                            input_dir,
+                            output_dir,
+                            language,
+                            work_dir,
+                            resume,
+                            all_bugs,
                         )
                         reasoning_futures[future] = file_path
                         logging.info(f"Submitted: {file_path}")
@@ -153,22 +167,35 @@ def streaming_reasoner(
                         completed_count += 1
                         rel_path = os.path.relpath(fpath, proj_dir) if proj_dir else os.path.relpath(fpath, input_dir)
                         # Submit bug validation for MISMATCH results; defer printing
-                        if verdict == "MISMATCH" and proj_dir is not None:
+                        if (
+                            verdict == "MISMATCH"
+                            and proj_dir is not None
+                            and config.BUG_VALIDATION_MAX_RETRIES > 0
+                        ):
                             rel = os.path.relpath(fpath, input_dir)
                             result_json_rel = os.path.join(
                                 os.path.relpath(output_dir, proj_dir),
                                 os.path.splitext(rel)[0] + ".json",
                             )
-                            vf = executor.submit(
-                                _validate_single_bug,
-                                result_json_rel,
-                                proj_dir,
-                                work_dir,
-                                resume=resume,
-                                bug_validator_path=bug_validator_path,
+                            validation_targets = _validation_targets(
+                                result_json_rel, proj_dir, all_bugs
                             )
-                            validation_futures[vf] = (fpath, rel_path, result_json_rel, completed_count)
-                            logging.info(f"Submitted validation: {fpath}")
+                            for target_rel in validation_targets:
+                                vf = executor.submit(
+                                    _validate_single_bug,
+                                    target_rel,
+                                    proj_dir,
+                                    work_dir,
+                                    resume=resume,
+                                    bug_validator_path=bug_validator_path,
+                                )
+                                validation_futures[vf] = (
+                                    fpath,
+                                    rel_path,
+                                    target_rel,
+                                    completed_count,
+                                )
+                                logging.info(f"Submitted validation: {target_rel}")
                         else:
                             if verdict == "MATCH" or verdict == "SKIPPED":
                                 label = "\033[32m✔\033[0m"
@@ -187,13 +214,7 @@ def streaming_reasoner(
                     try:
                         future.result()
                         # Read validation result to check confirmation
-                        parts = result_json_rel
-                        prefix = os.path.join("fm_agent", "logic_verification_results") + os.sep
-                        if parts.startswith(prefix):
-                            parts = parts[len(prefix):]
-                        elif parts.startswith("fm_agent/logic_verification_results/"):
-                            parts = parts[len("fm_agent/logic_verification_results/"):]
-                        bug_id = os.path.splitext(parts)[0].replace(os.sep, "--").replace("/", "--")
+                        bug_id = _bug_id_from_result_path(result_json_rel)
                         result_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
                         confirmed = False
                         if os.path.exists(result_path):
@@ -204,7 +225,12 @@ def streaming_reasoner(
                             print(f"[{count}/{num_functions}] {rel_path}: \033[31m✘\033[0m")
                         else:
                             print(f"[{count}/{num_functions}] {rel_path}: \033[32m✔\033[0m")
-                        logging.info(f"Validation completed: {fpath} (confirmed={confirmed})")
+                        logging.info(
+                            "Validation completed: %s (target=%s, confirmed=%s)",
+                            fpath,
+                            result_json_rel,
+                            confirmed,
+                        )
                     except Exception as exc:
                         logging.error(f"Validation error for {fpath}: {exc}")
 
@@ -260,27 +286,120 @@ def streaming_reasoner(
 
     # Generate validation summary after all work is done
     if proj_dir is not None:
-        _generate_validation_summary(work_dir)
+        if all_bugs:
+            _generate_all_bugs_validation_summary(work_dir)
+        else:
+            _generate_validation_summary(work_dir)
 
     return processed
 
 
-def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False):
+def _candidate_paths_for_output(output_path, bug_count):
+    stem, ext = os.path.splitext(output_path)
+    return [f"{stem}.bug-{index:03d}{ext}" for index in range(1, bug_count + 1)]
+
+
+def _clear_candidate_files(output_path):
+    directory = os.path.dirname(output_path)
+    stem = os.path.splitext(os.path.basename(output_path))[0]
+    pattern = re.compile(rf"^{re.escape(stem)}\.bug-\d{{3}}\.json$")
+    if not os.path.isdir(directory):
+        return
+    for filename in os.listdir(directory):
+        if pattern.fullmatch(filename):
+            try:
+                os.remove(os.path.join(directory, filename))
+            except OSError:
+                pass
+
+
+def _clear_bug_validation_artifacts(work_dir, bug_id):
+    validation_dir = os.path.join(work_dir, "bug_validation")
+    paths = [
+        os.path.join(validation_dir, f"{bug_id}.result.json"),
+        os.path.join(validation_dir, f"{bug_id}.md"),
+        os.path.join(validation_dir, f"bug_validator_{bug_id}.md"),
+    ]
+    paths.extend(
+        glob.glob(
+            os.path.join(validation_dir, f"probe_{glob.escape(bug_id)}.*")
+        )
+    )
+    for path in paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    try:
+        os.remove(os.path.join(validation_dir, "summary.json"))
+    except OSError:
+        pass
+
+
+def _clear_function_all_bugs_artifacts(output_path, output_dir, work_dir):
+    """Reset one incomplete function without disturbing completed functions."""
+    if work_dir:
+        validation_dir = os.path.join(work_dir, "bug_validation")
+        result_rel = os.path.relpath(output_path, output_dir)
+        bug_prefix = (
+            os.path.splitext(result_rel)[0]
+            .replace(os.sep, "--")
+            .replace("/", "--")
+            + ".bug-"
+        )
+        ordinal = "[0-9][0-9][0-9]"
+        patterns = (
+            f"{glob.escape(bug_prefix)}{ordinal}.result.json",
+            f"{glob.escape(bug_prefix)}{ordinal}.md",
+            f"bug_validator_{glob.escape(bug_prefix)}{ordinal}.md",
+            f"probe_{glob.escape(bug_prefix)}{ordinal}.*",
+        )
+        for pattern in patterns:
+            for path in glob.glob(os.path.join(validation_dir, pattern)):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        try:
+            os.remove(os.path.join(validation_dir, "summary.json"))
+        except OSError:
+            pass
+
+    _clear_candidate_files(output_path)
+    try:
+        os.remove(output_path)
+    except OSError:
+        pass
+
+
+def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False, all_bugs=False):
     """Verify a single file and write the result JSON."""
-    # Skip if resuming and a valid result already exists
+    # A complete function result is the reasoning checkpoint. Resume never
+    # re-runs it; missing candidate validations are resumed independently.
     rel = os.path.relpath(file_path, input_dir)
     output_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
     if resume and os.path.exists(output_path):
         try:
-            with open(output_path) as f:
+            with open(output_path, encoding="utf-8") as f:
                 existing = json.load(f)
+            _ensure_resume_result_mode(existing, output_path, all_bugs)
             verdict = existing.get("verdict", "ERROR")
-            logging.info(f"Already verified, skipping: {file_path} (verdict={verdict})")
-            return file_path, verdict
+            if not all_bugs or _all_bugs_candidate_paths(output_path, existing) is not None:
+                logging.info(f"Already verified, skipping: {file_path} (verdict={verdict})")
+                return file_path, verdict
         except (json.JSONDecodeError, OSError):
             pass  # re-verify if existing result is corrupted
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if all_bugs:
+        # Reaching this point means reasoning did not finish cleanly. Discard
+        # only this function's intermediate candidates and validations before
+        # restarting it; completed functions remain untouched.
+        _clear_function_all_bugs_artifacts(
+            output_path,
+            output_dir,
+            work_dir,
+        )
 
     try:
         func, spec, knowledge = parse_input_function(file_path)
@@ -299,9 +418,63 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
         domain_knowledge = load_staged_domain_knowledge_text(work_dir) if work_dir else ""
         if domain_knowledge:
             knowledge = f"{knowledge}\n\n{domain_knowledge}" if knowledge else domain_knowledge
-        result = reasoner(func, spec, knowledge, language, trace_context=trace_context)
+        result = reasoner(
+            func,
+            spec,
+            knowledge,
+            language,
+            trace_context=trace_context,
+            all_bugs=all_bugs,
+        )
 
-        if "passes the verification" in result:
+        if all_bugs:
+            status = result.get("status", "ERROR")
+            reasoning_complete = result.get(
+                "reasoning_complete", status in {"MATCH", "MISMATCH"}
+            )
+            violations = result.get("violations", [])
+            if not isinstance(violations, list):
+                violations = []
+            candidate_gaps = [
+                {
+                    "spec_claim": spec_post or "",
+                    "actual_behavior": violation.get("post_condition") or "",
+                    "code_evidence": violation.get("statements") or "",
+                    "trigger_condition": violation.get("reason") or "",
+                    "counterexample": violation.get("counterexample") or "",
+                }
+                for violation in violations
+            ]
+            for candidate_path, gaps in zip(
+                _candidate_paths_for_output(output_path, len(candidate_gaps)),
+                candidate_gaps,
+            ):
+                candidate = {
+                    "function": file_path,
+                    "verdict": "MISMATCH",
+                    "gaps": gaps,
+                }
+                with open(candidate_path, "w", encoding="utf-8") as f:
+                    json.dump(candidate, f, indent=2, ensure_ascii=False)
+            if not reasoning_complete or status == "ERROR":
+                verdict = "ERROR"
+            elif candidate_gaps:
+                verdict = "MISMATCH"
+            elif status == "MATCH":
+                verdict = "MATCH"
+            else:
+                verdict = "ERROR"
+            output = {
+                "function": file_path,
+                "verdict": verdict,
+                "gaps": candidate_gaps[0] if candidate_gaps else None,
+                "all_bugs": True,
+                "bug_count": len(candidate_gaps),
+                "reasoning_complete": bool(reasoning_complete),
+            }
+            if not reasoning_complete or status == "ERROR":
+                output["error"] = result.get("error") or "Reasoning failed."
+        elif "passes the verification" in result:
             output = {"function": file_path, "verdict": "MATCH", "gaps": None}
         elif result.startswith("Failed to "):
             output = {"function": file_path, "verdict": "ERROR", "gaps": None, "error": result}
@@ -335,12 +508,54 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     except Exception as exc:
         logging.exception(f"Verification failed for {file_path}")
         output = {"function": file_path, "verdict": "ERROR", "gaps": None, "error": str(exc)}
+        if all_bugs:
+            output.update({
+                "all_bugs": True,
+                "bug_count": 0,
+                "reasoning_complete": False,
+            })
 
-    output = _sanitize_strings(output)
-    with open(output_path, "w") as f:
+    if not all_bugs:
+        output = _sanitize_strings(output)
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
 
     return file_path, output["verdict"]
+
+
+def _bug_id_from_result_path(result_json_rel):
+    parts = result_json_rel
+    prefix = os.path.join("fm_agent", "logic_verification_results") + os.sep
+    if parts.startswith(prefix):
+        parts = parts[len(prefix):]
+    elif parts.startswith("fm_agent/logic_verification_results/"):
+        parts = parts[len("fm_agent/logic_verification_results/"):]
+    return os.path.splitext(parts)[0].replace(os.sep, "--").replace("/", "--")
+
+
+def _validation_targets(result_json_rel, proj_dir, all_bugs):
+    if not all_bugs:
+        return [result_json_rel]
+    result_path = os.path.join(proj_dir, result_json_rel)
+    try:
+        with open(result_path, "r", encoding="utf-8") as f:
+            result = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    candidates = _all_bugs_candidate_paths(result_path, result)
+    if candidates is None:
+        return []
+    return [os.path.relpath(path, proj_dir) for path in candidates]
+
+
+def _validation_status(result_json_rel, work_dir):
+    bug_id = _bug_id_from_result_path(result_json_rel)
+    result_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
+    try:
+        with open(result_path, "r") as f:
+            return json.load(f).get("confirmation_status")
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _validate_single_bug(
@@ -357,14 +572,23 @@ def _validate_single_bug(
 
     # Derive bug id from result path relative to results dir
     # e.g. "fm_agent/logic_verification_results/mod/func.json" -> "mod--func"
-    parts = result_json_rel
-    prefix = os.path.join("fm_agent", "logic_verification_results") + os.sep
-    if parts.startswith(prefix):
-        parts = parts[len(prefix):]
-    elif parts.startswith("fm_agent/logic_verification_results/"):
-        parts = parts[len("fm_agent/logic_verification_results/"):]
-    bug_id = os.path.splitext(parts)[0].replace(os.sep, "--").replace("/", "--")
-    function_id = function_id_from_result_path(result_json_rel)
+    bug_id = _bug_id_from_result_path(result_json_rel)
+    function_result_rel = re.sub(
+        r"\.bug-\d{3}(?=\.json$)", "", result_json_rel
+    )
+    function_id = function_id_from_result_path(function_result_rel)
+    result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
+    result_path = os.path.join(proj_dir, result_relpath)
+    is_candidate = re.search(r"\.bug-\d{3}(?=\.json$)", result_json_rel) is not None
+
+    # Candidate resume mirrors the legacy stage checkpoint: a terminal result
+    # finishes this validation stage. Candidate identity is fixed by the
+    # completed reasoning artifacts, so no content hash is needed here.
+    if is_candidate and resume and os.path.exists(result_path):
+        if _terminal_validation_is_valid(result_path):
+            logging.info(f"Bug validation already done, skipping: {bug_id}")
+            return
+        _clear_bug_validation_artifacts(work_dir, bug_id)
 
     # Read either the user-selected validator or the built-in default.
     base_md_path = (
@@ -404,7 +628,7 @@ def _validate_single_bug(
     prompt_path = os.path.join(proj_dir, prompt_filename)
 
     tmp_path = prompt_path + ".tmp"
-    with open(tmp_path, "w") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         f.write(prompt_content)
     os.replace(tmp_path, prompt_path)
 
@@ -415,10 +639,9 @@ def _validate_single_bug(
         cwd=proj_dir,
         files=[prompt_path],
     )
-    result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
-    result_path = os.path.join(proj_dir, result_relpath)
-    # Resume idempotency: if resuming and this bug was already validated, don't pay for it again.
-    if resume and os.path.exists(result_path):
+    # Preserve the legacy resume path exactly: a readable result is reusable
+    # without candidate-specific schema or content checks.
+    if not is_candidate and resume and os.path.exists(result_path):
         try:
             with open(result_path) as _f:
                 json.load(_f)
@@ -460,7 +683,18 @@ def _validate_single_bug(
                 )
 
             if os.path.exists(result_path):
-                return
+                if not is_candidate or _terminal_validation_is_valid(result_path):
+                    return
+                logging.warning(
+                    "bug_validation wrote a non-terminal result for %s on attempt %d/%d",
+                    bug_id,
+                    attempt,
+                    max_attempts,
+                )
+                try:
+                    os.remove(result_path)
+                except OSError:
+                    pass
 
             if attempt < max_attempts:
                 logging.warning(
@@ -484,9 +718,71 @@ def _validate_single_bug(
             pass
 
 
-def _generate_validation_summary(proj_dir):
+def _expected_all_bugs_validation_targets(work_dir):
+    """Return all-bugs candidate artifacts that require bug validation."""
+    if config.BUG_VALIDATION_MAX_RETRIES <= 0:
+        return []
+
+    results_dir = os.path.join(work_dir, "logic_verification_results")
+    if not os.path.isdir(results_dir):
+        return []
+
+    targets = []
+    for root, _dirs, files in os.walk(results_dir):
+        for filename in sorted(files):
+            if (
+                not filename.endswith(".json")
+                or re.search(r"\.bug-\d{3}\.json$", filename)
+            ):
+                continue
+            primary_path = os.path.join(root, filename)
+            try:
+                with open(primary_path, "r", encoding="utf-8") as f:
+                    primary = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(primary, dict):
+                continue
+            if primary.get("all_bugs") is True:
+                candidates = _all_bugs_candidate_paths(primary_path, primary)
+                if candidates:
+                    targets.extend(candidates)
+    return sorted(targets)
+
+
+def _pending_all_bugs_validation_record(
+    target_path, results_dir, validation_error
+):
+    """Build a pending record for one missing/unusable all-bugs validation."""
+    target_rel = os.path.relpath(target_path, results_dir)
+    bug_id = os.path.splitext(target_rel)[0].replace(os.sep, "--")
+    try:
+        with open(target_path, "r", encoding="utf-8") as f:
+            target = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        target = {}
+    function = target.get("function", "") if isinstance(target, dict) else ""
+    gaps = target.get("gaps", {}) if isinstance(target, dict) else {}
+    if not isinstance(gaps, dict):
+        gaps = {}
+    record = {
+        "id": bug_id,
+        "source_file": function,
+        "function_name": os.path.splitext(os.path.basename(function))[0],
+        "confirmation_status": "pending",
+        "attempts": 0,
+        "probe_script": None,
+        "detail_file": None,
+        "probe_stdout": "",
+        "trigger_summary": gaps.get("trigger_condition", ""),
+        "validation_error": validation_error,
+    }
+    return record
+
+
+def _generate_validation_summary(work_dir):
     """Scan bug_validation/*.result.json files and write summary.json."""
-    validation_dir = os.path.join(proj_dir, "bug_validation")
+    validation_dir = os.path.join(work_dir, "bug_validation")
     if not os.path.isdir(validation_dir):
         logging.info("No bug_validation directory found, skipping summary.")
         return
@@ -526,3 +822,101 @@ def _generate_validation_summary(proj_dir):
     os.replace(tmp_path, summary_path)
     logging.info(f"Validation summary written to {summary_path}")
     logging.info(f"  confirmed: {confirmed}, not_confirmed: {not_confirmed}, error: {errors}")
+
+
+def _generate_all_bugs_validation_summary(work_dir):
+    """Join all-bugs candidates with terminal records and mark gaps pending."""
+    if config.BUG_VALIDATION_MAX_RETRIES <= 0:
+        logging.info("Bug validation is disabled, skipping all-bugs summary.")
+        return
+
+    validation_dir = os.path.join(work_dir, "bug_validation")
+    results_dir = os.path.join(work_dir, "logic_verification_results")
+    targets = _expected_all_bugs_validation_targets(work_dir)
+    if not targets and not os.path.isdir(validation_dir):
+        logging.info("No all-bugs validations found, skipping summary.")
+        return
+    os.makedirs(validation_dir, exist_ok=True)
+
+    bugs = []
+    expected_result_paths = set()
+    for target_path in targets:
+        target_rel = os.path.relpath(target_path, results_dir)
+        bug_id = os.path.splitext(target_rel)[0].replace(os.sep, "--")
+        result_path = os.path.join(validation_dir, f"{bug_id}.result.json")
+        expected_result_paths.add(os.path.normpath(result_path))
+        record = None
+        validation_error = "missing_or_invalid_result"
+        try:
+            with open(result_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if (
+                isinstance(loaded, dict)
+                and loaded.get("confirmation_status")
+                in {"confirmed", "not_confirmed", "error"}
+            ):
+                record = loaded
+            else:
+                validation_error = "invalid_result"
+        except (OSError, json.JSONDecodeError):
+            pass
+        if record is None:
+            record = _pending_all_bugs_validation_record(
+                target_path,
+                results_dir,
+                validation_error,
+            )
+        bugs.append(record)
+
+    for fname in sorted(os.listdir(validation_dir)):
+        if not fname.endswith(".result.json"):
+            continue
+        result_path = os.path.normpath(os.path.join(validation_dir, fname))
+        if result_path not in expected_result_paths:
+            logging.warning(
+                "Ignoring stale validation result not tied to a current bug: %s",
+                result_path,
+            )
+
+    confirmed = sum(1 for b in bugs if b.get("confirmation_status") == "confirmed")
+    not_confirmed = sum(
+        1 for b in bugs if b.get("confirmation_status") == "not_confirmed"
+    )
+    errors = sum(1 for b in bugs if b.get("confirmation_status") == "error")
+    pending = sum(1 for b in bugs if b.get("confirmation_status") == "pending")
+
+    status_order = {
+        "confirmed": 0,
+        "not_confirmed": 1,
+        "error": 2,
+        "pending": 3,
+    }
+    bugs.sort(
+        key=lambda b: (
+            status_order.get(b.get("confirmation_status"), 4),
+            b.get("id", ""),
+        )
+    )
+
+    summary = {
+        "total_reported": len(bugs),
+        "total_confirmed": confirmed,
+        "total_not_confirmed": not_confirmed,
+        "total_error": errors,
+        "total_pending": pending,
+        "bugs": bugs,
+    }
+
+    summary_path = os.path.join(validation_dir, "summary.json")
+    tmp_path = summary_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, summary_path)
+    logging.info(f"Validation summary written to {summary_path}")
+    logging.info(
+        "  confirmed: %d, not_confirmed: %d, error: %d, pending: %d",
+        confirmed,
+        not_confirmed,
+        errors,
+        pending,
+    )
