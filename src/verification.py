@@ -6,6 +6,7 @@ from .file_utils import (
     _all_bugs_candidate_paths,
     _ensure_resume_result_mode,
     _terminal_validation_is_valid,
+    _terminal_validation_record_is_valid,
     is_file_ready,
 )
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
@@ -16,6 +17,7 @@ from .domain_knowledge import (
     load_staged_domain_knowledge_text,
 )
 import os
+import posixpath
 import re
 import json
 import glob
@@ -299,6 +301,88 @@ def _candidate_paths_for_output(output_path, bug_count):
     return [f"{stem}.bug-{index:03d}{ext}" for index in range(1, bug_count + 1)]
 
 
+def _extracted_function_identity(path):
+    """Return the stable suffix below extracted_functions/, if present."""
+    if not isinstance(path, str):
+        return None
+
+    parts = path.replace("\\", "/").split("/")
+    try:
+        marker_index = len(parts) - 1 - parts[::-1].index(
+            "extracted_functions"
+        )
+    except ValueError:
+        return None
+
+    relative_parts = parts[marker_index + 1 :]
+    if not relative_parts or any(
+        part in {"", ".", ".."} for part in relative_parts
+    ):
+        return None
+    return posixpath.normpath("/".join(relative_parts))
+
+
+def _stable_all_bugs_function_path(file_path, input_dir):
+    """Return the project-relative extracted-function path stored in artifacts."""
+    relative = os.path.relpath(file_path, input_dir).replace(os.sep, "/")
+    normalized = posixpath.normpath(relative)
+    if (
+        normalized in {"", ".", ".."}
+        or normalized.startswith("../")
+        or posixpath.isabs(normalized)
+    ):
+        raise ValueError(
+            f"all-bugs function path escapes extracted_functions: {file_path}"
+        )
+    return posixpath.join("fm_agent", "extracted_functions", normalized)
+
+
+def _write_json_atomic(path, data):
+    tmp_path = path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _rebind_all_bugs_function_paths(
+    output_path,
+    result,
+    candidate_paths,
+    current_function,
+):
+    """Rebind completed all-bugs artifacts to the current stable source path."""
+    stored_function = result.get("function")
+    if stored_function == current_function:
+        return True
+    if (
+        _extracted_function_identity(stored_function)
+        != _extracted_function_identity(current_function)
+    ):
+        return False
+
+    rebound_candidates = []
+    for candidate_path in candidate_paths:
+        with open(candidate_path, "r", encoding="utf-8") as f:
+            candidate = json.load(f)
+        candidate["function"] = current_function
+        rebound_candidates.append((candidate_path, candidate))
+
+    rebound_result = dict(result)
+    rebound_result["function"] = current_function
+    for candidate_path, candidate in rebound_candidates:
+        _write_json_atomic(candidate_path, candidate)
+    _write_json_atomic(output_path, rebound_result)
+    result["function"] = current_function
+    return True
+
+
 def _clear_candidate_files(output_path):
     directory = os.path.dirname(output_path)
     stem = os.path.splitext(os.path.basename(output_path))[0]
@@ -377,6 +461,11 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     # A complete function result is the reasoning checkpoint. Resume never
     # re-runs it; missing candidate validations are resumed independently.
     rel = os.path.relpath(file_path, input_dir)
+    artifact_function = (
+        _stable_all_bugs_function_path(file_path, input_dir)
+        if all_bugs
+        else file_path
+    )
     output_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
     if resume and os.path.exists(output_path):
         try:
@@ -384,7 +473,21 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 existing = json.load(f)
             _ensure_resume_result_mode(existing, output_path, all_bugs)
             verdict = existing.get("verdict", "ERROR")
-            if not all_bugs or _all_bugs_candidate_paths(output_path, existing) is not None:
+            candidates = (
+                _all_bugs_candidate_paths(output_path, existing)
+                if all_bugs
+                else None
+            )
+            reusable = not all_bugs or (
+                candidates is not None
+                and _rebind_all_bugs_function_paths(
+                    output_path,
+                    existing,
+                    candidates,
+                    artifact_function,
+                )
+            )
+            if reusable:
                 logging.info(f"Already verified, skipping: {file_path} (verdict={verdict})")
                 return file_path, verdict
         except (json.JSONDecodeError, OSError):
@@ -450,7 +553,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 candidate_gaps,
             ):
                 candidate = {
-                    "function": file_path,
+                    "function": artifact_function,
                     "verdict": "MISMATCH",
                     "gaps": gaps,
                 }
@@ -465,7 +568,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
             else:
                 verdict = "ERROR"
             output = {
-                "function": file_path,
+                "function": artifact_function,
                 "verdict": verdict,
                 "gaps": candidate_gaps[0] if candidate_gaps else None,
                 "all_bugs": True,
@@ -510,6 +613,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
         output = {"function": file_path, "verdict": "ERROR", "gaps": None, "error": str(exc)}
         if all_bugs:
             output.update({
+                "function": artifact_function,
                 "all_bugs": True,
                 "bug_count": 0,
                 "reasoning_complete": False,
@@ -553,9 +657,12 @@ def _validation_status(result_json_rel, work_dir):
     result_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
     try:
         with open(result_path, "r") as f:
-            return json.load(f).get("confirmation_status")
+            result = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
+    if not _terminal_validation_record_is_valid(result, bug_id):
+        return None
+    return result["confirmation_status"]
 
 
 def _validate_single_bug(
@@ -585,7 +692,7 @@ def _validate_single_bug(
     # finishes this validation stage. Candidate identity is fixed by the
     # completed reasoning artifacts, so no content hash is needed here.
     if is_candidate and resume and os.path.exists(result_path):
-        if _terminal_validation_is_valid(result_path):
+        if _terminal_validation_is_valid(result_path, bug_id):
             logging.info(f"Bug validation already done, skipping: {bug_id}")
             return
         _clear_bug_validation_artifacts(work_dir, bug_id)
@@ -683,7 +790,9 @@ def _validate_single_bug(
                 )
 
             if os.path.exists(result_path):
-                if not is_candidate or _terminal_validation_is_valid(result_path):
+                if not is_candidate or _terminal_validation_is_valid(
+                    result_path, bug_id
+                ):
                     return
                 logging.warning(
                     "bug_validation wrote a non-terminal result for %s on attempt %d/%d",
@@ -850,11 +959,7 @@ def _generate_all_bugs_validation_summary(work_dir):
         try:
             with open(result_path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-            if (
-                isinstance(loaded, dict)
-                and loaded.get("confirmation_status")
-                in {"confirmed", "not_confirmed", "error"}
-            ):
+            if _terminal_validation_record_is_valid(loaded, bug_id):
                 record = loaded
             else:
                 validation_error = "invalid_result"

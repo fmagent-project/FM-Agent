@@ -18,6 +18,21 @@ _CALLEE_FIELDS = {
     "post_condition",
 }
 
+_TERMINAL_VALIDATION_STATUSES = {
+    "confirmed",
+    "not_confirmed",
+    "error",
+}
+
+_TERMINAL_VALIDATION_STRING_FIELDS = {
+    "source_file",
+    "function_name",
+    "probe_script",
+    "detail_file",
+    "probe_stdout",
+    "trigger_summary",
+}
+
 
 def _is_metadata_sidecar(file_path):
     """Return whether file_path is a function metadata sidecar."""
@@ -260,20 +275,41 @@ def _ensure_resume_mode_compatible(output_dir, all_bugs):
             _ensure_resume_result_mode(result, result_path, all_bugs)
 
 
-def _terminal_validation_is_valid(validation_path):
-    """Return whether a bug-validation artifact reached a terminal state."""
+def _terminal_validation_record_is_valid(validation, expected_bug_id):
+    """Return whether a terminal validation record belongs to one candidate."""
+    if not isinstance(validation, dict):
+        return False
+    if (
+        not isinstance(expected_bug_id, str)
+        or not expected_bug_id
+        or validation.get("id") != expected_bug_id
+        or validation.get("confirmation_status")
+        not in _TERMINAL_VALIDATION_STATUSES
+    ):
+        return False
+    if not _TERMINAL_VALIDATION_STRING_FIELDS.issubset(validation):
+        return False
+    if not all(
+        isinstance(validation[field], str)
+        for field in _TERMINAL_VALIDATION_STRING_FIELDS
+    ):
+        return False
+    attempts = validation.get("attempts")
+    return (
+        isinstance(attempts, int)
+        and not isinstance(attempts, bool)
+        and 1 <= attempts <= 10
+    )
+
+
+def _terminal_validation_is_valid(validation_path, expected_bug_id):
+    """Return whether a candidate's validation artifact is complete and terminal."""
     try:
         with open(validation_path, "r", encoding="utf-8") as f:
             validation = json.load(f)
     except (OSError, json.JSONDecodeError):
         return False
-    if not isinstance(validation, dict):
-        return False
-    return validation.get("confirmation_status") in {
-        "confirmed",
-        "not_confirmed",
-        "error",
-    }
+    return _terminal_validation_record_is_valid(validation, expected_bug_id)
 
 
 def _get_incomplete_verification_files(
@@ -311,7 +347,7 @@ def _get_incomplete_verification_files(
                 validation_path = os.path.join(
                     work_dir, "bug_validation", f"{bug_id}.result.json"
                 )
-                if not _terminal_validation_is_valid(validation_path):
+                if not _terminal_validation_is_valid(validation_path, bug_id):
                     missing_validation = True
                     break
             if missing_validation:
