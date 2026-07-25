@@ -560,7 +560,11 @@ def _count_mismatches(results_dir, all_bugs=False):
                 with open(os.path.join(root, fname), "r") as f:
                     result = json.load(f)
                 if all_bugs:
-                    if result.get("all_bugs") is True:
+                    if (
+                        result.get("all_bugs") is True
+                        and result.get("verdict") == "MISMATCH"
+                        and result.get("reasoning_complete") is True
+                    ):
                         count += result.get("bug_count", 0)
                 elif result.get("verdict") == "MISMATCH":
                     count += 1

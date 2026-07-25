@@ -25,6 +25,8 @@ Read the JSON file specified in the prompt header. Extract:
 - `actual_behavior` — value of `gaps.actual_behavior`.
 - `code_evidence` — value of `gaps.code_evidence`.
 - `trigger_condition` — value of `gaps.trigger_condition`.
+- `counterexample` — optional value of `gaps.counterexample`; when non-empty,
+  this is the exact concrete input that must be attempted first.
 
 ---
 
@@ -38,9 +40,16 @@ Open the source file identified by the `"function"` field. Read enough of the fi
 
 ### 2b. Design a Minimal Test Case
 
-Using `"trigger_condition"` and `"code_evidence"` as your primary guide, and `"spec_claim"` vs `"actual_behavior"` as your oracle, construct a **minimal script** (in the project's primary language) that:
+When `"counterexample"` is non-empty, use it verbatim as the primary concrete
+input for the probe. Use `"trigger_condition"` and `"code_evidence"` to explain
+and reach that case, and `"spec_claim"` vs `"actual_behavior"` as the oracle.
+For legacy results where `"counterexample"` is absent or empty, derive the
+concrete input from `"trigger_condition"` as before. Construct a **minimal
+script** (in the project's primary language) that:
 
-1. Calls the relevant function through the **package entry point** with the inputs described in `"trigger_condition"`.
+1. Calls the relevant function through the **package entry point** with the
+   input from `"counterexample"`, or from `"trigger_condition"` when no concrete
+   counterexample is available.
 2. Asserts the **actual (buggy) output** against the **expected (spec-correct) output**.
 3. Prints a clear `CONFIRMED` / `NOT CONFIRMED` verdict to stdout when run.
 
@@ -337,3 +346,4 @@ fm_agent/bug_validation/
 | `actual_behavior` | Target result JSON file | Understand the buggy control flow (Step 2b) |
 | `code_evidence` | Target result JSON file | Pinpoint the exact lines to target (Step 2b) |
 | `trigger_condition` | Target result JSON file | Derive the concrete input(s) for the probe (Step 2b) |
+| `counterexample` | Target result JSON file | Use the exact concrete input first when present (Step 2b) |
