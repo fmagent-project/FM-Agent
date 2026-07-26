@@ -216,14 +216,31 @@ def streaming_reasoner(
                     except Exception as exc:
                         logging.error(f"Validation error for {fpath}: {exc}")
 
-                # Check if all expected files have been processed
+                # Check if all expected files have been processed successfully
                 all_reasoning_done = (
                     expected_files is not None
-                    and (processed | failed) >= expected_files
+                    and processed >= expected_files
                     and not reasoning_futures
                 )
                 if all_reasoning_done and not validation_futures:
                     logging.info("All files verified and validated. Done.")
+                    break
+
+                # Terminal state: every expected file is either processed or failed.
+                # Report failures explicitly instead of claiming success.
+                all_terminal = (
+                    expected_files is not None
+                    and (processed | failed) >= expected_files
+                    and not reasoning_futures
+                    and not validation_futures
+                )
+                if all_terminal and failed:
+                    logging.error(
+                        f"All files finished, but {len(failed)} file(s) failed verification."
+                    )
+                    for ff in sorted(failed):
+                        rel_path = os.path.relpath(ff, proj_dir) if proj_dir else os.path.relpath(ff, input_dir)
+                        print(f"[failed] {rel_path}: verification error")
                     break
 
                 # Detect if spec generation subprocesses exited before all files are ready
