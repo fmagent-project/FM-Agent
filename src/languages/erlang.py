@@ -482,6 +482,49 @@ def _symbol_line_span(symbol_range: dict) -> tuple[int, int]:
     return start, end
 
 
+def extract_functions_from_source(
+    proj_dir: str, filepath: str, source: str
+) -> list[tuple[str, str]]:
+    """Extract Erlang functions from an in-memory version of ``filepath``.
+
+    ELP identifies functions by document URI, while the supplied source is
+    authoritative after ``didOpen``. This lets incremental change detection
+    parse Git-baseline source without checking out a separate project workspace.
+    """
+    path = os.path.abspath(filepath)
+    try:
+        with ElpClient(proj_dir) as client:
+            client.initialize(path, source)
+            symbols = client.request(
+                "textDocument/documentSymbol",
+                {"textDocument": {"uri": Path(path).as_uri()}},
+            ) or []
+    except Exception as exc:
+        logging.warning("ELP Erlang extraction unavailable for %s: %s", path, exc)
+        return []
+
+    source_index = _SourceIndex.build(source)
+    functions = []
+    seen = set()
+    for symbol in symbols:
+        if symbol.get("kind") != _FUNCTION_KIND:
+            continue
+        symbol_range = _symbol_range(symbol)
+        if not symbol_range:
+            continue
+        symbol_uri = _symbol_uri(symbol, Path(path).as_uri())
+        try:
+            function_id = _function_id(symbol_uri, symbol.get("name", ""))
+        except ValueError:
+            logging.warning("Ignoring malformed ELP function symbol: %r", symbol)
+            continue
+        if function_id in seen:
+            continue
+        seen.add(function_id)
+        functions.append((function_id, source_index.source_for_range(symbol_range)))
+    return functions
+
+
 def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
     proj_dir = os.path.abspath(proj_dir)
     files = _erlang_files(proj_dir)

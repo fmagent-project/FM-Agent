@@ -54,6 +54,7 @@ from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import CodeGraphExtractor, try_codegraph_init
+from .languages import erlang as erlang_language
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
@@ -359,8 +360,9 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     Returns a dict mapping each changed file's absolute path to a dict with keys "added",
     "removed", and "modified", each a sorted list of function names. For every
     non-Erlang language that CodeGraph can index, both revisions are compared using
-    its class-qualified identifiers. Erlang and CodeGraph-unavailable files retain
-    the previous regex-based comparison. Files with no detectable function-level
+    its class-qualified identifiers. Erlang uses its ELP semantic backend, while
+    CodeGraph-unavailable non-Erlang files retain the previous regex comparison.
+    Files with no detectable function-level
     change are omitted. Raises subprocess.CalledProcessError if proj_dir is not a
     git repository or old_commit_id is not a valid commit.
     """
@@ -393,9 +395,8 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         and _is_under_submodules(f, submodules)
     ]
 
-    # Erlang intentionally remains on its existing extraction path: its ELP
-    # integration has different project and tooling requirements. Every other
-    # changed language gets a CodeGraph comparison when both indexes are usable.
+    # Erlang uses ELP below; every other changed language gets a CodeGraph
+    # comparison when both indexes are usable.
     file_languages = {
         rel_path: EXT_TO_LANG[rel_path.rsplit(".", 1)[-1]]
         for rel_path in files
@@ -447,6 +448,13 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         finally:
             os.unlink(tmp_path)
 
+    def _erlang_funcs_from_source(rel_path, source):
+        """Extract Erlang functions from an in-memory source version via ELP."""
+        path = os.path.abspath(os.path.join(proj_dir, rel_path))
+        return dict(
+            erlang_language.extract_functions_from_source(proj_dir, path, source)
+        )
+
     result = {}
     for rel_path in files:
         ext = rel_path.rsplit(".", 1)[-1] if "." in rel_path else ""
@@ -479,13 +487,26 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
                     "CodeGraph could not provide both revisions for %s; using "
                     "legacy regex comparison.", rel_path,
                 )
-            new_funcs = (
-                dict(extract_functions_from_file(abs_path, lang_key))
-                if current_exists else {}
-            )
-            old_funcs = (
-                _funcs_from_commit(rel_path, lang_key, ext) if old_exists else {}
-            )
+            if lang_key == "erlang":
+                if current_exists:
+                    with open(abs_path, "r", errors="replace") as f:
+                        new_funcs = _erlang_funcs_from_source(rel_path, f.read())
+                else:
+                    new_funcs = {}
+                old_funcs = (
+                    _erlang_funcs_from_source(
+                        rel_path, _git("show", f"{old_commit_id}:{rel_path}")
+                    )
+                    if old_exists else {}
+                )
+            else:
+                new_funcs = (
+                    dict(extract_functions_from_file(abs_path, lang_key))
+                    if current_exists else {}
+                )
+                old_funcs = (
+                    _funcs_from_commit(rel_path, lang_key, ext) if old_exists else {}
+                )
 
         added = sorted(n for n in new_funcs if n not in old_funcs)
         removed = sorted(n for n in old_funcs if n not in new_funcs)
