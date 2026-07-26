@@ -482,27 +482,8 @@ def _symbol_line_span(symbol_range: dict) -> tuple[int, int]:
     return start, end
 
 
-def extract_functions_from_source(
-    proj_dir: str, filepath: str, source: str
-) -> list[tuple[str, str]]:
-    """Extract Erlang functions from an in-memory version of ``filepath``.
-
-    ELP identifies functions by document URI, while the supplied source is
-    authoritative after ``didOpen``. This lets incremental change detection
-    parse Git-baseline source without checking out a separate project workspace.
-    """
-    path = os.path.abspath(filepath)
-    try:
-        with ElpClient(proj_dir) as client:
-            client.initialize(path, source)
-            symbols = client.request(
-                "textDocument/documentSymbol",
-                {"textDocument": {"uri": Path(path).as_uri()}},
-            ) or []
-    except Exception as exc:
-        logging.warning("ELP Erlang extraction unavailable for %s: %s", path, exc)
-        return []
-
+def _functions_from_document_symbols(path: str, source: str, symbols: list[dict]):
+    """Convert ELP document symbols into this project's function representation."""
     source_index = _SourceIndex.build(source)
     functions = []
     seen = set()
@@ -523,6 +504,53 @@ def extract_functions_from_source(
         seen.add(function_id)
         functions.append((function_id, source_index.source_for_range(symbol_range)))
     return functions
+
+
+def extract_functions_from_sources(
+    proj_dir: str, sources: dict[str, str]
+) -> dict[str, list[tuple[str, str]]] | None:
+    """Extract several in-memory Erlang documents through one ELP session.
+
+    ``None`` denotes an unavailable or failed ELP session. It is deliberately
+    different from a successful empty function list, so callers never mistake
+    tooling failure for removal of every function in a source file.
+    """
+    normalized_sources = {
+        os.path.abspath(path): source for path, source in sources.items()
+    }
+    if not normalized_sources:
+        return {}
+
+    paths = list(normalized_sources)
+    try:
+        with ElpClient(proj_dir) as client:
+            first_path = paths[0]
+            client.initialize(first_path, normalized_sources[first_path])
+            for path in paths[1:]:
+                client.open_document(path, normalized_sources[path])
+
+            result = {}
+            for path in paths:
+                symbols = client.request(
+                    "textDocument/documentSymbol",
+                    {"textDocument": {"uri": Path(path).as_uri()}},
+                ) or []
+                result[path] = _functions_from_document_symbols(
+                    path, normalized_sources[path], symbols
+                )
+            return result
+    except Exception as exc:
+        logging.warning("ELP Erlang extraction unavailable for %s: %s", proj_dir, exc)
+        return None
+
+
+def extract_functions_from_source(
+    proj_dir: str, filepath: str, source: str
+) -> list[tuple[str, str]] | None:
+    """Extract one in-memory Erlang document, preserving ELP failure state."""
+    path = os.path.abspath(filepath)
+    result = extract_functions_from_sources(proj_dir, {path: source})
+    return None if result is None else result[path]
 
 
 def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:

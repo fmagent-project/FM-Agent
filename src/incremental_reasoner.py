@@ -362,9 +362,10 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     non-Erlang language that CodeGraph can index, both revisions are compared using
     its class-qualified identifiers. Erlang uses its ELP semantic backend, while
     CodeGraph-unavailable non-Erlang files retain the previous regex comparison.
-    Files with no detectable function-level
-    change are omitted. Raises subprocess.CalledProcessError if proj_dir is not a
-    git repository or old_commit_id is not a valid commit.
+    Files with no detectable function-level change are omitted. Raises
+    subprocess.CalledProcessError if proj_dir is not a git repository or
+    old_commit_id is not a valid commit, and RuntimeError if ELP cannot extract
+    a changed Erlang revision.
     """
     # Pathspecs limiting git to recognized source-file extensions (e.g. "*.py", "*.cpp").
     pathspecs = [f"*.{ext}" for ext in EXT_TO_LANG]
@@ -448,11 +449,31 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         finally:
             os.unlink(tmp_path)
 
-    def _erlang_funcs_from_source(rel_path, source):
-        """Extract Erlang functions from an in-memory source version via ELP."""
-        path = os.path.abspath(os.path.join(proj_dir, rel_path))
-        return dict(
-            erlang_language.extract_functions_from_source(proj_dir, path, source)
+    current_erlang_sources = {}
+    baseline_erlang_sources = {}
+    for rel_path, lang_key in file_languages.items():
+        if lang_key != "erlang":
+            continue
+        abs_path = os.path.abspath(os.path.join(proj_dir, rel_path))
+        if os.path.exists(abs_path):
+            with open(abs_path, "r", errors="replace") as f:
+                current_erlang_sources[abs_path] = f.read()
+        if _path_exists_in_commit(rel_path):
+            baseline_erlang_sources[abs_path] = _git(
+                "show", f"{old_commit_id}:{rel_path}"
+            )
+
+    current_erlang_functions = erlang_language.extract_functions_from_sources(
+        proj_dir, current_erlang_sources
+    ) if current_erlang_sources else {}
+    baseline_erlang_functions = erlang_language.extract_functions_from_sources(
+        proj_dir, baseline_erlang_sources
+    ) if baseline_erlang_sources else {}
+    if current_erlang_functions is None or baseline_erlang_functions is None:
+        raise RuntimeError(
+            "ELP extraction failed while comparing Erlang changes; incremental "
+            "analysis was aborted to avoid treating unavailable results as removed "
+            "functions."
         )
 
     result = {}
@@ -488,17 +509,8 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
                     "legacy regex comparison.", rel_path,
                 )
             if lang_key == "erlang":
-                if current_exists:
-                    with open(abs_path, "r", errors="replace") as f:
-                        new_funcs = _erlang_funcs_from_source(rel_path, f.read())
-                else:
-                    new_funcs = {}
-                old_funcs = (
-                    _erlang_funcs_from_source(
-                        rel_path, _git("show", f"{old_commit_id}:{rel_path}")
-                    )
-                    if old_exists else {}
-                )
+                new_funcs = dict(current_erlang_functions.get(abs_path, ()))
+                old_funcs = dict(baseline_erlang_functions.get(abs_path, ()))
             else:
                 new_funcs = (
                     dict(extract_functions_from_file(abs_path, lang_key))
