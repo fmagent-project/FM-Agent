@@ -14,6 +14,7 @@ import time
 import shutil
 import logging
 import subprocess
+from pathlib import Path
 
 from config import (
     OPENCODE_MAX_RETRIES,
@@ -31,6 +32,8 @@ from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
 )
+from .extract import run_extraction
+from .languages.codegraph import try_codegraph_init
 
 
 def _merge_descriptions(target_desc, source_desc):
@@ -1283,6 +1286,70 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
             "are missing or incomplete. Please re-run this stage to produce valid "
             "domain context files."
         )
+
+
+def _handle_extract_functions(proj_dir, work_dir, plugin_config, force):
+    """Run the extract_functions stage with plugin support.
+
+    Shared by the full and incremental pipelines.
+    *force* is True for incremental (always re-extract), ``not resume`` for full.
+    """
+    extract_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
+    phases_path = os.path.join(work_dir, "phases.json")
+
+    if extract_stage is None:
+        try_codegraph_init(proj_dir, force=force)
+        run_extraction(proj_dir, work_dir=work_dir, force=force, verbose=True)
+
+    elif extract_stage.type == "pass":
+        extracted_dir = os.path.join(work_dir, "extracted_functions")
+        if not os.path.isdir(extracted_dir) or not any(
+            os.path.isfile(os.path.join(root, f))
+            for root, _, files in os.walk(extracted_dir)
+            for f in files
+        ):
+            raise RuntimeError(
+                "Stage extract_functions skipped (type=pass) but "
+                "extracted_functions/ is missing or empty."
+            )
+
+    elif extract_stage.type == "replace":
+        extracted_base = os.path.join(work_dir, "extracted_functions")
+        outputs = plugin_config.invoke_replace(
+            "extract_functions",
+            input_files=[phases_path],
+            context={"project_dir": proj_dir, "work_dir": work_dir},
+        )
+        if not outputs:
+            raise RuntimeError(
+                "Stage extract_functions failed: plugin returned no output files."
+            )
+        base = Path(extracted_base).resolve()
+        outside = []
+        for p in outputs:
+            try:
+                Path(p).resolve().relative_to(base)
+            except ValueError:
+                outside.append(p)
+        if outside:
+            raise RuntimeError(
+                "Stage extract_functions failed: plugin returned files outside "
+                f"extracted_functions/: {outside[0]}"
+            )
+        missing = [p for p in outputs if not os.path.isfile(p)]
+        if missing:
+            raise RuntimeError(
+                f"Stage extract_functions failed: plugin returned "
+                f"{len(missing)} non-existent or non-file entries: {missing[0]}..."
+            )
+
+    elif extract_stage.type == "modify":
+        try_codegraph_init(proj_dir, force=force)
+        plugin_config.invoke_modify_input("extract_functions", phases_path)
+        output_files: list[str] = []
+        run_extraction(proj_dir, work_dir=work_dir, force=force,
+                       verbose=True, output_files=output_files)
+        plugin_config.invoke_modify_output("extract_functions", output_files)
 
 
 def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,

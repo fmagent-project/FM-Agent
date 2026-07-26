@@ -61,6 +61,7 @@ from .domain_knowledge import (
     load_staged_domain_knowledge_text,
     stage_domain_knowledge_files,
 )
+from .pipeline_setup import _run_setup_extract, _handle_extract_functions
 
 
 class _StdoutTee:
@@ -709,9 +710,9 @@ def run_incremental_pipeline(
     fm_agent/incremental_updated_specs.json as a side effect.
     """
 
-    # run_pipeline and _run_setup_extract live in the top-level entry module (main.py);
-    # import them lazily here to avoid a src -> main import cycle at module load time.
-    from main import run_pipeline, _run_setup_extract
+    # run_pipeline lives in the top-level entry module (main.py);
+    # import it lazily here to avoid a src -> main import cycle at module load time.
+    from main import run_pipeline
 
     work_dir = os.path.join(proj_dir, "fm_agent")
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -815,13 +816,7 @@ def run_incremental_pipeline(
     # 4. Update functions under fm_agent/extracted_functions/. Re-extraction replaces
     #    only source files; adjacent .spec.json and .info.json sidecars are retained.
     logging.info("[Stage 4/10] Re-extracting function source files...")
-    # Rebuild the codegraph index before re-extraction. The index still reflects the code as
-    # of the previous full run, but the working tree has changed since then; run_extraction
-    # (and the downstream scope ranking) read function bodies and spans from codegraph, so a
-    # stale index would yield boundaries for the old code. try_codegraph_init rebuilds by
-    # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
-    try_codegraph_init(proj_dir)
-    run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
+    _handle_extract_functions(proj_dir, work_dir, plugin_config, force=True)
     logging.info("  -> function sources re-extracted; metadata sidecars retained.")
 
     # 5. Collect changed functions by comparing against the old version of functions in commit_id

@@ -8,7 +8,7 @@ from src.file_utils import (
     _json_file_is_valid,
     _is_under_submodules,
 )
-from src.extract import run_extraction, EXT_TO_LANG
+from src.extract import EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
 from src.incremental_reasoner import run_incremental_pipeline
@@ -24,6 +24,7 @@ from src.pipeline_setup import (
     _run_generate_phases,
     _post_process_phases,
     _run_generate_domain_context,
+    _handle_extract_functions,
 )
 from src.domain_knowledge import (
     collect_domain_knowledge_paths,
@@ -197,7 +198,7 @@ def run_pipeline(
     # force=False on resume preserves already-specced extracted files; on a fresh
     # run fm_agent/ was just wiped so it is equivalent to force=True.
     print("[Pipeline] Stage 3/6: Extracting functions from source files...")
-    run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
+    _handle_extract_functions(proj_dir, work_dir, plugin_config, force=not resume)
 
     # Copy system_prompt.md to spec_prompts/system_prompt.md
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")

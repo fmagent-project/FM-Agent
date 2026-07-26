@@ -87,6 +87,10 @@ _REPLACE_SPEC: Dict[str, tuple] = {
         (List[str], dict),
         List[str],
     ),
+    "extract_functions": (
+        (List[str], dict),
+        List[str],
+    ),
 }
 
 _MODIFY_SPEC: Dict[str, tuple] = {
@@ -95,6 +99,10 @@ _MODIFY_SPEC: Dict[str, tuple] = {
         (List[str],),
     ),
     "generate_domain_context": (
+        (str,),
+        (List[str],),
+    ),
+    "extract_functions": (
         (str,),
         (List[str],),
     ),

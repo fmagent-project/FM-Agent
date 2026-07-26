@@ -665,12 +665,16 @@ def _function_spans(filepath, lang_key, proj_dir=None):
     return spans, raw_lines
 
 
-def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
+def run_extraction(proj_dir, work_dir=None, force=False, verbose=False,
+                   output_files=None):
     """Run function extraction on a project directory.
 
     Reads phases.json from work_dir (or proj_dir), extracts functions from
     source files in proj_dir, writes them to work_dir/extracted_functions/,
     and validates the output.
+
+    If *output_files* is a list, every extracted file path (including
+    skipped files) is appended to it.
 
     Returns (written_count, skipped_count).
     """
@@ -753,6 +757,8 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             # does not target Windows extraction). _safe_filename keeps the "::",
             # maps "/" -> "_", and falls back to "_function" for empty names.
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
+            if output_files is not None:
+                output_files.append(out_file)
 
             # Skip only when the extracted file already has valid .spec.json and
             # .info.json sidecars.
