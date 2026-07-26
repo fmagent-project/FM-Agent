@@ -153,7 +153,7 @@ else
         curl -fsSL https://opencode.ai/install | bash
     fi
 
-    # ---------- oh-my-openagent plugin ----------
+    ---------- oh-my-openagent plugin ----------
     if command -v bunx &>/dev/null; then
         echo "[ok] bun found"
     else

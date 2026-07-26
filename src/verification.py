@@ -116,6 +116,16 @@ def streaming_reasoner(
             validation_futures = {}
             submitted = set()
 
+            def _submit_file(file_path, ext):
+                # Submit a ready file for reasoning/verification.
+                submitted.add(file_path)
+                language = EXT_TO_LANG.get(ext, "C")
+                future = executor.submit(
+                    _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume
+                )
+                reasoning_futures[future] = file_path
+                logging.info(f"Submitted: {file_path}")
+
             while True:
                 # Scan for new ready files
                 for root, _, files in os.walk(input_dir):
@@ -134,13 +144,7 @@ def streaming_reasoner(
                             continue
 
                         # File is ready and not yet submitted or processed.
-                        submitted.add(file_path)
-                        language = EXT_TO_LANG.get(ext, "C")
-                        future = executor.submit(
-                            _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume
-                        )
-                        reasoning_futures[future] = file_path
-                        logging.info(f"Submitted: {file_path}")
+                        _submit_file(file_path, ext)
 
                 # Collect completed reasoning futures (non-blocking)
                 done = [f for f in reasoning_futures if f.done()]
@@ -221,6 +225,23 @@ def streaming_reasoner(
                 # Detect if spec generation subprocesses exited before all files are ready
                 _all_procs = spec_procs if spec_procs else None
                 if _all_procs is not None and all(_spec_task_done(p) for p in _all_procs):
+                    # Final scan: producers may have finished writing markers after the
+                    # last regular scan, so check remaining expected files once more.
+                    newly_ready = False
+                    for file_path in (expected_files or set()) - processed - submitted:
+                        ext = os.path.splitext(file_path)[1]
+                        if ext not in EXT_TO_LANG:
+                            continue
+                        if not is_file_ready(file_path):
+                            continue
+                        _submit_file(file_path, ext)
+                        newly_ready = True
+                    if newly_ready:
+                        logging.info(
+                            "All spec producers done; rescan found newly ready files, submitting them."
+                        )
+                        continue
+
                     unready = (expected_files or set()) - processed
                     if unready and not reasoning_futures and not validation_futures:
                         exit_codes = [_spec_task_exit_code(p) for p in _all_procs]
