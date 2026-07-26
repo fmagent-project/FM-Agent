@@ -115,6 +115,7 @@ def streaming_reasoner(
             reasoning_futures = {}
             validation_futures = {}
             submitted = set()
+            failed = set()  # files that raised unhandled errors; don't retry forever
 
             def _submit_file(file_path, ext):
                 # Submit a ready file for reasoning/verification.
@@ -139,6 +140,8 @@ def streaming_reasoner(
                         if file_path in processed:
                             continue
                         if file_path in submitted:
+                            continue
+                        if file_path in failed:
                             continue
                         if not is_file_ready(file_path):
                             continue
@@ -183,6 +186,7 @@ def streaming_reasoner(
                             print(f"[{completed_count}/{num_functions}] {rel_path}: {label}")
                     except Exception as exc:
                         logging.error(f"Error verifying {fpath}: {exc}")
+                        failed.add(fpath)
 
                 # Collect completed validation futures (non-blocking)
                 val_done = [f for f in validation_futures if f.done()]
@@ -215,7 +219,7 @@ def streaming_reasoner(
                 # Check if all expected files have been processed
                 all_reasoning_done = (
                     expected_files is not None
-                    and processed >= expected_files
+                    and (processed | failed) >= expected_files
                     and not reasoning_futures
                 )
                 if all_reasoning_done and not validation_futures:
@@ -228,7 +232,7 @@ def streaming_reasoner(
                     # Final scan: producers may have finished writing markers after the
                     # last regular scan, so check remaining expected files once more.
                     newly_ready = False
-                    for file_path in (expected_files or set()) - processed - submitted:
+                    for file_path in (expected_files or set()) - processed - submitted - failed:
                         ext = os.path.splitext(file_path)[1]
                         if ext not in EXT_TO_LANG:
                             continue
@@ -242,24 +246,32 @@ def streaming_reasoner(
                         )
                         continue
 
-                    unready = (expected_files or set()) - processed
-                    if unready and not reasoning_futures and not validation_futures:
+                    unready = (expected_files or set()) - processed - failed
+                    if not reasoning_futures and not validation_futures:
                         exit_codes = [_spec_task_exit_code(p) for p in _all_procs]
-                        if not processed:
-                            # No function got a spec at all – this is an error
-                            logging.warning(
-                                f"Spec generation process(es) exited (codes {exit_codes}) "
-                                f"but no .spec.json/.info.json sidecar pairs were created."
+                        if unready:
+                            if not processed:
+                                # No function got a spec at all – this is an error
+                                logging.warning(
+                                    f"Spec generation process(es) exited (codes {exit_codes}) "
+                                    f"but no .spec.json/.info.json sidecar pairs were created."
+                                )
+                            else:
+                                # Some functions are missing specs; leave them pending for retry.
+                                logging.warning(
+                                    f"Spec generation process(es) exited (codes {exit_codes}), "
+                                    f"{len(unready)} files missing specs, leaving them pending for retry."
+                                )
+                                for uf in sorted(unready):
+                                    rel_path = os.path.relpath(uf, proj_dir) if proj_dir else os.path.relpath(uf, input_dir)
+                                    print(f"[pending] {rel_path}: no spec yet; will retry")
+                        if failed:
+                            logging.error(
+                                f"{len(failed)} file(s) failed verification and will not be retried."
                             )
-                        else:
-                            # Some functions are missing specs; leave them pending for retry.
-                            logging.warning(
-                                f"Spec generation process(es) exited (codes {exit_codes}), "
-                                f"{len(unready)} files missing specs, leaving them pending for retry."
-                            )
-                            for uf in sorted(unready):
-                                rel_path = os.path.relpath(uf, proj_dir) if proj_dir else os.path.relpath(uf, input_dir)
-                                print(f"[pending] {rel_path}: no spec yet; will retry")
+                            for ff in sorted(failed):
+                                rel_path = os.path.relpath(ff, proj_dir) if proj_dir else os.path.relpath(ff, input_dir)
+                                print(f"[failed] {rel_path}: verification error")
                         break
 
                 time.sleep(poll_interval)
@@ -298,7 +310,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
             verdict = existing.get("verdict", "ERROR")
             logging.info(f"Already verified, skipping: {file_path} (verdict={verdict})")
             return file_path, verdict
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             pass  # re-verify if existing result is corrupted
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
