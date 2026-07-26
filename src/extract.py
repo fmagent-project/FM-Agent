@@ -12,7 +12,6 @@ from src.languages.registry import batch_extract_all, function_spans_for_file
 LANG_CONFIG = {
     "cpp": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "#", "using", "typedef"),
         "skip_keywords_line": ("namespace", "struct", "class"),
         "keywords": {
@@ -28,7 +27,6 @@ LANG_CONFIG = {
     },
     "c": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "#", "using", "typedef"),
         "skip_keywords_line": ("struct",),
         "keywords": {
@@ -40,7 +38,6 @@ LANG_CONFIG = {
     },
     "python": {
         "comment_prefix": "#",
-        "spec_marker": "# [SPEC]",
         "skip_prefixes": ("#",),
         "skip_keywords_line": ("class",),
         "keywords": {
@@ -52,7 +49,6 @@ LANG_CONFIG = {
     },
     "go": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "package", "import"),
         "skip_keywords_line": ("type", "var", "const"),
         "keywords": {
@@ -63,7 +59,6 @@ LANG_CONFIG = {
     },
     "rust": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "use", "mod", "extern"),
         "skip_keywords_line": ("struct", "enum", "trait", "impl", "type"),
         "keywords": {
@@ -75,7 +70,6 @@ LANG_CONFIG = {
     },
     "java": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "import", "package"),
         "skip_keywords_line": ("class", "interface", "enum"),
         "keywords": {
@@ -89,7 +83,6 @@ LANG_CONFIG = {
     },
     "typescript": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "import", "export type", "export interface"),
         "skip_keywords_line": ("class", "interface", "enum", "type"),
         "keywords": {
@@ -101,7 +94,6 @@ LANG_CONFIG = {
     },
     "javascript": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "import"),
         "skip_keywords_line": ("class",),
         "keywords": {
@@ -113,7 +105,6 @@ LANG_CONFIG = {
     },
     "erlang": {
         "comment_prefix": "%",
-        "spec_marker": "% [SPEC]",
         "skip_prefixes": ("%", "-module", "-export", "-import", "-include"),
         "skip_keywords_line": ("-record", "-type", "-spec", "-callback"),
         "keywords": {
@@ -126,7 +117,6 @@ LANG_CONFIG = {
     },
     "cuda": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "#", "using", "typedef"),
         "skip_keywords_line": ("namespace", "struct", "class"),
         "keywords": {
@@ -143,7 +133,6 @@ LANG_CONFIG = {
     },
     "arkts": {
         "comment_prefix": "//",
-        "spec_marker": "// [SPEC]",
         "skip_prefixes": ("//", "import", "export type", "export interface"),
         "skip_keywords_line": ("class", "interface", "enum", "type", "struct"),
         "keywords": {
@@ -765,7 +754,8 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
             # maps "/" -> "_", and falls back to "_function" for empty names.
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
 
-            # Skip only when the file already has both [SPEC] and [INFO] blocks
+            # Skip only when the extracted file already has valid .spec.json and
+            # .info.json sidecars.
             if not force and os.path.exists(out_file) and is_file_ready(out_file):
                 if verbose:
                     print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")

@@ -29,8 +29,8 @@ omitted or empty. No short-name fallback is performed.
 Every function that contains one of these callsites gets a supplemental edge to
 ``callee.fqn``.
 
-``callee.info_names`` is only metadata for matching generated [INFO] entries.
-It is never used for source callsite scanning.
+``callee.info_names`` is only metadata for matching callee entries in generated
+``.info.json`` sidecars. It is never used for source callsite scanning.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ class CallerSelector:
 
 @dataclass(frozen=True)
 class CalleeTarget:
-    """The concrete callee FQN plus names callers may use in [INFO]."""
+    """The concrete callee FQN plus names callers may use in .info.json."""
 
     fqn: str
     info_names: tuple[str, ...]

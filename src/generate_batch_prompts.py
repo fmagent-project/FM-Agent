@@ -84,83 +84,68 @@ def parse_layers_spec(layers_spec: str) -> Tuple[int, int]:
     return start, end
 
 
-def _detect_comment_prefix(content: str) -> Optional[str]:
-    """Find the comment prefix by locating a line containing [SPEC] and extracting its prefix."""
-    for line in content.splitlines():
-        idx = line.find("[SPEC]")
-        if idx != -1:
-            return line[:idx].rstrip()
-    return None
+def _spec_json_path(filepath: Path) -> Path:
+    """Return the spec sidecar next to one extracted function file."""
+    return Path(str(filepath) + ".spec.json")
+
+
+def _info_json_path(filepath: Path) -> Path:
+    """Return the info sidecar next to one extracted function file."""
+    return Path(str(filepath) + ".info.json")
 
 
 def extract_spec_block(filepath: Path) -> Optional[str]:
-    """Return the '<comment> [SPEC]' block as a string, or None if not specced."""
-    content = filepath.read_text(errors="replace")
-    prefix = _detect_comment_prefix(content)
-    if prefix is None:
+    """Read .spec.json and rebuild reasoner-facing spec text."""
+    spec_path = _spec_json_path(filepath)
+
+    try:
+        with spec_path.open("r", encoding="utf-8") as file:
+            spec = json.load(file)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    tag = f"{prefix} [SPEC]"
-    if not content.startswith(tag):
+
+    if not isinstance(spec, dict):
         return None
-    end = content.find(tag, len(tag))
-    if end == -1:
-        return None
-    return content[: end + len(tag)].strip()
+
+    return (
+        f"{spec.get('signature', '')}\n\n"
+        f"Pre-condition:\n{spec.get('pre_condition', '')}\n\n"
+        f"Post-condition:\n{spec.get('post_condition', '')}"
+    )
 
 
-def extract_info_block(filepath: Path) -> Optional[str]:
-    """Return content between the two '<comment> [INFO]' markers, or None."""
-    content = filepath.read_text(errors="replace")
-    prefix = _detect_comment_prefix(content)
-    if prefix is None:
+def extract_info_block(filepath: Path) -> Optional[dict]:
+    """Read the adjacent .info.json object when it is usable."""
+    info_path = _info_json_path(filepath)
+
+    try:
+        with info_path.open("r", encoding="utf-8") as file:
+            info = json.load(file)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    tag = f"{prefix} [INFO]"
-    start = content.find(tag)
-    if start == -1:
-        return None
-    end = content.find(tag, start + len(tag))
-    if end == -1:
-        return None
-    return content[start + len(tag) + 1 : end].strip()
+
+    return info if isinstance(info, dict) else None
 
 
 def extract_callee_spec_from_info(
-    info_block: str,
+    info_dict: dict,
     callee_fqn: str,
     aliases: Optional[Sequence[str]] = None,
-) -> Optional[str]:
-    """Find the [SPLIT]-separated entry for callee_fqn in an info_block."""
-    # Detect comment prefix from the info_block content itself
-    prefix = ""
-    for line in info_block.splitlines():
-        stripped = line.strip()
-        if stripped:
-            idx = stripped.find("[SPLIT]")
-            if idx != -1:
-                prefix = stripped[:idx].rstrip()
-                break
-    # If no [SPLIT] found in block, infer prefix from first non-empty line
-    if not prefix:
-        for line in info_block.splitlines():
-            stripped = line.strip()
-            if stripped:
-                m = re.match(r'^(\S+)\s', stripped)
-                if m:
-                    prefix = m.group(1)
-                break
-
-    split_tag = f"{prefix} [SPLIT]" if prefix else "[SPLIT]"
+) -> Optional[dict]:
+    """Return the callee object matching the requested FQN or edge aliases."""
     names = _callee_match_names(callee_fqn, aliases or ())
-    for entry in info_block.split(split_tag):
-        entry = entry.strip()
-        if not entry or "(no callees)" in entry:
+    callees = info_dict.get("callees", [])
+    if not isinstance(callees, list):
+        return None
+
+    for callee in callees:
+        if not isinstance(callee, dict):
             continue
-        first_line = entry.split("\n")[0].strip()
-        # Strip the comment prefix to get the actual content
-        if prefix and first_line.startswith(prefix):
-            first_line = first_line[len(prefix):].strip()
-        if any(_info_line_mentions_name(first_line, name) for name in names):
-            return entry
+        name = callee.get("name", "")
+        if not isinstance(name, str):
+            continue
+        if any(_info_line_mentions_name(name, candidate) for candidate in names):
+            return callee
     return None
 
 
@@ -233,14 +218,14 @@ def build_prompt(
 ) -> str:
     lines: List[str] = []
     sample_lang = "unknown"
-    sample_comment = "//"
     if functions:
-        sample_lang, sample_comment = detect_lang_and_comment(functions[0]["file"], ext_to_lang)
+        sample_lang, _ = detect_lang_and_comment(functions[0]["file"], ext_to_lang)
 
     lines.append(f"You are generating behavioral specifications for Phase {phase}, Layer {layer_idx}.")
     lines.append("")
     lines.append(
-        f"Language: {sample_lang}. Spec comment style: `{sample_comment} [SPEC]`."
+        f"Language: {sample_lang}. "
+        "Write specifications to adjacent .spec.json and .info.json files."
     )
     lines.append("")
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
@@ -281,14 +266,21 @@ def build_prompt(
             spec_block = extract_spec_block(caller_file)
             if spec_block and (caller_name, spec_block) not in caller_specs:
                 caller_specs.append((caller_name, spec_block))
-            info_block = extract_info_block(caller_file)
-            if not info_block:
+            info_dict = extract_info_block(caller_file)
+            if not info_dict:
                 continue
             entry = extract_callee_spec_from_info(
-                info_block, fn_name, info_names_by_caller.get(caller_name, [])
+                info_dict, fn_name, info_names_by_caller.get(caller_name, [])
             )
             if entry:
-                caller_expectations.setdefault(fn_name, []).append((caller_name, entry.strip()))
+                entry_text = (
+                    f"{entry.get('signature', '')}\n"
+                    f"  Pre-condition: {entry.get('pre_condition', '')}\n"
+                    f"  Post-condition: {entry.get('post_condition', '')}"
+                )
+                caller_expectations.setdefault(fn_name, []).append(
+                    (caller_name, entry_text)
+                )
 
     if caller_specs:
         lines.append("")
@@ -338,41 +330,41 @@ def build_prompt(
             lines.append("  Earlier-layer callers: (none)")
 
     lines.append("")
-    lines.append("## SPEC FORMAT (prepend to file, preserving source code below)")
+    lines.append("## SPEC FORMAT (write JSON files; do NOT modify source files)")
     lines.append("")
-    lines.append("The exact format every specced file must start with:")
+    lines.append(
+        "For each function file `<function-file>`, "
+        "write TWO JSON files in the SAME directory:"
+    )
     lines.append("")
-    lines.append(f"{sample_comment} [SPEC]")
-    lines.append(f"{sample_comment} Unit: <file path relative to repo root>")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} <FunctionName>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} Pre-condition:")
-    lines.append(f"{sample_comment}   - ...")
-    lines.append(f"{sample_comment}")
-    lines.append(f"{sample_comment} Post-condition:")
-    lines.append(f"{sample_comment}   - ...")
-    lines.append(f"{sample_comment} [SPEC]")
+    lines.append("`<function-file>.spec.json`:")
+    lines.append("```json")
+    lines.append(
+        '{"signature": "<FunctionName>(<params>) -> <ReturnType>", '
+        '"pre_condition": "...", "post_condition": "..."}'
+    )
+    lines.append("```")
     lines.append("")
-    lines.append(f"{sample_comment} [INFO]")
-    lines.append(f"{sample_comment} <callee_name>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}   Pre-condition: ...")
-    lines.append(f"{sample_comment}   Post-condition: ...")
-    lines.append(f"{sample_comment} [SPLIT]")
-    lines.append(f"{sample_comment} <another_callee>(<params>) -> <ReturnType>")
-    lines.append(f"{sample_comment}   Pre-condition: ...")
-    lines.append(f"{sample_comment}   Post-condition: ...")
-    lines.append(f"{sample_comment} [INFO]")
+    lines.append("`<function-file>.info.json`:")
+    lines.append("```json")
+    lines.append(
+        '{"callees": [{"name": "<callee_name>", "signature": "...", '
+        '"pre_condition": "...", "post_condition": "..."}]}'
+    )
+    lines.append("```")
     lines.append("")
-    lines.append("If the function has no callees: '<comment> (no callees)' between the [INFO] markers.")
+    lines.append('If the function has no callees: write `{"callees": []}` to the .info.json file.')
     lines.append("")
     lines.append("## PROCESS")
     lines.append("For each function:")
     lines.append("1. Read the extracted file")
     lines.append("2. Read caller expectations above - what do callers NEED from this function?")
     lines.append("3. Write a behavioral spec describing WHAT it guarantees (not HOW)")
-    lines.append("4. Write the COMPLETE file with [SPEC] and [INFO] blocks prepended, then UNCHANGED source")
-    lines.append("5. Use the Write tool to save the complete file")
+    lines.append(
+        "4. Write the COMPLETE .spec.json and .info.json objects next to the "
+        "UNCHANGED source file"
+    )
+    lines.append("5. Use the Write tool to save both JSON files")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -498,6 +490,10 @@ def main() -> int:
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    current_batch_paths = {out_path for out_path, _ in write_targets}
+    for existing_path in output_dir.glob("batch_*.txt"):
+        if existing_path not in current_batch_paths:
+            existing_path.unlink()
     for out_path, content in write_targets:
         out_path.write_text(content)
     for out_path in stale_targets:
