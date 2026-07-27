@@ -664,6 +664,37 @@ def _validation_status(result_json_rel, work_dir):
     return result["confirmation_status"]
 
 
+def _all_bugs_custom_validator_result_contract(bug_id):
+    """Return the non-replaceable terminal-result contract for one candidate."""
+    example = {
+        "id": bug_id,
+        "source_file": "<string>",
+        "function_name": "<string>",
+        "confirmation_status": "confirmed",
+        "attempts": 1,
+        "probe_script": "<string>",
+        "detail_file": "<string>",
+        "probe_stdout": "<string>",
+        "trigger_summary": "<string>",
+    }
+    return (
+        "\n\n---\n\n"
+        "## Mandatory FM-Agent Candidate Result Contract\n\n"
+        "This contract applies in addition to the custom validation instructions "
+        "above. Write the terminal machine-readable result to "
+        f"`fm_agent/bug_validation/{bug_id}.result.json` using this schema:\n\n"
+        "```json\n"
+        f"{json.dumps(example, indent=2, ensure_ascii=False)}\n"
+        "```\n\n"
+        f"- `id` must be exactly `{bug_id}`.\n"
+        "- `confirmation_status` must be `confirmed`, `not_confirmed`, or `error`.\n"
+        "- `attempts` must be an integer from 1 through 10.\n"
+        "- `source_file`, `function_name`, `probe_script`, `detail_file`, "
+        "`probe_stdout`, and `trigger_summary` must be strings; use an empty "
+        "string when a value is not applicable.\n"
+    )
+
+
 def _validate_single_bug(
     result_json_rel,
     proj_dir,
@@ -717,6 +748,12 @@ def _validate_single_bug(
     else:
         user_knowledge_section = ""
 
+    candidate_result_contract = (
+        _all_bugs_custom_validator_result_contract(bug_id)
+        if is_candidate and bug_validator_path
+        else ""
+    )
+
     # Generate a per-file prompt with target file and bug ID header
     prompt_content = (
         "# Bug Validator\n\n"
@@ -724,6 +761,7 @@ def _validate_single_bug(
         f"**Bug ID:** `{bug_id}`\n\n---\n\n"
         + user_knowledge_section
         + base_content
+        + candidate_result_contract
     )
 
     os.makedirs(os.path.join(work_dir, "bug_validation"), exist_ok=True)
