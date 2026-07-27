@@ -115,20 +115,25 @@ def is_interactive():
 
 def run(proj_dir, config):
     """Run all env checks.  Return True to proceed, False to abort."""
+    from src.cli_backend import is_cli_backend_enabled
+
     work_dir = os.path.join(proj_dir, "fm_agent")
     os.makedirs(work_dir, exist_ok=True)
     ignored = _load_ignored(work_dir)
 
     checks = [
-        ("llm_key", "LLM API Key configured",
-         lambda: _check_llm_api_key(config)),
-        ("oh-my-openagent", "oh-my-openagent installed",
-         _check_oh_my_openagent),
-        ("comment-checker-disabled", "comment-checker hook disabled",
-         _check_comment_checker),
         ("codegraph-version", "codegraph pinned build installed",
          lambda: _check_codegraph_version(config)),
     ]
+    if not is_cli_backend_enabled():
+        checks[:0] = [
+            ("llm_key", "LLM API Key configured",
+             lambda: _check_llm_api_key(config)),
+            ("oh-my-openagent", "oh-my-openagent installed",
+             _check_oh_my_openagent),
+            ("comment-checker-disabled", "comment-checker hook disabled",
+             _check_comment_checker),
+        ]
 
     warnings = []
     for check_id, label, fn in checks:
