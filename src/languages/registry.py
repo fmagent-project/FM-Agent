@@ -19,6 +19,8 @@ class LanguageHandler:
     batch_extract(proj_dir)             -> {abs_filepath: [(func_name, body)]}
     call_edges(proj_dir)                -> {caller_fqn: {callee_fqns}}
     function_spans(proj_dir, filepath)  -> [(func_name, start_idx, end_idx)] | None
+    incremental_source_extract(proj_dir, sources)
+        -> {abs_filepath: [(func_name, body)]} | None
 
     Each function handles its own backend (e.g. codegraph) internally.
     batch_extract / call_edges return an empty dict when the backend is
@@ -27,13 +29,14 @@ class LanguageHandler:
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
-         and function_spans
+         function_spans, and optionally incremental_source_extract
       2. Import it here and add one entry to REGISTRY
     No other files need to change.
     """
     batch_extract: Callable
     call_edges: Callable
     function_spans: Callable
+    incremental_source_extract: Callable | None = None
 
 
 REGISTRY: dict = {
@@ -45,7 +48,7 @@ REGISTRY: dict = {
     "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans),
     "javascript": LanguageHandler(batch_extract=_javascript.batch_extract, call_edges=_javascript.call_edges, function_spans=_javascript.function_spans),
     "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans),
-    "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans),
+    "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
 }
 
 
@@ -78,6 +81,26 @@ def function_spans_for_file(proj_dir: str, filepath: str, lang_key: str):
     if handler is None:
         return None
     return handler.function_spans(proj_dir, filepath)
+
+
+def supports_incremental_source_extraction(lang_key: str) -> bool:
+    """Return whether a language supplies semantic extraction for source snapshots."""
+    handler = REGISTRY.get(lang_key)
+    return handler is not None and handler.incremental_source_extract is not None
+
+
+def extract_incremental_sources(proj_dir: str, lang_key: str, sources: dict):
+    """Dispatch source-snapshot extraction to a language's registered backend.
+
+    The backend returns ``None`` when it is unavailable or fails, distinct from
+    a successful extraction whose individual source files contain no functions.
+    """
+    handler = REGISTRY.get(lang_key)
+    if handler is None or handler.incremental_source_extract is None:
+        raise ValueError(
+            f"Language {lang_key!r} has no incremental source extraction backend"
+        )
+    return handler.incremental_source_extract(proj_dir, sources)
 
 
 def call_edges_all(proj_dir: str, lang_keys) -> tuple:

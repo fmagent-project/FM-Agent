@@ -54,7 +54,10 @@ from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import CodeGraphExtractor, try_codegraph_init
-from .languages import erlang as erlang_language
+from .languages.registry import (
+    extract_incremental_sources,
+    supports_incremental_source_extraction,
+)
 from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
@@ -358,14 +361,13 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     version, then compared by source text.
 
     Returns a dict mapping each changed file's absolute path to a dict with keys "added",
-    "removed", and "modified", each a sorted list of function names. For every
-    non-Erlang language that CodeGraph can index, both revisions are compared using
-    its class-qualified identifiers. Erlang uses its ELP semantic backend, while
-    CodeGraph-unavailable non-Erlang files retain the previous regex comparison.
-    Files with no detectable function-level change are omitted. Raises
+    "removed", and "modified", each a sorted list of function names. Languages
+    with a registered semantic source backend use it for both revisions; other
+    languages use CodeGraph when available, then the regex fallback. Files with
+    no detectable function-level change are omitted. Raises
     subprocess.CalledProcessError if proj_dir is not a git repository or
-    old_commit_id is not a valid commit, and RuntimeError if ELP cannot extract
-    a changed Erlang revision.
+    old_commit_id is not a valid commit, and RuntimeError if a registered source
+    backend cannot extract a changed revision.
     """
     # Pathspecs limiting git to recognized source-file extensions (e.g. "*.py", "*.cpp").
     pathspecs = [f"*.{ext}" for ext in EXT_TO_LANG]
@@ -396,18 +398,20 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         and _is_under_submodules(f, submodules)
     ]
 
-    # Erlang uses ELP below; every other changed language gets a CodeGraph
-    # comparison when both indexes are usable.
     file_languages = {
         rel_path: EXT_TO_LANG[rel_path.rsplit(".", 1)[-1]]
         for rel_path in files
         if "." in rel_path
         and rel_path.rsplit(".", 1)[-1] in EXT_TO_LANG
     }
+    source_backend_languages = {
+        lang_key for lang_key in set(file_languages.values())
+        if supports_incremental_source_extraction(lang_key)
+    }
     codegraph_file_languages = {
         rel_path: lang_key
         for rel_path, lang_key in file_languages.items()
-        if lang_key != "erlang"
+        if lang_key not in source_backend_languages
     }
     codegraph_langs = set(codegraph_file_languages.values())
     current_codegraph = (
@@ -449,32 +453,41 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         finally:
             os.unlink(tmp_path)
 
-    current_erlang_sources = {}
-    baseline_erlang_sources = {}
+    current_source_batches = defaultdict(dict)
+    baseline_source_batches = defaultdict(dict)
     for rel_path, lang_key in file_languages.items():
-        if lang_key != "erlang":
+        if lang_key not in source_backend_languages:
             continue
         abs_path = os.path.abspath(os.path.join(proj_dir, rel_path))
         if os.path.exists(abs_path):
             with open(abs_path, "r", errors="replace") as f:
-                current_erlang_sources[abs_path] = f.read()
+                current_source_batches[lang_key][abs_path] = f.read()
         if _path_exists_in_commit(rel_path):
-            baseline_erlang_sources[abs_path] = _git(
+            baseline_source_batches[lang_key][abs_path] = _git(
                 "show", f"{old_commit_id}:{rel_path}"
             )
 
-    current_erlang_functions = erlang_language.extract_functions_from_sources(
-        proj_dir, current_erlang_sources
-    ) if current_erlang_sources else {}
-    baseline_erlang_functions = erlang_language.extract_functions_from_sources(
-        proj_dir, baseline_erlang_sources
-    ) if baseline_erlang_sources else {}
-    if current_erlang_functions is None or baseline_erlang_functions is None:
-        raise RuntimeError(
-            "ELP extraction failed while comparing Erlang changes; incremental "
-            "analysis was aborted to avoid treating unavailable results as removed "
-            "functions."
+    current_source_functions = {}
+    baseline_source_functions = {}
+    for lang_key in sorted(source_backend_languages):
+        current_result = (
+            extract_incremental_sources(
+                proj_dir, lang_key, current_source_batches[lang_key]
+            ) if current_source_batches[lang_key] else {}
         )
+        baseline_result = (
+            extract_incremental_sources(
+                proj_dir, lang_key, baseline_source_batches[lang_key]
+            ) if baseline_source_batches[lang_key] else {}
+        )
+        if current_result is None or baseline_result is None:
+            raise RuntimeError(
+                f"Incremental source extraction failed for {lang_key}; analysis "
+                "was aborted to avoid treating unavailable results as removed "
+                "functions."
+            )
+        current_source_functions[lang_key] = current_result
+        baseline_source_functions[lang_key] = baseline_result
 
     result = {}
     for rel_path in files:
@@ -483,16 +496,17 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         if not lang_key:
             continue
 
-        # Use CodeGraph for both revisions whenever it can index this non-Erlang
-        # file. This keeps the comparison identity identical to the extracted
-        # function filename (for example, ``LocalStorage::Flush``) and avoids
-        # bare-name collisions between same-named C++ members.
+        # Use CodeGraph for both revisions whenever this language does not supply
+        # a semantic source backend and CodeGraph can index the file. This keeps
+        # comparison identifiers aligned with extracted filenames (for example,
+        # ``LocalStorage::Flush``) and avoids bare-name collisions.
         abs_path = os.path.abspath(os.path.join(proj_dir, rel_path))
         current_exists = os.path.exists(abs_path)
         old_exists = _path_exists_in_commit(rel_path)
         rel_key = _normalized_relative_path(proj_dir, rel_path)
+        uses_source_backend = lang_key in source_backend_languages
         use_codegraph = (
-            lang_key != "erlang"
+            not uses_source_backend
             and current_codegraph is not None
             and baseline_codegraph is not None
             and (not current_exists or current_coverage.get(rel_key, False))
@@ -503,14 +517,18 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
             new_funcs = current_codegraph.get(rel_key, {})
             old_funcs = baseline_codegraph.get(rel_key, {})
         else:
-            if lang_key != "erlang" and codegraph_langs:
+            if not uses_source_backend and codegraph_langs:
                 logging.warning(
                     "CodeGraph could not provide both revisions for %s; using "
                     "legacy regex comparison.", rel_path,
                 )
-            if lang_key == "erlang":
-                new_funcs = dict(current_erlang_functions.get(abs_path, ()))
-                old_funcs = dict(baseline_erlang_functions.get(abs_path, ()))
+            if uses_source_backend:
+                new_funcs = dict(
+                    current_source_functions[lang_key].get(abs_path, ())
+                )
+                old_funcs = dict(
+                    baseline_source_functions[lang_key].get(abs_path, ())
+                )
             else:
                 new_funcs = (
                     dict(extract_functions_from_file(abs_path, lang_key))
