@@ -218,5 +218,6 @@ docs/superpowers/
 
 .opencode/
 .codegraph/
+fm_agent_estimate/
 CLAUDE.md
 AGENTS.md
