@@ -32,6 +32,7 @@ from .generate_topdown_layers import (
     _file_to_fqn,
     _load_phases,
     generate_topdown_layers,
+    generate_bottomup_layers,
 )
 from .call_graph_edges import load_call_edges
 from .file_utils import (
@@ -659,17 +660,24 @@ def _remove_stale_extracted(proj_dir, modified_functions):
         _reconcile_extracted_dir(proj_dir, abs_src)
 
 
-def _topdown_ordered_fqns(work_dir, extra_call_edges=None):
+def _topdown_ordered_fqns(work_dir, extra_call_edges=None, reasoning_direction=None):
     """
-    Return every extracted-function FQN in the top-down order used by run_pipeline for
+    Return every extracted-function FQN in the order used by run_pipeline for
     spec generation: phases in ascending phase number, layers from 0 upward, and the
-    functions in the order listed within each layer (callers precede the callees they
-    depend on).
+    functions in the order listed within each layer.
 
-    Regenerates the per-phase topdown-layer JSON files under work_dir/spec_prompts/ as
-    a side effect (mirroring run_pipeline's generate_topdown_layers(work_dir) call).
+    In topdown mode, callers precede the callees they depend on.
+    In bottomup mode, callees precede the callers that invoke them.
+
+    Regenerates the per-phase layer JSON files under work_dir/spec_prompts/ as
+    a side effect (mirroring run_pipeline's layer generation call).
     """
-    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+    if reasoning_direction == "bottomup":
+        generate_bottomup_layers(work_dir, extra_call_edges=extra_call_edges)
+        _layers_suffix = "bottomup_layers"
+    else:
+        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+        _layers_suffix = "topdown_layers"
     phases_data = _load_phases(work_dir)
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
 
@@ -677,7 +685,7 @@ def _topdown_ordered_fqns(work_dir, extra_call_edges=None):
     for phase_info in sorted(phases_data.get("phases", []), key=lambda p: p["phase"]):
         phase_num = phase_info["phase"]
         layers_path = os.path.join(
-            spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
+            spec_prompts_dir, f"phase_{phase_num:02d}_{_layers_suffix}.json"
         )
         if not os.path.exists(layers_path):
             continue
@@ -699,6 +707,7 @@ def run_incremental_pipeline(
     extra_call_edges_path=None,
     bug_validator_path=None,
     plugin_config=None,
+    reasoning_direction=None,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -855,12 +864,16 @@ def run_incremental_pipeline(
         )
     logging.info("  -> file list has %d entr(ies).", len(file_list))
 
-    # 7. Update top-down layers
-    logging.info("[Stage 7/10] Generating topdown layers...")
+    # 7. Update layers (direction-aware)
     with open(os.path.join(work_dir, "phases.json"), "r") as f:
         phases_data = json.load(f)
-    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
-    logging.info("  -> topdown layers generated for %d phase(s).", len(phases_data.get("phases", [])))
+    if reasoning_direction == "bottomup":
+        logging.info("[Stage 7/10] Generating bottom-up layers (WP reasoning)...")
+        generate_bottomup_layers(work_dir, extra_call_edges=extra_call_edges)
+    else:
+        logging.info("[Stage 7/10] Generating topdown layers...")
+        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+    logging.info("  -> layers generated for %d phase(s).", len(phases_data.get("phases", [])))
 
     # 8. Collect the scope of functions relevant to the developer intent (the intent file defines the goal of modification).
     logging.info("[Stage 8/10] Collecting functions relevant to the developer intent...")
@@ -891,6 +904,7 @@ def run_incremental_pipeline(
         proj_dir, work_dir, changed_functions, updated_spec_files,
         submodules=submodules,
         bug_validator_path=bug_validator_path,
+        reasoning_direction=reasoning_direction,
     )
     logging.info("=" * 70)
     logging.info(
@@ -2019,7 +2033,7 @@ def _update_specs_for_intent(
 
 def _verify_incremental_functions(
     proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None,
-    bug_validator_path=None,
+    bug_validator_path=None, reasoning_direction="topdown",
 ):
     """
     Step 10: re-run the verification stage (reasoner + bug validation) on only the functions
@@ -2097,7 +2111,8 @@ def _verify_incremental_functions(
     def _verify(rel):
         fpath = os.path.join(extracted_dir, rel)
         language = _VERIFY_EXT_TO_LANG.get(os.path.splitext(fpath)[1], "C")
-        _, verdict = _verify_single_file(fpath, extracted_dir, output_dir, language, work_dir=work_dir)
+        _, verdict = _verify_single_file(fpath, extracted_dir, output_dir, language, work_dir=work_dir,
+                                         reasoning_direction=reasoning_direction)
         return rel, verdict
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:

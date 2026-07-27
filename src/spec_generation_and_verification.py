@@ -12,7 +12,7 @@ import time
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
 from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready
-from src.generate_topdown_layers import generate_topdown_layers
+from src.generate_topdown_layers import generate_topdown_layers, generate_bottomup_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
 from src.verification import streaming_reasoner
@@ -112,7 +112,7 @@ def _run_spec_generation_batch(
 def run_spec_generation_and_verification(
     proj_dir, work_dir, input_dir, output_dir, script_dir, spec_prompts_dir,
     phases_data, resume=False, extra_call_edges=None, only_spec=False,
-    bug_validator_path=None,
+    bug_validator_path=None, reasoning_direction="topdown",
 ):
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
@@ -133,11 +133,15 @@ def run_spec_generation_and_verification(
             continue
 
         # Determine how many layers this phase has
+        _layers_suffix = "bottomup_layers" if reasoning_direction == "bottomup" else "topdown_layers"
         layers_json_path = os.path.join(
-            spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
+            spec_prompts_dir, f"phase_{phase_num:02d}_{_layers_suffix}.json"
         )
         if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
+            if reasoning_direction == "bottomup":
+                generate_bottomup_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
+            else:
+                generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
         total_layers = layers_data.get("total_layers", 1)
@@ -201,6 +205,7 @@ def run_spec_generation_and_verification(
                                 already_processed=all_processed | layer_processed,
                                 resume=resume,
                                 bug_validator_path=bug_validator_path,
+                                reasoning_direction=reasoning_direction,
                             )
                             layer_processed.update(newly_processed)
                     break
@@ -245,6 +250,7 @@ def run_spec_generation_and_verification(
                             already_processed=all_processed | layer_processed,
                             resume=resume,
                             bug_validator_path=bug_validator_path,
+                            reasoning_direction=reasoning_direction,
                         )
                         layer_processed.update(newly_processed)
 

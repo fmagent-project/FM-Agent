@@ -13,6 +13,200 @@ from .trace_writer import (
 )
 
 
+# ---- WP (Weakest Precondition) prompt functions ----
+# These mirror the SP (Strongest Postcondition) functions above, but operate
+# in the backward direction: given a post-condition and a code block, derive
+# the weakest pre-condition that guarantees the post-condition holds.
+
+def _parse_wp_json(data):
+    """Validate the WP response (mirrors _parse_post_condition_json)."""
+    if not isinstance(data, dict):
+        raise ValueError("WP JSON must be an object")
+    pre_condition = data.get("pre_condition")
+    if not isinstance(pre_condition, str) or not pre_condition.strip():
+        raise ValueError("WP JSON requires a non-empty string field: pre_condition")
+    return pre_condition.strip()
+
+
+def _generate_block_wp(block, post_condition, knowledge, language,
+                       trace_dir=None, trace_meta=None):
+    """Compute the weakest pre-condition for a code block (backward derivation).
+
+    Mirrors _generate_block_post_condition(), but:
+    - Input: code block + post-condition (what must hold AFTER)
+    - Output: weakest pre-condition (what must hold BEFORE)
+    - Direction: backward (given target Q, find minimal P s.t. {P} S {Q})
+    """
+    info_str = f"\nAdditional context:\n{knowledge}" if knowledge else ""
+    messages = [
+        {"role": "system", "content": (
+            f"You are an expert in formal verification of {language} programs. "
+            f"Given a {language} code block and its post-condition (what must be true "
+            "after execution), compute the WEAKEST PRE-CONDITION: the minimal condition "
+            "that must hold before the block to GUARANTEE the post-condition holds after. "
+            "Cover all execution paths including early returns, exceptions, and normal "
+            f"flow-through. Apply {language}-specific semantics (ownership, lifetimes, error handling, etc.) as appropriate. "
+            "The weakest pre-condition should be as permissive as possible while still "
+            "guaranteeing the post-condition. Express it in natural language and formal logic."
+        )},
+        {"role": "user", "content": (
+            f"Programming language: {language}\n\n"
+            f"Post-condition (must hold AFTER this block):\n{post_condition}\n\n"
+            f"Code block:\n```{language.lower()}\n{block}\n```\n"
+            f"{info_str}\n"
+            "Compute the weakest pre-condition. Return only a valid JSON object with this "
+            "required field: {\"pre_condition\": \"...\"}. Do not include Markdown, "
+            "tags, or prose outside the JSON object."
+        )}
+    ]
+    meta = {
+        "purpose": "generate_block_wp",
+        "summary": "Generated weakest pre-condition for code block",
+        "direction": "backward",
+        **(trace_meta or {}),
+    }
+    return _llm_json_call(
+        _llm_provider_client,
+        REASONER_WP_MODEL,
+        messages,
+        _parse_wp_json,
+        '{"pre_condition": "non-empty string"}',
+        trace_dir=trace_dir,
+        trace_meta=meta,
+    )
+
+
+def _check_pre_implies_wp(block, wp, spec_pre_condition, knowledge, language,
+                          trace_dir=None, trace_meta=None):
+    """Check whether spec_pre_condition entails wp (the weakest pre-condition).
+
+    Mirrors _check_post_implies_spec(), but:
+    - SP checks: post (what code does) ⊨ spec_post (what it should do)? — forward contradiction
+    - WP checks: spec_pre (what callers guarantee) ⊨ wp (what code requires)? — backward gap
+
+    If spec_pre does NOT entail wp, there exists an input satisfying spec_pre but
+    violating wp — the caller's guarantees are insufficient for the code to work
+    correctly. This is a potential bug (pre-condition too weak).
+    """
+    info_str = f"\nAdditional context:\n{knowledge}" if knowledge else ""
+    lang_expertise = _LANGUAGE_EXPERTISE.get(language.lower(), f"You are an expert in logic, formal verification, and {language} programming. ")
+    messages = [
+        {"role": "system", "content": (
+            lang_expertise +
+            "Given a code block, its weakest pre-condition A (what the code REQUIRES "
+            "before execution to guarantee correctness), and a specification pre-condition "
+            "B (what callers GUARANTEE before calling), determine whether there exists a "
+            "concrete valid input where B holds but A does not. "
+            "If such an input exists, the function may fail because the caller's guarantees "
+            "are insufficient — the code requires more than what the spec promises. "
+            "Focus on finding CONCRETE COUNTEREXAMPLES: specific input values where B is "
+            "satisfied but A is violated. "
+            "Check these common violation patterns:\n"
+            "  1. B allows input ranges/shapes that A restricts (e.g., B says 'non-negative' "
+            "but A requires 'positive').\n"
+            "  2. B does not constrain a variable that A requires to be in a specific state.\n"
+            "  3. B allows null/empty/edge-case values that A excludes.\n"
+            "For each potential violation, construct a specific input, verify B holds, "
+            "then check if A is violated. "
+            "Return only a valid JSON object. Do not include markdown, tags, or prose. "
+            "Use exactly this schema: "
+            "{\"verdict\": \"MATCH|MISMATCH\", \"counterexample\": string|null, "
+            "\"offending_statements\": string|null, \"reason\": string}. "
+            "For MISMATCH, counterexample, offending_statements, and reason must be non-empty strings; "
+            "offending_statements must preserve any 'Line N:' prefixes from the code block. "
+            "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+        )},
+        {"role": "user", "content": (
+            f"Programming language: {language}\n\n"
+            f"Code block:\n```{language.lower()}\n{block}\n```\n\n"
+            f"Condition A (weakest pre-condition — what the code requires):\n{wp}\n\n"
+            f"Condition B (spec pre-condition — what callers guarantee):\n{spec_pre_condition}\n"
+            f"{info_str}\n"
+            "Is there a concrete valid input where B holds but A does not? "
+            "Provide a specific counterexample if any case exists. Return only the JSON object."
+        )}
+    ]
+    trace_meta = trace_meta or {}
+    for attempt in range(1, MAX_SPC_ITER + 1):
+        event_id = new_event_id("llm")
+        started = utc_now_iso()
+        response = None
+        usage = {}
+        try:
+            response, usage = _retry_create(_llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages)
+        except Exception as exc:
+            event = {
+                "event_id": event_id,
+                "type": "llm_call",
+                "stage": "wp_verification",
+                "status": "error",
+                "start_time": started,
+                "end_time": utc_now_iso(),
+                "summary": f"LLM WP implication check failed: {exc}",
+                "metadata": {
+                    **trace_meta,
+                    "purpose": "check_pre_implies_wp",
+                    "model": REASONER_SPEC_CHECK_MODEL,
+                    "attempt": attempt,
+                    "error": str(exc),
+                },
+            }
+            record_llm_exchange(trace_dir, event_id, event, messages)
+            raise
+        parsed_result = None
+        parse_error = None
+        try:
+            has_violation, stmts, reason, parsed_result = _parse_spec_check_json(response)
+            status = "mismatch" if has_violation else "success"
+        except ValueError as exc:
+            has_violation = None
+            stmts = reason = None
+            parse_error = str(exc)
+            status = "format_error"
+        event = {
+            "event_id": event_id,
+            "type": "llm_call",
+            "stage": "wp_verification",
+            "status": status,
+            "start_time": started,
+            "end_time": utc_now_iso(),
+            "summary": "Checked whether spec pre-condition implies the weakest pre-condition",
+            "metadata": {
+                **trace_meta,
+                "purpose": "check_pre_implies_wp",
+                "model": REASONER_SPEC_CHECK_MODEL,
+                "attempt": attempt,
+                "usage": usage,
+                "parsed_json": parsed_result,
+                "parse_error": parse_error,
+            },
+        }
+        record_llm_exchange(trace_dir, event_id, event, messages, response)
+        if has_violation is not None:
+            if has_violation:
+                stmts = stmts or "(unable to extract)"
+                reason = reason or "(unable to extract)"
+                return False, stmts, wp, reason
+            else:
+                return True, None, None, None
+        messages = messages + [
+            {"role": "assistant", "content": response or ""},
+            {
+                "role": "user",
+                "content": (
+                    "Return only valid JSON with schema: "
+                    "{\"verdict\": \"MATCH|MISMATCH\", "
+                    "\"counterexample\": string|null, "
+                    "\"offending_statements\": string|null, "
+                    "\"reason\": string}. "
+                    "For MISMATCH, all evidence fields must be non-empty strings. "
+                    "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+                ),
+            }
+        ]
+    raise ValueError("Could not parse a valid structured JSON verdict from WP spec-check response.")
+
+
 def _load_spec_check_json(response):
     """Load a single JSON object from a specification-check response.
 

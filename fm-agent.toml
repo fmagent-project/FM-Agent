@@ -20,6 +20,7 @@ granularity                = 40    # GRANULARITY
 opencode_max_retries       = 5     # OPENCODE_MAX_RETRIES
 bug_validation_max_retries = 1     # BUG_VALIDATION_MAX_RETRIES
 opencode_timeout_s         = 1800  # OPENCODE_TIMEOUT_SECONDS — hard cap on one `opencode run`
+reasoning_direction        = "topdown"  # REASONING_DIRECTION — topdown (SP/forward) | bottomup (WP/backward)
 
 [scope]
 top_k                    = 5    # SCOPE_TOP_K

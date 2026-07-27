@@ -1,6 +1,11 @@
 import re
 from config import *
-from .prompts import _generate_block_post_condition, _check_post_implies_spec
+from .prompts import (
+    _generate_block_post_condition,
+    _check_post_implies_spec,
+    _generate_block_wp,
+    _check_pre_implies_wp,
+)
 
 
 def _split_into_blocks(func):
@@ -242,6 +247,127 @@ def reasoner(func, spec, info, language, trace_context=None):
         current_pre = post_condition
 
     return "The function passes the verification. All code blocks satisfy the specification's post-condition."
+
+
+def wp_reasoner(func, spec, info, language, trace_context=None):
+    """Weakest Precondition reasoner — backward chain derivation.
+
+    Mirrors reasoner() but operates in reverse:
+    - Starts from spec_post_condition, traverses blocks backward
+    - Each block computes WP (the minimal pre-condition guaranteeing the post-condition)
+    - At function entry (i==0), checks spec_pre ⊨ wp (rather than post_n ⊨ spec_post at exit)
+
+    Returns (result_string, entry_wp):
+    - result_string: human-readable verdict (same interface as reasoner() for the string part)
+    - entry_wp: the WP at function entry (block 0), or None on failure.  Callers can
+      cache this for bottom-up callee→caller WP propagation.
+
+    This finds complementary bug classes to SP:
+    - SP finds "code did wrong" (forward contradiction)
+    - WP finds "code failed to guarantee" (backward gap / pre-condition too weak)
+    """
+    trace_context = trace_context or {}
+    trace_dir = trace_context.get("trace_dir")
+
+    # Step 1: Parse pre-condition and post-condition from spec (same as reasoner)
+    pre_condition, spec_post_condition = _parse_spec_conditions(spec)
+    if not pre_condition or not spec_post_condition:
+        return "Failed to parse pre/post conditions from the spec.", None
+
+    # Step 2: Split function into blocks (same as reasoner, reuse _split_into_blocks_braced)
+    blocks = _split_into_blocks_braced(func, language)
+
+    # Step 3: Backward traversal — start from the last block, derive WP toward the first
+    current_post = spec_post_condition  # Start from spec's post-condition
+    entry_wp = None  # WP at function entry (block 0); cached for upward propagation
+
+    for i in reversed(range(len(blocks))):
+        block = blocks[i]
+        trace_meta = {
+            "function_id": trace_context.get("function_id"),
+            "function_file": trace_context.get("function_file"),
+            "language": language,
+            "block_index": i,
+            "block_count": len(blocks),
+            "direction": "backward",
+        }
+
+        # 3a: Compute WP — given code block and post-condition, derive pre-condition
+        wp = _generate_block_wp(
+            block,
+            current_post,
+            info,
+            language,
+            trace_dir=trace_dir,
+            trace_meta=trace_meta,
+        )
+        if not wp:
+            return f"Failed to generate weakest pre-condition for block {i+1}.", None
+
+        # 3b: At function entry (i==0) or terminating statements, check spec_pre ⊨ wp
+        is_first_block = (i == 0)
+        if is_first_block:
+            entry_wp = wp  # Cache the function-entry WP for propagation
+        if is_first_block or _has_terminating_statement(block, language):
+            # Return order from _check_pre_implies_wp: (passed, stmts, wp, reason)
+            passed, stmts, wp_cond, reason = _check_pre_implies_wp(
+                block,
+                wp,
+                pre_condition,  # spec's pre-condition (what callers guarantee)
+                info,
+                language,
+                trace_dir=trace_dir,
+                trace_meta=trace_meta,
+            )
+            if not passed:
+                return (
+                    f"Verification FAILED (WP).\n"
+                    f"Statements triggering the violation:\n{stmts}\n\n"
+                    f"Weakest pre-condition:\n{wp_cond}\n\n"
+                    f"Reason for violation:\n{reason}"
+                ), wp
+
+        # 3c: This block's WP becomes the post-condition for the previous block
+        current_post = wp
+
+    return ("The function passes the WP verification. "
+            "The specification's pre-condition is sufficient to guarantee "
+            "the post-condition across all code paths."), entry_wp
+
+
+# ---------------------------------------------------------------------------
+# Callee WP propagation (bottom-up reasoning advantage)
+# ---------------------------------------------------------------------------
+
+def _collect_callee_wps(fqn, phase_fqns, wp_cache, callees_map):
+    """Collect WPs of all callees of fqn that are in phase_fqns and wp_cache.
+
+    In bottom-up mode, callees are processed before callers. When analyzing a
+    caller, all its callees' WPs are already cached. Injecting them into the
+    caller's reasoning context makes WP computation more precise: the caller
+    must guarantee each callee's pre-condition before calling it.
+    """
+    callee_wps = {}
+    for callee_fqn in callees_map.get(fqn, set()) & phase_fqns:
+        if callee_fqn in wp_cache:
+            callee_wps[callee_fqn] = wp_cache[callee_fqn]
+    return callee_wps
+
+
+def _format_callee_wps(callee_wps):
+    """Format callee WPs as info text for injection into the reasoning context.
+
+    Truncates each WP to 200 characters to prevent context explosion.
+    Only direct callees are propagated (no recursive grand-callee WPs).
+    """
+    if not callee_wps:
+        return ""
+    lines = ["Callee pre-condition requirements (from WP analysis):"]
+    for callee, wp in callee_wps.items():
+        short_name = callee.split("::")[-1]
+        truncated = wp[:200] + ("..." if len(wp) > 200 else "")
+        lines.append(f"  {short_name} requires: {truncated}")
+    return "\n".join(lines)
 
 def _sanitize_strings(obj):
     """Remove non-ASCII characters from all string values in a dict/list."""
