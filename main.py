@@ -29,6 +29,12 @@ from src.domain_knowledge import (
     collect_domain_knowledge_paths,
     stage_domain_knowledge_files,
 )
+from src.run_estimate import (
+    preserve_history_before_clean,
+    record_completed_run,
+    write_history,
+    write_preflight_estimate,
+)
 import os
 import sys
 import argparse
@@ -43,6 +49,53 @@ def _clean_previous_run(work_dir):
     """Remove the fm_agent working directory from the previous pipeline run."""
     if os.path.isdir(work_dir):
         shutil.rmtree(work_dir)
+
+
+def _print_preflight_summary(estimate, output_path):
+    scope = estimate["scope"]
+    prediction = estimate["estimate"]
+    included = ", ".join(scope["included_directories"]) or "(none)"
+    excluded = ", ".join(
+        item["path"] for item in scope["excluded_directories"][:8]
+    ) or "(none)"
+    if len(scope["excluded_directories"]) > 8:
+        excluded += f", … +{len(scope['excluded_directories']) - 8}"
+    print("[Estimate] ESTIMATE — no LLM calls were made.")
+    print(f"[Estimate] Included directories: {included}")
+    print(f"[Estimate] Excluded directories: {excluded}")
+    print(
+        "[Estimate] "
+        f"{scope['included_file_count']} included source file(s), "
+        f"{scope['excluded_file_count']} excluded source file(s), "
+        f"~{scope['function_count']} function(s)."
+    )
+    print(
+        "[Estimate] Historical samples: "
+        f"{prediction['based_on_runs']}; details: {output_path}"
+    )
+    ranges = (
+        ("time", prediction.get("duration_seconds"), _format_estimate_duration),
+        ("LLM calls", prediction.get("llm_calls"), lambda value: str(int(value))),
+        ("tokens", prediction.get("tokens"), lambda value: f"{int(value):,}"),
+        ("cost", prediction.get("cost_usd"), lambda value: f"${value:.3f}"),
+    )
+    for label, value, formatter in ranges:
+        if isinstance(value, dict):
+            rendered = f"{formatter(value['low'])} – {formatter(value['high'])}"
+        else:
+            rendered = "history unavailable"
+        print(f"[Estimate] {label} (ESTIMATE): {rendered}")
+
+
+def _format_estimate_duration(seconds):
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
 
 
 def _resolve_bug_validator_path(raw_path):
@@ -116,6 +169,7 @@ def run_pipeline(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    initial_history=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -135,6 +189,7 @@ def run_pipeline(
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
     # only do the remaining work.
+    preserved_history = list(initial_history or [])
     if resume:
         if os.path.isdir(work_dir):
             print(f"[Pipeline] RESUME: keeping existing {os.path.relpath(work_dir, proj_dir)}/ — only remaining work will run.")
@@ -142,8 +197,19 @@ def run_pipeline(
             print("[Pipeline] RESUME requested but no previous fm_agent/ found — starting fresh.")
             resume = False
     else:
+        if initial_history is None:
+            preserved_history = preserve_history_before_clean(work_dir)
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
+    if preserved_history:
+        write_history(work_dir, preserved_history)
+    estimate_path = os.path.join(work_dir, "estimate.json")
+    estimate = write_preflight_estimate(
+        proj_dir,
+        work_dir,
+        submodules=submodules,
+    )
+    _print_preflight_summary(estimate, estimate_path)
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
     )
@@ -275,7 +341,7 @@ if __name__ == "__main__":
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
               "[--end-func PATH ...] [--extra-edge FILE] "
-              "[--bug-validator FILE] [--only-spec] "
+              "[--bug-validator FILE] [--only-spec] [--estimate] "
               "[--list-plugin] [--plugin NAME]",
         description="Run the FM agent pipeline on a project directory.",
     )
@@ -309,6 +375,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Only generate behavioral specs; skip the reasoning and bug "
         "validation stages.",
+    )
+    parser.add_argument(
+        "--estimate",
+        action="store_true",
+        help="scan source scope and print a history-based run estimate without "
+        "starting the pipeline or making LLM calls",
     )
     parser.add_argument(
         "--domain-knowledge",
@@ -435,6 +507,34 @@ if __name__ == "__main__":
             "(incremental mode is inherently a reasoning/bug-validation flow)."
         )
 
+    if args.estimate:
+        incompatible = any(
+            [
+                resume,
+                args.incremental,
+                args.entry_func,
+                args.end_func,
+                args.isolate,
+                args.only_spec,
+            ]
+        )
+        if incompatible:
+            parser.error(
+                "--estimate is a standalone preflight and cannot be combined "
+                "with resume, incremental, entry/end functions, isolate, or only-spec"
+            )
+        estimate_work_dir = os.path.join(proj_dir, "fm_agent_estimate")
+        estimate = write_preflight_estimate(
+            proj_dir,
+            estimate_work_dir,
+            submodules=submodules,
+        )
+        _print_preflight_summary(
+            estimate,
+            os.path.join(estimate_work_dir, "estimate.json"),
+        )
+        sys.exit(0)
+
     # ---- pre-flight environment check (shared by all pipeline modes) ----
     import config
     from src.env_check import run as env_check_run
@@ -503,6 +603,11 @@ if __name__ == "__main__":
         if args.isolate
         else contextlib.nullcontext(proj_dir)
     )
+    isolated_history = (
+        preserve_history_before_clean(os.path.join(proj_dir, "fm_agent"))
+        if args.isolate
+        else None
+    )
     with run_ctx as run_dir:
         try:
             # Incremental mode requires a recorded commit to diff against; without a
@@ -530,12 +635,17 @@ if __name__ == "__main__":
                     only_spec=args.only_spec,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
+                    initial_history=isolated_history,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
             # copied back to the real project below. Only recorded on success so a
             # partial run does not advance the version baseline.
             _record_version(new_commit, os.path.join(run_dir, "fm_agent"))
+            record_completed_run(
+                os.path.join(run_dir, "fm_agent"),
+                duration_seconds=time.time() - start_time,
+            )
         finally:
             # With --isolate the pipeline ran against a throwaway snapshot, so its
             # fm_agent/ results live in the snapshot. Copy them back into the real
