@@ -260,13 +260,7 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
         if _has_terminating_statement(block, language) or is_last_block:
             if all_bugs:
                 try:
-                    (
-                        passed,
-                        stmts,
-                        post_cond,
-                        reason,
-                        counterexample,
-                    ) = _check_post_implies_spec(
+                    passed, stmts, post_cond, reason = _check_post_implies_spec(
                         block,
                         post_condition,
                         spec_post_condition,
@@ -274,7 +268,6 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
                         language,
                         trace_dir=trace_dir,
                         trace_meta=trace_meta,
-                        include_counterexample=True,
                     )
                 except Exception as exc:
                     return {
@@ -302,7 +295,6 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
                         "statements": stmts,
                         "post_condition": post_cond,
                         "reason": reason,
-                        "counterexample": counterexample,
                     })
                 else:
                     return (

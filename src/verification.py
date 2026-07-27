@@ -544,7 +544,6 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                     "actual_behavior": violation.get("post_condition") or "",
                     "code_evidence": violation.get("statements") or "",
                     "trigger_condition": violation.get("reason") or "",
-                    "counterexample": violation.get("counterexample") or "",
                 }
                 for violation in violations
             ]

@@ -18,6 +18,13 @@ _CALLEE_FIELDS = {
     "post_condition",
 }
 
+_ALL_BUGS_GAP_FIELDS = {
+    "spec_claim",
+    "actual_behavior",
+    "code_evidence",
+    "trigger_condition",
+}
+
 _TERMINAL_VALIDATION_STATUSES = {
     "confirmed",
     "not_confirmed",
@@ -205,8 +212,12 @@ def _all_bugs_candidate_paths(result_path, result):
             or candidate.get("function") != primary_function
             or candidate.get("verdict") != "MISMATCH"
             or not isinstance(candidate.get("gaps"), dict)
-            or not isinstance(candidate["gaps"].get("counterexample"), str)
-            or not candidate["gaps"]["counterexample"].strip()
+            or set(candidate["gaps"]) != _ALL_BUGS_GAP_FIELDS
+            or not all(
+                isinstance(candidate["gaps"][field], str)
+                and candidate["gaps"][field].strip()
+                for field in _ALL_BUGS_GAP_FIELDS
+            )
         ):
             return None
     return candidates
