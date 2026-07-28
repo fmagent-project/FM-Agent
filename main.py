@@ -778,6 +778,21 @@ if __name__ == "__main__":
     if not env_check_run(proj_dir, config):
         sys.exit(0)
 
+    if plugin_config is not None and plugin_config.configure_hook is not None:
+        try:
+            plugin_config.configure_hook(
+                {
+                    "entry_func": args.entry_func,
+                    "end_funcs": args.end_func or [],
+                    "extra_edge": extra_call_edges_path,
+                }
+            )
+        except Exception as exc:
+            parser.error(
+                f"plugin configure function "
+                f"'{plugin_config.configure_function}' failed: {exc}"
+            )
+
     start_time = time.time()
 
     # Entry-point mode: reason only about the call graph reachable from a specific

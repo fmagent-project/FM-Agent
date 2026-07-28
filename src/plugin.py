@@ -235,6 +235,8 @@ class PluginConfig:
     name: str
     version: str
     root: Path
+    configure_function: Optional[str] = None
+    configure_hook: Optional[Callable] = field(default=None, repr=False)
     stages: Dict[str, PluginStageConfig] = field(default_factory=dict)
 
     def get_stage(self, stage_name: str) -> Optional[PluginStageConfig]:
@@ -502,6 +504,52 @@ def _validate_plugin_json_content(
         print(f"Invalid plugin '{name}': 'version' field is missing or empty")
         return None
 
+    configure_function = data.get("configure_function")
+    configure_hook = None
+    if configure_function is not None:
+        if (
+            not isinstance(configure_function, str)
+            or not configure_function.strip()
+        ):
+            print(
+                f"Invalid plugin '{name}': 'configure_function' must be a "
+                "non-empty string"
+            )
+            return None
+        if module is None:
+            print(
+                f"Invalid plugin '{name}': function '{configure_function}' "
+                "declared by 'configure_function' requires plugin.py"
+            )
+            return None
+
+        configure_hook = getattr(module, configure_function, None)
+        if configure_hook is None:
+            print(
+                f"Invalid plugin '{name}': function '{configure_function}' "
+                "declared by 'configure_function' is missing from plugin.py"
+            )
+            return None
+        if not callable(configure_hook):
+            print(
+                f"Invalid plugin '{name}': '{configure_function}' declared by "
+                "'configure_function' is not callable"
+            )
+            return None
+
+        errors = _validate_hook_signature(
+            configure_hook,
+            configure_function,
+            [dict],
+            type(None),
+        )
+        if errors:
+            for error in errors:
+                print(
+                    f"Invalid plugin '{name}': configure_function — {error}"
+                )
+            return None
+
     stages = {}
     stages_data = data.get("stages", {})
     if not isinstance(stages_data, dict):
@@ -538,6 +586,8 @@ def _validate_plugin_json_content(
         name=plugin_name,
         version=data["version"],
         root=plugin_dir,
+        configure_function=configure_function,
+        configure_hook=configure_hook,
         stages=stages,
     )
 
@@ -576,14 +626,17 @@ def validate_plugin(plugin_dir: Path) -> Optional[PluginConfig]:
         "output_function",
     )
     declares_python = (
-        isinstance(stages_data, dict)
-        and any(
-            isinstance(stage_data, dict)
+        data.get("configure_function") is not None
+        or (
+            isinstance(stages_data, dict)
             and any(
-                stage_data.get(field_name) is not None
-                for field_name in function_fields
+                isinstance(stage_data, dict)
+                and any(
+                    stage_data.get(field_name) is not None
+                    for field_name in function_fields
+                )
+                for stage_data in stages_data.values()
             )
-            for stage_data in stages_data.values()
         )
     )
     module = None
