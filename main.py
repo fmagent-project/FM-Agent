@@ -14,7 +14,12 @@ from src.generate_topdown_layers import (
     generate_topdown_layers,
     validate_topdown_layer_files,
 )
-from src.spec_generation_and_verification import run_spec_generation_and_verification
+from src.spec_generation_and_verification import (
+    collect_spec_verification_artifacts,
+    collect_topdown_function_files,
+    run_spec_generation_and_verification,
+    validate_spec_verification_artifacts,
+)
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -165,6 +170,7 @@ def run_pipeline(
     extract_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
     file_list_stage = plugin_config.get_stage("collect_file_list") if plugin_config else None
     topdown_stage = plugin_config.get_stage("generate_topdown_layers") if plugin_config else None
+    spec_stage = plugin_config.get_stage("generate_specs_and_verification") if plugin_config else None
     plugin_root = plugin_config.root if plugin_config else None
 
     print("[Pipeline] Stage 1/6: Generating phase plan...")
@@ -451,24 +457,138 @@ def run_pipeline(
                 effective_file_list,
             )
 
+    function_files = collect_topdown_function_files(
+        topdown_outputs,
+        work_dir,
+    )
+    if (
+        spec_stage is not None
+        and spec_stage.type == "modify"
+        and spec_stage.input_hook is not None
+    ):
+        with tempfile.TemporaryDirectory(
+            prefix="fm-agent-plugin-stage6-input-"
+        ) as temp_dir:
+            temporary_topdown = []
+            for source_path in topdown_outputs:
+                destination = os.path.join(
+                    temp_dir,
+                    os.path.basename(source_path),
+                )
+                shutil.copy2(source_path, destination)
+                temporary_topdown.append(destination)
+            try:
+                returned_paths = spec_stage.input_hook(
+                    list(temporary_topdown)
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Plugin function '{spec_stage.input_function}' failed "
+                    "for generate_specs_and_verification input: "
+                    f"{exc}"
+                ) from exc
+            validated_temporary = validate_topdown_layer_files(
+                returned_paths,
+                work_dir,
+                function_files,
+                output_root=temp_dir,
+            )
+            for source_path in validated_temporary:
+                destination = os.path.join(
+                    spec_prompts_dir,
+                    os.path.basename(source_path),
+                )
+                shutil.copy2(source_path, destination)
+
+        topdown_outputs = validate_topdown_layer_files(
+            topdown_outputs,
+            work_dir,
+            function_files,
+        )
+        function_files = collect_topdown_function_files(
+            topdown_outputs,
+            work_dir,
+        )
+
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
     if only_spec:
         print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
     else:
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
-    run_spec_generation_and_verification(
-        proj_dir,
-        work_dir,
-        input_dir,
-        output_dir,
-        script_dir,
-        spec_prompts_dir,
-        phases_data,
-        resume=resume,
-        extra_call_edges=extra_call_edges,
-        only_spec=only_spec,
-        bug_validator_path=bug_validator_path,
-    )
+    if spec_stage is not None and spec_stage.type == "pass":
+        artifact_paths = collect_spec_verification_artifacts(
+            function_files,
+            work_dir,
+            only_spec=only_spec,
+        )
+        try:
+            validate_spec_verification_artifacts(
+                artifact_paths,
+                function_files,
+                work_dir,
+                only_spec=only_spec,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "Plugin stage 'generate_specs_and_verification' type=pass "
+                f"requires valid existing outputs: {exc}"
+            ) from exc
+    elif spec_stage is not None and spec_stage.type == "replace":
+        with tempfile.TemporaryDirectory(
+            prefix="fm-agent-plugin-stage6-output-"
+        ) as temp_dir:
+            try:
+                returned_paths = spec_stage.replace_hook(
+                    os.path.abspath(work_dir),
+                    temp_dir,
+                    only_spec,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Plugin function '{spec_stage.replace_function}' "
+                    "failed for generate_specs_and_verification: "
+                    f"{exc}"
+                ) from exc
+            temporary_artifacts = validate_spec_verification_artifacts(
+                returned_paths,
+                function_files,
+                work_dir,
+                only_spec=only_spec,
+                output_root=temp_dir,
+            )
+            for source_path in temporary_artifacts:
+                relative_path = os.path.relpath(source_path, temp_dir)
+                destination = os.path.join(work_dir, relative_path)
+                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                shutil.copy2(source_path, destination)
+
+        artifact_paths = collect_spec_verification_artifacts(
+            function_files,
+            work_dir,
+            only_spec=only_spec,
+        )
+        validate_spec_verification_artifacts(
+            artifact_paths,
+            function_files,
+            work_dir,
+            only_spec=only_spec,
+        )
+    else:
+        run_spec_generation_and_verification(
+            proj_dir,
+            work_dir,
+            input_dir,
+            output_dir,
+            script_dir,
+            spec_prompts_dir,
+            phases_data,
+            resume=resume,
+            extra_call_edges=extra_call_edges,
+            only_spec=only_spec,
+            bug_validator_path=bug_validator_path,
+            plugin_stage=spec_stage,
+            function_files=function_files,
+        )
 
     # Print confirmed bug count (skipped in only-spec mode, which runs no
     # reasoning or bug validation).

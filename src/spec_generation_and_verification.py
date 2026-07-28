@@ -20,6 +20,7 @@ from src.file_utils import (
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
+from src.plugin import apply_stage_workflow_markdown
 from src.verification import streaming_reasoner
 
 
@@ -34,7 +35,11 @@ def collect_topdown_function_files(topdown_paths, work_dir):
 
         for layer in layers_data["layers"]:
             for function in layer["functions"]:
-                rel_path = os.path.normpath(function["file"])
+                topdown_path = function["file"].replace("\\", "/")
+                prefix = "extracted_functions/"
+                if topdown_path.startswith(prefix):
+                    topdown_path = topdown_path[len(prefix):]
+                rel_path = os.path.normpath(topdown_path)
                 identity = os.path.normcase(rel_path)
                 if identity not in seen:
                     seen.add(identity)
@@ -196,6 +201,87 @@ def validate_spec_verification_artifacts(
     return sorted(validated_paths)
 
 
+def collect_spec_verification_artifacts(
+    function_files,
+    work_dir,
+    only_spec=False,
+    output_root=None,
+):
+    """Collect the complete expected Stage 6 artifact path set."""
+    function_files = validate_file_names(
+        function_files,
+        os.path.join(work_dir, "extracted_functions"),
+    )
+    output_root = os.path.realpath(output_root or work_dir)
+    extracted_root = os.path.join(output_root, "extracted_functions")
+    verification_root = os.path.join(
+        output_root, "logic_verification_results"
+    )
+    bug_root = os.path.join(output_root, "bug_validation")
+
+    artifact_paths = []
+    for function_file in function_files:
+        output_function = os.path.join(extracted_root, function_file)
+        artifact_paths.extend(
+            [
+                f"{output_function}.spec.json",
+                f"{output_function}.info.json",
+            ]
+        )
+        if only_spec:
+            continue
+
+        result_path = os.path.join(
+            verification_root,
+            os.path.splitext(function_file)[0] + ".json",
+        )
+        artifact_paths.append(result_path)
+        try:
+            with open(result_path, "r", encoding="utf-8") as file:
+                result = json.load(file)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(result, dict) and result.get("verdict") == "MISMATCH":
+            bug_id = (
+                os.path.splitext(function_file)[0]
+                .replace(os.sep, "--")
+                .replace("/", "--")
+            )
+            artifact_paths.append(
+                os.path.join(bug_root, f"{bug_id}.result.json")
+            )
+
+    summary_path = os.path.join(bug_root, "summary.json")
+    if not only_spec and os.path.isfile(summary_path):
+        artifact_paths.append(summary_path)
+    return sorted(os.path.realpath(path) for path in artifact_paths)
+
+
+def collect_consumable_stage6_outputs(artifact_paths, output_root):
+    """Return only Stage 6 results that consumers may read after the stage."""
+    output_root = os.path.realpath(output_root)
+    result_roots = (
+        os.path.realpath(
+            os.path.join(output_root, "logic_verification_results")
+        ),
+        os.path.realpath(os.path.join(output_root, "bug_validation")),
+    )
+    consumable = []
+    for artifact_path in artifact_paths:
+        absolute_path = os.path.realpath(artifact_path)
+        for result_root in result_roots:
+            try:
+                contained = os.path.commonpath(
+                    [result_root, absolute_path]
+                ) == result_root
+            except ValueError:
+                contained = False
+            if contained:
+                consumable.append(absolute_path)
+                break
+    return sorted(consumable)
+
+
 def _get_pending_batches(batches, proj_dir):
     """Return batches that still have at least one function without specs."""
     pending = []
@@ -290,12 +376,13 @@ def _run_spec_generation_batch(
 def run_spec_generation_and_verification(
     proj_dir, work_dir, input_dir, output_dir, script_dir, spec_prompts_dir,
     phases_data, resume=False, extra_call_edges=None, only_spec=False,
-    bug_validator_path=None,
+    bug_validator_path=None, plugin_stage=None, function_files=None,
 ):
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
     batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
     shutil.copy2(batch_md_src, batch_md_dst)
+    apply_stage_workflow_markdown(plugin_stage, batch_md_dst)
 
     all_processed = set()
     num_phases = len(phases_data["phases"])
@@ -472,3 +559,61 @@ def run_spec_generation_and_verification(
         # Mark all files from this phase as processed for subsequent phases
         for rel in phase_files:
             all_processed.add(os.path.join(input_dir, rel))
+
+    if function_files is None:
+        topdown_paths = [
+            os.path.join(spec_prompts_dir, file_name)
+            for file_name in os.listdir(spec_prompts_dir)
+            if (
+                file_name.startswith("phase_")
+                and file_name.endswith("_topdown_layers.json")
+            )
+        ]
+        function_files = collect_topdown_function_files(
+            topdown_paths,
+            work_dir,
+        )
+
+    artifact_paths = collect_spec_verification_artifacts(
+        function_files,
+        work_dir,
+        only_spec=only_spec,
+    )
+    artifact_paths = validate_spec_verification_artifacts(
+        artifact_paths,
+        function_files,
+        work_dir,
+        only_spec=only_spec,
+    )
+
+    if (
+        not only_spec
+        and plugin_stage is not None
+        and plugin_stage.output_hook is not None
+    ):
+        consumable_outputs = collect_consumable_stage6_outputs(
+            artifact_paths,
+            work_dir,
+        )
+        try:
+            result = plugin_stage.output_hook(
+                list(consumable_outputs)
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.output_function}' failed "
+                f"for generate_specs_and_verification output: {exc}"
+            ) from exc
+        if result is not None:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.output_function}' "
+                "must return None"
+            )
+        artifact_paths = validate_spec_verification_artifacts(
+            artifact_paths,
+            function_files,
+            work_dir,
+            only_spec=only_spec,
+        )
+
+    return artifact_paths
