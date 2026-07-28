@@ -92,6 +92,20 @@ class PluginStageConfig:
 
 
 STAGE_HOOK_CONTRACTS = {
+    "generate_phase_plan": {
+        "replace_function": HookContract(
+            parameter_types=(str, str),
+            return_type=str,
+        ),
+        "input_function": HookContract(
+            parameter_types=(str,),
+            return_type=type(None),
+        ),
+        "output_function": HookContract(
+            parameter_types=(str,),
+            return_type=type(None),
+        ),
+    },
     "extract_functions": {
         "replace_function": HookContract(
             parameter_types=(list[str], str),
