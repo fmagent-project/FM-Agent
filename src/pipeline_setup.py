@@ -14,6 +14,7 @@ import time
 import shutil
 import logging
 import subprocess
+import tempfile
 
 from config import (
     OPENCODE_MAX_RETRIES,
@@ -900,21 +901,110 @@ def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
         _f.write(md)
 
 
+def _run_phase_plan_modify_hook(hook, function_name, artifact_path):
+    """Run one in-place phase-plan hook and enforce its runtime contract."""
+    try:
+        result = hook(artifact_path)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Plugin function '{function_name}' failed for "
+            f"generate_phase_plan artifact '{artifact_path}': {exc}"
+        ) from exc
+
+    if result is not None:
+        raise RuntimeError(
+            f"Plugin function '{function_name}' must return None"
+        )
+    if not os.path.isfile(artifact_path):
+        raise RuntimeError(
+            f"Plugin function '{function_name}' must leave "
+            f"'{artifact_path}' in place"
+        )
+
+
+def _run_phase_plan_replacement(proj_dir, work_dir, plugin_stage):
+    """Run and validate a complete plugin replacement for phase planning."""
+    with tempfile.TemporaryDirectory(
+        prefix="fm-agent-plugin-phase-plan-"
+    ) as temp_dir:
+        try:
+            returned_path = plugin_stage.replace_hook(
+                os.path.abspath(proj_dir),
+                temp_dir,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                f"failed for generate_phase_plan: {exc}"
+            ) from exc
+
+        if not isinstance(returned_path, str) or not returned_path:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "must return a non-empty string path"
+            )
+
+        output_root = os.path.realpath(temp_dir)
+        result_path = os.path.realpath(returned_path)
+        try:
+            contained = os.path.commonpath(
+                [output_root, result_path]
+            ) == output_root
+        except ValueError:
+            contained = False
+        if not contained:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "returned a path outside its output directory"
+            )
+        if not os.path.isfile(result_path):
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                f"returned a missing file: {returned_path}"
+            )
+
+        phase_plan_errors = _phase_plan_schema_errors(result_path)
+        if phase_plan_errors:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "produced an invalid phases.json: "
+                + "; ".join(phase_plan_errors)
+            )
+
+        shutil.copy2(result_path, os.path.join(work_dir, "phases.json"))
+
+
 def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                          resume=False, submodules=None, plugin_stage=None,
                          plugin_root=None):
     """Stage 1: generate phase.json — input target code, output phases.json."""
+    phases_json = os.path.join(work_dir, "phases.json")
     if plugin_stage is not None:
         if plugin_stage.type == "pass":
-            print("[Pipeline] Stage 1/6: Plugin stage 'generate_phase_plan' type=pass, skipping.")
+            phase_plan_errors = (
+                _phase_plan_schema_errors(phases_json)
+                if os.path.isfile(phases_json)
+                else ["phases.json is missing"]
+            )
+            if phase_plan_errors:
+                raise RuntimeError(
+                    "Plugin stage 'generate_phase_plan' type=pass requires "
+                    "an existing valid phases.json: "
+                    + "; ".join(phase_plan_errors)
+                )
+            print(
+                "[Pipeline] Stage 1/6: Plugin stage "
+                "'generate_phase_plan' type=pass, using existing phases.json."
+            )
             return
         if plugin_stage.type == "replace":
-            print("[Pipeline] Stage 1/6: Plugin stage 'generate_phase_plan' type=replace, running plugin command.")
-            from .plugin import run_plugin_command
-            run_plugin_command(plugin_stage.replace_cmd, plugin_root, proj_dir, label="generate_phase_plan")
+            print(
+                "[Pipeline] Stage 1/6: Plugin stage "
+                "'generate_phase_plan' type=replace, running Python hook."
+            )
+            _run_phase_plan_replacement(proj_dir, work_dir, plugin_stage)
             return
 
-    phases_json = os.path.join(work_dir, "phases.json")
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
 
     phase_plan_errors = (
@@ -926,26 +1016,23 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
     if _resume_skip:
         print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
-    if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.input_md:
-        workflow_src = str(plugin_root / plugin_stage.input_md)
-        workflow_dst = os.path.join(work_dir, "workflow_generate_phases.md")
-        shutil.copy2(workflow_src, workflow_dst)
-        user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
-        if user_knowledge_paths:
-            with open(workflow_dst, "a") as _f:
-                _f.write(
-                    "\n---\n\n"
-                    "## User-Provided Domain Knowledge\n\n"
-                    "The user supplied extra Markdown files with domain knowledge for this run. "
-                    "Read these files before writing `phases.json` and the generated domain "
-                    "context files. Use them only as contextual knowledge about intended "
-                    "behavior, terminology, business rules, data encodings, and invariants; "
-                    "do NOT include these Markdown files as project source files in "
-                    "`phases.json`, and do NOT edit or summarize them in place.\n\n"
-                    f"{format_domain_knowledge_bullets(user_knowledge_paths)}\n"
-                )
-    else:
-        _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
+    _prepare_workflow_file(
+        proj_dir,
+        work_dir,
+        script_dir,
+        "workflow_generate_phases.md",
+    )
+    workflow_path = os.path.join(work_dir, "workflow_generate_phases.md")
+    if (
+        plugin_stage is not None
+        and plugin_stage.type == "modify"
+        and plugin_stage.input_hook is not None
+    ):
+        _run_phase_plan_modify_hook(
+            plugin_stage.input_hook,
+            plugin_stage.input_function,
+            workflow_path,
+        )
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -1068,10 +1155,27 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             )
             sys.exit(1)
 
-    if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.output_process:
-        print("[Pipeline] Stage 1/6: Running plugin post-process for generate_phase_plan...")
-        from .plugin import run_plugin_command
-        run_plugin_command(plugin_stage.output_process, plugin_root, proj_dir, label="generate_phase_plan post-process")
+    if (
+        plugin_stage is not None
+        and plugin_stage.type == "modify"
+        and plugin_stage.output_hook is not None
+    ):
+        print(
+            "[Pipeline] Stage 1/6: Running plugin output hook for "
+            "generate_phase_plan..."
+        )
+        _run_phase_plan_modify_hook(
+            plugin_stage.output_hook,
+            plugin_stage.output_function,
+            phases_json,
+        )
+        phase_plan_errors = _phase_plan_schema_errors(phases_json)
+        if phase_plan_errors:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.output_function}' "
+                "produced an invalid phases.json: "
+                + "; ".join(phase_plan_errors)
+            )
 
 
 def _post_process_phases(proj_dir, work_dir, required_source_files=None,
