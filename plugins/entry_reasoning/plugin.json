@@ -1,0 +1,11 @@
+{
+  "name": "entry_reasoning",
+  "version": "V1.0",
+  "configure_function": "configure",
+  "stages": {
+    "extract_functions": {
+      "type": "replace",
+      "replace_function": "extract_entry_functions"
+    }
+  }
+}
