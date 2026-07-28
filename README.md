@@ -203,7 +203,7 @@ OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/o
 ## Quick Start
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--entry-func FQN] [--end-func FQN ...] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
 ```
 
 | Argument                    | Description                                                                                     |
@@ -218,6 +218,8 @@ uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--domain-knowledge 
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 | `--plugin NAME`             | Enable a plugin from `plugins/` for this run. |
+| `--entry-func FQN`          | Entry function for the `entry_reasoning` plugin. Requires `--plugin entry_reasoning`. |
+| `--end-func FQN [FQN ...]`  | Optional terminal functions for the `entry_reasoning` plugin, supplied as a space-separated list. |
 | `--list-plugin`             | List valid plugins from `plugins/` and exit; `proj_dir` is not required. |
 
 `proj_dir` must be a git repository.
@@ -228,8 +230,36 @@ To list available plugins without running the pipeline:
 uv run python main.py --list-plugin
 ```
 
-For plugin configuration, Stage 3 modes, and Python hook development, see
+For multi-stage plugin configuration, pass/replace/modify modes, workflow
+Markdown hooks, and exact Python contracts, see
 [Plugin Development](docs/plugins.md).
+
+To scope a full run to call paths reachable from one entry function, enable
+the bundled `entry_reasoning` plugin:
+
+```bash
+uv run python main.py /path/to/project \
+  --plugin entry_reasoning \
+  --entry-func "main-py::application_entry"
+```
+
+Optionally provide one or more terminal functions:
+
+```bash
+uv run python main.py /path/to/project \
+  --plugin entry_reasoning \
+  --entry-func "main-py::application_entry" \
+  --end-func "services::statistics-py::calculate_total"
+```
+
+The plugin uses Stage 1 to select participating source files, keeps the
+built-in Stage 3 extraction, and uses Stage 4 to select functions consumed by
+Stages 5 and 6. It is supported only for the direct full pipeline: do not
+combine it with `--incremental`, `--isolate`, or `--submodule`. It can be used
+with `--resume`, `--only-spec`, `--one-phase`, domain knowledge, supplemental
+call-graph edges, and a custom bug validator. See
+[Plugin Development](docs/plugins.md#entry-reasoning-plugin) for selection
+semantics and implementation details.
 
 To provide project-specific domain knowledge without editing FM-Agent's built-in prompts, pass one or more Markdown files:
 

@@ -152,7 +152,7 @@ FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无�
 ## 快速开始
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--entry-func FQN] [--end-func FQN ...] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
 ```
 
 | 参数 | 描述 |
@@ -167,6 +167,8 @@ uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--domain-knowledge 
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 | `--plugin NAME` | 为本次运行启用 `plugins/` 目录中的插件。 |
+| `--entry-func FQN` | 为 `entry_reasoning` 插件指定入口函数。必须配合 `--plugin entry_reasoning` 使用。 |
+| `--end-func FQN [FQN ...]` | 为 `entry_reasoning` 插件指定可选终止函数，以空格分隔的列表传入。 |
 | `--list-plugin` | 列出 `plugins/` 目录中的有效插件并退出；不需要提供 `proj_dir`。 |
 
 `proj_dir` 必须是一个 git 仓库。
@@ -177,8 +179,33 @@ uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--domain-knowledge 
 uv run python main.py --list-plugin
 ```
 
-插件配置、Stage 3 模式和 Python Hook 开发方式请参阅
-[插件开发文档](docs/plugins_zh.md)。
+多 Stage 插件配置、Pass/Replace/Modify 模式、工作流 Markdown Hook 和
+准确的 Python 接口请参阅[插件开发文档](docs/plugins_zh.md)。
+
+如需把一次全量运行限制到从某个入口函数可达的调用路径，可启用内置
+`entry_reasoning` 插件：
+
+```bash
+uv run python main.py /path/to/project \
+  --plugin entry_reasoning \
+  --entry-func "main-py::application_entry"
+```
+
+还可以指定一个或多个终止函数：
+
+```bash
+uv run python main.py /path/to/project \
+  --plugin entry_reasoning \
+  --entry-func "main-py::application_entry" \
+  --end-func "services::statistics-py::calculate_total"
+```
+
+该插件在 Stage 1 选择参与的源码文件，Stage 3 继续使用内置函数提取，并在
+Stage 4 选择供 Stage 5 和 Stage 6 消费的函数。它仅支持直接全量流水线，
+不能与 `--incremental`、`--isolate` 或 `--submodule` 组合；可以与
+`--resume`、`--only-spec`、`--one-phase`、领域知识、补充调用边和自定义
+Bug Validator 组合。筛选语义和实现细节参阅
+[插件开发文档](docs/plugins_zh.md#entry-reasoning-插件)。
 
 如需在不修改 FM-Agent 内置提示词的情况下提供项目特定领域知识，可传入一个或多个 Markdown 文件：
 
