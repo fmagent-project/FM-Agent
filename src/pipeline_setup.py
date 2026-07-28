@@ -1227,6 +1227,140 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
     return phases_modified
 
 
+def _run_domain_context_modify_hook(hook, function_name, artifact_path):
+    """Run one in-place domain-context hook and enforce its contract."""
+    try:
+        result = hook(artifact_path)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Plugin function '{function_name}' failed for "
+            f"generate_domain_context artifact '{artifact_path}': {exc}"
+        ) from exc
+
+    if result is not None:
+        raise RuntimeError(
+            f"Plugin function '{function_name}' must return None"
+        )
+    if not os.path.exists(artifact_path):
+        raise RuntimeError(
+            f"Plugin function '{function_name}' must leave "
+            f"'{artifact_path}' in place"
+        )
+
+
+def _required_domain_context_files(phases_path):
+    """Return the canonical domain-context filenames for one phase plan."""
+    with open(phases_path, "r") as file:
+        phases_data = json.load(file)
+
+    required = {"engine_overview.txt"}
+    for phase in phases_data.get("phases", []):
+        required.add(f"phase_{phase['phase']:02d}_types.txt")
+    return required
+
+
+def _run_domain_context_replacement(proj_dir, work_dir, plugin_stage):
+    """Run and validate a complete plugin replacement for domain context."""
+    phases_path = os.path.join(work_dir, "phases.json")
+    with tempfile.TemporaryDirectory(
+        prefix="fm-agent-plugin-domain-context-"
+    ) as temp_dir:
+        try:
+            returned_paths = plugin_stage.replace_hook(
+                os.path.abspath(proj_dir),
+                os.path.abspath(phases_path),
+                temp_dir,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                f"failed for generate_domain_context: {exc}"
+            ) from exc
+
+        if not isinstance(returned_paths, list) or not returned_paths:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "must return a non-empty list[str]"
+            )
+        if any(
+            not isinstance(path, str) or not path
+            for path in returned_paths
+        ):
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "must return only non-empty string paths"
+            )
+
+        output_root = os.path.realpath(temp_dir)
+        validated = {}
+        seen_paths = set()
+        for returned_path in returned_paths:
+            result_path = os.path.realpath(returned_path)
+            if result_path in seen_paths:
+                raise RuntimeError(
+                    f"Plugin function '{plugin_stage.replace_function}' "
+                    f"returned a duplicate path: {returned_path}"
+                )
+            seen_paths.add(result_path)
+
+            try:
+                contained = os.path.commonpath(
+                    [output_root, result_path]
+                ) == output_root
+            except ValueError:
+                contained = False
+            if not contained:
+                raise RuntimeError(
+                    f"Plugin function '{plugin_stage.replace_function}' "
+                    "returned a path outside its output directory"
+                )
+            if not os.path.isfile(result_path):
+                raise RuntimeError(
+                    f"Plugin function '{plugin_stage.replace_function}' "
+                    f"returned a missing file: {returned_path}"
+                )
+
+            relative_path = os.path.relpath(result_path, output_root)
+            if os.path.dirname(relative_path):
+                raise RuntimeError(
+                    f"Plugin function '{plugin_stage.replace_function}' "
+                    "must place domain context files directly in its "
+                    "output directory"
+                )
+            validated[relative_path] = result_path
+
+        required = _required_domain_context_files(phases_path)
+        returned_names = set(validated)
+        if returned_names != required:
+            missing = sorted(required - returned_names)
+            unexpected = sorted(returned_names - required)
+            details = []
+            if missing:
+                details.append("missing: " + ", ".join(missing))
+            if unexpected:
+                details.append("unexpected: " + ", ".join(unexpected))
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "returned an invalid domain context file set ("
+                + "; ".join(details)
+                + ")"
+            )
+
+        domain_dir = os.path.join(
+            work_dir,
+            "spec_prompts",
+            "domain_context",
+        )
+        os.makedirs(domain_dir, exist_ok=True)
+        for file_name, source_path in validated.items():
+            shutil.copy2(source_path, os.path.join(domain_dir, file_name))
+        if not _domain_context_complete(work_dir):
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.replace_function}' "
+                "produced incomplete domain context outputs"
+            )
+
+
 def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
                                  plugin_stage=None, plugin_root=None):
     """Stage 2: generate domain context — input phases.json, output domain context
@@ -1234,36 +1368,54 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
     """
     if plugin_stage is not None:
         if plugin_stage.type == "pass":
-            print("[Pipeline] Stage 2/6: Plugin stage 'generate_domain_context' type=pass, skipping.")
+            if not _domain_context_complete(work_dir):
+                raise RuntimeError(
+                    "Plugin stage 'generate_domain_context' type=pass "
+                    "requires existing complete domain context files"
+                )
+            print(
+                "[Pipeline] Stage 2/6: Plugin stage "
+                "'generate_domain_context' type=pass, "
+                "using existing domain context."
+            )
             return
         if plugin_stage.type == "replace":
-            print("[Pipeline] Stage 2/6: Plugin stage 'generate_domain_context' type=replace, running plugin command.")
-            from .plugin import run_plugin_command
-            run_plugin_command(plugin_stage.replace_cmd, plugin_root, proj_dir, label="generate_domain_context")
+            print(
+                "[Pipeline] Stage 2/6: Plugin stage "
+                "'generate_domain_context' type=replace, "
+                "running Python hook."
+            )
+            _run_domain_context_replacement(
+                proj_dir,
+                work_dir,
+                plugin_stage,
+            )
             return
 
     _resume_skip = resume and _domain_context_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 2/6: RESUME — domain context files found, skipping domain context generation.")
 
-    if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.input_md:
-        workflow_src = str(plugin_root / plugin_stage.input_md)
-        workflow_dst = os.path.join(work_dir, "workflow_generate_domain_context.md")
-        shutil.copy2(workflow_src, workflow_dst)
-        user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
-        if user_knowledge_paths:
-            with open(workflow_dst, "a") as _f:
-                _f.write(
-                    "\n---\n\n"
-                    "## User-Provided Domain Knowledge\n\n"
-                    "The user supplied extra Markdown files with domain knowledge for this run. "
-                    "Read these files before writing the domain context files. "
-                    "Use them only as contextual knowledge about intended "
-                    "behavior, terminology, business rules, data encodings, and invariants.\n\n"
-                    f"{format_domain_knowledge_bullets(user_knowledge_paths)}\n"
-                )
-    else:
-        _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
+    _prepare_workflow_file(
+        proj_dir,
+        work_dir,
+        script_dir,
+        "workflow_generate_domain_context.md",
+    )
+    workflow_path = os.path.join(
+        work_dir,
+        "workflow_generate_domain_context.md",
+    )
+    if (
+        plugin_stage is not None
+        and plugin_stage.type == "modify"
+        and plugin_stage.input_hook is not None
+    ):
+        _run_domain_context_modify_hook(
+            plugin_stage.input_hook,
+            plugin_stage.input_function,
+            workflow_path,
+        )
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -1332,10 +1484,30 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
             )
             sys.exit(1)
 
-    if plugin_stage is not None and plugin_stage.type == "modify" and plugin_stage.output_process:
-        print("[Pipeline] Stage 2/6: Running plugin post-process for generate_domain_context...")
-        from .plugin import run_plugin_command
-        run_plugin_command(plugin_stage.output_process, plugin_root, proj_dir, label="generate_domain_context post-process")
+    if (
+        plugin_stage is not None
+        and plugin_stage.type == "modify"
+        and plugin_stage.output_hook is not None
+    ):
+        print(
+            "[Pipeline] Stage 2/6: Running plugin output hook for "
+            "generate_domain_context..."
+        )
+        domain_context_dir = os.path.join(
+            work_dir,
+            "spec_prompts",
+            "domain_context",
+        )
+        _run_domain_context_modify_hook(
+            plugin_stage.output_hook,
+            plugin_stage.output_function,
+            domain_context_dir,
+        )
+        if not _domain_context_complete(work_dir):
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.output_function}' "
+                "produced incomplete domain context outputs"
+            )
 
 
 def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
