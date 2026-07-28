@@ -242,6 +242,58 @@ class PluginConfig:
         return self.stages.get(stage_name)
 
 
+def apply_stage_workflow_markdown(
+    plugin_stage: Optional[PluginStageConfig],
+    workflow_path: str,
+) -> None:
+    """Apply one stage's replace_md or modify_md configuration."""
+    if plugin_stage is None:
+        return
+    if (
+        plugin_stage.replace_md_path is None
+        and plugin_stage.modify_md_path is None
+    ):
+        return
+
+    if plugin_stage.replace_md_path is not None:
+        field_name = "replace_md"
+        markdown_path = plugin_stage.replace_md_path
+    else:
+        field_name = "modify_md"
+        markdown_path = plugin_stage.modify_md_path
+
+    target_path = Path(workflow_path)
+    try:
+        if not target_path.is_file():
+            raise FileNotFoundError(
+                f"workflow file does not exist: {target_path}"
+            )
+
+        markdown = markdown_path.read_text(encoding="utf-8")
+        if field_name == "replace_md":
+            content = markdown
+        else:
+            original = target_path.read_text(encoding="utf-8")
+            content = (
+                original.rstrip()
+                + "\n\n---\n\n"
+                + markdown.strip()
+                + "\n"
+            )
+
+        target_path.write_text(content, encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RuntimeError(
+            f"Failed to apply '{field_name}' to '{workflow_path}': {exc}"
+        ) from exc
+
+    if not target_path.is_file():
+        raise RuntimeError(
+            f"Failed to apply '{field_name}' to '{workflow_path}': "
+            "workflow file is missing"
+        )
+
+
 def _load_plugin_module(
     plugin_dir: Path, plugin_name: str
 ) -> Optional[ModuleType]:
