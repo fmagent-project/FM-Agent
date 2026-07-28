@@ -352,11 +352,47 @@ def _codegraph_functions_at_revision(proj_dir, revision, file_languages):
 class _ChangedFunctionResults(dict):
     """Changed-function mapping plus semantic backends that could not compare."""
 
-    def __init__(self, *args, unavailable_source_backend_languages=(), **kwargs):
+    def __init__(
+        self,
+        *args,
+        source_backend_languages=(),
+        unavailable_source_backend_languages=(),
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
+        self.source_backend_languages = frozenset(source_backend_languages)
         self.unavailable_source_backend_languages = frozenset(
             unavailable_source_backend_languages
         )
+
+
+def _raise_if_incremental_source_backends_unavailable(
+    changed_functions, stage4_unavailable_backends=(),
+):
+    """Stop before downstream stages can consume stale semantic extraction."""
+    stale_extraction_backends = (
+        changed_functions.source_backend_languages
+        & frozenset(stage4_unavailable_backends)
+    )
+    unavailable_backends = (
+        changed_functions.unavailable_source_backend_languages
+        | stale_extraction_backends
+    )
+    if not unavailable_backends:
+        return
+
+    languages = ", ".join(sorted(unavailable_backends))
+    if stale_extraction_backends:
+        raise RuntimeError(
+            "Cannot safely complete incremental analysis because Stage 4 did "
+            f"not refresh extracted source files for: {languages}. Install or "
+            "repair the required language backend, then retry."
+        )
+    raise RuntimeError(
+        "Cannot safely complete incremental analysis because semantic source "
+        f"extraction is unavailable for: {languages}. Install or repair the "
+        "required language backend, then retry."
+    )
 
 
 def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
@@ -509,6 +545,7 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         available_source_backend_languages.add(lang_key)
 
     result = _ChangedFunctionResults(
+        source_backend_languages=source_backend_languages,
         unavailable_source_backend_languages=unavailable_source_backend_languages
     )
     for rel_path in files:
@@ -898,7 +935,13 @@ def run_incremental_pipeline(
     # stale index would yield boundaries for the old code. try_codegraph_init rebuilds by
     # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
     try_codegraph_init(proj_dir)
-    run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
+    _written, _skipped, stage4_unavailable_backends = run_extraction(
+        proj_dir,
+        work_dir=work_dir,
+        force=True,
+        verbose=True,
+        return_unavailable_backends=True,
+    )
     logging.info("  -> function sources re-extracted; metadata sidecars retained.")
 
     # 5. Collect changed functions by comparing against the old version of functions in commit_id
@@ -913,14 +956,9 @@ def run_incremental_pipeline(
         "  -> %d changed file(s): %d added, %d modified, %d removed function(s).",
         len(changed_functions), n_added, n_modified, n_removed,
     )
-    unavailable_backends = changed_functions.unavailable_source_backend_languages
-    if unavailable_backends:
-        languages = ", ".join(sorted(unavailable_backends))
-        raise RuntimeError(
-            "Cannot safely complete incremental analysis because semantic "
-            f"source extraction is unavailable for: {languages}. Install or "
-            "repair the required language backend, then retry."
-        )
+    _raise_if_incremental_source_backends_unavailable(
+        changed_functions, stage4_unavailable_backends
+    )
 
     # 5b. Delete extracted-function files for functions (or whole source files) that were
     #     removed since old_commit_id. Re-extraction never rewrites these, so without this

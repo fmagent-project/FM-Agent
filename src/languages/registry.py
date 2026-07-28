@@ -16,16 +16,18 @@ from src.languages import erlang as _erlang
 class LanguageHandler:
     """Extraction and call-graph backend for one language.
 
-    batch_extract(proj_dir)             -> {abs_filepath: [(func_name, body)]}
+    batch_extract(proj_dir)             -> {abs_filepath: [(func_name, body)]} | None
     call_edges(proj_dir)                -> {caller_fqn: {callee_fqns}}
     function_spans(proj_dir, filepath)  -> [(func_name, start_idx, end_idx)] | None
     incremental_source_extract(proj_dir, sources)
         -> {abs_filepath: [(func_name, body)]} | None
 
     Each function handles its own backend (e.g. codegraph) internally.
-    batch_extract / call_edges return an empty dict when the backend is
-    unavailable; function_spans returns None so the caller can fall back to the
-    regex extractor for that file.
+    batch_extract returns ``None`` when a semantic backend cannot safely
+    extract its sources, distinct from a successful empty dict. call_edges
+    returns an empty dict when its backend is unavailable; function_spans
+    returns None so the caller can fall back to the regex extractor for that
+    file.
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
@@ -52,19 +54,27 @@ REGISTRY: dict = {
 }
 
 
-def batch_extract_all(proj_dir: str) -> tuple:
+def batch_extract_all(proj_dir: str, include_unavailable: bool = False) -> tuple:
     """Call batch_extract for every registered language and merge results.
 
     Returns (funcs, langs) where funcs is {abs_filepath: [(func_name, body)]}
-    and langs is the set of language keys that returned data.
+    and langs is the set of language keys that returned data. When
+    ``include_unavailable`` is true, appends the set of languages whose
+    semantic extraction backend failed.
     """
     funcs = {}
     langs = set()
+    unavailable = set()
     for lang, handler in REGISTRY.items():
         result = handler.batch_extract(proj_dir)
+        if result is None:
+            unavailable.add(lang)
+            continue
         if result:
             funcs.update(result)
             langs.add(lang)
+    if include_unavailable:
+        return funcs, langs, unavailable
     return funcs, langs
 
 

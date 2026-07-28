@@ -684,17 +684,23 @@ def _analyze_project(proj_dir: str) -> ErlangAnalysis:
     return analysis
 
 
-def _analysis_or_empty(proj_dir: str) -> ErlangAnalysis:
+def _analysis_or_none(proj_dir: str) -> ErlangAnalysis | None:
     try:
         return _analyze_project(proj_dir)
     except Exception as exc:
         logging.warning("ELP Erlang analysis unavailable for %s: %s", proj_dir, exc)
-        return ErlangAnalysis(functions={}, edges={})
+        return None
 
 
-def batch_extract(proj_dir: str) -> dict:
-    """Return ``{abs_filepath: [(function_id, body)]}`` for Erlang files."""
-    return _analysis_or_empty(proj_dir).functions
+def _analysis_or_empty(proj_dir: str) -> ErlangAnalysis:
+    analysis = _analysis_or_none(proj_dir)
+    return analysis or ErlangAnalysis(functions={}, edges={})
+
+
+def batch_extract(proj_dir: str) -> dict | None:
+    """Return extracted functions, or ``None`` when the ELP session failed."""
+    analysis = _analysis_or_none(proj_dir)
+    return None if analysis is None else analysis.functions
 
 
 def function_spans(proj_dir: str, filepath: str):
