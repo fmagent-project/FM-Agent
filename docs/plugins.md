@@ -1,10 +1,13 @@
 # Plugin Development
 
-FM-Agent plugins can customize pipeline stages without changing FM-Agent's
-source code. The current Python hook interface is implemented for Stage 3,
-`extract_functions`.
+FM-Agent plugins customize one or more pipeline stages without changing
+FM-Agent's source code. A plugin may keep an existing stage output, replace the
+stage implementation, or modify the input, workflow instructions, or output of
+the built-in implementation.
 
-## Plugin layout
+Plugins are trusted Python code. Install and run only plugins you trust.
+
+## Directory structure
 
 Create one directory per plugin under `plugins/`:
 
@@ -12,184 +15,316 @@ Create one directory per plugin under `plugins/`:
 plugins/
 └── my_plugin/
     ├── plugin.json
-    └── plugin.py
+    ├── plugin.py                  # Required only when Python functions are used
+    └── extra_instructions.md      # Optional workflow instructions
 ```
 
-The directory name and the `name` field in `plugin.json` must match. Both files
-are required. To list plugins that load and validate successfully, run:
+The directory name must match the `name` in `plugin.json`. `plugin.json` is
+always required. `plugin.py` is required only when the configuration names a
+Python function; a pure `pass` plugin or a Markdown-only plugin does not need
+it.
+
+List plugins that load and validate successfully:
 
 ```bash
 uv run python main.py --list-plugin
 ```
 
-Enable one plugin for a pipeline run with:
+Enable one plugin for a pipeline run:
 
 ```bash
 uv run python main.py /path/to/project --plugin my_plugin
 ```
 
-Function names are chosen by the plugin author in `plugin.json`. FM-Agent
-defines and validates their Python signatures.
+## Multi-stage configuration
 
-## Pass mode
-
-Pass mode skips Stage 3 extraction and uses extraction files that already
-exist:
+One `plugin.json` can configure any number of pipeline stages:
 
 ```json
 {
   "name": "my_plugin",
   "version": "V1.0",
+  "configure_function": "configure",
   "stages": {
-    "extract_functions": {
-      "type": "pass"
+    "generate_phase_plan": {
+      "type": "modify",
+      "input_function": "select_sources"
+    },
+    "collect_file_list": {
+      "type": "modify",
+      "input_function": "select_functions"
+    },
+    "generate_specs_and_verification": {
+      "type": "modify",
+      "modify_md": "extra_instructions.md"
     }
   }
 }
 ```
 
-`plugin.py` is still required, but no hook function is declared:
+Function names are chosen by the plugin author. FM-Agent validates each stage
+independently according to its stage name, mode, allowed fields, and exact
+Python signature.
+
+The optional plugin-level configuration function has this signature:
 
 ```python
-"""Pass-mode plugin."""
+def configure(options: dict) -> None:
+    ...
 ```
 
-Pass mode fails if the expected extracted files do not already exist. In
-particular, entry-function selection uses a fresh temporary output directory,
-so pass mode cannot supply that extraction from an empty directory.
+It runs once before the configured stages and receives runtime context,
+including `project_dir`, `entry_func`, `end_funcs`, and `extra_edge`. Use it to
+store run-specific configuration for later hooks; it does not replace a stage
+hook.
 
-## Replace mode
+## Modes
 
-Replace mode substitutes a Python function for FM-Agent's built-in Stage 3
-extractor:
+### Pass
+
+Pass mode skips the built-in stage and consumes an existing valid canonical
+output:
 
 ```json
 {
-  "name": "my_plugin",
-  "version": "V1.0",
-  "stages": {
-    "extract_functions": {
-      "type": "replace",
-      "replace_function": "extract_with_custom_parser"
-    }
-  }
+  "type": "pass"
 }
 ```
 
-The named function must have this exact annotated signature:
+Pass mode accepts no function or Markdown fields. It fails when the required
+output is missing or invalid.
+
+### Replace
+
+Replace mode calls a Python function instead of the built-in stage:
+
+```json
+{
+  "type": "replace",
+  "replace_function": "replace_stage"
+}
+```
+
+The function writes into an FM-Agent-controlled temporary directory and
+returns the generated path or paths. FM-Agent validates the result before
+copying it to the canonical run directory. Replace mode accepts no modify
+hooks or Markdown fields.
+
+### Modify
+
+Modify mode keeps the built-in stage and changes at least one of its inputs,
+workflow instructions, or outputs:
+
+```json
+{
+  "type": "modify",
+  "input_function": "modify_input",
+  "output_function": "modify_output",
+  "modify_md": "extra_instructions.md"
+}
+```
+
+At least one modification field is required. `input_function` changes the
+semantic input consumed by the stage; it is not a workflow prompt hook.
+`output_function` runs only after a canonical output has been produced and
+must leave that output valid.
+
+Stages 1, 2, and 6 also support one of:
+
+- `replace_md`: replace the built-in workflow Markdown with a plugin-relative
+  UTF-8 `.md` file.
+- `modify_md`: append a plugin-relative UTF-8 `.md` file to the built-in
+  workflow.
+
+`replace_md` and `modify_md` are mutually exclusive. The path must remain
+inside the plugin directory.
+
+## Stage contracts
+
+The six canonical stage names and their exact Python signatures are:
+
+### Stage 1: `generate_phase_plan`
 
 ```python
-from pathlib import Path
+def replace_phase_plan(project_dir: str, output_dir: str) -> str: ...
+def modify_phase_input(source_files: list[str]) -> list[str]: ...
+def modify_phase_output(phases_path: str) -> None: ...
+```
 
+The input hook selects or transforms the source-file list used for phase
+planning. The replace hook must return the generated `phases.json`. The output
+hook modifies canonical `phases.json` in place. This stage supports
+`replace_md` and `modify_md`.
 
-def extract_with_custom_parser(
+### Stage 2: `generate_domain_context`
+
+```python
+def replace_domain_context(
+    project_dir: str,
+    phases_path: str,
+    output_dir: str,
+) -> list[str]: ...
+
+def modify_domain_input(phases: dict) -> dict: ...
+def modify_domain_output(domain_context_dir: str) -> None: ...
+```
+
+The input hook changes the phase data consumed by domain-context generation.
+The replace hook returns generated files under `output_dir`. The output hook
+modifies the canonical domain-context directory in place. This stage supports
+`replace_md` and `modify_md`.
+
+### Stage 3: `extract_functions`
+
+```python
+def replace_extraction(
     source_paths: list[str],
     output_dir: str,
-) -> list[str]:
-    destination = Path(output_dir) / "src" / "example.md"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        "# Function: src/example.py:example\n",
-        encoding="utf-8",
-    )
-    return [str(destination)]
+) -> list[str]: ...
+
+def modify_source(source_path: str) -> None: ...
+def modify_extracted_function(function_path: str) -> None: ...
 ```
 
-FM-Agent passes:
+The input hook receives each source file in an isolated temporary project
+copy. It may modify, add, or remove source content for this extraction run
+without changing the user's source tree. The output hook receives each newly
+written canonical extracted-function file; ready files skipped during resume
+are not processed again. Every resulting file must still contain exactly one
+valid extracted function. This stage has no workflow-Markdown hook.
 
-- `source_paths`: filtered source-file paths for the current extraction.
-- `output_dir`: a controlled temporary directory for generated files.
-
-The function must return a non-empty `list[str]`. Every returned path must:
-
-- exist as a file;
-- be located inside `output_dir`;
-- occur only once in the returned list.
-
-FM-Agent copies the returned files, preserving their relative paths, into the
-canonical `fm_agent/extracted_functions/` directory. When a canonical output
-is already marked ready and extraction is not forced, that output is skipped.
-Replacement plugins must preserve the output layout, naming, and fully
-qualified function identifiers expected by later pipeline stages.
-
-## Modify mode
-
-Modify mode keeps FM-Agent's built-in extractor and optionally changes its
-input files, output files, or both:
-
-```json
-{
-  "name": "my_plugin",
-  "version": "V1.0",
-  "stages": {
-    "extract_functions": {
-      "type": "modify",
-      "input_function": "prepare_source",
-      "output_function": "normalize_extraction"
-    }
-  }
-}
-```
-
-At least one of `input_function` or `output_function` is required. Each named
-function must have this exact annotated signature:
+### Stage 4: `collect_file_list`
 
 ```python
-from pathlib import Path
+def replace_file_list(
+    extracted_dir: str,
+    phases_path: str,
+) -> list[str]: ...
 
-
-def prepare_source(file_path: str) -> None:
-    path = Path(file_path)
-    text = path.read_text(encoding="utf-8")
-    path.write_text(text.replace("OLD_API", "NEW_API"), encoding="utf-8")
-
-
-def normalize_extraction(file_path: str) -> None:
-    path = Path(file_path)
-    text = path.read_text(encoding="utf-8")
-    path.write_text(text.rstrip() + "\n", encoding="utf-8")
+def modify_function_files(function_files: list[str]) -> list[str]: ...
+def modify_file_list_output(file_list_path: str) -> None: ...
 ```
 
-The input hook receives one source-file path at a time. The path belongs to a
-safe temporary copy of the target project, not the user's real project.
-Changes affect extraction for the current run without changing the original
-source tree. The hook must leave the file in place.
+The input hook changes the extracted-function files recorded in
+`fm_agent_file_list.json`. Its return value is not required to be a subset of
+the original list, but every item must resolve to a valid extracted-function
+file. The output hook modifies the canonical JSON file in place. This stage
+has no workflow-Markdown hook.
 
-The output hook receives one canonical extracted Markdown file at a time,
-after FM-Agent writes it under `fm_agent/extracted_functions/`. It runs only
-for newly written files; an output skipped because it is already ready is not
-processed again. The hook must modify the file in place and leave it in place.
+### Stage 5: `generate_topdown_layers`
 
-Both hooks must return `None`. The file content may change, but the resulting
-extraction must still satisfy the schemas and identifiers expected by later
-pipeline stages.
+```python
+def replace_topdown_layers(
+    work_dir: str,
+    output_dir: str,
+) -> list[str]: ...
 
-## Pipeline behavior
+def modify_topdown_input(function_files: list[str]) -> list[str]: ...
+def modify_topdown_output(topdown_paths: list[str]) -> None: ...
+```
 
-Stage 3 plugin configuration is propagated through these execution paths:
+The input is the authoritative Stage 4 function list. The replace hook returns
+the generated top-down JSON paths; the output hook modifies their canonical
+copies in place. Stage 5 does not rescan all extracted functions, so functions
+excluded by Stage 4 are not silently reintroduced. This stage has no
+workflow-Markdown hook.
 
-| Execution path | Stage 3 plugin support |
-| --- | --- |
-| Full run | Yes |
-| Resume run | Yes |
-| Isolated worktree run | Yes |
-| Entry-function selection | Yes |
-| Incremental run | Yes |
+### Stage 6: `generate_specs_and_verification`
 
-Entry-function workflows can extract once while selecting the entry scope and
-again during the final pipeline run, so hooks can execute in both phases.
-Incremental runs execute hooks when affected files are re-extracted.
+```python
+def replace_specs_and_verification(
+    work_dir: str,
+    output_dir: str,
+    only_spec: bool,
+) -> list[str]: ...
 
-## Validation and trust
+def modify_spec_input(topdown_paths: list[str]) -> list[str]: ...
+def modify_verification_output(result_paths: list[str]) -> None: ...
+```
 
-Plugin loading fails when:
+The input hook receives isolated copies of the top-down JSON files consumed by
+spec generation. The replace hook returns generated artifacts under
+`output_dir`.
 
-- `plugin.json` or `plugin.py` is missing;
-- `plugin.json` is invalid or its `name` does not match the directory;
-- a mode has missing, conflicting, or obsolete command-based fields;
-- a declared function is missing, is not callable, or has the wrong annotated
-  signature.
+The output hook receives only results that can still be consumed after Stage
+6:
 
-`plugin.py` is imported when plugins are scanned, and its top-level code runs
-at import time. Plugins are trusted Python code and are not sandboxed. Keep
-top-level code free of side effects and only install or run plugins you trust.
+- `logic_verification_results/**/*.json`
+- `bug_validation/*.result.json`
+- `bug_validation/summary.json`
+
+Internal `*.spec.json` and `*.info.json` files are not passed to this hook.
+The output hook is skipped for `--only-spec`. This stage supports `replace_md`
+and `modify_md`.
+
+## Pipeline data flow
+
+```text
+Stage 1 phases.json and selected source files
+        ↓
+Stage 2 domain context
+        ↓
+Stage 3 extracted function files
+        ↓
+Stage 4 fm_agent_file_list.json
+        ↓
+Stage 5 top-down layer JSON files
+        ↓
+Stage 6 specifications and verification results
+```
+
+Each stage must preserve the schema and path contract required by its
+consumers. In particular, Stage 4 is the authoritative function selection for
+Stage 5 and Stage 6.
+
+## Entry-reasoning plugin
+
+The bundled `entry_reasoning` plugin scopes a normal full pipeline run to the
+call paths reachable from one entry function:
+
+```bash
+uv run python main.py /path/to/project \
+  --plugin entry_reasoning \
+  --entry-func "main-py::application_entry"
+```
+
+Optionally stop selection at one or more terminal functions:
+
+```bash
+uv run python main.py /path/to/project \
+  --plugin entry_reasoning \
+  --entry-func "main-py::application_entry" \
+  --end-func "services::statistics-py::calculate_total"
+```
+
+The plugin uses Stage 1 to select participating source files and Stage 4 to
+select participating extracted functions. Stage 3 remains FM-Agent's built-in
+extractor, and Stages 5 and 6 consume the Stage 4 selection.
+
+`--end-func` keeps functions on paths from the entry to the named terminal
+functions and treats those endpoints as terminal, so unrelated sibling
+dependencies may be excluded. The entry plugin is supported only for the
+direct full pipeline and cannot be combined with `--incremental`, `--isolate`,
+or `--submodule`. It can be combined with `--resume`, `--only-spec`,
+`--one-phase`, domain knowledge, supplemental edges, and a custom bug
+validator.
+
+## Validation and trust boundary
+
+Plugin loading fails when, for example:
+
+- `plugin.json` is missing, malformed, or its `name` differs from the
+  directory name;
+- an unknown stage, mode, or field is used;
+- required fields are missing or mutually exclusive fields are combined;
+- a declared Python function is missing, not callable, or has the wrong
+  annotated signature;
+- a Markdown file is unreadable, is not UTF-8 `.md`, or escapes the plugin
+  directory;
+- returned files are missing, duplicated, outside an allowed directory, or
+  fail the stage schema.
+
+FM-Agent imports `plugin.py` during plugin discovery, so module-level code is
+executed at import time. Path and schema validation protect pipeline contracts
+and catch accidental mistakes; they do not sandbox or restrict arbitrary
+Python code.
