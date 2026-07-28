@@ -782,6 +782,7 @@ if __name__ == "__main__":
         try:
             plugin_config.configure_hook(
                 {
+                    "project_dir": proj_dir,
                     "entry_func": args.entry_func,
                     "end_funcs": args.end_func or [],
                     "extra_edge": extra_call_edges_path,

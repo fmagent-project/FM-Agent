@@ -1,30 +1,45 @@
-"""Entry-point reasoning implemented as an FM-Agent Stage 3 plugin."""
+"""Entry-point reasoning implemented through Stage 1 and Stage 4 hooks."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import posixpath
+import tempfile
 from collections import deque
-from pathlib import Path
 
 from src.call_graph_edges import load_call_edges
-from src.extract import (
-    EXT_TO_LANG,
-    _safe_filename,
-    extract_functions_from_file,
+from src.extract import EXT_TO_LANG, run_extraction
+from src.file_utils import (
+    add_test_file_exemption,
+    clear_test_file_exemptions,
 )
-from src.generate_topdown_layers import _build_call_graph, _file_to_fqn
-from src.languages.registry import batch_extract_all
+from src.generate_topdown_layers import (
+    _build_call_graph,
+    _collect_phase_files,
+    _file_to_fqn,
+)
+from src.languages.codegraph import try_codegraph_init
 
 
+_project_dir: str | None = None
 _entry_func: str | None = None
 _end_funcs: list[str] = []
 _extra_edge: str | None = None
+_selected_fqns: set[str] = set()
 
 
 def configure(options: dict) -> None:
     """Configure entry selection for one FM-Agent invocation."""
-    global _entry_func, _end_funcs, _extra_edge
+    global _project_dir, _entry_func, _end_funcs, _extra_edge
+    global _selected_fqns
+
+    project_dir = options.get("project_dir")
+    if not isinstance(project_dir, str) or not os.path.isdir(project_dir):
+        raise ValueError(
+            "entry_reasoning requires a valid project_dir"
+        )
 
     entry_func = options.get("entry_func")
     if not isinstance(entry_func, str) or not entry_func.strip():
@@ -45,9 +60,15 @@ def configure(options: dict) -> None:
     ):
         raise ValueError("extra_edge must be a non-empty path or None")
 
+    clear_test_file_exemptions()
+    _project_dir = os.path.abspath(project_dir)
     _entry_func = entry_func.strip()
     _end_funcs = [value.strip() for value in end_funcs]
     _extra_edge = extra_edge
+    _selected_fqns = set()
+    add_test_file_exemption(
+        _source_rel_from_fqn(_entry_func).replace(os.sep, "/")
+    )
 
 
 def _source_rel_from_fqn(fqn: str) -> str:
@@ -68,94 +89,6 @@ def _source_rel_from_fqn(fqn: str) -> str:
     )
 
 
-def _project_root(source_paths: list[str], entry_func: str) -> str:
-    """Derive the project root from the entry function's source path."""
-    entry_source_parts = Path(_source_rel_from_fqn(entry_func)).parts
-    for source_path in source_paths:
-        absolute_path = Path(source_path).resolve()
-        if len(absolute_path.parts) < len(entry_source_parts):
-            continue
-        tail = absolute_path.parts[-len(entry_source_parts) :]
-        if tuple(os.path.normcase(part) for part in tail) != tuple(
-            os.path.normcase(part) for part in entry_source_parts
-        ):
-            continue
-
-        root = absolute_path
-        for _ in entry_source_parts:
-            root = root.parent
-        return str(root)
-
-    entry_source = os.path.join(*entry_source_parts)
-    raise ValueError(
-        f"entry function source {entry_source!r} is not present in Stage 3 input"
-    )
-
-
-def _write_extracted_functions(
-    source_paths: list[str],
-    project_root: str,
-    output_dir: str,
-) -> list[str]:
-    """Extract Stage 3 source paths into the controlled plugin output."""
-    registry_funcs, _registry_langs = batch_extract_all(project_root)
-    registry_funcs = {
-        os.path.normcase(os.path.normpath(path)): functions
-        for path, functions in registry_funcs.items()
-    }
-
-    output_files = []
-    for source_path in source_paths:
-        absolute_source = os.path.abspath(source_path)
-        relative_source = os.path.relpath(absolute_source, project_root)
-        if relative_source == os.pardir or relative_source.startswith(
-            os.pardir + os.sep
-        ):
-            raise ValueError(
-                f"Stage 3 input escapes the entry project: {absolute_source!r}"
-            )
-
-        extension = (
-            relative_source.rsplit(".", 1)[-1]
-            if "." in os.path.basename(relative_source)
-            else ""
-        )
-        language = EXT_TO_LANG.get(extension)
-        if language is None:
-            continue
-
-        registry_key = os.path.normcase(os.path.normpath(absolute_source))
-        functions = registry_funcs.get(registry_key)
-        if functions is None:
-            functions = extract_functions_from_file(absolute_source, language)
-
-        source_dir = os.path.dirname(relative_source)
-        source_name = os.path.basename(relative_source)
-        last_dot = source_name.rfind(".")
-        function_dir_name = (
-            source_name[:last_dot] + "-" + source_name[last_dot + 1 :]
-            if last_dot > 0
-            else source_name
-        )
-        function_dir = os.path.join(
-            output_dir,
-            source_dir,
-            function_dir_name,
-        )
-
-        for function_name, function_source in functions:
-            os.makedirs(function_dir, exist_ok=True)
-            output_path = os.path.join(
-                function_dir,
-                _safe_filename(function_name, extension),
-            )
-            with open(output_path, "w", encoding="utf-8") as output_file:
-                output_file.write(function_source)
-            output_files.append(output_path)
-
-    return output_files
-
-
 def _reachable_graph(callees_map: dict, entry_func: str) -> dict:
     """Return the call graph reachable from the configured entry function."""
     call_graph = {}
@@ -170,25 +103,6 @@ def _reachable_graph(callees_map: dict, entry_func: str) -> dict:
             if callee not in call_graph:
                 queue.append(callee)
     return call_graph
-
-
-def _make_codegraph_available(project_root: str, output_dir: str) -> None:
-    """Expose the project's existing index to the temporary graph builder."""
-    source_index = os.path.join(project_root, ".codegraph")
-    temporary_index = os.path.join(
-        os.path.dirname(output_dir),
-        ".codegraph",
-    )
-    if not os.path.isdir(source_index) or os.path.lexists(temporary_index):
-        return
-    try:
-        os.symlink(source_index, temporary_index, target_is_directory=True)
-    except OSError as exc:
-        logging.warning(
-            "[EntryPlugin] Could not reuse codegraph index; "
-            "falling back to regex call analysis: %s",
-            exc,
-        )
 
 
 def _restrict_to_end_functions(
@@ -231,49 +145,87 @@ def _restrict_to_end_functions(
     }
 
 
-def extract_entry_functions(
-    source_paths: list[str],
-    output_dir: str,
-) -> list[str]:
-    """Extract and return only functions selected by entry reachability."""
-    if _entry_func is None:
+def _make_codegraph_available(project_dir: str, work_dir: str) -> None:
+    """Expose the project's existing index to the temporary graph builder."""
+    source_index = os.path.join(project_dir, ".codegraph")
+    temporary_index = os.path.join(work_dir, ".codegraph")
+    if not os.path.isdir(source_index) or os.path.lexists(temporary_index):
+        return
+    try:
+        os.symlink(source_index, temporary_index, target_is_directory=True)
+    except OSError as exc:
+        logging.warning(
+            "[EntryPlugin] Could not reuse codegraph index; "
+            "falling back to regex call analysis: %s",
+            exc,
+        )
+
+
+def select_entry_source_files(source_files: list[str]) -> list[str]:
+    """Select source files containing functions on the configured call chain."""
+    global _selected_fqns
+
+    if _project_dir is None or _entry_func is None:
         raise RuntimeError("entry_reasoning plugin has not been configured")
-    if not source_paths:
-        raise ValueError("entry_reasoning requires at least one Stage 3 source")
+    if not source_files:
+        raise ValueError("entry_reasoning requires at least one source file")
 
-    project_root = _project_root(source_paths, _entry_func)
-    extracted_files = _write_extracted_functions(
-        source_paths,
-        project_root,
-        output_dir,
-    )
-    if not extracted_files:
-        raise ValueError("no functions were extracted from Stage 3 input")
-
-    phase_files = [(path, "entry_reasoning") for path in extracted_files]
-    extra_edges = load_call_edges(_extra_edge)
-    _make_codegraph_available(project_root, output_dir)
-    (
-        callees_map,
-        _callers,
-        _all_callees,
-        _file_map,
-        _module_map,
-        _edge_aliases,
-    ) = _build_call_graph(
-        phase_files,
-        os.path.dirname(output_dir),
-        extra_call_edges=extra_edges,
-    )
-
-    files_by_fqn = {
-        _file_to_fqn(path, os.path.dirname(output_dir)): path
-        for path in extracted_files
+    phase = {
+        "phase": 1,
+        "name": "Entry Selection",
+        "modules": [
+            {
+                "name": "Entry Selection",
+                "source_files": list(source_files),
+            }
+        ],
     }
-    if _entry_func not in files_by_fqn:
+
+    with tempfile.TemporaryDirectory(
+        prefix="fm-agent-entry-selection-"
+    ) as work_dir:
+        with open(
+            os.path.join(work_dir, "phases.json"),
+            "w",
+            encoding="utf-8",
+        ) as phases_file:
+            json.dump({"phases": [phase]}, phases_file)
+
+        try_codegraph_init(_project_dir)
+        _make_codegraph_available(_project_dir, work_dir)
+        run_extraction(
+            _project_dir,
+            work_dir=work_dir,
+            force=True,
+        )
+
+        phase_files = _collect_phase_files(work_dir, phase)
+        if not phase_files:
+            raise ValueError(
+                "no functions were extracted from Stage 1 source candidates"
+            )
+
+        (
+            callees_map,
+            _callers,
+            _all_callees,
+            _file_map,
+            _module_map,
+            _edge_aliases,
+        ) = _build_call_graph(
+            phase_files,
+            work_dir,
+            extra_call_edges=load_call_edges(_extra_edge),
+        )
+        all_fqns = {
+            _file_to_fqn(path, work_dir)
+            for path, _module_name in phase_files
+        }
+
+    if _entry_func not in all_fqns:
         raise ValueError(
             f"entry function {_entry_func!r} was not found among extracted "
-            "Stage 3 functions"
+            "Stage 1 source candidates"
         )
 
     call_graph = _reachable_graph(callees_map, _entry_func)
@@ -290,13 +242,57 @@ def extract_entry_functions(
         _entry_func,
         _end_funcs,
     )
+    _selected_fqns = set(call_graph)
 
-    selected_paths = [
-        files_by_fqn[fqn]
-        for fqn in sorted(call_graph)
+    selected_sources = {
+        _source_rel_from_fqn(fqn).replace(os.sep, "/")
+        for fqn in _selected_fqns
+    }
+    result = [
+        source_file
+        for source_file in source_files
+        if source_file.replace("\\", "/") in selected_sources
     ]
+    if not result:
+        raise ValueError("entry call chain did not select any source files")
+
     print(
-        f"[EntryPlugin] Selected {len(selected_paths)} of "
-        f"{len(extracted_files)} function(s) from entry {_entry_func}."
+        f"[EntryPlugin] Selected {len(_selected_fqns)} function(s) in "
+        f"{len(result)} of {len(source_files)} source file(s) from entry "
+        f"{_entry_func}."
     )
-    return selected_paths
+    return result
+
+
+def _function_file_to_fqn(function_file: str) -> str:
+    """Convert a Stage 4 extracted-function path to its FM-Agent FQN."""
+    normalized = function_file.replace("\\", "/")
+    stem, _extension = posixpath.splitext(normalized)
+    return "::".join(part for part in stem.split("/") if part)
+
+
+def select_entry_functions(function_files: list[str]) -> list[str]:
+    """Return only Stage 4 functions selected by entry reachability."""
+    try:
+        if not _selected_fqns:
+            raise RuntimeError(
+                "entry source selection did not produce any functions"
+            )
+
+        result = [
+            function_file
+            for function_file in function_files
+            if _function_file_to_fqn(function_file) in _selected_fqns
+        ]
+        if not result:
+            raise ValueError(
+                "none of the selected entry functions were found in Stage 4"
+            )
+
+        print(
+            f"[EntryPlugin] Stage 4 kept {len(result)} of "
+            f"{len(function_files)} extracted function file(s)."
+        )
+        return result
+    finally:
+        clear_test_file_exemptions()

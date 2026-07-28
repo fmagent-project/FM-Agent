@@ -3,9 +3,13 @@
   "version": "V1.0",
   "configure_function": "configure",
   "stages": {
-    "extract_functions": {
-      "type": "replace",
-      "replace_function": "extract_entry_functions"
+    "generate_phase_plan": {
+      "type": "modify",
+      "input_function": "select_entry_source_files"
+    },
+    "collect_file_list": {
+      "type": "modify",
+      "input_function": "select_entry_functions"
     }
   }
 }
