@@ -11,11 +11,189 @@ import time
 
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
-from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready
+from src.file_utils import (
+    _get_incomplete_verification_files,
+    _get_phase_files,
+    is_file_ready,
+    validate_file_names,
+)
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
 from src.verification import streaming_reasoner
+
+
+def collect_topdown_function_files(topdown_paths, work_dir):
+    """Return normalized extracted-function paths selected by Stage 5."""
+    function_files = []
+    seen = set()
+
+    for topdown_path in topdown_paths:
+        with open(topdown_path, "r", encoding="utf-8") as file:
+            layers_data = json.load(file)
+
+        for layer in layers_data["layers"]:
+            for function in layer["functions"]:
+                rel_path = os.path.normpath(function["file"])
+                identity = os.path.normcase(rel_path)
+                if identity not in seen:
+                    seen.add(identity)
+                    function_files.append(rel_path)
+
+    return validate_file_names(
+        function_files,
+        os.path.join(work_dir, "extracted_functions"),
+    )
+
+
+def validate_spec_verification_artifacts(
+    artifact_paths,
+    function_files,
+    work_dir,
+    only_spec=False,
+    output_root=None,
+):
+    """Validate and return the canonical artifacts produced by Stage 6."""
+    if not isinstance(artifact_paths, list):
+        raise RuntimeError("Stage 6 artifacts must be a list[str]")
+    if any(not isinstance(path, str) or not path for path in artifact_paths):
+        raise RuntimeError(
+            "Stage 6 artifacts must contain only non-empty string paths"
+        )
+
+    function_files = validate_file_names(
+        function_files,
+        os.path.join(work_dir, "extracted_functions"),
+    )
+    output_root = os.path.realpath(output_root or work_dir)
+    extracted_root = os.path.join(output_root, "extracted_functions")
+    verification_root = os.path.join(
+        output_root, "logic_verification_results"
+    )
+    bug_root = os.path.join(output_root, "bug_validation")
+
+    validated_paths = []
+    seen_paths = set()
+    for artifact_path in artifact_paths:
+        absolute_path = os.path.realpath(artifact_path)
+        identity = os.path.normcase(absolute_path)
+        if identity in seen_paths:
+            raise RuntimeError(
+                f"Stage 6 artifacts contain a duplicate path: {artifact_path}"
+            )
+        seen_paths.add(identity)
+
+        try:
+            contained = os.path.commonpath(
+                [output_root, absolute_path]
+            ) == output_root
+        except ValueError:
+            contained = False
+        if not contained:
+            raise RuntimeError(
+                f"Stage 6 artifact is outside the output root: {artifact_path}"
+            )
+        if not os.path.isfile(absolute_path):
+            raise RuntimeError(
+                f"Stage 6 artifact does not exist: {artifact_path}"
+            )
+        validated_paths.append(absolute_path)
+
+    required_paths = set()
+    for function_file in function_files:
+        output_function = os.path.join(extracted_root, function_file)
+        if not is_file_ready(output_function):
+            raise RuntimeError(
+                "Stage 6 requires valid spec and info sidecars for "
+                f"{function_file}"
+            )
+        required_paths.update(
+            {
+                os.path.realpath(f"{output_function}.spec.json"),
+                os.path.realpath(f"{output_function}.info.json"),
+            }
+        )
+
+        if only_spec:
+            continue
+
+        result_path = os.path.realpath(
+            os.path.join(
+                verification_root,
+                os.path.splitext(function_file)[0] + ".json",
+            )
+        )
+        try:
+            with open(result_path, "r", encoding="utf-8") as file:
+                result = json.load(file)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Stage 6 verification result is invalid for {function_file}: "
+                f"{exc}"
+            ) from exc
+        if (
+            not isinstance(result, dict)
+            or result.get("verdict") not in {"MATCH", "MISMATCH"}
+        ):
+            raise RuntimeError(
+                "Stage 6 verification result must have verdict MATCH or "
+                f"MISMATCH for {function_file}"
+            )
+        required_paths.add(result_path)
+
+        if result["verdict"] == "MISMATCH":
+            bug_id = (
+                os.path.splitext(function_file)[0]
+                .replace(os.sep, "--")
+                .replace("/", "--")
+            )
+            bug_result_path = os.path.realpath(
+                os.path.join(bug_root, f"{bug_id}.result.json")
+            )
+            try:
+                with open(
+                    bug_result_path, "r", encoding="utf-8"
+                ) as file:
+                    json.load(file)
+            except (
+                OSError,
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+            ) as exc:
+                raise RuntimeError(
+                    "Stage 6 bug validation result is invalid for "
+                    f"{function_file}: {exc}"
+                ) from exc
+            required_paths.add(bug_result_path)
+
+    summary_path = os.path.realpath(
+        os.path.join(bug_root, "summary.json")
+    )
+    if summary_path in validated_paths:
+        try:
+            with open(summary_path, "r", encoding="utf-8") as file:
+                json.load(file)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Stage 6 bug validation summary is invalid: {exc}"
+            ) from exc
+        required_paths.add(summary_path)
+
+    supplied_paths = set(validated_paths)
+    missing = sorted(required_paths - supplied_paths)
+    if missing:
+        raise RuntimeError(
+            "Stage 6 artifact list is missing required path(s): "
+            + ", ".join(missing)
+        )
+    unexpected = sorted(supplied_paths - required_paths)
+    if unexpected:
+        raise RuntimeError(
+            "Stage 6 artifact list contains unexpected path(s): "
+            + ", ".join(unexpected)
+        )
+
+    return sorted(validated_paths)
 
 
 def _get_pending_batches(batches, proj_dir):
