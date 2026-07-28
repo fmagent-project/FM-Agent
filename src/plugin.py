@@ -9,6 +9,14 @@ from types import ModuleType
 from typing import Callable, Dict, List, Optional, get_type_hints
 
 
+@dataclass(frozen=True)
+class HookContract:
+    """Required Python signature for one stage hook."""
+
+    parameter_types: tuple[object, ...]
+    return_type: object
+
+
 @dataclass
 class PluginStageConfig:
     """Configuration and resolved Python hooks for one pipeline stage."""
@@ -81,6 +89,24 @@ class PluginStageConfig:
                 )
 
         return errors
+
+
+STAGE_HOOK_CONTRACTS = {
+    "extract_functions": {
+        "replace_function": HookContract(
+            parameter_types=(list[str], str),
+            return_type=list[str],
+        ),
+        "input_function": HookContract(
+            parameter_types=(str,),
+            return_type=type(None),
+        ),
+        "output_function": HookContract(
+            parameter_types=(str,),
+            return_type=type(None),
+        ),
+    },
+}
 
 
 @dataclass
@@ -182,17 +208,20 @@ def _validate_hook_signature(
 
 
 def _bind_stage_hooks(
-    stage: PluginStageConfig, module: ModuleType
+    stage_name: str,
+    stage: PluginStageConfig,
+    module: ModuleType,
 ) -> List[str]:
-    """Resolve JSON function names and validate their interfaces."""
+    """Resolve and validate functions declared for one pipeline stage."""
     errors = []
-    hook_specs = (
-        ("replace_function", "replace_hook", [list[str], str], list[str]),
-        ("input_function", "input_hook", [str], type(None)),
-        ("output_function", "output_hook", [str], type(None)),
+    hook_contracts = STAGE_HOOK_CONTRACTS[stage_name]
+    hook_fields = (
+        ("replace_function", "replace_hook"),
+        ("input_function", "input_hook"),
+        ("output_function", "output_hook"),
     )
 
-    for function_field, hook_field, parameter_types, return_type in hook_specs:
+    for function_field, hook_field in hook_fields:
         function_name = getattr(stage, function_field)
         if function_name is None:
             continue
@@ -210,8 +239,12 @@ def _bind_stage_hooks(
             )
             continue
 
+        hook_contract = hook_contracts[function_field]
         signature_errors = _validate_hook_signature(
-            function, function_name, parameter_types, return_type
+            function,
+            function_name,
+            list(hook_contract.parameter_types),
+            hook_contract.return_type,
         )
         errors.extend(signature_errors)
         if not signature_errors:
@@ -253,7 +286,7 @@ def _validate_plugin_json_content(
         stage = PluginStageConfig.from_dict(stage_data)
         errors = stage.validated()
         if not errors:
-            errors.extend(_bind_stage_hooks(stage, module))
+            errors.extend(_bind_stage_hooks(stage_name, stage, module))
         if errors:
             for error in errors:
                 print(
