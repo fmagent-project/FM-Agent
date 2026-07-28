@@ -63,6 +63,34 @@ def _collect_phase_files(proj_dir, phase_data):
     return results
 
 
+def _normalize_included_files(included_files):
+    """Normalize paths relative to extracted_functions for membership tests."""
+    if included_files is None:
+        return None
+    return {
+        os.path.normcase(os.path.normpath(path))
+        for path in included_files
+    }
+
+
+def _filter_phase_files(phase_files, proj_dir, included_files):
+    """Restrict collected phase files to the Stage 4 canonical file list."""
+    if included_files is None:
+        return phase_files
+
+    extracted_base = os.path.join(proj_dir, "extracted_functions")
+    filtered = []
+    for file_path, module_name in phase_files:
+        relative_path = os.path.normcase(
+            os.path.normpath(
+                os.path.relpath(file_path, extracted_base)
+            )
+        )
+        if relative_path in included_files:
+            filtered.append((file_path, module_name))
+    return filtered
+
+
 # ---------------------------------------------------------------------------
 # 1.3 Assign FQNs
 # ---------------------------------------------------------------------------
@@ -638,21 +666,350 @@ def _compute_layers(phase_fqns, callees_map, callers_map):
 
 
 # ---------------------------------------------------------------------------
+# 1.6 Validate canonical output
+# ---------------------------------------------------------------------------
+
+def validate_topdown_layer_files(output_paths, work_dir, allowed_files):
+    """Validate Stage 5 outputs against the Stage 4 canonical file list."""
+    if not isinstance(output_paths, list):
+        raise RuntimeError("topdown layer outputs must be a list[str]")
+    if any(not isinstance(path, str) or not path for path in output_paths):
+        raise RuntimeError(
+            "topdown layer outputs must contain only non-empty string paths"
+        )
+
+    allowed = _normalize_included_files(allowed_files)
+    if allowed is None:
+        raise RuntimeError(
+            "topdown layer validation requires the Stage 4 file list"
+        )
+
+    work_root = os.path.realpath(work_dir)
+    extracted_root = os.path.realpath(
+        os.path.join(work_root, "extracted_functions")
+    )
+    output_root = os.path.realpath(
+        os.path.join(work_root, "spec_prompts")
+    )
+    phases_data = _load_phases(work_root)
+    phases_by_number = {
+        phase["phase"]: phase
+        for phase in phases_data.get("phases", [])
+    }
+
+    expected_by_phase = {}
+    for phase_num, phase in phases_by_number.items():
+        phase_files = _filter_phase_files(
+            _collect_phase_files(work_root, phase),
+            work_root,
+            allowed,
+        )
+        expected = {
+            os.path.normcase(
+                os.path.normpath(
+                    os.path.relpath(path, extracted_root)
+                )
+            )
+            for path, _ in phase_files
+        }
+        if expected:
+            expected_by_phase[phase_num] = expected
+
+    validated_by_phase = {}
+    seen_paths = set()
+    seen_function_files = set()
+    file_name_pattern = re.compile(
+        r"^phase_(\d+)_topdown_layers\.json$"
+    )
+    for output_path in output_paths:
+        absolute_path = os.path.realpath(output_path)
+        if absolute_path in seen_paths:
+            raise RuntimeError(
+                f"topdown layer outputs contain a duplicate path: {output_path}"
+            )
+        seen_paths.add(absolute_path)
+
+        try:
+            contained = os.path.commonpath(
+                [output_root, absolute_path]
+            ) == output_root
+        except ValueError:
+            contained = False
+        if not contained or os.path.dirname(absolute_path) != output_root:
+            raise RuntimeError(
+                f"topdown layer output is outside spec_prompts: {output_path}"
+            )
+        if not os.path.isfile(absolute_path):
+            raise RuntimeError(
+                f"topdown layer output does not exist: {output_path}"
+            )
+
+        match = file_name_pattern.fullmatch(os.path.basename(absolute_path))
+        if match is None:
+            raise RuntimeError(
+                f"invalid topdown layer filename: {output_path}"
+            )
+        phase_num = int(match.group(1))
+        if phase_num in validated_by_phase:
+            raise RuntimeError(
+                f"duplicate topdown layer output for phase {phase_num}"
+            )
+
+        try:
+            with open(absolute_path, "r") as file:
+                data = json.load(file)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"invalid topdown layer JSON '{output_path}': {exc}"
+            ) from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                f"topdown layer output for phase {phase_num} "
+                "must be a JSON object"
+            )
+
+        phase = phases_by_number.get(phase_num)
+        if phase is None:
+            raise RuntimeError(
+                f"topdown layer output references unknown phase {phase_num}"
+            )
+        if data.get("phase") != phase_num:
+            raise RuntimeError(
+                f"topdown layer phase does not match filename for phase "
+                f"{phase_num}"
+            )
+        if data.get("phase_name") != phase.get("name"):
+            raise RuntimeError(
+                f"topdown layer phase_name does not match phases.json "
+                f"for phase {phase_num}"
+            )
+
+        total_functions = data.get("total_functions")
+        total_layers = data.get("total_layers")
+        layers = data.get("layers")
+        if (
+            not isinstance(total_functions, int)
+            or isinstance(total_functions, bool)
+            or total_functions < 0
+        ):
+            raise RuntimeError(
+                f"topdown layer total_functions is invalid for phase "
+                f"{phase_num}"
+            )
+        if (
+            not isinstance(total_layers, int)
+            or isinstance(total_layers, bool)
+            or total_layers < 0
+        ):
+            raise RuntimeError(
+                f"topdown layer total_layers is invalid for phase {phase_num}"
+            )
+        if not isinstance(layers, list):
+            raise RuntimeError(
+                f"topdown layers must be a list for phase {phase_num}"
+            )
+        if total_layers != len(layers):
+            raise RuntimeError(
+                f"topdown total_layers does not match layers for phase "
+                f"{phase_num}"
+            )
+
+        actual_files = set()
+        layer_numbers = []
+        callers_key = f"phase{phase_num}_callers"
+        callees_key = f"phase{phase_num}_callees"
+        info_names_key = (
+            f"phase{phase_num}_callee_info_names_by_caller"
+        )
+        for layer in layers:
+            if not isinstance(layer, dict):
+                raise RuntimeError(
+                    f"topdown layer entry must be an object for phase "
+                    f"{phase_num}"
+                )
+            layer_num = layer.get("layer")
+            functions = layer.get("functions")
+            if (
+                not isinstance(layer_num, int)
+                or isinstance(layer_num, bool)
+                or layer_num < 0
+            ):
+                raise RuntimeError(
+                    f"topdown layer number is invalid for phase {phase_num}"
+                )
+            if not isinstance(functions, list):
+                raise RuntimeError(
+                    f"topdown layer functions must be a list for phase "
+                    f"{phase_num}"
+                )
+            if (
+                "cycle_resolution" in layer
+                and not isinstance(layer["cycle_resolution"], bool)
+            ):
+                raise RuntimeError(
+                    f"topdown cycle_resolution must be bool for phase "
+                    f"{phase_num}"
+                )
+            layer_numbers.append(layer_num)
+
+            for function in functions:
+                if not isinstance(function, dict):
+                    raise RuntimeError(
+                        f"topdown function entry must be an object for "
+                        f"phase {phase_num}"
+                    )
+                if (
+                    not isinstance(function.get("name"), str)
+                    or not function["name"]
+                    or not isinstance(function.get("file"), str)
+                    or not function["file"]
+                    or not isinstance(function.get("unit"), str)
+                ):
+                    raise RuntimeError(
+                        f"topdown function identity is invalid for phase "
+                        f"{phase_num}"
+                    )
+                for field_name in (
+                    callers_key,
+                    callees_key,
+                    "all_callees",
+                ):
+                    values = function.get(field_name)
+                    if (
+                        not isinstance(values, list)
+                        or any(not isinstance(value, str) for value in values)
+                    ):
+                        raise RuntimeError(
+                            f"topdown field '{field_name}' must be list[str] "
+                            f"for phase {phase_num}"
+                        )
+
+                info_names = function.get(info_names_key)
+                if info_names is not None:
+                    if not isinstance(info_names, dict) or any(
+                        not isinstance(caller, str)
+                        or not isinstance(names, list)
+                        or any(not isinstance(name, str) for name in names)
+                        for caller, names in info_names.items()
+                    ):
+                        raise RuntimeError(
+                            f"topdown field '{info_names_key}' is invalid "
+                            f"for phase {phase_num}"
+                        )
+
+                function_path = os.path.realpath(
+                    os.path.join(work_root, function["file"])
+                )
+                try:
+                    function_contained = os.path.commonpath(
+                        [extracted_root, function_path]
+                    ) == extracted_root
+                except ValueError:
+                    function_contained = False
+                if not function_contained or not os.path.isfile(function_path):
+                    raise RuntimeError(
+                        f"topdown function file is invalid for phase "
+                        f"{phase_num}: {function['file']}"
+                    )
+                relative_file = os.path.normcase(
+                    os.path.normpath(
+                        os.path.relpath(function_path, extracted_root)
+                    )
+                )
+                if relative_file not in allowed:
+                    raise RuntimeError(
+                        f"topdown function is outside the Stage 4 file list: "
+                        f"{function['file']}"
+                    )
+                if relative_file in actual_files:
+                    raise RuntimeError(
+                        f"topdown function is duplicated for phase "
+                        f"{phase_num}: {function['file']}"
+                    )
+                if relative_file in seen_function_files:
+                    raise RuntimeError(
+                        "topdown function is duplicated across phases: "
+                        f"{function['file']}"
+                    )
+                actual_files.add(relative_file)
+                seen_function_files.add(relative_file)
+
+        if sorted(layer_numbers) != list(range(len(layers))):
+            raise RuntimeError(
+                f"topdown layer numbers must be consecutive for phase "
+                f"{phase_num}"
+            )
+        if total_functions != len(actual_files):
+            raise RuntimeError(
+                f"topdown total_functions does not match functions for phase "
+                f"{phase_num}"
+            )
+        expected_files = expected_by_phase.get(phase_num, set())
+        if actual_files != expected_files:
+            missing = sorted(expected_files - actual_files)
+            unexpected = sorted(actual_files - expected_files)
+            details = []
+            if missing:
+                details.append("missing: " + ", ".join(missing))
+            if unexpected:
+                details.append("unexpected: " + ", ".join(unexpected))
+            raise RuntimeError(
+                f"topdown functions do not match the Stage 4 file list for "
+                f"phase {phase_num} (" + "; ".join(details) + ")"
+            )
+
+        validated_by_phase[phase_num] = absolute_path
+
+    expected_phases = set(expected_by_phase)
+    actual_phases = set(validated_by_phase)
+    if actual_phases != expected_phases:
+        missing = sorted(expected_phases - actual_phases)
+        unexpected = sorted(actual_phases - expected_phases)
+        details = []
+        if missing:
+            details.append(
+                "missing phases: " + ", ".join(map(str, missing))
+            )
+        if unexpected:
+            details.append(
+                "unexpected phases: " + ", ".join(map(str, unexpected))
+            )
+        raise RuntimeError(
+            "topdown layer output phase set is invalid ("
+            + "; ".join(details)
+            + ")"
+        )
+
+    return [
+        validated_by_phase[phase_num]
+        for phase_num in sorted(validated_by_phase)
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None):
+def generate_topdown_layers(
+    proj_dir,
+    phase_numbers=None,
+    extra_call_edges=None,
+    included_files=None,
+):
     """Generate topdown layer JSON files for the specified phases (or all phases).
 
     Args:
         proj_dir: project root directory
         phase_numbers: list of phase numbers to process, or None for all
         extra_call_edges: optional iterable of supplemental caller/callee edges
+        included_files: optional Stage 4 file list, relative to
+                        extracted_functions
 
     Returns:
         list of output file paths written
     """
     phases_data = _load_phases(proj_dir)
+    included_files = _normalize_included_files(included_files)
 
     output_dir = os.path.join(proj_dir, "spec_prompts")
     os.makedirs(output_dir, exist_ok=True)
@@ -660,7 +1017,12 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
     # Build global stem->FQN mapping across ALL phases for all_callees
     global_stem_to_fqns = defaultdict(set)
     for pi in phases_data["phases"]:
-        for filepath, _ in _collect_phase_files(proj_dir, pi):
+        phase_files = _filter_phase_files(
+            _collect_phase_files(proj_dir, pi),
+            proj_dir,
+            included_files,
+        )
+        for filepath, _ in phase_files:
             fqn = _file_to_fqn(filepath, proj_dir)
             stem = fqn.split("::")[-1]
             global_stem_to_fqns[stem].add(fqn)
@@ -675,7 +1037,11 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
             continue
 
         # 1.2 Collect files
-        phase_files = _collect_phase_files(proj_dir, phase_info)
+        phase_files = _filter_phase_files(
+            _collect_phase_files(proj_dir, phase_info),
+            proj_dir,
+            included_files,
+        )
         if not phase_files:
             logging.warning(f"Phase {phase_num} ({phase_name}): no extracted files found, skipping.")
             continue
