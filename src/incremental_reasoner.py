@@ -349,6 +349,16 @@ def _codegraph_functions_at_revision(proj_dir, revision, file_languages):
         shutil.rmtree(parent_dir, ignore_errors=True)
 
 
+class _ChangedFunctionResults(dict):
+    """Changed-function mapping plus semantic backends that could not compare."""
+
+    def __init__(self, *args, unavailable_source_backend_languages=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.unavailable_source_backend_languages = frozenset(
+            unavailable_source_backend_languages
+        )
+
+
 def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     """
     Determine which functions changed between commit old_commit_id and the current working
@@ -364,7 +374,11 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     "removed", and "modified", each a sorted list of function names. Languages
     with a registered semantic source backend use it for both revisions; other
     languages use CodeGraph when available, then the regex fallback. Files with
-    no detectable function-level change are omitted. Raises
+    no detectable function-level change are omitted. If a registered semantic
+    source backend is unavailable, that language is omitted rather than passed
+    to a less-capable extractor; its key is recorded on the returned mapping's
+    ``unavailable_source_backend_languages`` attribute so the pipeline can
+    stop before silently skipping its changed functions. Raises
     subprocess.CalledProcessError if proj_dir is not a git repository or
     old_commit_id is not a valid commit, and RuntimeError if a registered source
     backend cannot extract a changed revision.
@@ -470,6 +484,7 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     current_source_functions = {}
     baseline_source_functions = {}
     available_source_backend_languages = set()
+    unavailable_source_backend_languages = set()
     for lang_key in sorted(source_backend_languages):
         current_result = (
             extract_incremental_sources(
@@ -483,16 +498,19 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         )
         if current_result is None or baseline_result is None:
             logging.warning(
-                "Incremental source extraction is unavailable for %s; using "
-                "legacy comparison for that language.",
+                "Incremental source extraction is unavailable for %s; "
+                "function-level comparison for that language is unsafe.",
                 lang_key,
             )
+            unavailable_source_backend_languages.add(lang_key)
             continue
         current_source_functions[lang_key] = current_result
         baseline_source_functions[lang_key] = baseline_result
         available_source_backend_languages.add(lang_key)
 
-    result = {}
+    result = _ChangedFunctionResults(
+        unavailable_source_backend_languages=unavailable_source_backend_languages
+    )
     for rel_path in files:
         ext = rel_path.rsplit(".", 1)[-1] if "." in rel_path else ""
         lang_key = EXT_TO_LANG.get(ext)
@@ -507,6 +525,11 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         current_exists = os.path.exists(abs_path)
         old_exists = _path_exists_in_commit(rel_path)
         rel_key = _normalized_relative_path(proj_dir, rel_path)
+        if lang_key in unavailable_source_backend_languages:
+            # Semantic-only languages cannot safely fall back to a local regex
+            # extractor. The caller will abort the incremental pipeline after
+            # retaining other languages' comparison results.
+            continue
         uses_source_backend = lang_key in available_source_backend_languages
         use_codegraph = (
             not uses_source_backend
@@ -890,6 +913,14 @@ def run_incremental_pipeline(
         "  -> %d changed file(s): %d added, %d modified, %d removed function(s).",
         len(changed_functions), n_added, n_modified, n_removed,
     )
+    unavailable_backends = changed_functions.unavailable_source_backend_languages
+    if unavailable_backends:
+        languages = ", ".join(sorted(unavailable_backends))
+        raise RuntimeError(
+            "Cannot safely complete incremental analysis because semantic "
+            f"source extraction is unavailable for: {languages}. Install or "
+            "repair the required language backend, then retry."
+        )
 
     # 5b. Delete extracted-function files for functions (or whole source files) that were
     #     removed since old_commit_id. Re-extraction never rewrites these, so without this
