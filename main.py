@@ -7,6 +7,7 @@ from src.file_utils import (
     _write_file_names,
     _json_file_is_valid,
     _is_under_submodules,
+    validate_file_names,
 )
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
@@ -158,6 +159,7 @@ def run_pipeline(
     phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
     context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
     extract_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
+    file_list_stage = plugin_config.get_stage("collect_file_list") if plugin_config else None
     plugin_root = plugin_config.root if plugin_config else None
 
     print("[Pipeline] Stage 1/6: Generating phase plan...")
@@ -227,11 +229,104 @@ def run_pipeline(
 
     print("[Pipeline] Stage 4/6: Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
-    file_list = collect_file_names(input_dir, file_list_path)
-    if submodules:
-        file_list = _write_file_names(
-            _get_all_phase_files(phases_data, input_dir), file_list_path
-        )
+    if file_list_stage is not None and file_list_stage.type == "pass":
+        if not os.path.isfile(file_list_path):
+            raise RuntimeError(
+                "Plugin stage 'collect_file_list' type=pass requires "
+                "an existing fm_agent_file_list.json"
+            )
+        try:
+            with open(file_list_path, "r") as file:
+                existing_file_list = json.load(file)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "Plugin stage 'collect_file_list' type=pass requires "
+                f"a valid JSON file: {exc}"
+            ) from exc
+        file_list = validate_file_names(existing_file_list, input_dir)
+        _write_file_names(file_list, file_list_path)
+
+    elif file_list_stage is not None and file_list_stage.type == "replace":
+        try:
+            returned_files = file_list_stage.replace_hook(
+                os.path.abspath(input_dir),
+                os.path.abspath(phases_path),
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Plugin function '{file_list_stage.replace_function}' "
+                f"failed for collect_file_list: {exc}"
+            ) from exc
+        file_list = validate_file_names(returned_files, input_dir)
+        _write_file_names(file_list, file_list_path)
+
+    else:
+        file_list = collect_file_names(input_dir, file_list_path)
+        if submodules:
+            file_list = _write_file_names(
+                _get_all_phase_files(phases_data, input_dir), file_list_path
+            )
+
+        candidate_files = validate_file_names(file_list, input_dir)
+        if (
+            file_list_stage is not None
+            and file_list_stage.input_hook is not None
+        ):
+            try:
+                modified_files = file_list_stage.input_hook(
+                    list(candidate_files)
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Plugin function '{file_list_stage.input_function}' "
+                    f"failed for collect_file_list input: {exc}"
+                ) from exc
+            file_list = validate_file_names(
+                modified_files,
+                input_dir,
+                allowed_files=candidate_files,
+            )
+        else:
+            file_list = candidate_files
+        _write_file_names(file_list, file_list_path)
+
+        if (
+            file_list_stage is not None
+            and file_list_stage.output_hook is not None
+        ):
+            try:
+                result = file_list_stage.output_hook(
+                    os.path.abspath(file_list_path)
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Plugin function '{file_list_stage.output_function}' "
+                    f"failed for collect_file_list output: {exc}"
+                ) from exc
+            if result is not None:
+                raise RuntimeError(
+                    f"Plugin function '{file_list_stage.output_function}' "
+                    "must return None"
+                )
+            if not os.path.isfile(file_list_path):
+                raise RuntimeError(
+                    f"Plugin function '{file_list_stage.output_function}' "
+                    "must leave fm_agent_file_list.json in place"
+                )
+            try:
+                with open(file_list_path, "r") as file:
+                    modified_output = json.load(file)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    f"Plugin function '{file_list_stage.output_function}' "
+                    f"produced invalid JSON: {exc}"
+                ) from exc
+            file_list = validate_file_names(
+                modified_output,
+                input_dir,
+                allowed_files=candidate_files,
+            )
+            _write_file_names(file_list, file_list_path)
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")

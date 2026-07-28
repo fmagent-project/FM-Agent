@@ -50,6 +50,79 @@ def collect_file_names(input_dir, output_path="file_list.json"):
     return _write_file_names(file_names, output_path)
 
 
+def validate_file_names(file_names, input_dir, allowed_files=None):
+    """Validate and normalize extracted-function paths for the file list."""
+    if not isinstance(file_names, list):
+        raise RuntimeError("file list must be a list[str]")
+
+    input_root = os.path.realpath(input_dir)
+    allowed = None
+    if allowed_files is not None:
+        allowed = {
+            os.path.normcase(os.path.normpath(path))
+            for path in allowed_files
+        }
+
+    validated = []
+    seen = set()
+    for file_name in file_names:
+        if not isinstance(file_name, str) or not file_name:
+            raise RuntimeError(
+                "file list entries must be non-empty strings"
+            )
+        if os.path.isabs(file_name):
+            raise RuntimeError(
+                f"file list entry must be relative: {file_name}"
+            )
+
+        normalized = os.path.normpath(file_name)
+        if normalized in ("", ".") or normalized == os.pardir:
+            raise RuntimeError(
+                f"file list entry is invalid: {file_name}"
+            )
+        if normalized.startswith(os.pardir + os.sep):
+            raise RuntimeError(
+                f"file list entry escapes extracted_functions: {file_name}"
+            )
+        if _is_metadata_sidecar(normalized):
+            raise RuntimeError(
+                f"file list entry cannot be a metadata sidecar: {file_name}"
+            )
+
+        absolute_path = os.path.realpath(
+            os.path.join(input_root, normalized)
+        )
+        try:
+            contained = os.path.commonpath(
+                [input_root, absolute_path]
+            ) == input_root
+        except ValueError:
+            contained = False
+        if not contained:
+            raise RuntimeError(
+                f"file list entry escapes extracted_functions: {file_name}"
+            )
+        if not os.path.isfile(absolute_path):
+            raise RuntimeError(
+                f"file list entry does not exist: {file_name}"
+            )
+
+        identity = os.path.normcase(normalized)
+        if identity in seen:
+            raise RuntimeError(
+                f"file list contains a duplicate entry: {file_name}"
+            )
+        if allowed is not None and identity not in allowed:
+            raise RuntimeError(
+                f"file list entry is outside the candidate set: {file_name}"
+            )
+
+        seen.add(identity)
+        validated.append(normalized)
+
+    return sorted(validated)
+
+
 def _is_valid_spec_json(data):
     """Check that .spec.json contains exactly the supported fields."""
     if not isinstance(data, dict):
