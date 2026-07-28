@@ -148,6 +148,20 @@ STAGE_HOOK_CONTRACTS = {
             return_type=type(None),
         ),
     },
+    "generate_topdown_layers": {
+        "replace_function": HookContract(
+            parameter_types=(str, str),
+            return_type=list[str],
+        ),
+        "input_function": HookContract(
+            parameter_types=(list[str],),
+            return_type=list[str],
+        ),
+        "output_function": HookContract(
+            parameter_types=(list[str],),
+            return_type=type(None),
+        ),
+    },
 }
 
 
