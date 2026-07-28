@@ -106,6 +106,20 @@ STAGE_HOOK_CONTRACTS = {
             return_type=type(None),
         ),
     },
+    "generate_domain_context": {
+        "replace_function": HookContract(
+            parameter_types=(str, str, str),
+            return_type=list[str],
+        ),
+        "input_function": HookContract(
+            parameter_types=(str,),
+            return_type=type(None),
+        ),
+        "output_function": HookContract(
+            parameter_types=(str,),
+            return_type=type(None),
+        ),
+    },
     "extract_functions": {
         "replace_function": HookContract(
             parameter_types=(list[str], str),
