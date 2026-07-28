@@ -25,9 +25,13 @@ class PluginStageConfig:
     replace_function: Optional[str] = None
     input_function: Optional[str] = None
     output_function: Optional[str] = None
+    replace_md: Optional[str] = None
+    modify_md: Optional[str] = None
     replace_hook: Optional[Callable] = field(default=None, repr=False)
     input_hook: Optional[Callable] = field(default=None, repr=False)
     output_hook: Optional[Callable] = field(default=None, repr=False)
+    replace_md_path: Optional[Path] = field(default=None, repr=False)
+    modify_md_path: Optional[Path] = field(default=None, repr=False)
 
     @staticmethod
     def from_dict(data: dict) -> "PluginStageConfig":
@@ -36,6 +40,8 @@ class PluginStageConfig:
             replace_function=data.get("replace_function"),
             input_function=data.get("input_function"),
             output_function=data.get("output_function"),
+            replace_md=data.get("replace_md"),
+            modify_md=data.get("modify_md"),
         )
 
     def validated(self) -> List[str]:
@@ -53,42 +59,85 @@ class PluginStageConfig:
             "input_function": self.input_function,
             "output_function": self.output_function,
         }
+        markdown_fields = {
+            "replace_md": self.replace_md,
+            "modify_md": self.modify_md,
+        }
         for field_name, function_name in function_fields.items():
             if function_name is not None and (
                 not isinstance(function_name, str) or not function_name.strip()
+            ):
+                errors.append(f"'{field_name}' must be a non-empty string")
+        for field_name, markdown_path in markdown_fields.items():
+            if markdown_path is not None and (
+                not isinstance(markdown_path, str) or not markdown_path.strip()
             ):
                 errors.append(f"'{field_name}' must be a non-empty string")
 
         if errors:
             return errors
 
+        declared_fields = {
+            **function_fields,
+            **markdown_fields,
+        }
         if self.type == "pass":
             declared = [
-                name for name, value in function_fields.items() if value is not None
+                name
+                for name, value in declared_fields.items()
+                if value is not None
             ]
             if declared:
                 errors.append(
-                    "type=pass cannot declare Python functions: "
+                    "type=pass cannot declare modification fields: "
                     + ", ".join(declared)
                 )
         elif self.type == "replace":
             if not self.replace_function:
                 errors.append("type=replace requires 'replace_function'")
-            if self.input_function or self.output_function:
+            forbidden = [
+                name
+                for name in (
+                    "input_function",
+                    "output_function",
+                    "replace_md",
+                    "modify_md",
+                )
+                if getattr(self, name) is not None
+            ]
+            if forbidden:
                 errors.append(
-                    "type=replace cannot declare "
-                    "'input_function' or 'output_function'"
+                    "type=replace cannot declare modification fields: "
+                    + ", ".join(forbidden)
                 )
         elif self.type == "modify":
             if self.replace_function:
                 errors.append("type=modify cannot declare 'replace_function'")
-            if not self.input_function and not self.output_function:
+            if self.replace_md and self.modify_md:
                 errors.append(
-                    "type=modify requires at least one of "
-                    "'input_function' or 'output_function'"
+                    "'replace_md' and 'modify_md' cannot be declared together"
+                )
+            if not any(
+                (
+                    self.input_function,
+                    self.output_function,
+                    self.replace_md,
+                    self.modify_md,
+                )
+            ):
+                errors.append(
+                    "type=modify requires at least one input, output, "
+                    "or Markdown modification"
                 )
 
         return errors
+
+
+STAGE_WORKFLOW_MARKDOWN = {
+    "generate_phase_plan",
+    "generate_domain_context",
+    "generate_specs_and_verification",
+}
 
 
 STAGE_HOOK_CONTRACTS = {
@@ -168,8 +217,8 @@ STAGE_HOOK_CONTRACTS = {
             return_type=list[str],
         ),
         "input_function": HookContract(
-            parameter_types=(str,),
-            return_type=type(None),
+            parameter_types=(list[str],),
+            return_type=list[str],
         ),
         "output_function": HookContract(
             parameter_types=(list[str],),
@@ -280,7 +329,7 @@ def _validate_hook_signature(
 def _bind_stage_hooks(
     stage_name: str,
     stage: PluginStageConfig,
-    module: ModuleType,
+    module: Optional[ModuleType],
 ) -> List[str]:
     """Resolve and validate functions declared for one pipeline stage."""
     errors = []
@@ -294,6 +343,12 @@ def _bind_stage_hooks(
     for function_field, hook_field in hook_fields:
         function_name = getattr(stage, function_field)
         if function_name is None:
+            continue
+        if module is None:
+            errors.append(
+                f"function '{function_name}' declared by '{function_field}' "
+                "requires plugin.py"
+            )
             continue
 
         function = getattr(module, function_name, None)
@@ -323,8 +378,64 @@ def _bind_stage_hooks(
     return errors
 
 
+def _resolve_stage_markdown(
+    plugin_dir: Path,
+    stage_name: str,
+    stage: PluginStageConfig,
+) -> List[str]:
+    """Resolve and validate Markdown files declared for one stage."""
+    errors = []
+    for field_name, path_field in (
+        ("replace_md", "replace_md_path"),
+        ("modify_md", "modify_md_path"),
+    ):
+        configured_path = getattr(stage, field_name)
+        if configured_path is None:
+            continue
+        if stage_name not in STAGE_WORKFLOW_MARKDOWN:
+            errors.append(
+                f"stage '{stage_name}' does not support '{field_name}'"
+            )
+            continue
+
+        relative_path = Path(configured_path)
+        if relative_path.is_absolute():
+            errors.append(f"'{field_name}' must be relative to the plugin")
+            continue
+        if relative_path.suffix.lower() != ".md":
+            errors.append(f"'{field_name}' must reference a .md file")
+            continue
+
+        plugin_root = plugin_dir.resolve()
+        resolved_path = (plugin_root / relative_path).resolve()
+        try:
+            resolved_path.relative_to(plugin_root)
+        except ValueError:
+            errors.append(f"'{field_name}' escapes the plugin directory")
+            continue
+        if not resolved_path.is_file():
+            errors.append(
+                f"'{field_name}' file does not exist: {configured_path}"
+            )
+            continue
+        try:
+            resolved_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            errors.append(
+                f"'{field_name}' must be a readable UTF-8 file: {exc}"
+            )
+            continue
+
+        setattr(stage, path_field, resolved_path)
+
+    return errors
+
+
 def _validate_plugin_json_content(
-    plugin_dir: Path, name: str, data: dict, module: ModuleType
+    plugin_dir: Path,
+    name: str,
+    data: dict,
+    module: Optional[ModuleType],
 ) -> Optional[PluginConfig]:
     """Validate parsed plugin.json and bind its declared Python functions."""
     plugin_name = data.get("name", "")
@@ -355,6 +466,12 @@ def _validate_plugin_json_content(
 
         stage = PluginStageConfig.from_dict(stage_data)
         errors = stage.validated()
+        if stage_name not in STAGE_HOOK_CONTRACTS:
+            errors.append(f"unknown stage '{stage_name}'")
+        if not errors:
+            errors.extend(
+                _resolve_stage_markdown(plugin_dir, stage_name, stage)
+            )
         if not errors:
             errors.extend(_bind_stage_hooks(stage_name, stage, module))
         if errors:
@@ -400,9 +517,28 @@ def validate_plugin(plugin_dir: Path) -> Optional[PluginConfig]:
         print(f"Invalid plugin '{name}': plugin.json must be a JSON object")
         return None
 
-    module = _load_plugin_module(plugin_dir, name)
-    if module is None:
-        return None
+    stages_data = data.get("stages", {})
+    function_fields = (
+        "replace_function",
+        "input_function",
+        "output_function",
+    )
+    declares_python = (
+        isinstance(stages_data, dict)
+        and any(
+            isinstance(stage_data, dict)
+            and any(
+                stage_data.get(field_name) is not None
+                for field_name in function_fields
+            )
+            for stage_data in stages_data.values()
+        )
+    )
+    module = None
+    if declares_python:
+        module = _load_plugin_module(plugin_dir, name)
+        if module is None:
+            return None
 
     return _validate_plugin_json_content(plugin_dir, name, data, module)
 
