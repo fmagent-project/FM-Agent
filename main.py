@@ -10,7 +10,10 @@ from src.file_utils import (
     validate_file_names,
 )
 from src.extract import run_extraction, EXT_TO_LANG
-from src.generate_topdown_layers import generate_topdown_layers
+from src.generate_topdown_layers import (
+    generate_topdown_layers,
+    validate_topdown_layer_files,
+)
 from src.spec_generation_and_verification import run_spec_generation_and_verification
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
@@ -38,6 +41,7 @@ import time
 import shutil
 import logging
 import contextlib
+import tempfile
 
 
 def _clean_previous_run(work_dir):
@@ -160,6 +164,7 @@ def run_pipeline(
     context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
     extract_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
     file_list_stage = plugin_config.get_stage("collect_file_list") if plugin_config else None
+    topdown_stage = plugin_config.get_stage("generate_topdown_layers") if plugin_config else None
     plugin_root = plugin_config.root if plugin_config else None
 
     print("[Pipeline] Stage 1/6: Generating phase plan...")
@@ -334,7 +339,117 @@ def run_pipeline(
 
     # --- Stage 5: Generate topdown layers ---
     print("[Pipeline] Stage 5/6: Generating topdown layers...")
-    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+    if topdown_stage is not None and topdown_stage.type == "pass":
+        existing_outputs = [
+            os.path.join(spec_prompts_dir, file_name)
+            for file_name in os.listdir(spec_prompts_dir)
+            if (
+                file_name.startswith("phase_")
+                and file_name.endswith("_topdown_layers.json")
+            )
+        ]
+        try:
+            topdown_outputs = validate_topdown_layer_files(
+                existing_outputs,
+                work_dir,
+                file_list,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "Plugin stage 'generate_topdown_layers' type=pass "
+                f"requires valid existing outputs: {exc}"
+            ) from exc
+
+    elif topdown_stage is not None and topdown_stage.type == "replace":
+        with tempfile.TemporaryDirectory(
+            prefix="fm-agent-plugin-topdown-"
+        ) as temp_dir:
+            try:
+                returned_paths = topdown_stage.replace_hook(
+                    os.path.abspath(work_dir),
+                    temp_dir,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Plugin function '{topdown_stage.replace_function}' "
+                    f"failed for generate_topdown_layers: {exc}"
+                ) from exc
+
+            validated_temporary = validate_topdown_layer_files(
+                returned_paths,
+                work_dir,
+                file_list,
+                output_root=temp_dir,
+            )
+            topdown_outputs = []
+            for source_path in validated_temporary:
+                destination = os.path.join(
+                    spec_prompts_dir,
+                    os.path.basename(source_path),
+                )
+                shutil.copy2(source_path, destination)
+                topdown_outputs.append(destination)
+
+        topdown_outputs = validate_topdown_layer_files(
+            topdown_outputs,
+            work_dir,
+            file_list,
+        )
+
+    else:
+        effective_file_list = file_list
+        if (
+            topdown_stage is not None
+            and topdown_stage.input_hook is not None
+        ):
+            try:
+                modified_files = topdown_stage.input_hook(
+                    list(file_list)
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Plugin function '{topdown_stage.input_function}' "
+                    f"failed for generate_topdown_layers input: {exc}"
+                ) from exc
+            effective_file_list = validate_file_names(
+                modified_files,
+                input_dir,
+            )
+
+        topdown_outputs = generate_topdown_layers(
+            work_dir,
+            extra_call_edges=extra_call_edges,
+            included_files=effective_file_list,
+        )
+        topdown_outputs = validate_topdown_layer_files(
+            topdown_outputs,
+            work_dir,
+            effective_file_list,
+        )
+
+        if (
+            topdown_stage is not None
+            and topdown_stage.output_hook is not None
+        ):
+            try:
+                result = topdown_stage.output_hook(
+                    list(topdown_outputs)
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Plugin function '{topdown_stage.output_function}' "
+                    f"failed for generate_topdown_layers output: {exc}"
+                ) from exc
+            if result is not None:
+                raise RuntimeError(
+                    f"Plugin function '{topdown_stage.output_function}' "
+                    "must return None"
+                )
+            topdown_outputs = validate_topdown_layer_files(
+                topdown_outputs,
+                work_dir,
+                effective_file_list,
+            )
 
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
     if only_spec:

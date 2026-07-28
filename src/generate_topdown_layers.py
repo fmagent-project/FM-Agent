@@ -669,7 +669,12 @@ def _compute_layers(phase_fqns, callees_map, callers_map):
 # 1.6 Validate canonical output
 # ---------------------------------------------------------------------------
 
-def validate_topdown_layer_files(output_paths, work_dir, allowed_files):
+def validate_topdown_layer_files(
+    output_paths,
+    work_dir,
+    allowed_files,
+    output_root=None,
+):
     """Validate Stage 5 outputs against the Stage 4 canonical file list."""
     if not isinstance(output_paths, list):
         raise RuntimeError("topdown layer outputs must be a list[str]")
@@ -688,9 +693,9 @@ def validate_topdown_layer_files(output_paths, work_dir, allowed_files):
     extracted_root = os.path.realpath(
         os.path.join(work_root, "extracted_functions")
     )
-    output_root = os.path.realpath(
-        os.path.join(work_root, "spec_prompts")
-    )
+    if output_root is None:
+        output_root = os.path.join(work_root, "spec_prompts")
+    output_root = os.path.realpath(output_root)
     phases_data = _load_phases(work_root)
     phases_by_number = {
         phase["phase"]: phase
