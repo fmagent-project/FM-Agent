@@ -25,9 +25,11 @@ from .file_utils import (
     _json_file_is_valid,
     _iter_project_source_files,
     _is_under_submodules,
+    validate_file_names,
 )
 from .opencode_trace import run_opencode_traced
 from .llm_client import build_llm_cli_command
+from .plugin import apply_stage_workflow_markdown
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -729,6 +731,76 @@ def _collect_project_source_files(proj_dir, submodules=None):
     return files
 
 
+def _phases_cover_source_files(phases_json, source_files):
+    """Return whether phases.json lists every selected Stage 1 input file."""
+    try:
+        with open(phases_json, "r") as file:
+            data = json.load(file)
+    except (OSError, ValueError):
+        return False
+
+    listed = {
+        source_file.replace("\\", "/")
+        for phase in data.get("phases", [])
+        for module in phase.get("modules", [])
+        for source_file in module.get("source_files", [])
+    }
+    expected = {
+        source_file.replace("\\", "/")
+        for source_file in source_files
+    }
+    return bool(listed) and expected.issubset(listed)
+
+
+def _filter_phases_to_source_files(phases_json, allowed_files):
+    """Remove source files outside the selected Stage 1 input scope."""
+    allowed = {
+        source_file.replace("\\", "/")
+        for source_file in allowed_files
+    }
+    with open(phases_json, "r") as file:
+        data = json.load(file)
+
+    removed = []
+    for phase in data.get("phases", []):
+        for module in phase.get("modules", []):
+            source_files = module.get("source_files", [])
+            kept = [
+                source_file
+                for source_file in source_files
+                if source_file.replace("\\", "/") in allowed
+            ]
+            removed.extend(
+                source_file
+                for source_file in source_files
+                if source_file.replace("\\", "/") not in allowed
+            )
+            module["source_files"] = kept
+
+    with open(phases_json, "w") as file:
+        json.dump(data, file, indent=2)
+    return sorted(removed)
+
+
+def _phase_sources_outside_scope(phases_json, allowed_files):
+    """Return phase-plan source files outside the Stage 1 input scope."""
+    allowed = {
+        source_file.replace("\\", "/")
+        for source_file in allowed_files
+    }
+    with open(phases_json, "r") as file:
+        data = json.load(file)
+    return sorted(
+        {
+            source_file
+            for phase in data.get("phases", [])
+            for module in phase.get("modules", [])
+            for source_file in module.get("source_files", [])
+            if source_file.replace("\\", "/") not in allowed
+        }
+    )
+
+
 def _phases_cover_current_sources(phases_json, proj_dir, submodules=None):
     """Return whether phases.json is valid for the current source-file set."""
     try:
@@ -1005,6 +1077,42 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             _run_phase_plan_replacement(proj_dir, work_dir, plugin_stage)
             return
 
+    effective_source_files = None
+    phase_input_manifest = None
+    if (
+        plugin_stage is not None
+        and plugin_stage.type == "modify"
+        and plugin_stage.input_hook is not None
+    ):
+        candidate_sources = sorted(
+            _iter_project_source_files(proj_dir, submodules)
+        )
+        try:
+            modified_sources = plugin_stage.input_hook(
+                list(candidate_sources)
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.input_function}' failed "
+                f"for generate_phase_plan input: {exc}"
+            ) from exc
+        effective_source_files = validate_file_names(
+            modified_sources,
+            proj_dir,
+            allowed_files=candidate_sources,
+        )
+        if not effective_source_files:
+            raise RuntimeError(
+                f"Plugin function '{plugin_stage.input_function}' must "
+                "return at least one Stage 1 source file"
+            )
+        phase_input_manifest = os.path.join(
+            work_dir,
+            "phase_plan_input_files.json",
+        )
+        with open(phase_input_manifest, "w") as file:
+            json.dump(effective_source_files, file, indent=2)
+
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
 
     phase_plan_errors = (
@@ -1012,7 +1120,17 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         if os.path.exists(phases_json)
         else []
     )
-    _resume_skip = resume and _phase_plan_complete(work_dir)
+    _resume_skip = (
+        resume
+        and _phase_plan_complete(work_dir)
+        and (
+            effective_source_files is None
+            or _phases_cover_source_files(
+                phases_json,
+                effective_source_files,
+            )
+        )
+    )
     if _resume_skip:
         print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
@@ -1023,16 +1141,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         "workflow_generate_phases.md",
     )
     workflow_path = os.path.join(work_dir, "workflow_generate_phases.md")
-    if (
-        plugin_stage is not None
-        and plugin_stage.type == "modify"
-        and plugin_stage.input_hook is not None
-    ):
-        _run_phase_plan_modify_hook(
-            plugin_stage.input_hook,
-            plugin_stage.input_function,
-            workflow_path,
-        )
+    apply_stage_workflow_markdown(plugin_stage, workflow_path)
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -1052,18 +1161,31 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             f"subdirectories: {allowed}. Do NOT include files outside these "
             "subdirectories in phases.json."
         )
+    input_scope_reminder = ""
+    if effective_source_files is not None:
+        input_scope_reminder = (
+            "IMPORTANT: Only analyze source files listed in "
+            "fm_agent/phase_plan_input_files.json. Do not add any other "
+            "source files to phases.json."
+        )
 
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         if _resume_skip:
             break
         if attempt == 1 and not resume:
-            prompt = f"Follow the instructions in the attached file. {fm_reminder} {submodule_reminder}"
+            prompt = (
+                "Follow the instructions in the attached file. "
+                f"{fm_reminder} {submodule_reminder} "
+                f"{input_scope_reminder}"
+            )
         else:
             prompt = ("A previous attempt was interrupted and may have already produced some of the "
                       "required output files. Follow the instructions in the attached file, but FIRST "
                       "check the current progress in fm_agent/ (e.g. phases.json). Keep any existing valid "
                       "output as-is and only generate the files that are missing or incomplete — do NOT "
-                      f"regenerate or overwrite work that is already done. {fm_reminder} {submodule_reminder}")
+                      f"regenerate or overwrite work that is already done. "
+                      f"{fm_reminder} {submodule_reminder} "
+                      f"{input_scope_reminder}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
         if phase_plan_errors:
@@ -1092,10 +1214,15 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                 work_dir=work_dir,
                 command=command,
                 stage="generate_phases_json",
-                input_files=[
-                    "fm_agent/workflow_generate_phases.md",
-                    *list_staged_domain_knowledge_relpaths(work_dir),
-                ],
+                input_files=(
+                    ["fm_agent/workflow_generate_phases.md"]
+                    + (
+                        ["fm_agent/phase_plan_input_files.json"]
+                        if phase_input_manifest is not None
+                        else []
+                    )
+                    + list_staged_domain_knowledge_relpaths(work_dir)
+                ),
                 output_files=[
                     "fm_agent/phases.json",
                 ],
@@ -1113,7 +1240,12 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
 
         phase_plan_ready = False
         if not phase_plan_errors:
-            if submodules:
+            if effective_source_files is not None:
+                phase_plan_ready = _phases_cover_source_files(
+                    phases_json,
+                    effective_source_files,
+                )
+            elif submodules:
                 phase_plan_ready = _phases_cover_current_sources(
                     phases_json, proj_dir, submodules
                 )
@@ -1155,6 +1287,18 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             )
             sys.exit(1)
 
+    if effective_source_files is not None:
+        removed_sources = _filter_phases_to_source_files(
+            phases_json,
+            effective_source_files,
+        )
+        if removed_sources:
+            logging.info(
+                "Removed %d source file(s) outside the Stage 1 plugin "
+                "input scope.",
+                len(removed_sources),
+            )
+
     if (
         plugin_stage is not None
         and plugin_stage.type == "modify"
@@ -1176,6 +1320,17 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                 "produced an invalid phases.json: "
                 + "; ".join(phase_plan_errors)
             )
+        if effective_source_files is not None:
+            outside_scope = _phase_sources_outside_scope(
+                phases_json,
+                effective_source_files,
+            )
+            if outside_scope:
+                raise RuntimeError(
+                    f"Plugin function '{plugin_stage.output_function}' "
+                    "added source files outside the Stage 1 input scope: "
+                    + ", ".join(outside_scope)
+                )
 
 
 def _post_process_phases(proj_dir, work_dir, required_source_files=None,
