@@ -100,7 +100,7 @@ class ElpClient:
     """Minimal synchronous LSP client for an ``elp server`` subprocess."""
 
     def __init__(self, proj_dir: str):
-        self.proj_dir = os.path.abspath(proj_dir)
+        self.proj_dir = str(Path(proj_dir).resolve())
         self.root_uri = Path(self.proj_dir).as_uri()
         self.timeout = _timeout_seconds()
         self._messages: queue.Queue = queue.Queue()
@@ -109,6 +109,11 @@ class ElpClient:
         self._write_lock = threading.Lock()
         self._proc = None
         self._reader = None
+
+    @staticmethod
+    def document_uri(path: str) -> str:
+        """Return the canonical URI used consistently for every ELP request."""
+        return Path(path).resolve().as_uri()
 
     def __enter__(self):
         self._proc = subprocess.Popen(
@@ -249,7 +254,7 @@ class ElpClient:
             "textDocument/didOpen",
             {
                 "textDocument": {
-                    "uri": document.as_uri(),
+                    "uri": self.document_uri(path),
                     "languageId": "erlang",
                     "version": 1,
                     "text": source,
@@ -493,7 +498,7 @@ def _functions_from_document_symbols(path: str, source: str, symbols: list[dict]
         symbol_range = _symbol_range(symbol)
         if not symbol_range:
             continue
-        symbol_uri = _symbol_uri(symbol, Path(path).as_uri())
+        symbol_uri = _symbol_uri(symbol, ElpClient.document_uri(path))
         try:
             function_id = _function_id(symbol_uri, symbol.get("name", ""))
         except ValueError:
@@ -522,21 +527,28 @@ def extract_functions_from_sources(
         return {}
 
     paths = list(normalized_sources)
+    resolved_paths = {path: str(Path(path).resolve()) for path in paths}
     try:
         with ElpClient(proj_dir) as client:
             first_path = paths[0]
-            client.initialize(first_path, normalized_sources[first_path])
+            client.initialize(
+                resolved_paths[first_path], normalized_sources[first_path]
+            )
             for path in paths[1:]:
-                client.open_document(path, normalized_sources[path])
+                client.open_document(resolved_paths[path], normalized_sources[path])
 
             result = {}
             for path in paths:
                 symbols = client.request(
                     "textDocument/documentSymbol",
-                    {"textDocument": {"uri": Path(path).as_uri()}},
+                    {
+                        "textDocument": {
+                            "uri": client.document_uri(resolved_paths[path])
+                        }
+                    },
                 ) or []
                 result[path] = _functions_from_document_symbols(
-                    path, normalized_sources[path], symbols
+                    resolved_paths[path], normalized_sources[path], symbols
                 )
             return result
     except Exception as exc:
@@ -575,7 +587,7 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
             source = sources[path]
             source_index = _SourceIndex.build(source)
             caller_module = _caller_module(path)
-            uri = Path(path).as_uri()
+            uri = client.document_uri(path)
             symbols = client.request(
                 "textDocument/documentSymbol", {"textDocument": {"uri": uri}}
             ) or []

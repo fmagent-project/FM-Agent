@@ -469,6 +469,7 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
 
     current_source_functions = {}
     baseline_source_functions = {}
+    available_source_backend_languages = set()
     for lang_key in sorted(source_backend_languages):
         current_result = (
             extract_incremental_sources(
@@ -481,13 +482,15 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
             ) if baseline_source_batches[lang_key] else {}
         )
         if current_result is None or baseline_result is None:
-            raise RuntimeError(
-                f"Incremental source extraction failed for {lang_key}; analysis "
-                "was aborted to avoid treating unavailable results as removed "
-                "functions."
+            logging.warning(
+                "Incremental source extraction is unavailable for %s; using "
+                "legacy comparison for that language.",
+                lang_key,
             )
+            continue
         current_source_functions[lang_key] = current_result
         baseline_source_functions[lang_key] = baseline_result
+        available_source_backend_languages.add(lang_key)
 
     result = {}
     for rel_path in files:
@@ -504,7 +507,7 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         current_exists = os.path.exists(abs_path)
         old_exists = _path_exists_in_commit(rel_path)
         rel_key = _normalized_relative_path(proj_dir, rel_path)
-        uses_source_backend = lang_key in source_backend_languages
+        uses_source_backend = lang_key in available_source_backend_languages
         use_codegraph = (
             not uses_source_backend
             and current_codegraph is not None
