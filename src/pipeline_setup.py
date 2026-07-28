@@ -7,6 +7,7 @@ It is imported by `main.py` (the full pipeline) and by `src/incremental_reasoner
 """
 
 import os
+import copy
 import glob
 import sys
 import json
@@ -1403,6 +1404,74 @@ def _run_domain_context_modify_hook(hook, function_name, artifact_path):
         )
 
 
+def _run_domain_context_input_hook(
+    hook,
+    function_name,
+    phases_path,
+):
+    """Transform phases.json through a validated structured Stage 2 input."""
+    with open(phases_path, "r", encoding="utf-8") as file:
+        original_phases = json.load(file)
+
+    try:
+        modified_phases = hook(copy.deepcopy(original_phases))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Plugin function '{function_name}' failed for "
+            f"generate_domain_context input: {exc}"
+        ) from exc
+    if not isinstance(modified_phases, dict):
+        raise RuntimeError(
+            f"Plugin function '{function_name}' must return dict"
+        )
+
+    temporary_path = phases_path + ".plugin-input.tmp"
+    try:
+        with open(temporary_path, "w", encoding="utf-8") as file:
+            json.dump(modified_phases, file, indent=2)
+        phase_plan_errors = _phase_plan_schema_errors(temporary_path)
+        if phase_plan_errors:
+            raise RuntimeError(
+                f"Plugin function '{function_name}' produced an invalid "
+                "Stage 2 phases input: "
+                + "; ".join(phase_plan_errors)
+            )
+        changed = modified_phases != original_phases
+        if changed:
+            os.replace(temporary_path, phases_path)
+        return changed
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Plugin function '{function_name}' produced an invalid "
+            f"Stage 2 phases input: {exc}"
+        ) from exc
+    finally:
+        try:
+            os.remove(temporary_path)
+        except OSError:
+            pass
+
+
+def _clear_domain_context_outputs(work_dir):
+    """Remove canonical Stage 2 outputs after its input changes."""
+    domain_dir = os.path.join(
+        work_dir,
+        "spec_prompts",
+        "domain_context",
+    )
+    if not os.path.isdir(domain_dir):
+        return
+    for file_name in os.listdir(domain_dir):
+        if (
+            file_name == "engine_overview.txt"
+            or (
+                file_name.startswith("phase_")
+                and file_name.endswith("_types.txt")
+            )
+        ):
+            os.remove(os.path.join(domain_dir, file_name))
+
+
 def _required_domain_context_files(phases_path):
     """Return the canonical domain-context filenames for one phase plan."""
     with open(phases_path, "r") as file:
@@ -1547,6 +1616,22 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
             )
             return
 
+    phases_path = os.path.join(work_dir, "phases.json")
+    input_changed = False
+    if (
+        plugin_stage is not None
+        and plugin_stage.type == "modify"
+        and plugin_stage.input_hook is not None
+    ):
+        input_changed = _run_domain_context_input_hook(
+            plugin_stage.input_hook,
+            plugin_stage.input_function,
+            phases_path,
+        )
+        if input_changed:
+            _clear_domain_context_outputs(work_dir)
+            resume = False
+
     _resume_skip = resume and _domain_context_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 2/6: RESUME — domain context files found, skipping domain context generation.")
@@ -1561,16 +1646,7 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False,
         work_dir,
         "workflow_generate_domain_context.md",
     )
-    if (
-        plugin_stage is not None
-        and plugin_stage.type == "modify"
-        and plugin_stage.input_hook is not None
-    ):
-        _run_domain_context_modify_hook(
-            plugin_stage.input_hook,
-            plugin_stage.input_function,
-            workflow_path,
-        )
+    apply_stage_workflow_markdown(plugin_stage, workflow_path)
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "

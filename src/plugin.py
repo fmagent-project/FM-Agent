@@ -161,8 +161,8 @@ STAGE_HOOK_CONTRACTS = {
             return_type=list[str],
         ),
         "input_function": HookContract(
-            parameter_types=(str,),
-            return_type=type(None),
+            parameter_types=(dict,),
+            return_type=dict,
         ),
         "output_function": HookContract(
             parameter_types=(str,),
