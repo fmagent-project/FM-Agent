@@ -763,8 +763,26 @@ if __name__ == "__main__":
     except ValueError as exc:
         parser.error(str(exc))
 
+    entry_plugin_active = (
+        plugin_config is not None
+        and plugin_config.name == "entry_reasoning"
+    )
+    if args.end_func and args.entry_func is None:
+        parser.error("--end-func requires --entry-func.")
     if submodules and args.entry_func is not None:
         parser.error("--submodule cannot be combined with --entry-func.")
+    if args.incremental and args.entry_func is not None:
+        parser.error("--incremental cannot be combined with --entry-func.")
+    if args.isolate and args.entry_func is not None:
+        parser.error("--isolate cannot be combined with --entry-func.")
+    if args.entry_func is not None and not entry_plugin_active:
+        parser.error(
+            "--entry-func requires --plugin entry_reasoning."
+        )
+    if entry_plugin_active and args.entry_func is None:
+        parser.error(
+            "--plugin entry_reasoning requires --entry-func."
+        )
 
     if args.only_spec and args.incremental:
         parser.error(
@@ -796,14 +814,11 @@ if __name__ == "__main__":
 
     start_time = time.time()
 
-    # Entry-point mode: reason only about the call graph reachable from a specific
-    # entry function. Runs directly against the project directory (no worktree
-    # isolation or incremental diffing).
+    # Entry-point plugins currently run only in direct full mode. Entry selection
+    # itself is implemented by the plugin's normal Stage 1 and Stage 4 hooks.
     if args.entry_func is not None:
-        run_entry_pipeline(
+        run_pipeline(
             proj_dir,
-            entry_func=args.entry_func,
-            end_funcs=args.end_func,
             resume=resume,
             domain_knowledge_files=domain_knowledge_files,
             one_phase=args.one_phase,
