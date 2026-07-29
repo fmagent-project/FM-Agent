@@ -665,14 +665,19 @@ def _function_spans(filepath, lang_key, proj_dir=None):
     return spans, raw_lines
 
 
-def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
+def run_extraction(
+    proj_dir, work_dir=None, force=False, verbose=False,
+    return_unavailable_backends=False,
+):
     """Run function extraction on a project directory.
 
     Reads phases.json from work_dir (or proj_dir), extracts functions from
     source files in proj_dir, writes them to work_dir/extracted_functions/,
     and validates the output.
 
-    Returns (written_count, skipped_count).
+    Returns (written_count, skipped_count). When
+    ``return_unavailable_backends`` is true, appends the languages whose
+    semantic full-project extraction backend failed.
     """
     if work_dir is None:
         work_dir = proj_dir
@@ -683,7 +688,13 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     with open(phases_path, 'r') as f:
         phases_data = json.load(f)
 
-    registry_funcs, registry_langs = batch_extract_all(proj_dir)
+    registry_result = batch_extract_all(
+        proj_dir, include_unavailable=return_unavailable_backends
+    )
+    if return_unavailable_backends:
+        registry_funcs, registry_langs, unavailable_backends = registry_result
+    else:
+        registry_funcs, registry_langs = registry_result
     registry_funcs = {
         os.path.normcase(os.path.normpath(path)): funcs
         for path, funcs in registry_funcs.items()
@@ -772,7 +783,10 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
 
     if written == 0 and skipped == 0:
         logging.error("Nothing was extracted — check phases.json source_files paths.")
-        return written, skipped
+        return (
+            (written, skipped, unavailable_backends)
+            if return_unavailable_backends else (written, skipped)
+        )
 
     # --- Validation (Step 2) ---
     validation_failures = _validate_extraction(output_base, registry_langs=registry_langs)
@@ -791,7 +805,10 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         if verbose:
             print("Validation passed: every extracted file contains exactly one function.")
 
-    return written, skipped
+    return (
+        (written, skipped, unavailable_backends)
+        if return_unavailable_backends else (written, skipped)
+    )
 
 
 def _validate_extraction(extracted_dir, registry_langs=None):
