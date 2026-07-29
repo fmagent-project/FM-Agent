@@ -100,7 +100,7 @@ class ElpClient:
     """Minimal synchronous LSP client for an ``elp server`` subprocess."""
 
     def __init__(self, proj_dir: str):
-        self.proj_dir = os.path.abspath(proj_dir)
+        self.proj_dir = str(Path(proj_dir).resolve())
         self.root_uri = Path(self.proj_dir).as_uri()
         self.timeout = _timeout_seconds()
         self._messages: queue.Queue = queue.Queue()
@@ -109,6 +109,11 @@ class ElpClient:
         self._write_lock = threading.Lock()
         self._proc = None
         self._reader = None
+
+    @staticmethod
+    def document_uri(path: str) -> str:
+        """Return the canonical URI used consistently for every ELP request."""
+        return Path(path).resolve().as_uri()
 
     def __enter__(self):
         self._proc = subprocess.Popen(
@@ -249,7 +254,7 @@ class ElpClient:
             "textDocument/didOpen",
             {
                 "textDocument": {
-                    "uri": document.as_uri(),
+                    "uri": self.document_uri(path),
                     "languageId": "erlang",
                     "version": 1,
                     "text": source,
@@ -482,6 +487,84 @@ def _symbol_line_span(symbol_range: dict) -> tuple[int, int]:
     return start, end
 
 
+def _functions_from_document_symbols(path: str, source: str, symbols: list[dict]):
+    """Convert ELP document symbols into this project's function representation."""
+    source_index = _SourceIndex.build(source)
+    functions = []
+    seen = set()
+    for symbol in symbols:
+        if symbol.get("kind") != _FUNCTION_KIND:
+            continue
+        symbol_range = _symbol_range(symbol)
+        if not symbol_range:
+            continue
+        symbol_uri = _symbol_uri(symbol, ElpClient.document_uri(path))
+        try:
+            function_id = _function_id(symbol_uri, symbol.get("name", ""))
+        except ValueError:
+            logging.warning("Ignoring malformed ELP function symbol: %r", symbol)
+            continue
+        if function_id in seen:
+            continue
+        seen.add(function_id)
+        functions.append((function_id, source_index.source_for_range(symbol_range)))
+    return functions
+
+
+def extract_functions_from_sources(
+    proj_dir: str, sources: dict[str, str]
+) -> dict[str, list[tuple[str, str]]] | None:
+    """Extract several in-memory Erlang documents through one ELP session.
+
+    ``None`` denotes an unavailable or failed ELP session. It is deliberately
+    different from a successful empty function list, so callers never mistake
+    tooling failure for removal of every function in a source file.
+    """
+    normalized_sources = {
+        os.path.abspath(path): source for path, source in sources.items()
+    }
+    if not normalized_sources:
+        return {}
+
+    paths = list(normalized_sources)
+    resolved_paths = {path: str(Path(path).resolve()) for path in paths}
+    try:
+        with ElpClient(proj_dir) as client:
+            first_path = paths[0]
+            client.initialize(
+                resolved_paths[first_path], normalized_sources[first_path]
+            )
+            for path in paths[1:]:
+                client.open_document(resolved_paths[path], normalized_sources[path])
+
+            result = {}
+            for path in paths:
+                symbols = client.request(
+                    "textDocument/documentSymbol",
+                    {
+                        "textDocument": {
+                            "uri": client.document_uri(resolved_paths[path])
+                        }
+                    },
+                ) or []
+                result[path] = _functions_from_document_symbols(
+                    resolved_paths[path], normalized_sources[path], symbols
+                )
+            return result
+    except Exception as exc:
+        logging.warning("ELP Erlang extraction unavailable for %s: %s", proj_dir, exc)
+        return None
+
+
+def extract_functions_from_source(
+    proj_dir: str, filepath: str, source: str
+) -> list[tuple[str, str]] | None:
+    """Extract one in-memory Erlang document, preserving ELP failure state."""
+    path = os.path.abspath(filepath)
+    result = extract_functions_from_sources(proj_dir, {path: source})
+    return None if result is None else result[path]
+
+
 def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
     proj_dir = os.path.abspath(proj_dir)
     files = _erlang_files(proj_dir)
@@ -504,7 +587,7 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
             source = sources[path]
             source_index = _SourceIndex.build(source)
             caller_module = _caller_module(path)
-            uri = Path(path).as_uri()
+            uri = client.document_uri(path)
             symbols = client.request(
                 "textDocument/documentSymbol", {"textDocument": {"uri": uri}}
             ) or []
@@ -601,17 +684,23 @@ def _analyze_project(proj_dir: str) -> ErlangAnalysis:
     return analysis
 
 
-def _analysis_or_empty(proj_dir: str) -> ErlangAnalysis:
+def _analysis_or_none(proj_dir: str) -> ErlangAnalysis | None:
     try:
         return _analyze_project(proj_dir)
     except Exception as exc:
         logging.warning("ELP Erlang analysis unavailable for %s: %s", proj_dir, exc)
-        return ErlangAnalysis(functions={}, edges={})
+        return None
 
 
-def batch_extract(proj_dir: str) -> dict:
-    """Return ``{abs_filepath: [(function_id, body)]}`` for Erlang files."""
-    return _analysis_or_empty(proj_dir).functions
+def _analysis_or_empty(proj_dir: str) -> ErlangAnalysis:
+    analysis = _analysis_or_none(proj_dir)
+    return analysis or ErlangAnalysis(functions={}, edges={})
+
+
+def batch_extract(proj_dir: str) -> dict | None:
+    """Return extracted functions, or ``None`` when the ELP session failed."""
+    analysis = _analysis_or_none(proj_dir)
+    return None if analysis is None else analysis.functions
 
 
 def function_spans(proj_dir: str, filepath: str):

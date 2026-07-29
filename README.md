@@ -84,7 +84,25 @@ The following macOS environment has been tested with the install script:
 
 Set the LLM API key used by both FM-Agent and OpenCode. We recommend [OpenRouter](https://openrouter.ai/): FM-Agent invokes LLMs concurrently, and OpenRouter is generous on RPM (requests per minute) and TPM (tokens per minute) — but any compatible provider works.
 
-Put your API key in `.env` (gitignored, loaded automatically via python-dotenv); every other setting has a committed default in `fm-agent.toml`. Copy the template:
+The easiest setup path is the interactive wizard:
+
+```bash
+uv run python src/configure_llm.py
+```
+
+It previews the changes, backs up existing files, updates the active FM-Agent
+TOML file, stores
+the API key in `.env` plus a private local key file for standalone OpenCode, and syncs the matching OpenCode provider entry in
+`~/.config/opencode/opencode.json` (or the platform-equivalent config path)
+without requiring you to hand-edit JSON.
+If you choose `auto`, `codex-cli`, or `claude-cli` in the wizard, it updates the
+backend in the active FM-Agent TOML file and clears stale non-secret LLM
+overrides from the project `.env`. Any model and effort values found there are
+first retained in the TOML; no API key or OpenCode provider setup is needed.
+
+If you prefer to edit files manually, put your API key in `.env` (gitignored,
+loaded automatically via python-dotenv); every other setting has a committed
+default in `fm-agent.toml`. Copy the template:
 
 ```bash
 cp .env.example .env
@@ -96,7 +114,30 @@ cp .env.example .env
 LLM_API_KEY=your-api-key-here
 ```
 
-Non-secret settings — model, endpoint, backend, provider, etc. — live in `fm-agent.toml` under `[llm]`. Edit them there for a permanent change. To override without touching the committed file — e.g. on a git clone you update with `git pull` — set the matching environment variable in `.env` or your shell. Precedence is `env > .env > fm-agent.toml`; because `.env` wins over the toml, a stale value there overrides a later toml edit, so check `.env` first if a change isn't taking effect. See [docs/config_llm.md](docs/config_llm.md) for details and OpenCode provider setup.
+Non-secret settings — model, endpoint, backend, provider, etc. — live in
+`fm-agent.toml` under `[llm]`. Edit them there for a permanent change. To
+override without touching the committed file — e.g. on a git clone you update
+with `git pull` — set the matching environment variable in `.env` or your
+shell. Precedence is `env > .env > fm-agent.toml`; because `.env` wins over the
+toml, a stale value there overrides a later toml edit, so check `.env` first if
+a change isn't taking effect. The wizard removes the common legacy LLM override
+keys from `.env` for you. See [docs/config_llm.md](docs/config_llm.md) for
+details and OpenCode provider setup. The wizard also warns about LLM variables
+already exported by the launching shell; use its displayed `unset` command
+before starting FM-Agent if the saved configuration should take effect.
+
+To change just one non-secret LLM setting without manually editing the file,
+use the configuration command. For example, select the local Codex CLI backend:
+
+```bash
+uv run python src/configure_llm.py set --backend codex-cli
+```
+
+It previews and backs up `fm-agent.toml`, then changes only the setting(s) you
+pass. The command also supports `--name`, `--provider`, `--base-url`,
+`--effort`, and `--api-style`; see [docs/config_llm.md](docs/config_llm.md) for
+the complete syntax. It warns when a legacy `.env` value would still override a
+requested TOML setting.
 
 Then, all of the above dependencies (except Ubuntu and Python) can be installed via the provided script:
 
@@ -112,7 +153,14 @@ Erlang support is optional because its toolchain is not needed for other languag
 
 The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
 
-FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so you do not need to hand-edit `~/.config/opencode/opencode.json` for the model or key (see [docs/config_llm.md](docs/config_llm.md)).
+FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so
+you do not need to hand-edit `~/.config/opencode/opencode.json` for the model
+or key. The configuration wizard above can still keep that file synchronized for
+standalone OpenCode usage by writing the API key to a private provider-specific
+key file under your user state/config directory (see [docs/config_llm.md](docs/config_llm.md)).
+If you already use `OPENCODE_CONFIG`, the wizard updates that file instead of
+the default global path. It also honors `OPENCODE_CONFIG_DIR`, using that
+directory's `opencode.jsonc` when present or its `opencode.json` otherwise.
 
 **Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready. If project-specific validation instructions are needed, provide them with `--bug-validator`; otherwise, the agent will decide how to execute the tests.
 
