@@ -722,6 +722,10 @@ if __name__ == "__main__":
                 print(f"{name:<30} {plugin.version:<12} {stage_names}")
         sys.exit(0)
 
+    # Preserve the legacy entry CLI by routing it through the plugin implementation.
+    if args.entry_func is not None and args.plugin is None:
+        args.plugin = "entry_reasoning"
+
     plugin_config = None
     if args.plugin:
         if not args.proj_dir:
