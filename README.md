@@ -218,7 +218,7 @@ uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--entry-func FQN] [
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 | `--plugin NAME`             | Enable a plugin from `plugins/` for this run. |
-| `--entry-func FQN`          | Entry function for the `entry_reasoning` plugin. Requires `--plugin entry_reasoning`. |
+| `--entry-func FQN`          | Analyze from this entry function. Automatically enables `entry_reasoning` when `--plugin` is omitted. |
 | `--end-func FQN [FQN ...]`  | Optional terminal functions for the `entry_reasoning` plugin, supplied as a space-separated list. |
 | `--list-plugin`             | List valid plugins from `plugins/` and exit; `proj_dir` is not required. |
 
@@ -234,8 +234,16 @@ For multi-stage plugin configuration, pass/replace/modify modes, workflow
 Markdown hooks, and exact Python contracts, see
 [Plugin Development](docs/plugins.md).
 
-To scope a full run to call paths reachable from one entry function, enable
-the bundled `entry_reasoning` plugin:
+To scope a full run to call paths reachable from one entry function, use:
+
+```bash
+uv run python main.py /path/to/project \
+  --entry-func "main-py::application_entry"
+```
+
+For backward compatibility, `--entry-func` automatically enables the bundled
+`entry_reasoning` plugin when `--plugin` is omitted. The command above is
+equivalent to explicitly passing `--plugin entry_reasoning`:
 
 ```bash
 uv run python main.py /path/to/project \
@@ -247,7 +255,6 @@ Optionally provide one or more terminal functions:
 
 ```bash
 uv run python main.py /path/to/project \
-  --plugin entry_reasoning \
   --entry-func "main-py::application_entry" \
   --end-func "services::statistics-py::calculate_total"
 ```

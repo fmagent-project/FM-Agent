@@ -167,7 +167,7 @@ uv run python main.py <proj_dir> [--resume] [--plugin NAME] [--entry-func FQN] [
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 | `--plugin NAME` | 为本次运行启用 `plugins/` 目录中的插件。 |
-| `--entry-func FQN` | 为 `entry_reasoning` 插件指定入口函数。必须配合 `--plugin entry_reasoning` 使用。 |
+| `--entry-func FQN` | 从该入口函数开始分析；未指定 `--plugin` 时会自动启用 `entry_reasoning`。 |
 | `--end-func FQN [FQN ...]` | 为 `entry_reasoning` 插件指定可选终止函数，以空格分隔的列表传入。 |
 | `--list-plugin` | 列出 `plugins/` 目录中的有效插件并退出；不需要提供 `proj_dir`。 |
 
@@ -182,8 +182,16 @@ uv run python main.py --list-plugin
 多 Stage 插件配置、Pass/Replace/Modify 模式、工作流 Markdown Hook 和
 准确的 Python 接口请参阅[插件开发文档](docs/plugins_zh.md)。
 
-如需把一次全量运行限制到从某个入口函数可达的调用路径，可启用内置
-`entry_reasoning` 插件：
+如需把一次全量运行限制到从某个入口函数可达的调用路径，可使用：
+
+```bash
+uv run python main.py /path/to/project \
+  --entry-func "main-py::application_entry"
+```
+
+为了兼容旧版命令，未指定 `--plugin` 时，`--entry-func` 会自动启用内置
+`entry_reasoning` 插件。上面的命令等价于显式传入
+`--plugin entry_reasoning`：
 
 ```bash
 uv run python main.py /path/to/project \
@@ -195,7 +203,6 @@ uv run python main.py /path/to/project \
 
 ```bash
 uv run python main.py /path/to/project \
-  --plugin entry_reasoning \
   --entry-func "main-py::application_entry" \
   --end-func "services::statistics-py::calculate_total"
 ```

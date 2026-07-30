@@ -264,15 +264,17 @@ Stage 6 规约与验证结果
 
 ```bash
 uv run python main.py /path/to/project \
-  --plugin entry_reasoning \
   --entry-func "main-py::application_entry"
 ```
+
+为了兼容旧版命令，未指定 `--plugin` 时，`--entry-func` 会自动启用内置
+`entry_reasoning` 插件。显式传入 `--plugin entry_reasoning` 与其等价，
+并且仍然受支持。
 
 也可以指定一个或多个终止函数：
 
 ```bash
 uv run python main.py /path/to/project \
-  --plugin entry_reasoning \
   --entry-func "main-py::application_entry" \
   --end-func "services::statistics-py::calculate_total"
 ```

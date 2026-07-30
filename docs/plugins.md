@@ -284,15 +284,17 @@ call paths reachable from one entry function:
 
 ```bash
 uv run python main.py /path/to/project \
-  --plugin entry_reasoning \
   --entry-func "main-py::application_entry"
 ```
+
+For backward compatibility, `--entry-func` automatically activates the
+bundled `entry_reasoning` plugin when `--plugin` is omitted. Passing
+`--plugin entry_reasoning` explicitly is equivalent and remains supported.
 
 Optionally stop selection at one or more terminal functions:
 
 ```bash
 uv run python main.py /path/to/project \
-  --plugin entry_reasoning \
   --entry-func "main-py::application_entry" \
   --end-func "services::statistics-py::calculate_total"
 ```
