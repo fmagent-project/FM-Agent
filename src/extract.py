@@ -805,7 +805,8 @@ def _run_replace_extraction(
 
 
 def run_extraction(
-    proj_dir, work_dir=None, force=False, verbose=False, plugin_stage=None
+    proj_dir, work_dir=None, force=False, verbose=False, plugin_stage=None,
+    return_unavailable_backends=False,
 ):
     """Run function extraction on a project directory.
 
@@ -813,7 +814,9 @@ def run_extraction(
     source files in proj_dir, writes them to work_dir/extracted_functions/,
     and validates the output.
 
-    Returns (written_count, skipped_count).
+    Returns (written_count, skipped_count). When
+    ``return_unavailable_backends`` is true, appends the languages whose
+    semantic full-project extraction backend failed.
     """
     if work_dir is None:
         work_dir = proj_dir
@@ -870,6 +873,7 @@ def run_extraction(
                 "extracted function files"
             )
         registry_langs = set()
+        unavailable_backends = set()
 
     elif plugin_stage is not None and plugin_stage.type == "replace":
         written, skipped = _run_replace_extraction(
@@ -880,10 +884,23 @@ def run_extraction(
             verbose=verbose,
         )
         registry_langs = set()
+        unavailable_backends = set()
 
     else:
         with _plugin_input_project(proj_dir, sources, plugin_stage) as source_root:
-            registry_funcs, registry_langs = batch_extract_all(source_root)
+            registry_result = batch_extract_all(
+                source_root,
+                include_unavailable=return_unavailable_backends,
+            )
+            if return_unavailable_backends:
+                (
+                    registry_funcs,
+                    registry_langs,
+                    unavailable_backends,
+                ) = registry_result
+            else:
+                registry_funcs, registry_langs = registry_result
+                unavailable_backends = set()
             registry_funcs = {
                 os.path.normcase(os.path.normpath(path)): funcs
                 for path, funcs in registry_funcs.items()
@@ -951,7 +968,10 @@ def run_extraction(
 
     if written == 0 and skipped == 0:
         logging.error("Nothing was extracted — check phases.json source_files paths.")
-        return written, skipped
+        return (
+            (written, skipped, unavailable_backends)
+            if return_unavailable_backends else (written, skipped)
+        )
 
     # --- Validation (Step 2) ---
     validation_failures = _validate_extraction(output_base, registry_langs=registry_langs)
@@ -970,7 +990,10 @@ def run_extraction(
         if verbose:
             print("Validation passed: every extracted file contains exactly one function.")
 
-    return written, skipped
+    return (
+        (written, skipped, unavailable_backends)
+        if return_unavailable_backends else (written, skipped)
+    )
 
 
 def _validate_extraction(extracted_dir, registry_langs=None):
