@@ -1,5 +1,6 @@
 import re
 from config import *
+from .languages.registry import split_blocks_for_function
 from .prompts import _generate_block_post_condition, _check_post_implies_spec
 
 
@@ -83,6 +84,10 @@ def _split_into_blocks_braced(func, language):
     """
     Split function body into blocks respecting syntactic boundaries.
     """
+
+    syntax_blocks = split_blocks_for_function(func, language, GRANULARITY)
+    if syntax_blocks is not None:
+        return syntax_blocks
 
     python_like = {"python"}
 
