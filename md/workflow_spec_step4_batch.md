@@ -12,17 +12,31 @@ You are given a single batch prompt file path in the prompt. Your ONLY job is to
 4. For EACH function listed in the batch prompt:
    a. Read the extracted function file
    b. If layer > 0, read earlier-layer caller specs mentioned in the batch prompt
-   c. Generate a behavioral spec and write it to `<function-file>.spec.json` in the same directory
-   d. Generate callee expectations and write them to `<function-file>.info.json` in the same directory
+    c. Generate a behavioral spec and write it to `<function-file>.spec.json` — the filename MUST include the source extension (see Spec Format below)
+    d. Generate callee expectations and write them to `<function-file>.info.json` — the filename MUST include the source extension (see Spec Format below)
    e. Do NOT modify the original function source file
 
 ---
 
 ## Spec Format
 
-For each extracted function file (for example, `calculate_average.py`), write TWO
-separate JSON files in the SAME directory. Do NOT modify the original function
-source file.
+For each extracted function file, write TWO separate JSON files in the SAME
+directory. Do NOT modify the original function source file.
+
+**CRITICAL — filename rule:** The output filename MUST be **exactly** the
+function file name **including its source extension**, with `.spec.json` or
+`.info.json` appended. The source extension (.rs, .cpp, .py, .c, etc.) is
+part of the filename and MUST NOT be removed, changed, or normalized. The
+same naming rule applies to both `.spec.json` and `.info.json`.
+
+**Examples:**
+
+| Function file | Spec output | Info output |
+|---|---|---|
+| `Preprocessor::preprocess_source.rs` | `Preprocessor::preprocess_source.rs.spec.json` | `Preprocessor::preprocess_source.rs.info.json` |
+| `calculate_average.py` | `calculate_average.py.spec.json` | `calculate_average.py.info.json` |
+| `LocalStorage::Flush.cpp` | `LocalStorage::Flush.cpp.spec.json` | `LocalStorage::Flush.cpp.info.json` |
+| `src/lib/parser.c` | `src/lib/parser.c.spec.json` | `src/lib/parser.c.info.json` |
 
 **`<function-file>.spec.json`** — the function's own behavioral specification:
 

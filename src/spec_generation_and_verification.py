@@ -11,7 +11,7 @@ import time
 
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
-from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready
+from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready, normalize_spec_filenames
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
@@ -253,6 +253,50 @@ def run_spec_generation_and_verification(
                             future.result()
                         except Exception as exc:
                             logging.error(f"Spec generation task failed unexpectedly: {exc}")
+
+                changed = normalize_spec_filenames(
+                    [os.path.join(input_dir, rel) for rel in layer_files]
+                )
+
+                if changed and not only_spec:
+                    incomplete = _get_incomplete_verification_files(
+                        layer_files,
+                        input_dir,
+                        output_dir,
+                        work_dir,
+                    )
+
+                    ready_to_verify = [
+                        rel
+                        for rel in incomplete
+                        if is_file_ready(os.path.join(input_dir, rel))
+                    ]
+
+                    unready_count = len(incomplete) - len(ready_to_verify)
+                    if unready_count:
+                        logging.warning(
+                            "Skipping verification for %d file(s) that are not ready; they will be retried.",
+                            unready_count,
+                        )
+
+                    if ready_to_verify:
+                        logging.info(
+                            "Running verification for %d normalized file(s).",
+                            len(ready_to_verify),
+                        )
+
+                        newly_processed = streaming_reasoner(
+                            input_dir,
+                            output_dir,
+                            file_list=ready_to_verify,
+                            proj_dir=proj_dir,
+                            work_dir=work_dir,
+                            spec_procs=None,
+                            already_processed=all_processed | layer_processed,
+                            resume=resume,
+                            bug_validator_path=bug_validator_path,
+                        )
+                        layer_processed.update(newly_processed)
 
                 # Check if any files in this layer received specs
                 specs_generated = sum(

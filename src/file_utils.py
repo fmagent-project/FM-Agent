@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import re
@@ -94,6 +95,83 @@ def is_file_ready(file_path):
         return False
 
     return _is_valid_spec_json(spec) and _is_valid_info_json(info)
+
+
+def _is_valid_sidecar_file(path):
+    """Return True if *path* is a sidecar JSON file with valid FM-Agent schema."""
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if path.endswith(".spec.json"):
+        return _is_valid_spec_json(data)
+    if path.endswith(".info.json"):
+        return _is_valid_info_json(data)
+    return False
+
+
+def normalize_spec_filenames(function_files):
+    """Fix sidecar filenames where the LLM dropped the source extension.
+
+    For each function file ``foo.rs`` the pipeline expects sidecars
+    ``foo.rs.spec.json`` and ``foo.rs.info.json``. Some LLMs instead
+    produce ``foo.spec.json`` and ``foo.info.json``.
+
+    When the mapping is unambiguous, this function renames or replaces
+    those files so they match the expected filenames.
+
+    Raises:
+        RuntimeError: If a bare sidecar could belong to multiple source files.
+
+    Returns:
+        bool: True if any sidecar filename was renamed or replaced.
+    """
+    if not function_files:
+        return False
+
+    changed = False
+
+    base_map = {}
+    for func_path in function_files:
+        base = os.path.splitext(func_path)[0]
+        base_map.setdefault(base, []).append(func_path)
+
+    for func_path in function_files:
+        base = os.path.splitext(func_path)[0]
+        candidates = base_map[base]
+
+        if len(candidates) > 1:
+            for suffix in (".spec.json", ".info.json"):
+                alt = f"{base}{suffix}"
+                expected = f"{func_path}{suffix}"
+                if os.path.isfile(alt) and not _is_valid_sidecar_file(expected):
+                    raise RuntimeError(
+                        f"Ambiguous sidecar filename: {alt} could belong to "
+                        f"multiple source files: {candidates}"
+                    )
+
+    for func_path in function_files:
+        base = os.path.splitext(func_path)[0]
+
+        for suffix, expected in (
+            (".spec.json", f"{func_path}.spec.json"),
+            (".info.json", f"{func_path}.info.json"),
+        ):
+            if _is_valid_sidecar_file(expected):
+                continue
+
+            alt = f"{base}{suffix}"
+            if not os.path.isfile(alt):
+                continue
+
+            logging.info("Normalized sidecar filename: %s -> %s", alt, expected)
+            os.replace(alt, expected)
+            changed = True
+
+    return changed
 
 
 # Directories that typically contain test code
