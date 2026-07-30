@@ -1,7 +1,14 @@
 import config
 from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL
 from .parser import parse_input_function
-from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
+from .reasoner import (
+    reasoner,
+    wp_reasoner,
+    _parse_spec_conditions,
+    _sanitize_strings,
+    _collect_callee_wps,
+    _format_callee_wps,
+)
 from .file_utils import is_file_ready
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
 from .llm_client import build_llm_cli_command
@@ -72,6 +79,7 @@ def streaming_reasoner(
     already_processed=None,
     resume=False,
     bug_validator_path=None,
+    reasoning_direction="topdown",
 ):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
     if work_dir is None:
@@ -110,6 +118,17 @@ def streaming_reasoner(
     logging.info(f"Watching {input_dir} for ready files (poll every {poll_interval}s)...")
     completed_count = 0
 
+    # WP cache: fqn -> wp_string. Maintained only in bottomup mode so that
+    # callees' WPs are available when analyzing their callers.
+    wp_cache = {} if reasoning_direction == "bottomup" else None
+    # Load callees_map from bottomup layers JSON for WP propagation
+    callees_map = None
+    phase_fqns = None
+    if reasoning_direction == "bottomup" and work_dir:
+        callees_map, phase_fqns = _load_callees_from_layers(work_dir)
+        if callees_map:
+            logging.info(f"Loaded {len(callees_map)} callee entries from bottomup layers for WP propagation")
+
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             reasoning_futures = {}
@@ -137,7 +156,9 @@ def streaming_reasoner(
                         submitted.add(file_path)
                         language = EXT_TO_LANG.get(ext, "C")
                         future = executor.submit(
-                            _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume
+                            _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume,
+                            reasoning_direction=reasoning_direction, wp_cache=wp_cache,
+                            callees_map=callees_map, phase_fqns=phase_fqns,
                         )
                         reasoning_futures[future] = file_path
                         logging.info(f"Submitted: {file_path}")
@@ -265,7 +286,41 @@ def streaming_reasoner(
     return processed
 
 
-def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False):
+def _load_callees_from_layers(work_dir):
+    """Load a global callees_map from all bottomup_layers.json files.
+
+    Used by WP reasoning to look up a function's callees for WP propagation.
+    Returns (callees_map, phase_fqns) where callees_map maps fqn -> set(callee_fqn).
+    """
+    from pathlib import Path
+    callees_map = {}
+    phase_fqns = set()
+    spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
+    if not os.path.isdir(spec_prompts_dir):
+        return callees_map, phase_fqns
+    for json_path in sorted(Path(spec_prompts_dir).glob("phase_*_bottomup_layers.json")):
+        try:
+            with open(json_path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        for layer in data.get("layers", []):
+            for func_entry in layer.get("functions", []):
+                fqn = func_entry["name"]
+                phase_fqns.add(fqn)
+                # Collect callees from phase-specific and all_callees fields
+                callees = set()
+                for key, val in func_entry.items():
+                    if key.endswith("_callees") or key == "all_callees":
+                        if isinstance(val, list):
+                            callees.update(val)
+                callees_map[fqn] = callees
+    return callees_map, phase_fqns
+
+
+def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False,
+                        reasoning_direction="topdown", wp_cache=None,
+                        callees_map=None, phase_fqns=None):
     """Verify a single file and write the result JSON."""
     # Skip if resuming and a valid result already exists
     rel = os.path.relpath(file_path, input_dir)
@@ -299,26 +354,47 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
         domain_knowledge = load_staged_domain_knowledge_text(work_dir) if work_dir else ""
         if domain_knowledge:
             knowledge = f"{knowledge}\n\n{domain_knowledge}" if knowledge else domain_knowledge
-        result = reasoner(func, spec, knowledge, language, trace_context=trace_context)
 
-        if "passes the verification" in result:
+        if reasoning_direction == "bottomup":
+            # Inject callee WP info for more precise backward analysis
+            enhanced_info = knowledge
+            if wp_cache is not None and callees_map is not None and phase_fqns is not None:
+                fqn = trace_context["function_id"] if trace_context else None
+                if fqn:
+                    callee_wps = _collect_callee_wps(fqn, phase_fqns, wp_cache, callees_map)
+                    callee_wp_text = _format_callee_wps(callee_wps)
+                    if callee_wp_text:
+                        enhanced_info = f"{knowledge}\n\n{callee_wp_text}" if knowledge else callee_wp_text
+            result, entry_wp = wp_reasoner(func, spec, enhanced_info, language, trace_context=trace_context)
+            # Cache the actual WP for upward propagation to callers
+            if wp_cache is not None and trace_context:
+                fqn = trace_context.get("function_id")
+                if fqn and entry_wp:
+                    wp_cache[fqn] = entry_wp
+        else:
+            result = reasoner(func, spec, knowledge, language, trace_context=trace_context)
+
+        if "passes" in result and "verification" in result:
             output = {"function": file_path, "verdict": "MATCH", "gaps": None}
         elif result.startswith("Failed to "):
             output = {"function": file_path, "verdict": "ERROR", "gaps": None, "error": result}
         else:
             stmts = post_cond = reason_text = ""
+            # Handle both SP ("Post-condition:") and WP ("Weakest pre-condition:") formats
             stmts_match = re.search(
-                r"Statements triggering the violation:\n(.*?)\n\nPost-condition:", result, re.DOTALL
+                r"Statements triggering the violation:\n(.*?)\n\n(?:Post-condition|Weakest pre-condition):",
+                result, re.DOTALL
             )
-            post_match = re.search(
-                r"Post-condition:\n(.*?)\n\nReason for violation:", result, re.DOTALL
+            cond_match = re.search(
+                r"(?:Post-condition|Weakest pre-condition):\n(.*?)\n\nReason for violation:",
+                result, re.DOTALL
             )
             reason_match = re.search(r"Reason for violation:\n(.*)", result, re.DOTALL)
 
             if stmts_match:
                 stmts = stmts_match.group(1).strip()
-            if post_match:
-                post_cond = post_match.group(1).strip()
+            if cond_match:
+                post_cond = cond_match.group(1).strip()
             if reason_match:
                 reason_text = reason_match.group(1).strip()
 

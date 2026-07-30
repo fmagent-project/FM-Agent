@@ -255,6 +255,7 @@ def run_entry_pipeline(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    reasoning_direction=None,
 ):
     """Run the entry-point-scoped reasoning pipeline.
 
@@ -317,6 +318,7 @@ def run_entry_pipeline(
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            reasoning_direction=reasoning_direction,
         )
     finally:
         clear_test_file_exemptions()
@@ -467,6 +469,7 @@ def _run_entry_pipeline_inner(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    reasoning_direction=None,
 ):
     """Body of run_entry_pipeline; runs with the entry source file exempted."""
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
@@ -516,6 +519,7 @@ def _run_entry_pipeline_inner(
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            reasoning_direction=reasoning_direction,
         )
     finally:
         # 4. Copy the generated fm_agent/ back into proj_dir, then discard the

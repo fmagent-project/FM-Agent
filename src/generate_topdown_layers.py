@@ -638,8 +638,107 @@ def _compute_layers(phase_fqns, callees_map, callers_map):
 
 
 # ---------------------------------------------------------------------------
-# Main entry point
+# Bottom-up layer computation (for WP reasoning)
 # ---------------------------------------------------------------------------
+
+def _compute_bottomup_layers(phase_fqns, callees_map, callers_map):
+    """Compute bottom-up topological layers: Layer 0 = leaf functions (no callees).
+
+    Mirrors _compute_layers(), but the readiness condition is flipped:
+    - _compute_layers: a function is ready when all its *callers* are assigned
+      (entry functions first, leaves last)
+    - _compute_bottomup_layers: a function is ready when all its *callees* are
+      assigned (leaf functions first, entry functions last)
+
+    This ensures that when analyzing a caller in WP mode, all its callees'
+    weakest pre-conditions have already been computed and can be propagated
+    upward via wp_cache.
+    """
+    phase_set = set(phase_fqns)
+    remaining = set(phase_set)
+    assigned = {}
+    layers = []
+
+    while remaining:
+        # Find functions whose all same-phase callees are already assigned
+        ready = set()
+        for fqn in remaining:
+            phase_callees = callees_map.get(fqn, set()) & phase_set
+            unassigned_callees = phase_callees - set(assigned.keys())
+            if not unassigned_callees:
+                ready.add(fqn)
+
+        if ready:
+            layer_idx = len(layers)
+            for fqn in ready:
+                assigned[fqn] = layer_idx
+            layers.append({"layer": layer_idx, "functions": sorted(ready),
+                          "cycle_resolution": False})
+            remaining -= ready
+        else:
+            # Cycle detected — use Tarjan's SCC on the callee graph
+            # Build subgraph of remaining functions using callee edges
+            sub_edges = {}
+            for fqn in remaining:
+                sub_edges[fqn] = callees_map.get(fqn, set()) & remaining
+
+            sccs = _tarjan_scc(remaining, sub_edges)
+
+            # Build SCC DAG based on callee edges
+            fqn_to_scc = {}
+            for i, scc in enumerate(sccs):
+                for fqn in scc:
+                    fqn_to_scc[fqn] = i
+
+            scc_callees = defaultdict(set)  # scc_idx -> set of scc_idx it calls
+            for fqn in remaining:
+                scc_i = fqn_to_scc[fqn]
+                for callee_fqn in callees_map.get(fqn, set()) & remaining:
+                    scc_j = fqn_to_scc[callee_fqn]
+                    if scc_i != scc_j:
+                        scc_callees[scc_i].add(scc_j)
+
+            # Topological sort: callee SCCs first (leaves before roots)
+            scc_assigned = {}
+            scc_remaining = set(range(len(sccs)))
+
+            while scc_remaining:
+                scc_ready = set()
+                for scc_idx in scc_remaining:
+                    unassigned_scc_callees = scc_callees.get(scc_idx, set()) - set(scc_assigned.keys())
+                    if not unassigned_scc_callees:
+                        scc_ready.add(scc_idx)
+
+                if not scc_ready:
+                    # Degenerate: assign all remaining to the same layer
+                    layer_idx = len(layers)
+                    all_fqns = set()
+                    for scc_idx in scc_remaining:
+                        all_fqns.update(sccs[scc_idx])
+                    for fqn in all_fqns:
+                        assigned[fqn] = layer_idx
+                    layers.append({"layer": layer_idx, "functions": sorted(all_fqns),
+                                  "cycle_resolution": True})
+                    remaining -= all_fqns
+                    break
+
+                layer_idx = len(layers)
+                layer_fqns = set()
+                is_cycle = False
+                for scc_idx in scc_ready:
+                    scc_assigned[scc_idx] = layer_idx
+                    layer_fqns.update(sccs[scc_idx])
+                    if len(sccs[scc_idx]) > 1:
+                        is_cycle = True
+
+                for fqn in layer_fqns:
+                    assigned[fqn] = layer_idx
+                layers.append({"layer": layer_idx, "functions": sorted(layer_fqns),
+                              "cycle_resolution": is_cycle})
+                remaining -= layer_fqns
+                scc_remaining -= scc_ready
+
+    return layers
 
 def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None):
     """Generate topdown layer JSON files for the specified phases (or all phases).
@@ -758,5 +857,123 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
 
         output_files.append(out_path)
         print(f"[TopdownLayers] Phase {phase_num} ({phase_name}): {total_functions} functions, {total_layers} layers -> {os.path.relpath(out_path, proj_dir)}")
+
+    return output_files
+
+
+def generate_bottomup_layers(proj_dir, phase_numbers=None, extra_call_edges=None):
+    """Generate bottom-up layer JSON files for the specified phases (or all phases).
+
+    Mirrors generate_topdown_layers(), but uses _compute_bottomup_layers() which
+    orders leaf functions (no callees) first and entry functions last. This is
+    the layering used by WP (weakest precondition) reasoning: when analyzing a
+    caller, all its callees' WPs are already computed and can be propagated.
+
+    Output files: phase_XX_bottomup_layers.json (same structure as topdown, but
+    with reversed layer order).
+    """
+    phases_data = _load_phases(proj_dir)
+
+    output_dir = os.path.join(proj_dir, "spec_prompts")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Build global stem->FQN mapping across ALL phases for all_callees
+    global_stem_to_fqns = defaultdict(set)
+    for pi in phases_data["phases"]:
+        for filepath, _ in _collect_phase_files(proj_dir, pi):
+            fqn = _file_to_fqn(filepath, proj_dir)
+            stem = fqn.split("::")[-1]
+            global_stem_to_fqns[stem].add(fqn)
+
+    output_files = []
+
+    for phase_info in phases_data["phases"]:
+        phase_num = phase_info["phase"]
+        phase_name = phase_info["name"]
+
+        if phase_numbers and phase_num not in phase_numbers:
+            continue
+
+        phase_files = _collect_phase_files(proj_dir, phase_info)
+        if not phase_files:
+            logging.warning(f"Phase {phase_num} ({phase_name}): no extracted files found, skipping.")
+            continue
+
+        (
+            callees_map,
+            callers_map,
+            all_callees_map,
+            file_map,
+            module_map,
+            edge_aliases_map,
+        ) = _build_call_graph(
+            phase_files, proj_dir, global_stem_to_fqns, extra_call_edges=extra_call_edges
+        )
+        phase_fqns = set(file_map.keys())
+
+        # Compute bottom-up topological layers (callees first, callers last)
+        layers = _compute_bottomup_layers(phase_fqns, callees_map, callers_map)
+
+        # Build phase-specific key names (same as topdown for compatibility)
+        phase_callers_key = f"phase{phase_num}_callers"
+        phase_callees_key = f"phase{phase_num}_callees"
+        phase_info_names_key = f"phase{phase_num}_callee_info_names_by_caller"
+
+        total_functions = len(phase_fqns)
+        total_layers = len(layers)
+
+        output_layers = []
+        for layer_info in layers:
+            layer_dict = {
+                "layer": layer_info["layer"],
+            }
+            if layer_info["cycle_resolution"]:
+                layer_dict["cycle_resolution"] = True
+
+            func_entries = []
+            for fqn in layer_info["functions"]:
+                filepath = file_map[fqn]
+                rel_path = os.path.relpath(filepath, proj_dir)
+                unit = module_map.get(fqn, "")
+
+                phase_callers = sorted(callers_map.get(fqn, set()) & phase_fqns)
+                phase_callees = sorted(callees_map.get(fqn, set()) & phase_fqns)
+                all_callees = sorted(all_callees_map.get(fqn, set()))
+
+                entry = {
+                    "name": fqn,
+                    "file": rel_path,
+                    "unit": unit,
+                    phase_callers_key: phase_callers,
+                    phase_callees_key: phase_callees,
+                    "all_callees": all_callees,
+                }
+                info_names_by_caller = {
+                    caller: sorted(info_names)
+                    for caller, info_names in edge_aliases_map.get(fqn, {}).items()
+                    if caller in phase_fqns and info_names
+                }
+                if info_names_by_caller:
+                    entry[phase_info_names_key] = info_names_by_caller
+                func_entries.append(entry)
+
+            layer_dict["functions"] = func_entries
+            output_layers.append(layer_dict)
+
+        output = {
+            "phase": phase_num,
+            "phase_name": phase_name,
+            "total_functions": total_functions,
+            "total_layers": total_layers,
+            "layers": output_layers,
+            "direction": "bottomup",
+        }
+
+        out_path = os.path.join(output_dir, f"phase_{phase_num:02d}_bottomup_layers.json")
+        with open(out_path, "w") as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
+
+        output_files.append(out_path)
+        print(f"[BottomupLayers] Phase {phase_num} ({phase_name}): {total_functions} functions, {total_layers} layers -> {os.path.relpath(out_path, proj_dir)}")
 
     return output_files

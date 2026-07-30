@@ -9,7 +9,7 @@ from src.file_utils import (
     _is_under_submodules,
 )
 from src.extract import run_extraction, EXT_TO_LANG
-from src.generate_topdown_layers import generate_topdown_layers
+from src.generate_topdown_layers import generate_topdown_layers, generate_bottomup_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
@@ -116,6 +116,7 @@ def run_pipeline(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    reasoning_direction=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -131,6 +132,11 @@ def run_pipeline(
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     extra_call_edges = load_call_edges(extra_call_edges_path)
+
+    # Resolve reasoning direction: CLI arg > config (fm-agent.toml/.env) > default "topdown"
+    if reasoning_direction is None:
+        from config import REASONING_DIRECTION as _cfg_direction
+        reasoning_direction = _cfg_direction or "topdown"
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -230,9 +236,13 @@ def run_pipeline(
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
         return
 
-    # --- Stage 5: Generate topdown layers ---
-    print("[Pipeline] Stage 5/6: Generating topdown layers...")
-    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+    # --- Stage 5: Generate layers (direction-aware) ---
+    if reasoning_direction == "bottomup":
+        print("[Pipeline] Stage 5/6: Generating bottom-up layers (WP reasoning)...")
+        generate_bottomup_layers(work_dir, extra_call_edges=extra_call_edges)
+    else:
+        print("[Pipeline] Stage 5/6: Generating topdown layers...")
+        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
 
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
     if only_spec:
@@ -251,6 +261,7 @@ def run_pipeline(
         extra_call_edges=extra_call_edges,
         only_spec=only_spec,
         bug_validator_path=bug_validator_path,
+        reasoning_direction=reasoning_direction,
     )
 
     # Print confirmed bug count (skipped in only-spec mode, which runs no
@@ -369,6 +380,16 @@ if __name__ == "__main__":
         default=None,
         help="load and activate the named plugin from the plugins/ directory.",
     )
+    parser.add_argument(
+        "--reasoning-direction",
+        choices=["topdown", "bottomup"],
+        default=None,
+        help="reasoning direction: 'topdown' (strongest postcondition, forward, default) "
+        "or 'bottomup' (weakest precondition, backward). "
+        "WP derives the minimal pre-condition from the spec's post-condition, "
+        "finding complementary bug classes to SP. "
+        "Defaults to fm-agent.toml [runtime] reasoning_direction.",
+    )
     args = parser.parse_args()
 
     if args.list_plugin:
@@ -458,6 +479,7 @@ if __name__ == "__main__":
             only_spec=args.only_spec,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            reasoning_direction=args.reasoning_direction,
         )
         end_time = time.time()
         logging.info(f"Total time: {end_time - start_time:.2f} seconds")
@@ -518,6 +540,7 @@ if __name__ == "__main__":
                     extra_call_edges_path=extra_call_edges_path,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
+                    reasoning_direction=args.reasoning_direction,
                 )
             else:
                 run_pipeline(
@@ -530,6 +553,7 @@ if __name__ == "__main__":
                     only_spec=args.only_spec,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
+                    reasoning_direction=args.reasoning_direction,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is

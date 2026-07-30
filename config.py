@@ -69,6 +69,7 @@ _ENV_MAP: dict[str, tuple[str, str]] = {
     "BUG_VALIDATION_MAX_RETRIES": ("runtime", "bug_validation_max_retries"),
     "OPENCODE_TIMEOUT_SECONDS": ("runtime", "opencode_timeout_s"),
     "FM_AGENT_DOMAIN_KNOWLEDGE": ("runtime", "domain_knowledge_paths"),
+    "REASONING_DIRECTION": ("runtime", "reasoning_direction"),
     # [scope]
     "SCOPE_TOP_K": ("scope", "top_k"),
     "SCOPE_LLM_TRIGGER_FUNCS": ("scope", "llm_trigger_funcs"),
@@ -125,6 +126,11 @@ class RuntimeCfg(_Section):
     # Extra domain-knowledge markdown paths (os.pathsep- or newline-separated);
     # env-driven, so no committed default.
     domain_knowledge_paths: str = ""
+    # Reasoning direction: "topdown" = strongest postcondition (forward, default),
+    # "bottomup" = weakest precondition (backward). WP derives the minimal
+    # pre-condition from the spec's post-condition, checking spec_pre ⊨ wp at
+    # function entry. The two directions find complementary bug classes.
+    reasoning_direction: Literal["topdown", "bottomup"] = "topdown"
 
 
 class ScopeCfg(_Section):
@@ -254,6 +260,9 @@ OPENCODE_MAX_RETRIES = settings.runtime.opencode_max_retries
 BUG_VALIDATION_MAX_RETRIES = settings.runtime.bug_validation_max_retries
 OPENCODE_TIMEOUT_SECONDS = settings.runtime.opencode_timeout_s
 
+REASONING_DIRECTION = settings.runtime.reasoning_direction
+REASONER_WP_MODEL = LLM_MODEL
+
 SCOPE_TOP_K = settings.scope.top_k
 SCOPE_LLM_TRIGGER_FUNCS = settings.scope.llm_trigger_funcs
 SCOPE_LLM_TOP_K = settings.scope.llm_top_k
@@ -281,6 +290,8 @@ __all__ = [
     "OPENCODE_MAX_RETRIES",
     "BUG_VALIDATION_MAX_RETRIES",
     "OPENCODE_TIMEOUT_SECONDS",
+    "REASONING_DIRECTION",
+    "REASONER_WP_MODEL",
     "SCOPE_TOP_K",
     "SCOPE_LLM_TRIGGER_FUNCS",
     "SCOPE_LLM_TOP_K",
