@@ -716,9 +716,10 @@ def _analysis_or_raise(proj_dir: str) -> ErlangAnalysis:
             f"ELP Erlang analysis unavailable for {proj_dir}: {exc}"
         ) from exc
 
-def batch_extract(proj_dir: str) -> dict:
-    """Return ``{abs_filepath: [(function_id, body)]}`` for Erlang files."""
-    return _analysis_or_empty(proj_dir).functions
+def batch_extract(proj_dir: str) -> dict | None:
+    """Return extracted functions, or ``None`` when the ELP session failed."""
+    analysis = _analysis_or_none(proj_dir)
+    return None if analysis is None else analysis.functions
 
 def function_spans(proj_dir: str, filepath: str):
     """Return ELP function ranges as 0-based inclusive source-line spans.
