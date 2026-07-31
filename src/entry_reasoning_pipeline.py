@@ -161,7 +161,7 @@ def _trim_source_file(filepath, keep_names, proj_dir=None):
     if not lang_key:
         return 0, 0
 
-    spans, raw_lines = _function_spans(filepath, lang_key, proj_dir)
+    spans, raw_lines, _backend_available = _function_spans(filepath, lang_key, proj_dir)
     if not spans:
         return 0, 0
 

@@ -647,7 +647,7 @@ def _parse_generic_file(src_path: Path, lang_key: str,
     extracted-function file.
     """
     try:
-        spans, raw_lines = _function_spans(str(src_path), lang_key, proj_dir=proj_dir)
+        spans, raw_lines, _backend_available = _function_spans(str(src_path), lang_key, proj_dir=proj_dir)
     except Exception as exc:
         logger.warning("Could not read %s: %s", src_path, exc)
         return None, None, None

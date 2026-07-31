@@ -11,6 +11,7 @@ from src.languages import javascript as _javascript
 from src.languages import typescript as _typescript
 from src.languages import erlang as _erlang
 
+from src.languages.base import BackendUnavailableError
 
 @dataclass
 class LanguageHandler:

@@ -220,3 +220,7 @@ docs/superpowers/
 .codegraph/
 CLAUDE.md
 AGENTS.md
+
+.env
+.gitignore
+fm-agent.toml
