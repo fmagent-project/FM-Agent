@@ -539,7 +539,7 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
                 lang_key,
             )
             unavailable_source_backend_languages.add(lang_key)
-            continueExpand commentComment on line R542
+            continue
         current_source_functions[lang_key] = current_result
         baseline_source_functions[lang_key] = baseline_result
         available_source_backend_languages.add(lang_key)
