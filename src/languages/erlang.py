@@ -694,11 +694,8 @@ def _analysis_or_none(proj_dir: str) -> ErlangAnalysis | None:
 
 
 def _analysis_or_empty(proj_dir: str) -> ErlangAnalysis:
-    try:
-        return _analyze_project(proj_dir)
-    except Exception as exc:
-        logging.warning("ELP Erlang analysis unavailable for %s: %s", proj_dir, exc)
-        return ErlangAnalysis(functions={}, edges={})
+    analysis = _analysis_or_none(proj_dir)
+    return analysis or ErlangAnalysis(functions={}, edges={})
 
 def _analysis_or_raise(proj_dir: str) -> ErlangAnalysis:
     """Run ELP analysis and raise BackendUnavailableError on failure.

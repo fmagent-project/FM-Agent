@@ -7,8 +7,9 @@ import logging
 
 from src.file_utils import is_file_ready, _is_test_file
 from src.languages.codegraph import canonicalize
-from src.languages.registry import batch_extract_all, function_spans_for_file
-from src.languages.base import BackendUnavailableError
+from src.languages.registry import (
+    batch_extract_all, function_spans_for_file, BackendUnavailableError,
+)
 
 LANG_CONFIG = {
     "cpp": {

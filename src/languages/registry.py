@@ -11,7 +11,7 @@ from src.languages import javascript as _javascript
 from src.languages import typescript as _typescript
 from src.languages import erlang as _erlang
 
-from src.languages.base import BackendUnavailableError
+from src.languages.base import BackendUnavailableError as _BackendUnavailableError
 
 @dataclass
 class LanguageHandler:
@@ -28,7 +28,10 @@ class LanguageHandler:
     extract its sources, distinct from a successful empty dict. call_edges
     returns an empty dict when its backend is unavailable; function_spans
     returns None so the caller can fall back to the regex extractor for that
-    file.
+    file, or raises BackendUnavailableError for languages where a regex
+    fallback is unsafe (e.g. Erlang/ELP) — callers that are about to delete
+    extracted-function artifacts should catch it and skip the file instead of
+    trusting an empty regex result.
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
@@ -41,6 +44,7 @@ class LanguageHandler:
     function_spans: Callable
     incremental_source_extract: Callable | None = None
 
+BackendUnavailableError = _BackendUnavailableError
 
 REGISTRY: dict = {
     "python":     LanguageHandler(batch_extract=_python.batch_extract,     call_edges=_python.call_edges,     function_spans=_python.function_spans),
@@ -86,7 +90,9 @@ def function_spans_for_file(proj_dir: str, filepath: str, lang_key: str):
     Returns [(func_name, start_idx, end_idx)] (0-indexed, inclusive) when
     codegraph indexes the file, or None when the language is unregistered,
     codegraph does not support it, or the file is not in the index — in every
-    such case the caller should fall back to the regex extractor.
+    such case the caller should fall back to the regex extractor. May raise
+    BackendUnavailableError for languages where the backend is required
+    and cannot be consulted (e.g. Erlang/ELP).
     """
     handler = REGISTRY.get(lang_key)
     if handler is None:
