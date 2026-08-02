@@ -21,7 +21,12 @@ import subprocess
 import sys
 import logging
 
+from dotenv import load_dotenv
+
 from src.plugins import registry
+
+
+load_dotenv()
 
 
 def _parse_args(argv):
