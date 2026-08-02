@@ -146,12 +146,26 @@ class EntryReasoningPluginTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        extracted_root = project / "fm_agent" / "extracted_functions"
+        for path in [
+            "main-py/main.py",
+            "main-py/unused.py",
+            "service-py/helper.py",
+            "unrelated-py/unrelated.py",
+        ]:
+            extracted = extracted_root / path
+            extracted.parent.mkdir(parents=True, exist_ok=True)
+            extracted.write_text("def extracted():\n    pass\n", encoding="utf-8")
         plugin.filter_entry_file_list(str(project))
 
         self.assertEqual(
             json.loads(file_list.read_text(encoding="utf-8")),
             ["main-py/main.py", "service-py/helper.py"],
         )
+        self.assertTrue((extracted_root / "main-py/main.py").is_file())
+        self.assertTrue((extracted_root / "service-py/helper.py").is_file())
+        self.assertFalse((extracted_root / "main-py/unused.py").exists())
+        self.assertFalse((extracted_root / "unrelated-py/unrelated.py").exists())
         self.assertIn("def unused", (project / "main.py").read_text(encoding="utf-8"))
 
     def test_end_function_is_terminal(self):

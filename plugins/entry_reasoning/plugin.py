@@ -365,6 +365,21 @@ def filter_entry_file_list(proj_dir: str) -> None:
         with open(file_list_path, "w", encoding="utf-8") as file:
             json.dump(selected, file, indent=2)
 
+        selected_set = set(selected)
+        extracted_root = os.path.join(
+            proj_dir,
+            "fm_agent",
+            "extracted_functions",
+        )
+        for path in function_files:
+            if path in selected_set:
+                continue
+            function_path = os.path.join(extracted_root, path)
+            for suffix in ("", ".spec.json", ".info.json"):
+                candidate = f"{function_path}{suffix}"
+                if os.path.isfile(candidate):
+                    os.remove(candidate)
+
         print(
             f"[EntryPlugin] Stage 4 kept {len(selected)} of "
             f"{len(function_files)} extracted function file(s)."
