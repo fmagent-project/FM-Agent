@@ -24,7 +24,14 @@ class PluginCliTests(unittest.TestCase):
         self.assertIn("collect_file_list", result.stdout)
 
     def test_entry_option_implicitly_loads_entry_plugin(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        plugins_dir = Path(main.__file__).resolve().parent / "plugins"
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            tempfile.TemporaryDirectory(
+                dir=plugins_dir,
+                prefix="invalid_sibling_",
+            ) as invalid_plugin_dir,
+        ):
             project = Path(temp_dir) / "project"
             (project / "src").mkdir(parents=True)
             (project / "src" / "main.py").write_text(
@@ -47,6 +54,10 @@ class PluginCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2)
         self.assertIn("Loaded plugin 'entry_reasoning'", result.stdout)
+        self.assertNotIn(
+            f"Invalid plugin '{Path(invalid_plugin_dir).name}'",
+            result.stdout,
+        )
         self.assertIn("--submodule cannot be combined with --entry-func", result.stderr)
 
     def test_incremental_api_does_not_accept_plugin_configuration(self):

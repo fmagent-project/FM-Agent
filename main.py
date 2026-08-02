@@ -592,13 +592,12 @@ if __name__ == "__main__":
         if not args.proj_dir:
             parser.error("the following arguments are required when --plugin is used: proj_dir")
         from pathlib import Path
-        from src.plugin import load_plugins
+        from src.plugin import validate_plugin
         plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
-        plugins = load_plugins(Path(plugins_dir))
-        if selected_plugin not in plugins:
+        plugin_config = validate_plugin(Path(plugins_dir) / selected_plugin)
+        if plugin_config is None:
             print(f"[Pipeline] ERROR: Plugin '{selected_plugin}' not found or invalid.")
             sys.exit(1)
-        plugin_config = plugins[selected_plugin]
         print(f"[Pipeline] Loaded plugin '{plugin_config.name}' v{plugin_config.version}")
 
     if not args.proj_dir:
