@@ -39,6 +39,25 @@ except ImportError:
         return sorted(relpaths)
 
 
+# Extension -> canonical language key. Keep in sync with EXT_TO_LANG in
+# src/extract.py. This script is copied into the analyzed project's
+# fm_agent/spec_prompts/ and run there as a subprocess, so it must NOT import
+# src.*: a same-named package in the target project would shadow FM-Agent's
+# own modules (crash at import time, or silently supply a wrong map).
+EXT_TO_LANG = {
+    "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "c": "c", "h": "cpp", "hpp": "cpp",
+    "py": "python",
+    "erl": "erlang",
+    "go": "go",
+    "rs": "rust",
+    "java": "java",
+    "ts": "typescript", "tsx": "typescript",
+    "js": "javascript", "jsx": "javascript",
+    "cu": "cuda", "cuh": "cuda",
+    "ets": "arkts",
+}
+
+
 COMMENT_PREFIX_BY_LANG = {
     "c": "//",
     "cpp": "//",
@@ -397,10 +416,6 @@ def main() -> int:
     modules_json = read_json(work_dir / "modules.json")
     project = modules_json["project"]
     exts = modules_json.get("file_extensions", [])
-    try:
-        from src.extract import EXT_TO_LANG
-    except ImportError:
-        EXT_TO_LANG = {}
     ext_to_lang = {
         ext.lower().lstrip("."): EXT_TO_LANG.get(ext.lower().lstrip("."), ext)
         for ext in exts
