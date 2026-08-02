@@ -177,6 +177,113 @@ def format_domain_knowledge_bullets(relpaths):
     return "\n".join(f"- `{path}`" for path in relpaths)
 
 
+def module_type_filename(module_name):
+    """Return the canonical module_types filename for a module name."""
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", str(module_name or "module"))
+    stem = stem.strip("._-") or "module"
+    return f"{stem}.txt"
+
+
+def _source_file_to_extracted_dir(source_file):
+    source_file = source_file.replace("\\", "/").strip("/")
+    src_dir = os.path.dirname(source_file).replace(os.sep, "/")
+    src_base = os.path.basename(source_file)
+    dot = src_base.rfind(".")
+    if dot > 0:
+        extracted_name = src_base[:dot] + "-" + src_base[dot + 1:]
+    else:
+        extracted_name = src_base
+    return f"{src_dir}/{extracted_name}" if src_dir else extracted_name
+
+
+def _module_name_for_artifact(work_dir, artifact_relpath):
+    """Map an extracted-function/result artifact path to its owning module."""
+    if not artifact_relpath:
+        return None
+    rel = artifact_relpath.replace("\\", "/").strip("/")
+    for prefix in (
+        "fm_agent/extracted_functions/",
+        "extracted_functions/",
+        "fm_agent/logic_verification_results/",
+        "logic_verification_results/",
+    ):
+        if rel.startswith(prefix):
+            rel = rel[len(prefix):]
+            break
+
+    modules_path = os.path.join(work_dir, "modules.json")
+    try:
+        with open(modules_path, "r", encoding="utf-8") as f:
+            modules_data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    for module in modules_data.get("modules", []):
+        module_name = module.get("name")
+        if not module_name:
+            continue
+        for source_file in module.get("source_files", []):
+            extracted_dir = _source_file_to_extracted_dir(str(source_file))
+            if rel == extracted_dir or rel.startswith(extracted_dir + "/"):
+                return module_name
+    return None
+
+
+def list_generated_domain_context_relpaths(work_dir, artifact_relpath=None, prefix="fm_agent"):
+    """Return generated domain context files relevant to an artifact."""
+    domain_dir = os.path.join(work_dir, "spec_prompts", "domain_context")
+    relpaths = []
+
+    engine_path = os.path.join(domain_dir, "engine_overview.txt")
+    if os.path.isfile(engine_path):
+        relpaths.append("spec_prompts/domain_context/engine_overview.txt")
+
+    types_path = os.path.join(domain_dir, "types.txt")
+    if os.path.isfile(types_path):
+        relpaths.append("spec_prompts/domain_context/types.txt")
+    else:
+        module_name = _module_name_for_artifact(work_dir, artifact_relpath)
+        if module_name:
+            module_type_rel = os.path.join(
+                "spec_prompts",
+                "domain_context",
+                "module_types",
+                module_type_filename(module_name),
+            )
+            if os.path.isfile(os.path.join(work_dir, module_type_rel)):
+                relpaths.append(module_type_rel.replace(os.sep, "/"))
+
+    return [f"{prefix.rstrip('/')}/{rel}" for rel in relpaths]
+
+
+def load_generated_domain_context_text(work_dir, artifact_relpath=None):
+    """Return generated setup domain context relevant to an artifact."""
+    relpaths = list_generated_domain_context_relpaths(work_dir, artifact_relpath)
+    if not relpaths:
+        return ""
+
+    sections = [
+        "Generated domain context:",
+        "Use this setup-generated context for intended behavior, terminology, "
+        "data encodings, and invariants.",
+        "",
+    ]
+    project_root = os.path.dirname(os.path.abspath(work_dir))
+    for relpath in relpaths:
+        abs_path = os.path.join(project_root, relpath)
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read().strip()
+        except OSError:
+            continue
+        if not content:
+            continue
+        sections.append(f"### {relpath}")
+        sections.append(content)
+        sections.append("")
+    return "\n".join(sections).strip()
+
+
 def load_staged_domain_knowledge_text(work_dir):
     """Return staged markdown contents formatted for LLM context."""
     relpaths = list_staged_domain_knowledge_relpaths(work_dir)

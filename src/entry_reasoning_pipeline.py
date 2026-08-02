@@ -7,7 +7,7 @@ from collections import deque, defaultdict
 from src.call_graph_edges import load_call_edges
 from src.generate_topdown_layers import (
     _build_call_graph,
-    _collect_phase_files,
+    _collect_module_files,
     _file_to_fqn,
 )
 from src.extract import EXT_TO_LANG, _function_spans, run_extraction
@@ -75,7 +75,7 @@ def _restrict_to_chains(call_graph, entry_func, end_funcs):
 #
 # The selected call graph names individual functions, but run_pipeline()'s unit
 # of work is the *source file* (it re-extracts every function of each file in
-# phases.json). To make run_pipeline() process only the selected functions, we
+# the setup manifests). To make run_pipeline() process only the selected functions, we
 # surgically delete the unselected function bodies from proj_dir's source files
 # (and delete entirely-unselected source files) before invoking run_pipeline()
 # on it; the original sources are restored from a snapshot afterwards.
@@ -250,7 +250,6 @@ def run_entry_pipeline(
     end_funcs=None,
     resume=False,
     domain_knowledge_files=None,
-    one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
     bug_validator_path=None,
@@ -287,7 +286,6 @@ def run_entry_pipeline(
             restriction is applied and the whole call graph reachable from
             ``entry_func`` is selected.
         resume: forwarded directly to the standard pipeline.
-        one_phase: forwarded directly to the standard pipeline.
         extra_call_edges_path: optional file containing supplemental caller/callee
             edges used for entry reachability and later top-down layer generation.
     """
@@ -312,7 +310,6 @@ def run_entry_pipeline(
             end_funcs,
             resume,
             domain_knowledge_files=domain_knowledge_files,
-            one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
@@ -372,22 +369,28 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
         if not source_files:
             raise ValueError(f"no extractable source files found under {proj_dir!r}")
 
-        # One all-encompassing phase, so _build_call_graph's within-phase edges
-        # span the entire project (every reachable callee is retained).
-        phase = {"phase": 0, "name": "all",
-                 "modules": [{"name": "all", "source_files": source_files}]}
+        # One all-encompassing module, so _build_call_graph's edges span the
+        # entire project (every reachable callee is retained).
+        modules_data = {
+            "project": os.path.basename(os.path.abspath(sel_dir)),
+            "languages": [],
+            "file_extensions": [],
+            "modules": [{"name": "all", "description": "", "source_files": source_files}],
+        }
         # _make_run_copy brings along any existing fm_agent/; start the selection
         # extraction from a clean slate so no stale extracted_functions leak in.
         shutil.rmtree(work_dir, ignore_errors=True)
         os.makedirs(work_dir, exist_ok=True)
-        with open(os.path.join(work_dir, "phases.json"), "w") as f:
-            json.dump({"phases": [phase]}, f)
+        with open(os.path.join(work_dir, "source_files.json"), "w") as f:
+            json.dump({"source_files": source_files}, f)
+        with open(os.path.join(work_dir, "modules.json"), "w") as f:
+            json.dump(modules_data, f)
 
         try_codegraph_init(sel_dir)
         run_extraction(sel_dir, work_dir=work_dir, force=True)
 
-        phase_files = _collect_phase_files(work_dir, phase)
-        if not phase_files:
+        module_files = _collect_module_files(work_dir, modules_data)
+        if not module_files:
             raise ValueError(f"no extractable functions found under {proj_dir!r}")
         (
             callees_map,
@@ -397,11 +400,11 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
             _module_map,
             _edge_aliases,
         ) = _build_call_graph(
-            phase_files,
+            module_files,
             work_dir,
             extra_call_edges=extra_call_edges,
         )
-        all_fqns = {_file_to_fqn(fp, work_dir) for fp, _mod in phase_files}
+        all_fqns = {_file_to_fqn(fp, work_dir) for fp, _mod in module_files}
 
         if entry_func not in all_fqns:
             raise ValueError(
@@ -462,7 +465,6 @@ def _run_entry_pipeline_inner(
     end_funcs,
     resume,
     domain_knowledge_files=None,
-    one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
     bug_validator_path=None,
@@ -503,15 +505,14 @@ def _run_entry_pipeline_inner(
         # run_entry_pipeline at module load).
         from main import run_pipeline
 
-        # Force the entry point's source file into phases.json even if the setup
-        # agent omits it (e.g. because it looks like a test), so run_pipeline
-        # always extracts and reasons about the entry function.
+        # Force the entry point's source file into the setup manifests even if
+        # the setup agent omits it (e.g. because it looks like a test), so
+        # run_pipeline always extracts and reasons about the entry function.
         run_pipeline(
             run_dir,
             resume=resume,
             required_source_files=[_entry_func_source_rel(entry_func)],
             domain_knowledge_files=domain_knowledge_files,
-            one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,

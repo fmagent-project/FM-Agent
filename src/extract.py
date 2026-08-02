@@ -671,9 +671,9 @@ def run_extraction(
 ):
     """Run function extraction on a project directory.
 
-    Reads phases.json from work_dir (or proj_dir), extracts functions from
-    source files in proj_dir, writes them to work_dir/extracted_functions/,
-    and validates the output.
+    Reads modules.json/source_files.json from work_dir (or proj_dir), extracts
+    functions from source files in proj_dir, writes them to
+    work_dir/extracted_functions/, and validates the output.
 
     Returns (written_count, skipped_count). When
     ``return_unavailable_backends`` is true, appends the languages whose
@@ -681,12 +681,12 @@ def run_extraction(
     """
     if work_dir is None:
         work_dir = proj_dir
-    phases_path = os.path.join(work_dir, "phases.json")
-    if not os.path.exists(phases_path):
-        raise FileNotFoundError(f"phases.json not found at {phases_path}")
-
-    with open(phases_path, 'r') as f:
-        phases_data = json.load(f)
+    source_files = load_source_file_list(work_dir)
+    if not source_files:
+        raise FileNotFoundError(
+            f"No source files found in {os.path.join(work_dir, 'modules.json')} "
+            f"or {os.path.join(work_dir, 'source_files.json')}"
+        )
 
     registry_result = batch_extract_all(
         proj_dir, include_unavailable=return_unavailable_backends
@@ -699,13 +699,6 @@ def run_extraction(
         os.path.normcase(os.path.normpath(path)): funcs
         for path, funcs in registry_funcs.items()
     }
-
-    # Build source file list from phases.json
-    source_files = []
-    for phase in phases_data.get("phases", []):
-        for module in phase.get("modules", []):
-            for sf in module.get("source_files", []):
-                source_files.append(sf)
 
     output_base = os.path.join(work_dir, "extracted_functions")
     written = 0
@@ -782,7 +775,7 @@ def run_extraction(
     print(f"Extraction complete: {written} written, {skipped} skipped.")
 
     if written == 0 and skipped == 0:
-        logging.error("Nothing was extracted — check phases.json source_files paths.")
+        logging.error("Nothing was extracted — check source_files.json/modules.json paths.")
         return (
             (written, skipped, unavailable_backends)
             if return_unavailable_backends else (written, skipped)
@@ -809,6 +802,37 @@ def run_extraction(
         (written, skipped, unavailable_backends)
         if return_unavailable_backends else (written, skipped)
     )
+
+
+def load_source_file_list(work_dir):
+    """Return source files from modules.json, falling back to source_files.json."""
+    modules_path = os.path.join(work_dir, "modules.json")
+    files = []
+    try:
+        with open(modules_path, "r") as f:
+            modules_data = json.load(f)
+        for module in modules_data.get("modules", []):
+            files.extend(module.get("source_files", []))
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    if not files:
+        source_files_path = os.path.join(work_dir, "source_files.json")
+        try:
+            with open(source_files_path, "r") as f:
+                data = json.load(f)
+            files = data.get("source_files", []) if isinstance(data, dict) else data
+        except (OSError, json.JSONDecodeError):
+            files = []
+
+    normalized = []
+    seen = set()
+    for raw in files:
+        rel = str(raw).replace("\\", "/")
+        if rel and rel not in seen:
+            seen.add(rel)
+            normalized.append(rel)
+    return normalized
 
 
 def _validate_extraction(extracted_dir, registry_langs=None):

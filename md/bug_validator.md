@@ -137,6 +137,13 @@ python3 fm_agent/bug_validation/probe_<bug_id>.py
 
 Capture both stdout and the exit code.
 
+#### Environment failures
+
+Do not confirm a bug solely because the local environment is broken. Missing or
+corrupted runtimes, package managers, dependencies, or analysis tools (for
+example `codegraph: command not found`) are **error**, not **confirmed**. A bug is
+confirmable only through the package's normal public entry point on a valid input.
+
 ### 2e. Classify the Result and Retry if Needed
 
 Based on the output:

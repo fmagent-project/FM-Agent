@@ -3,14 +3,12 @@ from src.call_graph_edges import load_call_edges
 from src.file_utils import (
     collect_file_names,
     _has_source_code,
-    _get_all_phase_files,
-    _write_file_names,
-    _json_file_is_valid,
     _is_under_submodules,
 )
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
+from src.backend import DEFAULT_BACKEND
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -21,9 +19,6 @@ from src.git import (
 from src.languages.codegraph import try_codegraph_init
 from src.pipeline_setup import (
     _run_setup_extract,
-    _run_generate_phases,
-    _post_process_phases,
-    _run_generate_domain_context,
 )
 from src.domain_knowledge import (
     collect_domain_knowledge_paths,
@@ -111,12 +106,13 @@ def run_pipeline(
     required_source_files=None,
     domain_knowledge_files=None,
     submodules=None,
-    one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    backend=None,
 ):
+    backend = backend or DEFAULT_BACKEND
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
@@ -133,7 +129,7 @@ def run_pipeline(
     extra_call_edges = load_call_edges(extra_call_edges_path)
 
     # Clean files from the previous run — unless resuming, where we keep all
-    # prior progress (phases.json, generated specs, verification results) and
+    # prior progress (setup manifests, generated specs, verification results) and
     # only do the remaining work.
     if resume:
         if os.path.isdir(work_dir):
@@ -153,35 +149,17 @@ def run_pipeline(
             f"{len(domain_knowledge_relpaths)} markdown file(s)."
         )
 
-    # Stage 1: generate phase.json (input: target code → phases.json)
-    # Stage 2: generate domain context (input: phases.json → domain context files)
-    phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
-    context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
-    plugin_root = plugin_config.root if plugin_config else None
-
-    print("[Pipeline] Stage 1/6: Generating phase plan...")
-    _run_generate_phases(
-        proj_dir, work_dir, script_dir, resume=resume,
-        submodules=submodules,
-        plugin_stage=phase_stage,
-        plugin_root=plugin_root,
-    )
-
-    phases_modified = _post_process_phases(
+    # Stage 1/2: generate source/module manifests and domain context.
+    print("[Pipeline] Stage 1/6: Generating source/module manifests...")
+    print("[Pipeline] Stage 2/6: Generating domain context...")
+    _run_setup_extract(
         proj_dir, work_dir,
+        script_dir,
+        resume=resume,
         required_source_files=required_source_files,
         submodules=submodules,
-        one_phase=one_phase,
-    )
-
-    print("[Pipeline] Stage 2/6: Generating domain context...")
-    _run_generate_domain_context(
-        proj_dir,
-        work_dir,
-        script_dir,
-        resume=resume and not phases_modified,
-        plugin_stage=context_stage,
-        plugin_root=plugin_root,
+        plugin_config=plugin_config,
+        backend=backend,
     )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
@@ -214,17 +192,9 @@ def run_pipeline(
         os.path.join(spec_prompts_dir, "file_utils.py"),
     )
 
-    phases_path = os.path.join(work_dir, "phases.json")
-    with open(phases_path, "r") as f:
-        phases_data = json.load(f)
-
     print("[Pipeline] Stage 4/6: Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
     file_list = collect_file_names(input_dir, file_list_path)
-    if submodules:
-        file_list = _write_file_names(
-            _get_all_phase_files(phases_data, input_dir), file_list_path
-        )
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
@@ -234,11 +204,13 @@ def run_pipeline(
     print("[Pipeline] Stage 5/6: Generating topdown layers...")
     generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
 
-    # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
+    # --- Stage 6: Execute spec generation workflow (per global layer) ---
     if only_spec:
         print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
     else:
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
+    with open(os.path.join(work_dir, "modules.json"), "r") as f:
+        modules_data = json.load(f)
     run_spec_generation_and_verification(
         proj_dir,
         work_dir,
@@ -246,10 +218,11 @@ def run_pipeline(
         output_dir,
         script_dir,
         spec_prompts_dir,
-        phases_data,
+        modules_data,
         resume=resume,
         extra_call_edges=extra_call_edges,
         only_spec=only_spec,
+        backend=backend,
         bug_validator_path=bug_validator_path,
     )
 
@@ -272,7 +245,7 @@ def run_pipeline(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
-              "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
+              "[--domain-knowledge FILE ...] [--isolate] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH] "
               "[--end-func PATH ...] [--extra-edge FILE] "
               "[--bug-validator FILE] [--only-spec] "
@@ -284,8 +257,8 @@ if __name__ == "__main__":
         "--resume",
         action="store_true",
         help="continue a previous run in <proj_dir>/fm_agent instead of wiping it: "
-        "keeps phases.json, generated specs, and existing verification results; "
-        "only does the remaining work.",
+        "keeps the setup manifests, generated specs, and existing verification "
+        "results; only does the remaining work.",
     )
     parser.add_argument(
         "--incremental",
@@ -298,11 +271,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the pipeline against an isolated git worktree snapshot of "
         "the project instead of the project directory itself.",
-    )
-    parser.add_argument(
-        "--one-phase",
-        action="store_true",
-        help="Put all planned source files into a single analysis phase.",
     )
     parser.add_argument(
         "--only-spec",
@@ -453,7 +421,6 @@ if __name__ == "__main__":
             end_funcs=args.end_func,
             resume=resume,
             domain_knowledge_files=domain_knowledge_files,
-            one_phase=args.one_phase,
             extra_call_edges_path=extra_call_edges_path,
             only_spec=args.only_spec,
             bug_validator_path=bug_validator_path,
@@ -493,7 +460,7 @@ if __name__ == "__main__":
     new_commit = _get_head_commit(proj_dir)
 
     # With --isolate, the pipeline runs against the snapshot's fm_agent/. Resuming
-    # needs the previous run's fm_agent/ (phases.json, specs, verification results)
+    # needs the previous run's fm_agent/ (setup manifests, specs, verification results)
     # to be present in the snapshot, so copy the excluded workspace in for resume
     # too — not just incremental mode.
     run_ctx = (
@@ -514,7 +481,6 @@ if __name__ == "__main__":
                     old_commit,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
-                    one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
@@ -525,7 +491,6 @@ if __name__ == "__main__":
                     resume=resume,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
-                    one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     only_spec=args.only_spec,
                     bug_validator_path=bug_validator_path,

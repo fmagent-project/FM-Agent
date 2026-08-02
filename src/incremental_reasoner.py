@@ -28,9 +28,9 @@ from .extract import (
 )
 from .generate_topdown_layers import (
     _build_call_graph,
-    _collect_phase_files,
+    _collect_module_files,
     _file_to_fqn,
-    _load_phases,
+    _load_modules,
     generate_topdown_layers,
 )
 from .call_graph_edges import load_call_edges
@@ -39,9 +39,7 @@ from .file_utils import (
     collect_file_names,
     _is_test_file,
     _is_under_submodules,
-    _get_all_phase_files,
     _is_metadata_sidecar,
-    _write_file_names,
     _is_valid_spec_json,
     _is_valid_info_json,
 )
@@ -50,7 +48,7 @@ from .generate_batch_prompts import (
     extract_info_block,
     extract_spec_block,
 )
-from .opencode_trace import run_opencode_traced
+from .backend import DEFAULT_BACKEND
 from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import CodeGraphExtractor, try_codegraph_init
@@ -169,8 +167,11 @@ def check_last_run_existence(proj_dir, submodules=None):
     previous full run, so it can only proceed when those artifacts are present. A full run
     is considered to exist when, under proj_dir/fm_agent/, both:
 
-      1. phases.json exists — the module/phase plan that the full run aborts without, and
-      2. extracted_functions/ holds at least one function file and EVERY function file
+      1. source_files.json and modules.json exist — the setup manifests that the
+         full run aborts without, and
+      2. spec_prompts/topdown_layers.json exists — the global call graph/layer
+         artifact that incremental scope selection depends on, and
+      3. extracted_functions/ holds at least one function file and EVERY function file
          has both metadata sidecars (per is_file_ready) — proving
          the spec-generation stage ran to completion. A partially specced tree means the
          previous full run did not finish, so it is not a sound basis for incremental
@@ -183,7 +184,11 @@ def check_last_run_existence(proj_dir, submodules=None):
     """
     work_dir = os.path.join(proj_dir, "fm_agent")
 
-    if not os.path.isfile(os.path.join(work_dir, "phases.json")):
+    if not os.path.isfile(os.path.join(work_dir, "source_files.json")):
+        return False
+    if not os.path.isfile(os.path.join(work_dir, "modules.json")):
+        return False
+    if not os.path.isfile(os.path.join(work_dir, "spec_prompts", "topdown_layers.json")):
         return False
 
     extracted_dir = os.path.join(work_dir, "extracted_functions")
@@ -752,7 +757,7 @@ def _remove_stale_extracted(proj_dir, modified_functions):
     deleting any file that no longer corresponds to a current source function and
     pruning emptied directories.
 
-    We reconcile every source file in the current phases.json plus any file
+    We reconcile every source file in the current modules.json plus any file
     reported changed or deleted — not only files whose regex-visible function names
     changed. A qualifier-only edit (e.g. renaming a C++ namespace around an
     otherwise identical ``void foo(){...}``) moves the extracted file to a new
@@ -762,11 +767,10 @@ def _remove_stale_extracted(proj_dir, modified_functions):
     """
     srcs = set(modified_functions)  # abs paths; includes deleted source files
     try:
-        phases_data = _load_phases(os.path.join(proj_dir, "fm_agent"))
-        for phase in phases_data.get("phases", []):
-            for module in phase.get("modules", []):
-                for rel in module.get("source_files", []):
-                    srcs.add(os.path.abspath(os.path.join(proj_dir, rel)))
+        modules_data = _load_modules(os.path.join(proj_dir, "fm_agent"))
+        for module in modules_data.get("modules", []):
+            for rel in module.get("source_files", []):
+                srcs.add(os.path.abspath(os.path.join(proj_dir, rel)))
     except (OSError, ValueError, KeyError):
         pass
     for abs_src in srcs:
@@ -776,30 +780,23 @@ def _remove_stale_extracted(proj_dir, modified_functions):
 def _topdown_ordered_fqns(work_dir, extra_call_edges=None):
     """
     Return every extracted-function FQN in the top-down order used by run_pipeline for
-    spec generation: phases in ascending phase number, layers from 0 upward, and the
-    functions in the order listed within each layer (callers precede the callees they
-    depend on).
+    spec generation: global layers from 0 upward, and the functions in the
+    order listed within each layer (callers precede the callees they depend on).
 
-    Regenerates the per-phase topdown-layer JSON files under work_dir/spec_prompts/ as
-    a side effect (mirroring run_pipeline's generate_topdown_layers(work_dir) call).
+    Regenerates topdown_layers.json under work_dir/spec_prompts/ as a side
+    effect (mirroring run_pipeline's generate_topdown_layers(work_dir) call).
     """
     generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
-    phases_data = _load_phases(work_dir)
-    spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
+    layers_path = os.path.join(work_dir, "spec_prompts", "topdown_layers.json")
 
     ordered = []
-    for phase_info in sorted(phases_data.get("phases", []), key=lambda p: p["phase"]):
-        phase_num = phase_info["phase"]
-        layers_path = os.path.join(
-            spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
-        )
-        if not os.path.exists(layers_path):
-            continue
-        with open(layers_path, "r") as f:
-            layers_data = json.load(f)
-        for layer in sorted(layers_data.get("layers", []), key=lambda l: l["layer"]):
-            for func in layer.get("functions", []):
-                ordered.append(func["name"])
+    if not os.path.exists(layers_path):
+        return ordered
+    with open(layers_path, "r") as f:
+        layers_data = json.load(f)
+    for layer in sorted(layers_data.get("layers", []), key=lambda l: l["layer"]):
+        for func in layer.get("functions", []):
+            ordered.append(func["name"])
     return ordered
 
 
@@ -809,10 +806,10 @@ def run_incremental_pipeline(
     old_commit_id,
     domain_knowledge_files=None,
     submodules=None,
-    one_phase=False,
     extra_call_edges_path=None,
     bug_validator_path=None,
     plugin_config=None,
+    backend=None,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -822,6 +819,8 @@ def run_incremental_pipeline(
     then confirmed. The set of functions whose specs were updated is recorded to
     fm_agent/incremental_updated_specs.json as a side effect.
     """
+
+    backend = backend or DEFAULT_BACKEND
 
     # run_pipeline and _run_setup_extract live in the top-level entry module (main.py);
     # import them lazily here to avoid a src -> main import cycle at module load time.
@@ -857,16 +856,16 @@ def run_incremental_pipeline(
     has_last_run = check_last_run_existence(proj_dir, submodules=submodules)
     if not has_last_run:
         logging.warning(
-            "No previous full run detected (phases.json missing or incomplete extracted_functions), so falling back to a full run rather than incremental."
+            "No previous full run detected (setup manifests missing or incomplete extracted_functions), so falling back to a full run rather than incremental."
         )
         run_pipeline(
             proj_dir,
             domain_knowledge_files=domain_knowledge_files,
             submodules=submodules,
-            one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            backend=backend,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -916,15 +915,15 @@ def run_incremental_pipeline(
     if removed_artifacts:
         logging.info("  -> removed %d stale scope-selection artifact(s) from %s.", removed_artifacts, work_dir)
 
-    # 3. Re-generate the phases.json
-    logging.info("[Stage 3/10] Generating new phases.json based on current working tree...")
+    # 3. Re-generate the setup manifests.
+    logging.info("[Stage 3/10] Generating new setup manifests based on current working tree...")
     _run_setup_extract(
         proj_dir, work_dir, script_dir,
         is_incremental=True, submodules=submodules,
-        one_phase=one_phase,
         plugin_config=plugin_config,
+        backend=backend,
     )
-    logging.info("  -> phases.json regenerated.")
+    logging.info("  -> setup manifests regenerated.")
 
     # 4. Update functions under fm_agent/extracted_functions/. Re-extraction replaces
     #    only source files; adjacent .spec.json and .info.json sidecars are retained.
@@ -970,24 +969,18 @@ def run_incremental_pipeline(
     logging.info("[Stage 6/10] Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
     file_list = collect_file_names(input_dir, file_list_path)
-    if submodules:
-        with open(os.path.join(work_dir, "phases.json"), "r") as f:
-            phases_data = json.load(f)
-        file_list = _write_file_names(
-            _get_all_phase_files(phases_data, input_dir), file_list_path
-        )
     logging.info("  -> file list has %d entr(ies).", len(file_list))
 
     # 7. Update top-down layers
     logging.info("[Stage 7/10] Generating topdown layers...")
-    with open(os.path.join(work_dir, "phases.json"), "r") as f:
-        phases_data = json.load(f)
     generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
-    logging.info("  -> topdown layers generated for %d phase(s).", len(phases_data.get("phases", [])))
+    logging.info("  -> global topdown layers generated.")
 
     # 8. Collect the scope of functions relevant to the developer intent (the intent file defines the goal of modification).
     logging.info("[Stage 8/10] Collecting functions relevant to the developer intent...")
-    spec_files = collect_relevent_function_scope(proj_dir, developer_intent, changed_functions)
+    spec_files = collect_relevent_function_scope(
+        proj_dir, developer_intent, changed_functions, backend=backend
+    )
     logging.info("  -> %d function(s) judged relevant to the intent.", len(spec_files))
 
     # 9. Re-generate the spec of functions if it satisfies one of the following conditions: 1) the function is changed; 2) the function is relevant to the developer intent.
@@ -999,6 +992,7 @@ def run_incremental_pipeline(
         changed_functions,
         spec_files,
         extra_call_edges=extra_call_edges,
+        backend=backend,
     )
     record_path = os.path.join(work_dir, "incremental_updated_specs.json")
     with open(record_path, "w") as f:
@@ -1013,6 +1007,7 @@ def run_incremental_pipeline(
     buggy_files = _verify_incremental_functions(
         proj_dir, work_dir, changed_functions, updated_spec_files,
         submodules=submodules,
+        backend=backend,
         bug_validator_path=bug_validator_path,
     )
     logging.info("=" * 70)
@@ -1028,11 +1023,11 @@ def run_incremental_pipeline(
 
 def _extracted_func_dir(extracted_base, src_rel):
     """
-    Map a source file (relative path, phases.json convention) to the directory holding its
+    Map a project-relative source file to the directory holding its
     extracted-function files.
 
     Mirrors the `zzz.ext -> zzz-ext` derivation used by run_extraction and
-    _collect_phase_files: source file <src_dir>/<base>.<ext> is extracted to
+    _collect_module_files: source file <src_dir>/<base>.<ext> is extracted to
     <extracted_base>/<src_dir>/<base>-<ext>/, with one file per function named
     <func_name>.<ext>.
     """
@@ -1049,7 +1044,7 @@ def _extracted_func_dir(extracted_base, src_rel):
 
 
 def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
-                          result_relpath, stage, input_files):
+                          result_relpath, stage, input_files, backend=None):
     """
     Run opencode to produce a JSON artifact and return the parsed JSON.
 
@@ -1060,6 +1055,7 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
     artifact or it could not be parsed. Shared by the module- and file-selection steps of
     collect_relevent_function_scope.
     """
+    backend = backend or DEFAULT_BACKEND
     prompt_path = os.path.join(proj_dir, prompt_relpath)
     result_path = os.path.join(proj_dir, result_relpath)
     if os.path.exists(result_path):
@@ -1081,7 +1077,7 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
     produced = False
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         try:
-            run_opencode_traced(
+            backend.run_opencode_traced(
                 proj_dir=proj_dir,
                 work_dir=work_dir,
                 command=command,
@@ -1130,13 +1126,13 @@ def _validate_module_selection(data):
     for index, item in enumerate(data):
         if not isinstance(item, dict):
             raise ValueError(f"module-selection item {index} must be an object")
-        phase = item.get("phase")
         name = item.get("name")
-        if isinstance(phase, bool) or not isinstance(phase, int):
-            raise ValueError(f"module-selection item {index} requires integer field: phase")
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"module-selection item {index} requires non-empty string field: name")
-        validated.append({"phase": phase, "name": name.strip()})
+        module_index = item.get("index")
+        if isinstance(module_index, bool) or not isinstance(module_index, int):
+            raise ValueError(f"module-selection item {index} requires integer field: index")
+        validated.append({"index": module_index, "name": name.strip()})
     return validated
 
 
@@ -1250,16 +1246,27 @@ def _domain_knowledge_prompt_section(work_dir):
     return f"## User-provided domain knowledge\n\n{text}\n\n" if text else ""
 
 
-def collect_relevent_function_scope(proj_dir, developer_intent, changed_functions, range=None):
+def _changed_functions_for_source(proj_dir, src_rel, changed_functions):
+    abs_src = os.path.abspath(os.path.join(proj_dir, src_rel))
+    changes = changed_functions.get(abs_src, {})
+    names = []
+    for key in ("added", "modified"):
+        names.extend(changes.get(key, []))
+    return names
+
+
+def collect_relevent_function_scope(
+    proj_dir, developer_intent, changed_functions, range=None, backend=None
+):
     """
     Select the functions relevant to developer_intent and return the most relevant ones.
 
-    The module/phase plan in proj_dir/fm_agent/phases.json describes the project as a set
-    of modules, each with a natural-language description and a list of source_files. This
+    fm_agent/modules.json describes the project as a set of modules, each with a
+    natural-language description and a list of source_files. This
     narrows the scope to the developer's intent in three passes:
 
-      1. Module selection — a direct LLM call is given the module descriptions (already
-         parsed from phases.json) and picks the modules relevant to the intent.
+      1. Module selection — a direct LLM call is given the module descriptions
+         and picks the modules relevant to the intent.
       2. File selection — for each relevant module, opencode reads that module's source
          files and picks the files relevant to the intent.
       3. Function selection — the function-localization algorithm from scope.py ranks the
@@ -1270,26 +1277,20 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     range, when given, caps the result to the first (most relevant) `range` functions; pass
     None to return all of them.
 
-    Returns the selected extracted-function file paths (relative to the extracted_functions
-    dir, matching the convention used elsewhere in this module), ordered by descending
-    relevance score and truncated to the first `range` entries. Returns an empty list when
-    phases.json has no modules or opencode selects none / fails to produce a result.
+    Returns the selected extracted-function file paths (relative to the
+    extracted_functions dir), ordered by descending relevance score and truncated
+    to the first `range` entries. Returns an empty list when modules.json has no
+    modules or opencode selects none / fails to produce a result.
     """
+    backend = backend or DEFAULT_BACKEND
     work_dir = os.path.join(proj_dir, "fm_agent")
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
-    phases_data = _load_phases(work_dir)
-
-    # Flatten every module across all phases so we can match opencode's selection back to
-    # concrete modules (module names can repeat across phases, so keep the phase number too).
-    modules = []  # list of (phase_num, module_dict)
-    for phase_info in phases_data.get("phases", []):
-        phase_num = phase_info.get("phase")
-        for module in phase_info.get("modules", []):
-            modules.append((phase_num, module))
+    modules_data = _load_modules(work_dir)
+    modules = list(modules_data.get("modules", []))
 
     if not modules:
-        logging.info("    [scope] no modules in phases.json; nothing to select.")
+        logging.info("    [scope] no modules in modules.json; nothing to select.")
         return []
 
     changed_source_rels = {
@@ -1298,19 +1299,20 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     }
     logging.info("    [scope] pass 1/3: selecting relevant modules from %d module(s)...", len(modules))
 
-    # Pass 1: module selection. The module descriptions are already parsed from phases.json
-    # above, so rather than have opencode read the file, inline the catalog and make a direct
-    # LLM call that returns the selection as JSON.
+    indexed_modules = list(enumerate(modules))
+
+    # Pass 1: module selection. Inline the catalog and make a direct LLM call
+    # that returns the selection as JSON.
     module_catalog = "\n".join(
-        f"- phase {phase_num}, name `{module.get('name', '(unnamed)')}`: "
+        f"- index {index}, name `{module.get('name', '(unnamed)')}`: "
         f"{(module.get('description') or '').strip() or '(no description)'}"
-        for phase_num, module in modules
+        for index, module in indexed_modules
     )
     module_prompt = (
         "# Select Relevant Modules\n\n"
         "You are triaging which parts of a codebase are relevant to a developer's intent.\n\n"
-        "Each module below has a `phase` number, a `name`, and a `description`. Using each "
-        "module's description, decide which modules are relevant to the developer intent — a "
+        "Each module below has an `index`, a `name`, and a `description`. Using each module's "
+        "description, decide which modules are relevant to the developer intent — a "
         "module is relevant if the developer intent is likely to affect it or depend on it.\n\n"
         "## Modules\n\n"
         f"{module_catalog}\n\n"
@@ -1318,38 +1320,38 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
         f"{developer_intent}\n\n"
         "## Output\n\n"
         "Return ONLY a JSON array of objects, each "
-        '`{"phase": <phase number>, "name": "<module name>"}`, naming exactly the modules you '
-        "judged relevant (reuse the same `phase` and `name` values from the list above). Use "
-        "`[]` if no module is relevant. Do not include Markdown, tags, or prose outside the JSON array.\n"
+        '`{"index": <module index>, "name": "<module name>"}`, naming exactly the modules '
+        "you judged relevant (reuse the same `index` and `name` values from the list above). "
+        "Use `[]` if no module is relevant. Do not include Markdown, tags, or prose outside the JSON array.\n"
     )
     selection = _llm_select_json(
         work_dir,
         module_prompt,
         stage="select_relevant_modules",
         validator=_validate_module_selection,
-        schema_description='[{"phase": integer, "name": "non-empty string"}]',
+        schema_description='[{"index": integer, "name": "non-empty string"}]',
     )
     if selection is None:
         selection = []
 
-    selected_keys = set()
+    selected_indices = set()
     if isinstance(selection, list):
         for item in selection:
-            if isinstance(item, dict) and "name" in item:
-                selected_keys.add((item.get("phase"), item["name"]))
+            if isinstance(item, dict) and "index" in item:
+                selected_indices.add(item["index"])
 
     relevant_modules = [
-        (phase_num, module) for phase_num, module in modules
-        if (phase_num, module.get("name")) in selected_keys
+        module for index, module in indexed_modules
+        if index in selected_indices
         or any(sf.replace("\\", "/") in changed_source_rels for sf in module.get("source_files", []))
     ]
     if not relevant_modules:
         logging.info("    [scope] pass 1/3: no relevant modules selected.")
         return []
-    for phase_num, module in relevant_modules:
+    for module in relevant_modules:
         logging.info(
-            "    [scope] pass 1/3: relevant module: phase %s / %s",
-            phase_num, module.get("name", "(unnamed)"),
+            "    [scope] pass 1/3: relevant module: %s",
+            module.get("name", "(unnamed)"),
         )
     logging.info(
         "    [scope] pass 2/3: %d relevant module(s); selecting relevant files per module...",
@@ -1361,7 +1363,7 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     # module dict carrying only the chosen source_files; on opencode failure we fall back to
     # the module's full file list so the scope is never silently dropped.
     filtered_modules = []
-    for idx, (phase_num, module) in enumerate(relevant_modules):
+    for idx, module in enumerate(relevant_modules):
         module_name = module.get("name", f"module_{idx}")
         source_files = module.get("source_files", [])
         if not source_files:
@@ -1398,6 +1400,7 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
             os.path.join("fm_agent", f"relevant_files_{idx}.json"),
             stage="select_relevant_files",
             input_files=[f"fm_agent/select_relevant_files_{idx}.md", *source_files],
+            backend=backend,
         )
 
         if isinstance(file_selection, list):
@@ -1473,6 +1476,14 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
                     )
                     for cand in cands:
                         _record(os.path.relpath(cand, extracted_dir), f.get("score", 0.0))
+                for changed_name in _changed_functions_for_source(
+                    proj_dir, src_rel, changed_functions
+                ):
+                    cands = by_method.get(changed_name) or by_method.get(
+                        re.sub(r"_\d+$", "", changed_name), []
+                    )
+                    for cand in cands:
+                        _record(os.path.relpath(cand, extracted_dir), 0.0)
                 logging.info(
                     "    [scope] pass 3/3: %s -> %s",
                     src_rel,
@@ -1502,21 +1513,20 @@ def _project_call_graph(work_dir, extra_call_edges=None):
     """
     Build the project-wide call graph (keyed by FQN) over every extracted function.
 
-    Treats all extracted functions across every phase in phases.json as one graph, so
+    Treats all extracted functions across modules.json as one graph, so
     callee/caller edges span the whole project. Returns (callees_map, callers_map,
     file_map, edge_aliases_map): callees_map maps each FQN to the set of FQNs it calls
     directly, callers_map the inverse (each FQN to the FQNs that call it directly),
     file_map maps each FQN to the absolute path of its extracted-function file, and
     edge_aliases_map maps callee -> caller -> supplemental edge labels.
     """
-    phases = _load_phases(work_dir)
+    modules = _load_modules(work_dir)
     all_files = []
     seen = set()
-    for phase in phases.get("phases", []):
-        for fpath, module_name in _collect_phase_files(work_dir, phase):
-            if fpath not in seen:
-                seen.add(fpath)
-                all_files.append((fpath, module_name))
+    for fpath, module_name in _collect_module_files(work_dir, modules):
+        if fpath not in seen:
+            seen.add(fpath)
+            all_files.append((fpath, module_name))
 
     (
         callees_map,
@@ -1742,7 +1752,8 @@ def _collect_caller_context(fqn, callers_map, file_map, edge_aliases_map=None):
 
 
 def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
-                            developer_intent, callee_names, source, caller_context):
+                            developer_intent, callee_names, source, caller_context,
+                            backend=None):
     """
     Ask opencode to generate brand-new .spec.json and .info.json objects from scratch for a
     function that has no existing metadata sidecars — e.g. a function
@@ -1851,6 +1862,7 @@ def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_pref
             "fm_agent/spec_prompts/system_prompt.md",
             *user_knowledge_paths,
         ],
+        backend=backend,
     )
     return _validate_spec_update(result) if result is not None else None
 
@@ -1862,6 +1874,7 @@ def _update_specs_for_intent(
     changed_functions,
     relevant_rel_files,
     extra_call_edges=None,
+    backend=None,
 ):
     """
     Re-generate the .spec.json (and dependent .info.json) sidecars of every function that is
@@ -1885,6 +1898,7 @@ def _update_specs_for_intent(
     Returns the sorted list of extracted-function files (paths relative to the
     extracted_functions dir) whose metadata sidecar was changed.
     """
+    backend = backend or DEFAULT_BACKEND
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
     callees_map, callers_map, file_map, edge_aliases_map = _project_call_graph(
@@ -1956,6 +1970,7 @@ def _update_specs_for_intent(
             result = _opencode_generate_spec(
                 proj_dir, work_dir, idx, fqn, lang_key, "",
                 developer_intent, callee_names, source, caller_context,
+                backend=backend,
             )
         else:
             result = _llm_check_spec_update(
@@ -2142,6 +2157,7 @@ def _update_specs_for_intent(
 
 def _verify_incremental_functions(
     proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None,
+    backend=None,
     bug_validator_path=None,
 ):
     """
@@ -2170,6 +2186,7 @@ def _verify_incremental_functions(
     Returns the sorted list of extracted-function files (paths relative to the
     extracted_functions dir) whose reasoner MISMATCH was confirmed a bug by bug validation.
     """
+    backend = backend or DEFAULT_BACKEND
     extracted_dir = os.path.join(work_dir, "extracted_functions")
     output_dir = os.path.join(work_dir, "logic_verification_results")
 
@@ -2220,7 +2237,10 @@ def _verify_incremental_functions(
     def _verify(rel):
         fpath = os.path.join(extracted_dir, rel)
         language = _VERIFY_EXT_TO_LANG.get(os.path.splitext(fpath)[1], "C")
-        _, verdict = _verify_single_file(fpath, extracted_dir, output_dir, language, work_dir=work_dir)
+        _, verdict = _verify_single_file(
+            fpath, extracted_dir, output_dir, language,
+            work_dir=work_dir, backend=backend,
+        )
         return rel, verdict
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -2253,6 +2273,7 @@ def _verify_incremental_functions(
             result_json_rel,
             proj_dir,
             work_dir,
+            backend=backend,
             bug_validator_path=bug_validator_path,
         )
         return rel

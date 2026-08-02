@@ -1,13 +1,16 @@
 import config
 from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL
 from .parser import parse_input_function
-from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
+from .reasoner import _parse_spec_conditions, _sanitize_strings
 from .file_utils import is_file_ready
-from .opencode_trace import function_id_from_result_path, run_opencode_traced
+from .opencode_trace import function_id_from_result_path
+from .backend import DEFAULT_BACKEND
 from .llm_client import build_llm_cli_command
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
+    list_generated_domain_context_relpaths,
     list_staged_domain_knowledge_relpaths,
+    load_generated_domain_context_text,
     load_staged_domain_knowledge_text,
 )
 import os
@@ -71,9 +74,11 @@ def streaming_reasoner(
     spec_procs=None,
     already_processed=None,
     resume=False,
+    backend=None,
     bug_validator_path=None,
 ):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
+    backend = backend or DEFAULT_BACKEND
     if work_dir is None:
         work_dir = proj_dir
     os.makedirs(output_dir, exist_ok=True)
@@ -137,7 +142,8 @@ def streaming_reasoner(
                         submitted.add(file_path)
                         language = EXT_TO_LANG.get(ext, "C")
                         future = executor.submit(
-                            _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume
+                            _verify_single_file, file_path, input_dir, output_dir,
+                            language, work_dir, resume, backend
                         )
                         reasoning_futures[future] = file_path
                         logging.info(f"Submitted: {file_path}")
@@ -165,6 +171,7 @@ def streaming_reasoner(
                                 proj_dir,
                                 work_dir,
                                 resume=resume,
+                                backend=backend,
                                 bug_validator_path=bug_validator_path,
                             )
                             validation_futures[vf] = (fpath, rel_path, result_json_rel, completed_count)
@@ -265,8 +272,9 @@ def streaming_reasoner(
     return processed
 
 
-def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False):
+def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False, backend=None):
     """Verify a single file and write the result JSON."""
+    backend = backend or DEFAULT_BACKEND
     # Skip if resuming and a valid result already exists
     rel = os.path.relpath(file_path, input_dir)
     output_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
@@ -297,9 +305,15 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 "function_file": os.path.join("extracted_functions", rel_function).replace(os.sep, "/"),
             }
         domain_knowledge = load_staged_domain_knowledge_text(work_dir) if work_dir else ""
+        generated_context = (
+            load_generated_domain_context_text(work_dir, rel_function)
+            if work_dir else ""
+        )
+        if generated_context:
+            knowledge = f"{knowledge}\n\n{generated_context}" if knowledge else generated_context
         if domain_knowledge:
             knowledge = f"{knowledge}\n\n{domain_knowledge}" if knowledge else domain_knowledge
-        result = reasoner(func, spec, knowledge, language, trace_context=trace_context)
+        result = backend.reasoner(func, spec, knowledge, language, trace_context=trace_context)
 
         if "passes the verification" in result:
             output = {"function": file_path, "verdict": "MATCH", "gaps": None}
@@ -348,9 +362,11 @@ def _validate_single_bug(
     proj_dir,
     work_dir=None,
     resume=False,
+    backend=None,
     bug_validator_path=None,
 ):
     """Validate a single MISMATCH result by running opencode with a per-file prompt."""
+    backend = backend or DEFAULT_BACKEND
     if work_dir is None:
         work_dir = proj_dir
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -375,7 +391,20 @@ def _validate_single_bug(
     with open(base_md_path, "r") as f:
         base_content = f.read()
 
+    generated_context_paths = list_generated_domain_context_relpaths(
+        work_dir,
+        result_json_rel,
+    )
     user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
+    if generated_context_paths:
+        generated_context_section = (
+            "## Generated Domain Context\n\n"
+            "Read these setup-generated context files before validating the "
+            "candidate bug:\n\n"
+            f"{format_domain_knowledge_bullets(generated_context_paths)}\n\n---\n\n"
+        )
+    else:
+        generated_context_section = ""
     if user_knowledge_paths:
         user_knowledge_section = (
             "## User-Provided Domain Knowledge\n\n"
@@ -392,6 +421,7 @@ def _validate_single_bug(
         "# Bug Validator\n\n"
         f"**Target result file:** `{result_json_rel}`\n"
         f"**Bug ID:** `{bug_id}`\n\n---\n\n"
+        + generated_context_section
         + user_knowledge_section
         + base_content
     )
@@ -431,7 +461,7 @@ def _validate_single_bug(
         for attempt in range(1, max_attempts + 1):
             run_failed = False
             try:
-                run_opencode_traced(
+                backend.run_opencode_traced(
                     proj_dir=proj_dir,
                     work_dir=work_dir,
                     command=command,
@@ -440,6 +470,7 @@ def _validate_single_bug(
                     input_files=[
                         prompt_filename,
                         result_json_rel,
+                        *generated_context_paths,
                         *user_knowledge_paths,
                     ],
                     output_files=[

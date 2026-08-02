@@ -109,10 +109,10 @@ def frozen_worktree(proj_dir, exclude=("fm_agent",), copy_excluded=True):
             symlinks=True,
         )
 
-    # Copy the excluded workspace dirs (e.g. fm_agent/ with a prior full run's
-    # phases.json and extracted_functions) into the snapshot. They were kept out
-    # of the git commit, but incremental mode reads them from disk to compare
-    # against, so the snapshot must physically contain them.
+    # Copy excluded workspace dirs (e.g. fm_agent/ with setup manifests and
+    # extracted_functions) into the snapshot. They were kept out of the git
+    # commit, but incremental mode reads them from disk to compare against, so
+    # the snapshot must physically contain them.
     if copy_excluded:
         for name in exclude:
             src = os.path.join(proj_dir, name)
