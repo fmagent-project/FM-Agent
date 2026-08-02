@@ -96,6 +96,8 @@ def _parse_args(argv):
         ),
     )
     args = parser.parse_args(argv)
+    if args.openai and args.deepseek:
+        parser.error("--openai and --deepseek are mutually exclusive")
     if not args.plugin or not args.proj_dir:
         parser.print_usage()
         print(f"Available plugins: {names}")
@@ -170,15 +172,15 @@ def _configure_llm_env(args):
         _apply_config_env(args.config)
 
     if args.deepseek:
-        os.environ.setdefault("LLM_API_BASE_URL", "https://api.deepseek.com")
-        os.environ.setdefault("LLM_API_MODE", "chat")
-        os.environ.setdefault("LLM_MODEL", "deepseek-v4-pro")
+        os.environ["LLM_API_BASE_URL"] = "https://api.deepseek.com"
+        os.environ["LLM_API_MODE"] = "chat"
+        os.environ["LLM_MODEL"] = "deepseek-v4-pro"
         if not os.environ.get("LLM_API_KEY") and os.environ.get("DEEPSEEK_API_KEY"):
             os.environ["LLM_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
 
     if args.openai:
-        os.environ.setdefault("LLM_API_BASE_URL", "https://api.openai.com/v1")
-        os.environ.setdefault("LLM_API_MODE", "responses")
+        os.environ["LLM_API_BASE_URL"] = "https://api.openai.com/v1"
+        os.environ["LLM_API_MODE"] = "responses"
         if not os.environ.get("LLM_API_KEY") and os.environ.get("OPENAI_API_KEY"):
             os.environ["LLM_API_KEY"] = os.environ["OPENAI_API_KEY"]
     if args.base_url:

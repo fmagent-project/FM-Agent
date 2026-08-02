@@ -87,24 +87,76 @@ def _js_type_confusion(source: str) -> bool:
     return jit_shape_confusion and (arbitrary_rw or wasm_hijack)
 
 
-def _line_negates_finding(line: str) -> bool:
+def _line_describes_missing_protection(line: str) -> bool:
     return any(token in line for token in (
-        "no ",
-        "not ",
-        "without ",
-        "does not ",
-        "isn't ",
-        "不是",
-        "没有",
-        "无需",
-        "不需要",
-        "不依赖",
+        "without bounds check",
+        "without bound check",
+        "without bounds checking",
+        "without validation",
+        "without mitigation",
+        "without guard",
+        "without a guard",
+        "without check",
+        "no bounds check",
+        "no bound check",
+        "missing bounds check",
+        "missing bound check",
+        "missing validation",
+        "missing mitigation",
+        "missing guard",
+        "缺少边界检查",
+        "缺少校验",
+        "缺少缓解",
+        "没有边界检查",
+        "未进行边界检查",
     ))
+
+
+def _line_negates_finding(line: str, terms: Sequence[str]) -> bool:
+    if _denies_memory_corruption(line):
+        return True
+    if _line_describes_missing_protection(line):
+        return False
+
+    for term in terms:
+        deny_phrases = (
+            f"no {term}",
+            f"no evidence of {term}",
+            f"no sign of {term}",
+            f"not {term}",
+            f"not a {term}",
+            f"not an {term}",
+            f"not vulnerable to {term}",
+            f"without {term}",
+            f"does not trigger {term}",
+            f"does not cause {term}",
+            f"does not involve {term}",
+            f"does not contain {term}",
+            f"is not {term}",
+            f"is not a {term}",
+            f"is not an {term}",
+            f"isn't {term}",
+            f"isn't a {term}",
+            f"isn't an {term}",
+            f"没有 {term}",
+            f"没有{term}",
+            f"不是 {term}",
+            f"不是{term}",
+            f"无需 {term}",
+            f"无需{term}",
+            f"不需要 {term}",
+            f"不需要{term}",
+            f"不依赖 {term}",
+            f"不依赖{term}",
+        )
+        if any(phrase in line for phrase in deny_phrases):
+            return True
+    return False
 
 
 def _has_positive_term(text: str, terms: Sequence[str]) -> bool:
     for line in text.splitlines():
-        if any(term in line for term in terms) and not _line_negates_finding(line):
+        if any(term in line for term in terms) and not _line_negates_finding(line, terms):
             return True
     return False
 
