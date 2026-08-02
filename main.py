@@ -160,6 +160,7 @@ def run_pipeline(
     context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
     extraction_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
     file_list_stage = plugin_config.get_stage("collect_file_list") if plugin_config else None
+    topdown_stage = plugin_config.get_stage("generate_topdown_layers") if plugin_config else None
     print("[Pipeline] Stage 1/6: Generating phase plan...")
     if phase_stage is not None and phase_stage.type == "pass":
         print(
@@ -355,7 +356,37 @@ def run_pipeline(
 
     # --- Stage 5: Generate topdown layers ---
     print("[Pipeline] Stage 5/6: Generating topdown layers...")
-    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+    if topdown_stage is not None and topdown_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 5/6: Plugin stage "
+            "'generate_topdown_layers' type=pass, skipping."
+        )
+    elif topdown_stage is not None and topdown_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_topdown_layers",
+            topdown_stage.replace_function,
+            topdown_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if topdown_stage is not None and topdown_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_topdown_layers",
+                topdown_stage.input_function,
+                topdown_stage.input_hook,
+                proj_dir,
+            )
+        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+        if topdown_stage is not None and topdown_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_topdown_layers",
+                topdown_stage.output_function,
+                topdown_stage.output_hook,
+                proj_dir,
+            )
 
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
     if only_spec:
