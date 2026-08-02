@@ -159,6 +159,7 @@ def run_pipeline(
     phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
     context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
     extraction_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
+    file_list_stage = plugin_config.get_stage("collect_file_list") if plugin_config else None
     print("[Pipeline] Stage 1/6: Generating phase plan...")
     if phase_stage is not None and phase_stage.type == "pass":
         print(
@@ -306,11 +307,47 @@ def run_pipeline(
 
     print("[Pipeline] Stage 4/6: Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
-    file_list = collect_file_names(input_dir, file_list_path)
-    if submodules:
-        file_list = _write_file_names(
-            _get_all_phase_files(phases_data, input_dir), file_list_path
+    if file_list_stage is not None and file_list_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 4/6: Plugin stage "
+            "'collect_file_list' type=pass, skipping."
         )
+        with open(file_list_path, "r", encoding="utf-8") as file:
+            file_list = json.load(file)
+    elif file_list_stage is not None and file_list_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "collect_file_list",
+            file_list_stage.replace_function,
+            file_list_stage.replace_hook,
+            proj_dir,
+        )
+        with open(file_list_path, "r", encoding="utf-8") as file:
+            file_list = json.load(file)
+    else:
+        if file_list_stage is not None and file_list_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "collect_file_list",
+                file_list_stage.input_function,
+                file_list_stage.input_hook,
+                proj_dir,
+            )
+        file_list = collect_file_names(input_dir, file_list_path)
+        if submodules:
+            file_list = _write_file_names(
+                _get_all_phase_files(phases_data, input_dir), file_list_path
+            )
+        if file_list_stage is not None and file_list_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "collect_file_list",
+                file_list_stage.output_function,
+                file_list_stage.output_hook,
+                proj_dir,
+            )
+            with open(file_list_path, "r", encoding="utf-8") as file:
+                file_list = json.load(file)
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
