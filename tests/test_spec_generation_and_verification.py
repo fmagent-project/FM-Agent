@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from src.generate_batch_prompts import build_prompt
 from src.spec_generation_and_verification import (
     _get_pending_batches,
     _run_spec_generation_batch,
@@ -13,6 +14,23 @@ from src.spec_generation_and_verification import (
 
 
 class SpecGenerationRetryTests(unittest.TestCase):
+    def test_batch_prompt_preserves_function_extension_in_sidecar_names(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prompt = build_prompt(
+                phase=1,
+                layer_idx=0,
+                is_cycle=False,
+                functions=[{"file": "function.py", "name": "function"}],
+                func_to_layer={"function": 0},
+                all_funcs={"function": {"file": "function.py"}},
+                work_dir=Path(temp_dir),
+                fm_agent_prefix="fm_agent/",
+                ext_to_lang={"py": "python"},
+            )
+
+        self.assertIn("`foo.py.spec.json`", prompt)
+        self.assertIn("`foo.py.info.json`", prompt)
+
     def _capture_prompt(self, attempt):
         with tempfile.TemporaryDirectory() as temp_dir:
             with (
