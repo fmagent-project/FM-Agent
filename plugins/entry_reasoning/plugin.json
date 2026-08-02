@@ -1,0 +1,16 @@
+{
+  "name": "entry_reasoning",
+  "version": "V1.0",
+  "configure_function": "configure",
+  "stages": {
+    "generate_phase_plan": {
+      "type": "modify",
+      "input_function": "select_entry_call_chain",
+      "output_function": "write_entry_phase_plan"
+    },
+    "collect_file_list": {
+      "type": "modify",
+      "output_function": "filter_entry_file_list"
+    }
+  }
+}

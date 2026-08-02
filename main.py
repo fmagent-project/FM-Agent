@@ -584,18 +584,22 @@ if __name__ == "__main__":
                 print(f"{name:<30} {plugin.version:<12} {stage_names}")
         sys.exit(0)
 
+    selected_plugin = args.plugin
+    if selected_plugin is None and args.entry_func is not None:
+        selected_plugin = "entry_reasoning"
+
     plugin_config = None
-    if args.plugin:
+    if selected_plugin:
         if not args.proj_dir:
             parser.error("the following arguments are required when --plugin is used: proj_dir")
         from pathlib import Path
         from src.plugin import load_plugins
         plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
         plugins = load_plugins(Path(plugins_dir))
-        if args.plugin not in plugins:
-            print(f"[Pipeline] ERROR: Plugin '{args.plugin}' not found or invalid.")
+        if selected_plugin not in plugins:
+            print(f"[Pipeline] ERROR: Plugin '{selected_plugin}' not found or invalid.")
             sys.exit(1)
-        plugin_config = plugins[args.plugin]
+        plugin_config = plugins[selected_plugin]
         print(f"[Pipeline] Loaded plugin '{plugin_config.name}' v{plugin_config.version}")
 
     if not args.proj_dir:
@@ -606,6 +610,11 @@ if __name__ == "__main__":
     extra_call_edges_path = args.extra_edge
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
+    plugin_context = {
+        "entry_func": args.entry_func,
+        "end_funcs": args.end_func or [],
+        "extra_edge": extra_call_edges_path,
+    }
     try:
         bug_validator_path = _resolve_bug_validator_path(args.bug_validator)
     except ValueError as exc:
@@ -640,26 +649,6 @@ if __name__ == "__main__":
         sys.exit(0)
 
     start_time = time.time()
-
-    # Entry-point mode: reason only about the call graph reachable from a specific
-    # entry function. Runs directly against the project directory (no worktree
-    # isolation or incremental diffing).
-    if args.entry_func is not None:
-        run_entry_pipeline(
-            proj_dir,
-            entry_func=args.entry_func,
-            end_funcs=args.end_func,
-            resume=resume,
-            domain_knowledge_files=domain_knowledge_files,
-            one_phase=args.one_phase,
-            extra_call_edges_path=extra_call_edges_path,
-            only_spec=args.only_spec,
-            bug_validator_path=bug_validator_path,
-            plugin_config=plugin_config,
-        )
-        end_time = time.time()
-        logging.info(f"Total time: {end_time - start_time:.2f} seconds")
-        sys.exit(0)
 
     # Incremental mode diffs against the commit recorded by a previous run, and
     # --isolate snapshots the repo via a git worktree, so both require a git repo.
@@ -727,7 +716,7 @@ if __name__ == "__main__":
                     only_spec=args.only_spec,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
-                    plugin_context={},
+                    plugin_context=plugin_context,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
