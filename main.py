@@ -19,6 +19,7 @@ from src.git import (
     _record_version,
 )
 from src.languages.codegraph import try_codegraph_init
+from src.plugin import run_plugin_hook
 from src.pipeline_setup import (
     _run_setup_extract,
     _run_generate_phases,
@@ -157,15 +158,41 @@ def run_pipeline(
     # Stage 2: generate domain context (input: phases.json → domain context files)
     phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
     context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
-    plugin_root = plugin_config.root if plugin_config else None
-
     print("[Pipeline] Stage 1/6: Generating phase plan...")
-    _run_generate_phases(
-        proj_dir, work_dir, script_dir, resume=resume,
-        submodules=submodules,
-        plugin_stage=phase_stage,
-        plugin_root=plugin_root,
-    )
+    if phase_stage is not None and phase_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 1/6: Plugin stage "
+            "'generate_phase_plan' type=pass, skipping."
+        )
+    elif phase_stage is not None and phase_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_phase_plan",
+            phase_stage.replace_function,
+            phase_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if phase_stage is not None and phase_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_phase_plan",
+                phase_stage.input_function,
+                phase_stage.input_hook,
+                proj_dir,
+            )
+        _run_generate_phases(
+            proj_dir, work_dir, script_dir, resume=resume,
+            submodules=submodules,
+        )
+        if phase_stage is not None and phase_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_phase_plan",
+                phase_stage.output_function,
+                phase_stage.output_hook,
+                proj_dir,
+            )
 
     phases_modified = _post_process_phases(
         proj_dir, work_dir,
@@ -175,14 +202,42 @@ def run_pipeline(
     )
 
     print("[Pipeline] Stage 2/6: Generating domain context...")
-    _run_generate_domain_context(
-        proj_dir,
-        work_dir,
-        script_dir,
-        resume=resume and not phases_modified,
-        plugin_stage=context_stage,
-        plugin_root=plugin_root,
-    )
+    if context_stage is not None and context_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 2/6: Plugin stage "
+            "'generate_domain_context' type=pass, skipping."
+        )
+    elif context_stage is not None and context_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_domain_context",
+            context_stage.replace_function,
+            context_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if context_stage is not None and context_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_domain_context",
+                context_stage.input_function,
+                context_stage.input_hook,
+                proj_dir,
+            )
+        _run_generate_domain_context(
+            proj_dir,
+            work_dir,
+            script_dir,
+            resume=resume and not phases_modified,
+        )
+        if context_stage is not None and context_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_domain_context",
+                context_stage.output_function,
+                context_stage.output_hook,
+                proj_dir,
+            )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
     # run_extraction (Stage 3) and generate_topdown_layers (Stage 5) read from it.

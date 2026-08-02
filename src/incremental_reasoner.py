@@ -922,7 +922,6 @@ def run_incremental_pipeline(
         proj_dir, work_dir, script_dir,
         is_incremental=True, submodules=submodules,
         one_phase=one_phase,
-        plugin_config=plugin_config,
     )
     logging.info("  -> phases.json regenerated.")
 
