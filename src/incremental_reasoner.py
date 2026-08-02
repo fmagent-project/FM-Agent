@@ -709,22 +709,33 @@ def _modified_function_targets(
 
 def _reconcile_extracted_dir(proj_dir, abs_src):
     """Delete extracted-function files under abs_src's function directory that
-    codegraph no longer produces for it, then prune emptied directories.
+    the backend no longer produces for it, then prune emptied directories.
 
     ``valid`` is computed with the same backend (codegraph when it indexes the
     file, else regex) that run_extraction used to write the files, so their
     identifiers — and therefore the on-disk layout — agree; only genuinely orphaned
     files are removed. A source file that no longer exists yields an empty ``valid``
     set, so all of its extracted files are removed.
+
+    Returns True if reconciliation was performed, or False if the semantic backend
+    (e.g. ELP for Erlang) could not be consulted. In the latter case the file is
+    left untouched so that transient backend failures do not delete existing specs.
     """
     func_dir, ext = _src_rel_to_func_dir(proj_dir, abs_src)
     if not os.path.isdir(func_dir):
-        return
+        return True
 
     valid = set()
     lang_key = EXT_TO_LANG.get(ext)
     if lang_key and os.path.isfile(abs_src):
-        spans, _raw = _function_spans(abs_src, lang_key, proj_dir)
+        spans, _raw, backend_available = _function_spans(abs_src, lang_key, proj_dir)
+        if not backend_available:
+            logging.warning(
+                "ELP backend unavailable for %s; skipping reconciliation for this file "
+                "to avoid deleting existing specs.",
+                abs_src,
+            )
+            return False
         for ident, _s, _e in spans:
             # ident is the class-qualified, deduped identifier written by
             # run_extraction as a flat file that keeps the "::" in its name.
@@ -744,11 +755,12 @@ def _reconcile_extracted_dir(proj_dir, abs_src):
     for root, _dirs, _files in os.walk(func_dir, topdown=False):
         if root != func_dir and os.path.isdir(root) and not os.listdir(root):
             os.rmdir(root)
+    return True
 
 
 def _remove_stale_extracted(proj_dir, modified_functions):
     """
-    Reconcile the extracted-function tree against what codegraph now produces,
+    Reconcile the extracted-function tree against what the backends now produce,
     deleting any file that no longer corresponds to a current source function and
     pruning emptied directories.
 
@@ -759,6 +771,10 @@ def _remove_stale_extracted(proj_dir, modified_functions):
     qualified directory without changing the regex name or body, so the old
     qualified file would otherwise linger as a stale, orphaned spec. Reconciling by
     path rather than by (class-less) name handles it.
+
+    Returns a list of absolute source-file paths whose reconciliation was skipped
+    because the semantic backend could not be consulted. Callers should surface this
+    degraded coverage so users know existing specs were retained but not refreshed.
     """
     srcs = set(modified_functions)  # abs paths; includes deleted source files
     try:
@@ -769,8 +785,11 @@ def _remove_stale_extracted(proj_dir, modified_functions):
                     srcs.add(os.path.abspath(os.path.join(proj_dir, rel)))
     except (OSError, ValueError, KeyError):
         pass
+    skipped = []
     for abs_src in srcs:
-        _reconcile_extracted_dir(proj_dir, abs_src)
+        if not _reconcile_extracted_dir(proj_dir, abs_src):
+            skipped.append(abs_src)
+    return skipped
 
 
 def _topdown_ordered_fqns(work_dir, extra_call_edges=None):
@@ -960,8 +979,16 @@ def run_incremental_pipeline(
     # 5b. Delete extracted-function files for functions (or whole source files) that were
     #     removed since old_commit_id. Re-extraction never rewrites these, so without this
     #     they linger as stale specs and would pollute the file list and call graph below.
-    _remove_stale_extracted(proj_dir, changed_functions)
+    skipped_srcs = _remove_stale_extracted(proj_dir, changed_functions)
     logging.info("  -> stale extracted-function files for removed functions deleted.")
+    if skipped_srcs:
+        logging.warning(
+            "Reconciliation skipped for %d source file(s) because the semantic "
+            "backend was unavailable; existing specs retained.",
+            len(skipped_srcs),
+        )
+        for skipped_src in skipped_srcs:
+            logging.warning("  - %s", skipped_src)
 
     # 6. Update file list
     logging.info("[Stage 6/10] Collecting file list...")

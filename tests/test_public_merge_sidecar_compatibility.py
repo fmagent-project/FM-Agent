@@ -62,7 +62,7 @@ class ReconcileSidecarTests(unittest.TestCase):
 
             with patch(
                 "src.incremental_reasoner._function_spans",
-                return_value=([("current", 1, 1)], ""),
+                return_value=([("current", 1, 1)], "", True),
             ):
                 _reconcile_extracted_dir(str(project), str(source))
 
