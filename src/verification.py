@@ -222,10 +222,22 @@ def streaming_reasoner(
                             with open(result_path) as rf:
                                 result_data = json.load(rf)
                             confirmed = result_data.get("confirmation_status") == "confirmed"
+                        candidate_suffix = ""
+                        if all_bugs:
+                            candidate_name = os.path.splitext(
+                                os.path.basename(result_json_rel)
+                            )[0]
+                            candidate_suffix = f" [{candidate_name}]"
                         if confirmed:
-                            print(f"[{count}/{num_functions}] {rel_path}: \033[31m✘\033[0m")
+                            print(
+                                f"[{count}/{num_functions}] {rel_path}: "
+                                f"\033[31m✘\033[0m{candidate_suffix}"
+                            )
                         else:
-                            print(f"[{count}/{num_functions}] {rel_path}: \033[32m✔\033[0m")
+                            print(
+                                f"[{count}/{num_functions}] {rel_path}: "
+                                f"\033[32m✔\033[0m{candidate_suffix}"
+                            )
                         logging.info(
                             "Validation completed: %s (target=%s, confirmed=%s)",
                             fpath,
