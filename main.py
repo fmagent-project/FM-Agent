@@ -117,6 +117,7 @@ def run_pipeline(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    plugin_context=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -145,6 +146,18 @@ def run_pipeline(
     else:
         _clean_previous_run(work_dir)
     os.makedirs(work_dir, exist_ok=True)
+    if plugin_config is not None:
+        plugin_context_path = os.path.join(work_dir, "plugin_context.json")
+        with open(plugin_context_path, "w", encoding="utf-8") as file:
+            json.dump(plugin_context or {}, file, indent=2)
+        if plugin_config.configure_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "configure",
+                plugin_config.configure_function,
+                plugin_config.configure_hook,
+                proj_dir,
+            )
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
     )
@@ -702,7 +715,6 @@ if __name__ == "__main__":
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     bug_validator_path=bug_validator_path,
-                    plugin_config=plugin_config,
                 )
             else:
                 run_pipeline(
@@ -715,6 +727,7 @@ if __name__ == "__main__":
                     only_spec=args.only_spec,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
+                    plugin_context={},
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is

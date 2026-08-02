@@ -812,7 +812,6 @@ def run_incremental_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     bug_validator_path=None,
-    plugin_config=None,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -866,7 +865,6 @@ def run_incremental_pipeline(
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             bug_validator_path=bug_validator_path,
-            plugin_config=plugin_config,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
