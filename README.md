@@ -237,8 +237,10 @@ uv run python main.py <proj_dir> --bug-validator prompts/compiler_bug_validator.
 ```
 
 The selected file replaces the built-in `md/bug_validator.md` instructions.
-For `--all-bugs` candidate validation, FM-Agent appends a mandatory
-machine-readable result contract so candidate identity and resume remain safe.
+When a custom `--bug-validator` is used for `--all-bugs` candidate validation,
+FM-Agent specifies the output path, required fields, and allowed values for the
+final result JSON so it can reliably read and validate the result and safely
+reuse it during `--resume`.
 Relative `--bug-validator` paths are resolved from the directory where
 FM-Agent is launched, not from `proj_dir`.
 FM-Agent still adds the current bug ID, target verification result, and any

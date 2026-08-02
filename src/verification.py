@@ -4,7 +4,6 @@ from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
 from .file_utils import (
     _all_bugs_candidate_paths,
-    _ensure_resume_result_mode,
     _terminal_validation_is_valid,
     _terminal_validation_record_is_valid,
     is_file_ready,
@@ -306,20 +305,9 @@ def _extracted_function_identity(path):
     if not isinstance(path, str):
         return None
 
-    parts = path.replace("\\", "/").split("/")
-    try:
-        marker_index = len(parts) - 1 - parts[::-1].index(
-            "extracted_functions"
-        )
-    except ValueError:
-        return None
-
-    relative_parts = parts[marker_index + 1 :]
-    if not relative_parts or any(
-        part in {"", ".", ".."} for part in relative_parts
-    ):
-        return None
-    return posixpath.normpath("/".join(relative_parts))
+    normalized = "/" + path.replace("\\", "/")
+    _, marker, relative = normalized.rpartition("/extracted_functions/")
+    return relative if marker and relative else None
 
 
 def _stable_all_bugs_function_path(file_path, input_dir):
@@ -471,7 +459,6 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
         try:
             with open(output_path, encoding="utf-8") as f:
                 existing = json.load(f)
-            _ensure_resume_result_mode(existing, output_path, all_bugs)
             verdict = existing.get("verdict", "ERROR")
             candidates = (
                 _all_bugs_candidate_paths(output_path, existing)
@@ -688,7 +675,7 @@ def _all_bugs_custom_validator_result_contract(bug_id):
         "```\n\n"
         f"- `id` must be exactly `{bug_id}`.\n"
         "- `confirmation_status` must be `confirmed`, `not_confirmed`, or `error`.\n"
-        "- `attempts` must be an integer from 1 through 10.\n"
+        "- `attempts` must be a positive integer.\n"
         "- `source_file`, `function_name`, `probe_script`, `detail_file`, "
         "`probe_stdout`, and `trigger_summary` must be strings; use an empty "
         "string when a value is not applicable.\n"
@@ -702,7 +689,7 @@ def _validate_single_bug(
     resume=False,
     bug_validator_path=None,
 ):
-    """Validate a single MISMATCH result by running opencode with a per-file prompt."""
+    """Validate a single MISMATCH result with the configured CLI backend."""
     if work_dir is None:
         work_dir = proj_dir
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -813,7 +800,7 @@ def _validate_single_bug(
                         os.path.join("fm_agent", "bug_validation", f"{bug_id}.md"),
                         result_relpath,
                     ],
-                    summary=f"OpenCode bug validation for {bug_id}",
+                    summary=f"Bug validation for {bug_id}",
                     metadata={"bug_id": bug_id, "result_json": result_json_rel},
                 )
             except subprocess.CalledProcessError as exc:

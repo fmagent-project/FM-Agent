@@ -309,7 +309,7 @@ def _terminal_validation_record_is_valid(validation, expected_bug_id):
     return (
         isinstance(attempts, int)
         and not isinstance(attempts, bool)
-        and 1 <= attempts <= 10
+        and attempts > 0
     )
 
 
@@ -341,8 +341,6 @@ def _get_incomplete_verification_files(
         except (OSError, json.JSONDecodeError):
             incomplete.append(rel)
             continue
-
-        _ensure_resume_result_mode(result, result_path, all_bugs)
 
         if all_bugs:
             candidates = _all_bugs_candidate_paths(result_path, result)
