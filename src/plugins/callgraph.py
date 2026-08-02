@@ -48,8 +48,13 @@ def _path_is_within(path: str, root: str) -> bool:
         return False
 
 
+def _is_fm_agent_work_dir(name: str) -> bool:
+    """Return True for FM-Agent runtime output directories under a target repo."""
+    return name == "fm_agent" or name.startswith("fm_agent_")
+
+
 def scan_source_files(proj_dir: str, excluded_root: Optional[str] = None) -> List[str]:
-    """Find supported source files, excluding one active plugin work tree."""
+    """Find supported source files, excluding FM-Agent runtime work trees."""
     source_exts = set(EXT_TO_LANG.keys())
     excluded = _absolute_path(excluded_root) if excluded_root else None
     if excluded and _path_is_within(proj_dir, excluded):
@@ -60,6 +65,7 @@ def scan_source_files(proj_dir: str, excluded_root: Optional[str] = None) -> Lis
             d for d in dirs
             if not d.startswith(".")
             and d not in {"node_modules", "__pycache__", "venv", ".venv"}
+            and not _is_fm_agent_work_dir(d)
             and not (excluded and _path_is_within(os.path.join(root, d), excluded))
         ]
         for fname in files:

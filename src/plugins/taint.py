@@ -268,6 +268,65 @@ def _source_proven_sink_kinds(source: str) -> set[str]:
     return proven
 
 
+def _has_js_browser_exploit_pattern(source: str) -> bool:
+    """Recognize browser exploit primitives that are not normal app sinks."""
+    lower = source.lower()
+    jit_confusion = (
+        "object.keys(" in lower
+        and "object.defineproperty" in lower
+        and "\"name\"" in lower
+    )
+    arbitrary_rw = (
+        ("forgedwritebyte" in lower and "forgedreadbyte" in lower)
+        or ("write64(" in lower and "read64(" in lower)
+    )
+    wasm_hijack = (
+        "webassembly.module" in lower
+        or "webassembly.instance" in lower
+        or "unchecked_entry" in lower
+        or "setwasmuncheckedentry" in lower
+    )
+    shell_exec = (
+        "/system/bin/sh" in lower
+        or "ld_preload" in lower
+        or "runspawncommand" in lower
+        or "runcapturecommand" in lower
+    )
+    return (
+        (jit_confusion and arbitrary_rw)
+        or (arbitrary_rw and wasm_hijack)
+        or (wasm_hijack and shell_exec)
+    )
+
+
+def _append_js_browser_exploit_sink(normalized: dict, kept: list, source: str) -> None:
+    if not _has_js_browser_exploit_pattern(source):
+        return
+    sources = normalized.setdefault("taint_sources", [])
+    source_id = "SRC_BROWSER_EXPLOIT_PRIMITIVE"
+    if not any(isinstance(item, dict) and item.get("id") == source_id for item in sources):
+        sources.append({
+            "id": source_id,
+            "source_kind": "unknown_external",
+            "expr": "browser JIT type-confusion primitive",
+            "confidence": "high",
+            "evidence": "Object.keys/name confusion, arbitrary read/write, WASM entry hijack, or shell command bridge",
+        })
+    sink_id = "K_BROWSER_EXPLOIT_CHAIN"
+    if any(isinstance(item, dict) and item.get("id") == sink_id for item in kept):
+        return
+    kept.append({
+        "id": sink_id,
+        "sink_kind": "shell_command" if "/system/bin/sh" in source.lower() else "code_eval",
+        "callee": "browser_exploit_chain",
+        "call_expr": "JIT primitive -> arbitrary read/write -> WASM/native command execution",
+        "arg_position": 0,
+        "arg_expr": "browser exploit payload",
+        "arg_context": "shell_command_text" if "/system/bin/sh" in source.lower() else "code_string",
+        "flows": [{"source": f"source:{source_id}", "sanitizers": []}],
+    })
+
+
 def _compact_expr(value) -> str:
     if isinstance(value, ast.AST):
         value = ast.unparse(value)
@@ -1088,6 +1147,7 @@ def _normalize_operation_sinks(payload: dict, source: str) -> dict:
                 ):
                     sink.pop("_validation_guard_coverage", None)
 
+    _append_js_browser_exploit_sink(normalized, kept, source)
     normalized["sinks"] = kept
     return normalized
 

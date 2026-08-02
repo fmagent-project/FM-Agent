@@ -79,17 +79,21 @@ class PluginWorkDirectoryDiscoveryTests(unittest.TestCase):
             self.assertEqual([second_id], [site.callee for site in program.calls_by_caller[first_id]])
             self.assertEqual([first_id], [site.callee for site in program.calls_by_caller[second_id]])
 
-    def test_exclusion_uses_path_containment_not_directory_name_or_prefix(self):
+    def test_scan_excludes_fm_agent_work_dirs_but_not_prefix_siblings(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             work = project / "active-work"
             sibling = project / "active-work-copy"
-            named_like_legacy_work = project / "fm_agent_authn"
+            default_work = project / "fm_agent_authn"
+            main_work = project / "fm_agent"
+            prefix_sibling = project / "fm_agentx_authn"
             for path in (
                 project / "app.py",
                 work / "results/nested/generated.py",
                 sibling / "user.py",
-                named_like_legacy_work / "user.py",
+                default_work / "user.py",
+                main_work / "user.py",
+                prefix_sibling / "user.py",
             ):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("def target():\n    return 1\n")
@@ -97,7 +101,7 @@ class PluginWorkDirectoryDiscoveryTests(unittest.TestCase):
             found = scan_source_files(str(project), excluded_root=str(work.resolve()))
 
             self.assertEqual(
-                ["active-work-copy/user.py", "app.py", "fm_agent_authn/user.py"],
+                ["active-work-copy/user.py", "app.py", "fm_agentx_authn/user.py"],
                 found,
             )
 
@@ -188,6 +192,59 @@ class PluginWorkDirectoryDiscoveryTests(unittest.TestCase):
             self.assertTrue((
                 project / "custom-ifc-work/facts_cache/app-py/original.json"
             ).is_file())
+
+    def test_driver_does_not_cache_error_facts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "app.py").write_text("def original():\n    return 1\n")
+            metadata = SimpleNamespace(
+                name="ifc", requires_top_down_context=False
+            )
+            plugin = SimpleNamespace(
+                metadata=metadata,
+                check=lambda facts, context, propagated: Verdict(
+                    plugin_name="ifc", verdict="ERROR", status="error"
+                ),
+                render_result=lambda unit, facts, verdict, context: {
+                    "rel": unit.id.rel, "verdict": verdict.verdict,
+                    "status": verdict.status,
+                },
+                render_summary=lambda results, counts: {
+                    "total": len(results), "counts": dict(counts), "results": list(results)
+                },
+            )
+
+            def error_facts(plugin, request, model, max_iter):
+                return FactEnvelope(
+                    plugin_name="ifc",
+                    schema_version="test.v1",
+                    function=request.function.id,
+                    status="error",
+                    payload=None,
+                )
+
+            with mock.patch.object(
+                driver, "_call_llm_with_retries", side_effect=error_facts
+            ) as llm:
+                driver.run_plugin(
+                    plugin,
+                    str(project),
+                    work_subdir="custom-ifc-work",
+                    results_subdir="ifc_results",
+                    verbose=False,
+                )
+                driver.run_plugin(
+                    plugin,
+                    str(project),
+                    work_subdir="custom-ifc-work",
+                    results_subdir="ifc_results",
+                    verbose=False,
+                )
+
+            self.assertEqual(2, llm.call_count)
+            self.assertFalse((
+                project / "custom-ifc-work/facts_cache/app-py/original.json"
+            ).exists())
 
 
 if __name__ == "__main__":

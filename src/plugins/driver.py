@@ -362,10 +362,16 @@ def run_plugin(plugin: AnalysisPlugin, proj_dir: str, work_subdir: Optional[str]
                 trace_dir=trace_dir,
                 trace_meta={"function_id": unit.id.rel, "language": unit.id.language},
             )
-            facts = _call_llm_with_retries(plugin, request, model, max_iter)
-            # Persist the raw abstraction immediately, BEFORE compose, so a crash
-            # or rate-limit after this point never loses the LLM work.
-            _write_facts_checkpoint(cache_dir, unit, facts)
+            derive_facts = getattr(plugin, "derive_facts", None)
+            facts = derive_facts(request) if callable(derive_facts) else None
+            if facts is None:
+                facts = _call_llm_with_retries(plugin, request, model, max_iter)
+            # Persist usable abstractions immediately, BEFORE compose, so a crash
+            # or rate-limit after this point never loses the LLM work. Do not
+            # cache error facts from auth/balance/config failures; after the
+            # operator fixes the root cause, a resumed run should retry them.
+            if facts.status != "error":
+                _write_facts_checkpoint(cache_dir, unit, facts)
             derived += 1
         resolved = _resolved_calls(unit, facts_by_fn, program)
         if resolved:

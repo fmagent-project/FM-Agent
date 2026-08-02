@@ -165,6 +165,7 @@ EXT_TO_LANG = {
     "java": "java",
     "ts": "typescript", "tsx": "typescript",
     "js": "javascript", "jsx": "javascript",
+    "html": "javascript", "htm": "javascript",
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
 }

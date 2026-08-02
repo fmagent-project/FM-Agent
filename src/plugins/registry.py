@@ -255,6 +255,68 @@ PLUGIN_MANIFESTS: Dict[str, dict] = {
         ),
         "benchmark_categories": [],
     },
+    "memsafety": {
+        "name": "memsafety",
+        "module": "src.plugins.memsafety",
+        "class_name": "MemSafetyPlugin",
+        "work_subdir": "fm_agent_memsafety",
+        "results_subdir": "results",
+        "requires_llm": False,
+        "label": "Memory safety",
+        "verdicts": {
+            "positive": ["VULNERABLE"],
+            "poly": [],
+            "review": ["NEEDS_REVIEW"],
+            "negative": ["SAFE"],
+        },
+        "cwes": ["CWE-119", "CWE-122", "CWE-125", "CWE-416", "CWE-787", "CWE-843"],
+        "cwe_notes": {
+            "CWE-119": "improper restriction of operations within memory buffer bounds",
+            "CWE-122": "heap-based buffer overflow",
+            "CWE-125": "out-of-bounds read",
+            "CWE-416": "use after free",
+            "CWE-787": "out-of-bounds write",
+            "CWE-843": "type confusion",
+        },
+        "property_nl": (
+            "memory-safety vulnerabilities such as use-after-free, heap/stack "
+            "overflow, out-of-bounds access, parser memory corruption, and "
+            "JIT/browser type confusion"
+        ),
+        "benchmark_categories": [],
+    },
+    "kernel": {
+        "name": "kernel",
+        "module": "src.plugins.kernel",
+        "class_name": "KernelPlugin",
+        "work_subdir": "fm_agent_kernel",
+        "results_subdir": "results",
+        "requires_llm": False,
+        "label": "Kernel exploitation",
+        "verdicts": {
+            "positive": ["VULNERABLE"],
+            "poly": [],
+            "review": ["NEEDS_REVIEW"],
+            "negative": ["SAFE"],
+        },
+        "cwes": ["CWE-123", "CWE-269", "CWE-284", "CWE-345", "CWE-362", "CWE-664", "CWE-669", "CWE-863"],
+        "cwe_notes": {
+            "CWE-123": "write-what-where condition",
+            "CWE-269": "improper privilege management",
+            "CWE-284": "improper access control",
+            "CWE-345": "insufficient verification of data authenticity",
+            "CWE-362": "race condition / incorrect synchronization",
+            "CWE-664": "improper control of a resource through its lifetime",
+            "CWE-669": "incorrect resource transfer between spheres",
+            "CWE-863": "incorrect authorization",
+        },
+        "property_nl": (
+            "kernel exploitation primitives, including page-cache corruption, "
+            "partial COW, zero-copy file-page misuse, keyring description trust, "
+            "pidfd/file-descriptor theft, and subsystem-specific LPE chains"
+        ),
+        "benchmark_categories": [],
+    },
 }
 
 

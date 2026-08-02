@@ -259,6 +259,15 @@ class AnalysisPlugin(ABC, Generic[PayloadT, ContextT]):
         """Produce fail-closed facts after retries are exhausted or the call
         raised. For security plugins this MUST lead to ERROR/unsafe, never SECURE."""
 
+    def derive_facts(self, request: AbstractionRequest) -> Optional[FactEnvelope[PayloadT]]:
+        """Optional deterministic fact derivation hook.
+
+        Plugins that can derive their complete fact envelope from source syntax
+        or project metadata may override this to avoid an LLM abstraction call.
+        Returning None preserves the standard prompt -> LLM -> parse path.
+        """
+        return None
+
     # -- (b) composition -------------------------------------------------------
 
     @abstractmethod
