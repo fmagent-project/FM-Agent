@@ -166,6 +166,43 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
+| `--plugin NAME` | 加载 `plugins/NAME/` 下的 Pipeline 插件。 |
+| `--list-plugin` | 列出有效的 Pipeline 插件并退出。 |
+| `--entry-func FQN` | 仅分析入口函数可达的函数；未指定 `--plugin` 时自动启用 `entry_reasoning`。 |
+| `--end-func FQN [FQN ...]` | 在一个或多个可达终止函数处截断入口调用链。 |
+
+### Pipeline 插件
+
+FM-Agent 插件可以通过受信任的 Python Hook 跳过、替换或修改六个 Pipeline
+Stage。所有 Hook 使用统一签名：
+
+```python
+def hook(proj_dir: str) -> None:
+    ...
+```
+
+插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
+[Pipeline 插件](docs/plugins_zh.md)。
+
+### 入口函数推理
+
+使用 `--entry-func` 且未显式选择其他插件时，会自动启用内置
+`entry_reasoning` 插件：
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::application_entry
+```
+
+可以使用一个或多个终止函数截断选中的调用链：
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::application_entry \
+  --end-func services/statistics-py::calculate_total
+```
+
+入口函数推理使用标准 Pipeline，并支持 `--resume` 和 `--isolate`。
 
 `proj_dir` 必须是一个 git 仓库。
 

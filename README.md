@@ -217,6 +217,44 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
+| `--plugin NAME`             | Load a pipeline plugin from `plugins/NAME/`. |
+| `--list-plugin`             | List valid pipeline plugins and exit. |
+| `--entry-func FQN`          | Limit reasoning to functions reachable from an entry function. Automatically enables `entry_reasoning` when `--plugin` is omitted. |
+| `--end-func FQN [FQN ...]`  | Stop entry reasoning at one or more reachable end functions. |
+
+### Pipeline plugins
+
+FM-Agent plugins can pass, replace, or modify each of the six pipeline stages
+through trusted Python hooks. Every hook uses the same signature:
+
+```python
+def hook(proj_dir: str) -> None:
+    ...
+```
+
+See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
+configuration, execution modes, lifecycle, and trust boundary.
+
+### Entry-point reasoning
+
+`--entry-func` automatically enables the built-in `entry_reasoning` plugin
+unless another plugin is explicitly selected:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::application_entry
+```
+
+Optionally stop the selected call chain at one or more end functions:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::application_entry \
+  --end-func services/statistics-py::calculate_total
+```
+
+Entry reasoning uses the standard pipeline and supports `--resume` and
+`--isolate`.
 
 `proj_dir` must be a git repository.
 
