@@ -161,6 +161,7 @@ def run_pipeline(
     extraction_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
     file_list_stage = plugin_config.get_stage("collect_file_list") if plugin_config else None
     topdown_stage = plugin_config.get_stage("generate_topdown_layers") if plugin_config else None
+    spec_stage = plugin_config.get_stage("generate_specs_and_verification") if plugin_config else None
     print("[Pipeline] Stage 1/6: Generating phase plan...")
     if phase_stage is not None and phase_stage.type == "pass":
         print(
@@ -393,19 +394,49 @@ def run_pipeline(
         print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
     else:
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
-    run_spec_generation_and_verification(
-        proj_dir,
-        work_dir,
-        input_dir,
-        output_dir,
-        script_dir,
-        spec_prompts_dir,
-        phases_data,
-        resume=resume,
-        extra_call_edges=extra_call_edges,
-        only_spec=only_spec,
-        bug_validator_path=bug_validator_path,
-    )
+    if spec_stage is not None and spec_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 6/6: Plugin stage "
+            "'generate_specs_and_verification' type=pass, skipping."
+        )
+    elif spec_stage is not None and spec_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_specs_and_verification",
+            spec_stage.replace_function,
+            spec_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if spec_stage is not None and spec_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_specs_and_verification",
+                spec_stage.input_function,
+                spec_stage.input_hook,
+                proj_dir,
+            )
+        run_spec_generation_and_verification(
+            proj_dir,
+            work_dir,
+            input_dir,
+            output_dir,
+            script_dir,
+            spec_prompts_dir,
+            phases_data,
+            resume=resume,
+            extra_call_edges=extra_call_edges,
+            only_spec=only_spec,
+            bug_validator_path=bug_validator_path,
+        )
+        if spec_stage is not None and spec_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_specs_and_verification",
+                spec_stage.output_function,
+                spec_stage.output_hook,
+                proj_dir,
+            )
 
     # Print confirmed bug count (skipped in only-spec mode, which runs no
     # reasoning or bug validation).
