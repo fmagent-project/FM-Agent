@@ -526,4 +526,3 @@ def _generate_validation_summary(proj_dir):
     os.replace(tmp_path, summary_path)
     logging.info(f"Validation summary written to {summary_path}")
     logging.info(f"  confirmed: {confirmed}, not_confirmed: {not_confirmed}, error: {errors}")
-    
