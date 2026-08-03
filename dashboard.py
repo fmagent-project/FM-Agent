@@ -41,7 +41,7 @@ from rich.text import Text
 from rich.progress_bar import ProgressBar
 from rich.align import Align
 
-from src.run_estimate import write_preflight_estimate
+from src.run_estimate import SCHEMA_VERSION, write_preflight_estimate
 
 
 STAGES = ["init", "generate_phases_json", "generate_domain_context", "spec_generation", "verification", "bug_validation"]
@@ -184,12 +184,28 @@ def _locate_workdir(proj_dir):
     Accepts either:
       - A project root: dashboard looks for <root>/fm_agent/ (the live workspace).
       - A workspace directly (any name like fm_agent.opus_partial_*): detected
-        by the presence of a `trace/` subdir, used as-is.
+        by a `trace/` subdir or a valid FM-Agent estimate manifest, used as-is.
     """
     p = Path(proj_dir).resolve()
-    if (p / "trace").is_dir() or (p / "estimate.json").is_file():
+    if (p / "trace").is_dir() or _has_preflight_manifest(p / "estimate.json"):
         return p
     return p / "fm_agent"
+
+
+def _has_preflight_manifest(path):
+    """Return whether path is an FM-Agent estimate manifest, not a namesake."""
+    try:
+        estimate = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(estimate, dict)
+        and estimate.get("schema_version") == SCHEMA_VERSION
+        and isinstance(estimate.get("project"), str)
+        and isinstance(estimate.get("scope"), dict)
+        and isinstance(estimate.get("analysis_stages"), list)
+        and isinstance(estimate.get("estimate"), dict)
+    )
 
 
 class State:

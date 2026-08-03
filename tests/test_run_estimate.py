@@ -10,7 +10,7 @@ from unittest.mock import patch
 from rich.console import Console
 
 import main as main_module
-from dashboard import State, render_preflight
+from dashboard import State, _locate_workdir, render_preflight
 from src.run_estimate import (
     ANALYSIS_STAGES,
     build_scope_inventory,
@@ -200,6 +200,29 @@ class RunHistoryTests(unittest.TestCase):
 
 
 class DashboardEstimateTests(unittest.TestCase):
+    def test_project_namesake_estimate_json_does_not_override_live_workdir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "estimate.json").write_text(
+                json.dumps({"duration_seconds": 30}),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                _locate_workdir(project),
+                (project / "fm_agent").resolve(),
+            )
+
+    def test_preflight_manifest_identifies_direct_estimate_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            project.mkdir()
+            (project / "app.py").write_text("def main():\n    return 0\n")
+            work_dir = Path(tmp) / "saved-estimate"
+            write_preflight_estimate(project, work_dir)
+
+            self.assertEqual(_locate_workdir(work_dir), work_dir.resolve())
+
     def test_one_shot_manifest_renders_scope_stages_and_estimate_label(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"
