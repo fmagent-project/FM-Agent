@@ -120,19 +120,22 @@ def normalize_spec_filenames(function_files):
     ``foo.rs.spec.json`` and ``foo.rs.info.json``. Some LLMs instead
     produce ``foo.spec.json`` and ``foo.info.json``.
 
-    When the mapping is unambiguous, this function renames or replaces
-    those files so they match the expected filenames.
+    When the mapping is unambiguous and both bare sidecars form a valid
+    pair, this function replaces both expected sidecars together. Treating
+    the pair as one unit avoids combining a sidecar from an earlier attempt
+    with one from the latest attempt.
 
     Raises:
         RuntimeError: If a bare sidecar could belong to multiple source files.
 
     Returns:
-        bool: True if any sidecar filename was renamed or replaced.
+        list[str]: Function paths whose complete sidecar pair was replaced.
     """
     if not function_files:
-        return False
+        return []
 
-    changed = False
+    function_files = list(dict.fromkeys(function_files))
+    normalized = []
 
     base_map = {}
     for func_path in function_files:
@@ -155,23 +158,37 @@ def normalize_spec_filenames(function_files):
 
     for func_path in function_files:
         base = os.path.splitext(func_path)[0]
+        expected_spec = f"{func_path}.spec.json"
+        expected_info = f"{func_path}.info.json"
 
-        for suffix, expected in (
-            (".spec.json", f"{func_path}.spec.json"),
-            (".info.json", f"{func_path}.info.json"),
-        ):
-            if _is_valid_sidecar_file(expected):
-                continue
+        if (_is_valid_sidecar_file(expected_spec)
+                and _is_valid_sidecar_file(expected_info)):
+            continue
 
-            alt = f"{base}{suffix}"
-            if not os.path.isfile(alt):
-                continue
+        alt_spec = f"{base}.spec.json"
+        alt_info = f"{base}.info.json"
+        if not (_is_valid_sidecar_file(alt_spec)
+                and _is_valid_sidecar_file(alt_info)):
+            if os.path.isfile(alt_spec) or os.path.isfile(alt_info):
+                logging.warning(
+                    "Not normalizing incomplete or invalid sidecar pair for %s; "
+                    "it will be retried.",
+                    func_path,
+                )
+            continue
 
-            logging.info("Normalized sidecar filename: %s -> %s", alt, expected)
-            os.replace(alt, expected)
-            changed = True
+        logging.info(
+            "Normalized sidecar pair: (%s, %s) -> (%s, %s)",
+            alt_spec,
+            alt_info,
+            expected_spec,
+            expected_info,
+        )
+        os.replace(alt_spec, expected_spec)
+        os.replace(alt_info, expected_info)
+        normalized.append(func_path)
 
-    return changed
+    return normalized
 
 
 # Directories that typically contain test code

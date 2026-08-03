@@ -30,6 +30,31 @@ def _get_pending_batches(batches, proj_dir):
     return pending
 
 
+def _invalidate_verification_artifacts(file_list, output_dir, work_dir):
+    """Remove cached results made from sidecars that have just changed."""
+    for rel in file_list:
+        result_stem = os.path.splitext(rel)[0]
+        bug_id = result_stem.replace(os.sep, "--").replace("/", "--")
+        stale_paths = (
+            os.path.join(output_dir, result_stem + ".json"),
+            os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json"),
+            os.path.join(work_dir, "bug_validation", f"{bug_id}.md"),
+        )
+        for stale_path in stale_paths:
+            try:
+                os.remove(stale_path)
+                logging.info("Removed stale verification artifact: %s", stale_path)
+            except FileNotFoundError:
+                pass
+
+    if file_list:
+        try:
+            os.remove(os.path.join(work_dir, "bug_validation", "summary.json"))
+            logging.info("Removed stale bug-validation summary.")
+        except FileNotFoundError:
+            pass
+
+
 def _run_spec_generation_batch(
     proj_dir,
     work_dir,
@@ -254,34 +279,33 @@ def run_spec_generation_and_verification(
                         except Exception as exc:
                             logging.error(f"Spec generation task failed unexpectedly: {exc}")
 
-                changed = normalize_spec_filenames(
+                normalized_paths = normalize_spec_filenames(
                     [os.path.join(input_dir, rel) for rel in layer_files]
                 )
 
-                if changed and not only_spec:
-                    incomplete = _get_incomplete_verification_files(
-                        layer_files,
-                        input_dir,
+                if normalized_paths:
+                    ready_to_verify = []
+                    normalized_abs = set()
+                    for func_path in normalized_paths:
+                        if not is_file_ready(func_path):
+                            logging.warning(
+                                "Normalized sidecars for %s are not ready; they will be retried.",
+                                func_path,
+                            )
+                            continue
+                        ready_to_verify.append(os.path.relpath(func_path, input_dir))
+                        normalized_abs.add(func_path)
+
+                    _invalidate_verification_artifacts(
+                        ready_to_verify,
                         output_dir,
                         work_dir,
                     )
+                    layer_processed.difference_update(normalized_abs)
 
-                    ready_to_verify = [
-                        rel
-                        for rel in incomplete
-                        if is_file_ready(os.path.join(input_dir, rel))
-                    ]
-
-                    unready_count = len(incomplete) - len(ready_to_verify)
-                    if unready_count:
-                        logging.warning(
-                            "Skipping verification for %d file(s) that are not ready; they will be retried.",
-                            unready_count,
-                        )
-
-                    if ready_to_verify:
+                    if ready_to_verify and not only_spec:
                         logging.info(
-                            "Running verification for %d normalized file(s).",
+                            "Forcing verification for %d normalized file(s).",
                             len(ready_to_verify),
                         )
 
@@ -292,8 +316,8 @@ def run_spec_generation_and_verification(
                             proj_dir=proj_dir,
                             work_dir=work_dir,
                             spec_procs=None,
-                            already_processed=all_processed | layer_processed,
-                            resume=resume,
+                            already_processed=(all_processed | layer_processed) - normalized_abs,
+                            resume=False,
                             bug_validator_path=bug_validator_path,
                         )
                         layer_processed.update(newly_processed)
