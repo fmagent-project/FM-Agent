@@ -8,7 +8,10 @@ from src.file_utils import (
     _is_under_submodules,
     _ensure_resume_mode_compatible,
 )
-from src.verification import _generate_all_bugs_validation_summary
+from src.verification import (
+    _count_mismatch_candidates,
+    _generate_all_bugs_validation_summary,
+)
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
@@ -120,6 +123,7 @@ def run_pipeline(
     plugin_config=None,
     plugin_context=None,
     all_bugs=False,
+    bug_validation_enabled=True,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -446,6 +450,7 @@ def run_pipeline(
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
             all_bugs=all_bugs,
+            bug_validation_enabled=bug_validation_enabled,
         )
         if spec_stage is not None and spec_stage.output_hook is not None:
             run_plugin_hook(
@@ -459,17 +464,24 @@ def run_pipeline(
     # Print confirmed bug count (skipped in only-spec mode, which runs no
     # reasoning or bug validation).
     if not only_spec:
-        if all_bugs:
+        if not bug_validation_enabled:
+            candidates = _count_mismatch_candidates(
+                output_dir,
+                all_bugs=all_bugs,
+            )
+            print(f"[Pipeline] Candidate bugs: {candidates}")
+        elif all_bugs:
             # A resumed run may find every function and candidate validation
             # already complete, so no watcher runs to refresh the persistent
             # summary. Rebuild it from the current terminal records here.
             _generate_all_bugs_validation_summary(work_dir)
-        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-        if os.path.exists(summary_path):
-            with open(summary_path, "r") as f:
-                summary = json.load(f)
-            confirmed = summary.get("total_confirmed", 0)
-            print(f"[Pipeline] Confirmed bugs: {confirmed}")
+        if bug_validation_enabled:
+            summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
+            if os.path.exists(summary_path):
+                with open(summary_path, "r") as f:
+                    summary = json.load(f)
+                confirmed = summary.get("total_confirmed", 0)
+                print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
     if only_spec:
         print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
@@ -607,6 +619,7 @@ if __name__ == "__main__":
         selected_plugin = "entry_reasoning"
 
     plugin_config = None
+    bug_validation_enabled = True
     if selected_plugin:
         if not args.proj_dir:
             parser.error("the following arguments are required when --plugin is used: proj_dir")
@@ -618,6 +631,8 @@ if __name__ == "__main__":
             print(f"[Pipeline] ERROR: Plugin '{selected_plugin}' not found or invalid.")
             sys.exit(1)
         print(f"[Pipeline] Loaded plugin '{plugin_config.name}' v{plugin_config.version}")
+        if plugin_config.name == "entry_reasoning":
+            bug_validation_enabled = False
 
     if not args.proj_dir:
         parser.error("the following arguments are required: proj_dir")
@@ -736,6 +751,7 @@ if __name__ == "__main__":
                     plugin_config=plugin_config,
                     plugin_context=plugin_context,
                     all_bugs=args.all_bugs,
+                    bug_validation_enabled=bug_validation_enabled,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
