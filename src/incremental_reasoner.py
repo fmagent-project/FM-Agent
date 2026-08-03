@@ -58,7 +58,15 @@ from .languages.registry import (
     extract_incremental_sources,
     supports_incremental_source_extraction,
 )
-from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
+from .verification import (
+    EXT_TO_LANG as _VERIFY_EXT_TO_LANG,
+    _generate_all_bugs_validation_summary,
+    _generate_validation_summary,
+    _validate_single_bug,
+    _validation_status,
+    _validation_targets,
+    _verify_single_file,
+)
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -831,6 +839,7 @@ def run_incremental_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     bug_validator_path=None,
+    all_bugs=False,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -884,6 +893,7 @@ def run_incremental_pipeline(
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             bug_validator_path=bug_validator_path,
+            all_bugs=all_bugs,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -1034,16 +1044,29 @@ def run_incremental_pipeline(
 
     # 10. Run the verification stage only on the functions that satisfy one of the following conditions: 1) the function is changed; 2) the function spec is changed after step 9; 3) the callee spec of the function is changed.
     logging.info("[Stage 10/10] Verifying changed and affected functions...")
-    buggy_files = _verify_incremental_functions(
+    verification_result = _verify_incremental_functions(
         proj_dir, work_dir, changed_functions, updated_spec_files,
         submodules=submodules,
+        all_bugs=all_bugs,
         bug_validator_path=bug_validator_path,
     )
+    if all_bugs:
+        buggy_files, confirmed_bug_count = verification_result
+    else:
+        buggy_files = verification_result
+        confirmed_bug_count = len(buggy_files)
     logging.info("=" * 70)
-    logging.info(
-        "INCREMENTAL PIPELINE DONE: bug validation confirmed bugs in %d function(s).",
-        len(buggy_files),
-    )
+    if all_bugs:
+        logging.info(
+            "INCREMENTAL PIPELINE DONE: bug validation confirmed %d bug(s) in %d function(s).",
+            confirmed_bug_count,
+            len(buggy_files),
+        )
+    else:
+        logging.info(
+            "INCREMENTAL PIPELINE DONE: bug validation confirmed bugs in %d function(s).",
+            len(buggy_files),
+        )
     for bf in buggy_files:
         logging.info("  - %s", bf)
     logging.info("=" * 70)
@@ -1075,14 +1098,14 @@ def _extracted_func_dir(extracted_base, src_rel):
 def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
                           result_relpath, stage, input_files):
     """
-    Run opencode to produce a JSON artifact and return the parsed JSON.
+    Run the configured CLI backend to produce a JSON artifact and return the parsed JSON.
 
     Writes prompt_content to proj_dir/prompt_relpath, removes any stale artifact at
-    proj_dir/result_relpath, then runs `opencode run --file <prompt> -- ...` (with the same
-    retry / result-artifact check used by the setup stage) until the agent writes the
-    result file. Returns the parsed JSON value, or None if opencode never produced the
-    artifact or it could not be parsed. Shared by the module- and file-selection steps of
-    collect_relevent_function_scope.
+    proj_dir/result_relpath, then runs the configured CLI backend with the prompt file
+    (with the same retry / result-artifact check used by the setup stage) until the agent
+    writes the result file. Returns the parsed JSON value, or None if the backend never
+    produced the artifact or it could not be parsed. Shared by the module- and
+    file-selection steps of collect_relevent_function_scope.
     """
     prompt_path = os.path.join(proj_dir, prompt_relpath)
     result_path = os.path.join(proj_dir, result_relpath)
@@ -1112,12 +1135,12 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
                 stage=stage,
                 input_files=input_files,
                 output_files=[result_relpath],
-                summary=f"OpenCode {stage} attempt {attempt}",
+                summary=f"CLI backend {stage} attempt {attempt}",
                 metadata={"attempt": attempt},
             )
         except subprocess.CalledProcessError as exc:
             logging.warning(
-                "%s: opencode exited with code %s (attempt %d/%d)",
+                "%s: CLI backend exited with code %s (attempt %d/%d)",
                 stage, exc.returncode, attempt, OPENCODE_MAX_RETRIES,
             )
 
@@ -1284,8 +1307,8 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
 
       1. Module selection — a direct LLM call is given the module descriptions (already
          parsed from phases.json) and picks the modules relevant to the intent.
-      2. File selection — for each relevant module, opencode reads that module's source
-         files and picks the files relevant to the intent.
+      2. File selection — for each relevant module, the CLI backend reads that
+         module's source files and picks the files relevant to the intent.
       3. Function selection — the function-localization algorithm from scope.py ranks the
          functions in each chosen file by relevance to the intent (heuristic signal scoring
          with call-graph and class-scope enrichments) and keeps the top-ranked functions
@@ -1297,14 +1320,14 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     Returns the selected extracted-function file paths (relative to the extracted_functions
     dir, matching the convention used elsewhere in this module), ordered by descending
     relevance score and truncated to the first `range` entries. Returns an empty list when
-    phases.json has no modules or opencode selects none / fails to produce a result.
+    phases.json has no modules or the CLI backend selects none / fails to produce a result.
     """
     work_dir = os.path.join(proj_dir, "fm_agent")
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
     phases_data = _load_phases(work_dir)
 
-    # Flatten every module across all phases so we can match opencode's selection back to
+    # Flatten every module across all phases so we can match the CLI backend's selection to
     # concrete modules (module names can repeat across phases, so keep the phase number too).
     modules = []  # list of (phase_num, module_dict)
     for phase_info in phases_data.get("phases", []):
@@ -1323,8 +1346,8 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     logging.info("    [scope] pass 1/3: selecting relevant modules from %d module(s)...", len(modules))
 
     # Pass 1: module selection. The module descriptions are already parsed from phases.json
-    # above, so rather than have opencode read the file, inline the catalog and make a direct
-    # LLM call that returns the selection as JSON.
+    # above, so rather than have the CLI backend read the file, inline the catalog
+    # and make a direct LLM call that returns the selection as JSON.
     module_catalog = "\n".join(
         f"- phase {phase_num}, name `{module.get('name', '(unnamed)')}`: "
         f"{(module.get('description') or '').strip() or '(no description)'}"
@@ -1380,10 +1403,11 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
         len(relevant_modules),
     )
 
-    # Pass 2: file selection. For each relevant module, opencode reads that module's source
-    # files and narrows them to the files relevant to the intent. The result is a synthetic
-    # module dict carrying only the chosen source_files; on opencode failure we fall back to
-    # the module's full file list so the scope is never silently dropped.
+    # Pass 2: file selection. For each relevant module, the CLI backend reads that
+    # module's source files and narrows them to the files relevant to the intent.
+    # The result is a synthetic module dict carrying only the chosen source_files;
+    # on CLI backend failure we fall back to the module's full file list so the
+    # scope is never silently dropped.
     filtered_modules = []
     for idx, (phase_num, module) in enumerate(relevant_modules):
         module_name = module.get("name", f"module_{idx}")
@@ -1430,7 +1454,7 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
                 if sf not in chosen:
                     chosen.append(sf)
         else:
-            # opencode failed for this module; keep all files rather than drop scope.
+            # The CLI backend failed for this module; keep all files rather than drop scope.
             chosen = list(source_files)
 
         if chosen:
@@ -1559,8 +1583,8 @@ def _project_call_graph(work_dir, extra_call_edges=None):
 
 def _resolve_callee_fqns(caller_fqn, callee_names, callees_map, edge_aliases_map=None):
     """
-    Map callee names reported by opencode (the .info.json entries whose expected spec changed)
-    back to the FQNs of caller_fqn's callees.
+    Map callee names reported by the CLI backend (the .info.json entries whose
+    expected spec changed) back to the FQNs of caller_fqn's callees.
 
     A callee is identified in .info.json by its name; this matches that name against
     the final component (stem) of each of caller_fqn's callee FQNs, case-insensitively, and
@@ -1589,8 +1613,8 @@ def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefi
 
     The prompt inlines the entire function source, its current metadata sidecars, and the
     developer intent, so it needs no repository file access and is issued as a direct LLM
-    call (via _llm_select_json) rather than an opencode run. idx is used only to label the
-    traced exchange.
+    call via _llm_select_json rather than the repository-reading artifact workflow.
+    idx is used only to label the traced exchange.
 
     Returns the parsed result dict — keys: "spec_updated" (bool), "new_spec" (dict),
     "info_updated" (bool), "new_info" (dict), "updated_callees" (list[str]) — or None when
@@ -1683,7 +1707,8 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
     consistency, not equality: the entry must merely not conflict with the new spec, and the
     entries for other callees are left untouched. The prompt inlines the callee's new spec
     and the caller's source/info sidecar, so it is issued as a direct LLM call (via
-    _llm_select_json) rather than an opencode run; idx only labels the traced exchange.
+    _llm_select_json) rather than the repository-reading artifact workflow; idx only
+    labels the traced exchange.
 
     Returns the parsed result dict — keys "info_updated" (bool) and "new_info" (dict) — or
     None when the LLM produced nothing usable.
@@ -1768,21 +1793,22 @@ def _collect_caller_context(fqn, callers_map, file_map, edge_aliases_map=None):
 def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
                             developer_intent, callee_names, source, caller_context):
     """
-    Ask opencode to generate brand-new .spec.json and .info.json objects from scratch for a
-    function that has no existing metadata sidecars — e.g. a function
+    Ask the configured CLI backend to generate brand-new .spec.json and .info.json
+    objects for a function that has no existing metadata sidecars — e.g. a function
     freshly added by the modification.
 
     Mirrors the full run's spec generation (run_pipeline Stage 6) but for a single function:
-    opencode reads the project's spec format rules (fm_agent/spec_prompts/system_prompt.md),
-    is given the same caller context the full run provides (each caller's .spec.json and what
-    that caller's .info.json expects from this function, in caller_context as returned by
-    _collect_caller_context), and produces the objects directly. Returns the parsed decision
-    in the SAME shape as _opencode_check_spec_update so the caller can splice and propagate it
-    identically.
+    The CLI backend reads the project's spec format rules
+    (fm_agent/spec_prompts/system_prompt.md), is given the same caller context the
+    full run provides (each caller's .spec.json and what that caller's .info.json
+    expects from this function, in caller_context as returned by
+    _collect_caller_context), and produces the objects directly. Returns the parsed
+    decision in the SAME shape as _opencode_check_spec_update so the caller can
+    splice and propagate it identically.
 
     Returns the parsed result dict — keys: "spec_updated" (bool, true when .spec.json was
     produced), "new_spec" (dict), "info_updated" (bool), "new_info" (dict), "updated_callees"
-    (list[str]) — or None when opencode produced nothing usable.
+    (list[str]) — or None when the CLI backend produced nothing usable.
     """
     result_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.json")
     prompt_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.md")
@@ -1893,13 +1919,14 @@ def _update_specs_for_intent(
 
     Seeds from the changed functions (added/modified) and the relevant extracted-function
     files returned by collect_relevent_function_scope, then processes functions in top-down
-    order (callers before callees). For each function, opencode reads its current .spec.json
-    block and decides whether it must change to reflect developer_intent. A function with no
-    existing .spec.json (e.g. one freshly added by the modification) instead has a spec
-    generated from scratch the way the full run does. If a spec is written or generated, the
-    new .spec.json is written back (source untouched), and then:
+    order (callers before callees). For each function, the CLI backend reads its
+    current .spec.json block and decides whether it must change to reflect
+    developer_intent. A function with no existing .spec.json (e.g. one freshly
+    added by the modification) instead has a spec generated from scratch the way
+    the full run does. If a spec is written or generated, the new .spec.json is
+    written back (source untouched), and then:
 
-      - Downward: opencode decides whether the function's own .info.json (the expected
+      - Downward: the CLI backend decides whether the function's own .info.json (the expected
         specs of its callees) must change too, and any callee whose expected spec changed is
         queued to have its own spec file re-checked.
       - Upward: every caller's .info.json (which records this function as one of its
@@ -1946,7 +1973,7 @@ def _update_specs_for_intent(
         """
         Decide fqn's new metadata sidecars and return an apply-plan, or None to skip.
 
-        Makes the opencode LLM call (the slow part) but performs NO file writes, so a batch of
+        Makes the CLI backend call (the slow part) but performs NO file writes, so a batch of
         mutually independent functions can run this concurrently. The returned plan carries the
         exact file content to write plus what the serial apply phase needs for downward
         propagation; None means the function does not exist, is an unsupported language, or its
@@ -1994,17 +2021,19 @@ def _update_specs_for_intent(
             return None
 
         if old_info is None:
-            # Freshly generated: take the .info.json object opencode produced. Treat it as
-            # "updated" so its recorded callee expectations propagate downward below.
+            # Freshly generated: take the .info.json object the CLI backend
+            # produced. Treat it as "updated" so its recorded callee expectations
+            # propagate downward below.
             new_info = result.get("new_info")
             if not isinstance(new_info, dict):
                 new_info = {"callees": []}
             info_updated = True
         else:
-            # Keep the existing .info.json unless opencode rewrote it. A modified function may
-            # now call a different set of callees, so a fresh .info.json can legitimately be
-            # created even when the function previously had none (old_info is None) — gate on
-            # whether opencode produced a block, not on a prior block existing.
+            # Keep the existing .info.json unless the CLI backend rewrote it. A
+            # modified function may now call a different set of callees, so a fresh
+            # .info.json can legitimately be created even when the function previously
+            # had none (old_info is None) — gate on whether the CLI backend produced a
+            # block, not on a prior block existing.
             info_updated = bool(result.get("info_updated"))
             new_info = result.get("new_info") if info_updated else old_info
             if not isinstance(new_info, dict):
@@ -2026,7 +2055,7 @@ def _update_specs_for_intent(
         updates is a list of (callee_name, callee_new_spec). The entries are applied
         sequentially, re-reading the caller file between each, because they all edit the same
         file — so a single caller is one unit of work and DIFFERENT callers run concurrently
-        (see the batch loop). base_idx + offset gives each opencode call a unique artifact name.
+        (see the batch loop). base_idx + offset gives each CLI backend call a unique artifact name.
         Returns the caller's path if any reconciliation changed it, else None.
         """
         cpath = file_map.get(caller_fqn)
@@ -2167,6 +2196,7 @@ def _update_specs_for_intent(
 def _verify_incremental_functions(
     proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None,
     bug_validator_path=None,
+    all_bugs=False,
 ):
     """
     Step 10: re-run the verification stage (reasoner + bug validation) on only the functions
@@ -2189,7 +2219,8 @@ def _verify_incremental_functions(
     updated) spec rather than reusing the cached verdict from the previous full run.
 
     A reasoner MISMATCH is only a candidate bug; each one is then handed to bug validation
-    (verification._validate_single_bug, an opencode pass) which confirms or rejects it.
+    (verification._validate_single_bug, using the configured CLI backend) which confirms or
+    rejects it.
 
     Returns the sorted list of extracted-function files (paths relative to the
     extracted_functions dir) whose reasoner MISMATCH was confirmed a bug by bug validation.
@@ -2226,7 +2257,7 @@ def _verify_incremental_functions(
         ]
     if not file_list:
         logging.info("    [verify] no functions require re-verification.")
-        return []
+        return ([], 0) if all_bugs else []
     logging.info("    [verify] running reasoner on %d function(s)...", len(file_list))
 
     # Drop stale verification results so the reasoner re-runs rather than reusing the cached
@@ -2244,7 +2275,14 @@ def _verify_incremental_functions(
     def _verify(rel):
         fpath = os.path.join(extracted_dir, rel)
         language = _VERIFY_EXT_TO_LANG.get(os.path.splitext(fpath)[1], "C")
-        _, verdict = _verify_single_file(fpath, extracted_dir, output_dir, language, work_dir=work_dir)
+        _, verdict = _verify_single_file(
+            fpath,
+            extracted_dir,
+            output_dir,
+            language,
+            work_dir=work_dir,
+            all_bugs=all_bugs,
+        )
         return rel, verdict
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -2261,12 +2299,66 @@ def _verify_incremental_functions(
 
     logging.info("    [verify] reasoner reported %d MISMATCH(es) (candidate bugs).", len(mismatches))
     if not mismatches:
-        return []
+        return ([], 0) if all_bugs else []
+
+    if all_bugs:
+        validation_targets = []
+        for rel in mismatches:
+            primary_rel = os.path.join(
+                os.path.relpath(output_dir, proj_dir),
+                os.path.splitext(rel)[0] + ".json",
+            )
+            validation_targets.extend(
+                (rel, target_rel)
+                for target_rel in _validation_targets(primary_rel, proj_dir, True)
+            )
+
+        logging.info(
+            "    [verify] validating %d candidate bug(s) with the configured CLI backend...",
+            len(validation_targets),
+        )
+
+        def _validate_candidate(function_rel, target_rel):
+            _validate_single_bug(
+                target_rel,
+                proj_dir,
+                work_dir,
+                bug_validator_path=bug_validator_path,
+            )
+            return function_rel, target_rel
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(_validate_candidate, function_rel, target_rel): (
+                    function_rel,
+                    target_rel,
+                )
+                for function_rel, target_rel in validation_targets
+            }
+            for future in concurrent.futures.as_completed(futures):
+                function_rel, target_rel = futures[future]
+                try:
+                    future.result()
+                except Exception:
+                    logging.exception("Bug validation failed for %s", target_rel)
+
+        _generate_all_bugs_validation_summary(work_dir)
+        confirmed_functions = set()
+        confirmed_bug_count = 0
+        for function_rel, target_rel in validation_targets:
+            if _validation_status(target_rel, work_dir) == "confirmed":
+                confirmed_functions.add(function_rel)
+                confirmed_bug_count += 1
+        return sorted(confirmed_functions), confirmed_bug_count
 
     # Bug validation: the reasoner's MISMATCH is only a candidate bug, so validate each one
-    # with opencode (_validate_single_bug writes work_dir/bug_validation/<bug_id>.result.json
-    # with a confirmation_status). Run them concurrently, bounded by MAX_WORKERS.
-    logging.info("    [verify] validating %d candidate bug(s) with opencode...", len(mismatches))
+    # with the configured CLI backend. _validate_single_bug writes
+    # work_dir/bug_validation/<bug_id>.result.json with a confirmation_status. Run them
+    # concurrently, bounded by MAX_WORKERS.
+    logging.info(
+        "    [verify] validating %d candidate bug(s) with the configured CLI backend...",
+        len(mismatches),
+    )
 
     def _validate(rel):
         result_json_rel = os.path.join(
