@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import os
 import re
 
 
@@ -17,6 +18,28 @@ _CALLEE_FIELDS = {
     "signature",
     "pre_condition",
     "post_condition",
+}
+
+_ALL_BUGS_GAP_FIELDS = {
+    "spec_claim",
+    "actual_behavior",
+    "code_evidence",
+    "trigger_condition",
+}
+
+_TERMINAL_VALIDATION_STATUSES = {
+    "confirmed",
+    "not_confirmed",
+    "error",
+}
+
+_TERMINAL_VALIDATION_STRING_FIELDS = {
+    "source_file",
+    "function_name",
+    "probe_script",
+    "detail_file",
+    "probe_stdout",
+    "trigger_summary",
 }
 
 
@@ -262,18 +285,214 @@ def clear_test_file_exemptions():
     _TEST_FILE_EXEMPTIONS.clear()
 
 
-def _get_incomplete_verification_files(layer_files, input_dir, output_dir, work_dir):
+def _all_bugs_candidate_paths(result_path, result):
+    """Return deterministic candidate paths for a valid all-bugs result."""
+    if not isinstance(result, dict) or result.get("all_bugs") is not True:
+        return None
+    verdict = result.get("verdict")
+    bug_count = result.get("bug_count")
+    reasoning_complete = result.get("reasoning_complete", True)
+    primary_function = result.get("function")
+    if not isinstance(primary_function, str) or not primary_function:
+        return None
+    if not isinstance(bug_count, int) or isinstance(bug_count, bool):
+        return None
+    if not isinstance(reasoning_complete, bool):
+        return None
+    stem, ext = os.path.splitext(result_path)
+    candidates = [f"{stem}.bug-{index:03d}{ext}" for index in range(1, bug_count + 1)]
+    directory = os.path.dirname(result_path)
+    basename = os.path.basename(stem)
+    sidecar_pattern = re.compile(
+        rf"^{re.escape(basename)}\.bug-\d{{3}}{re.escape(ext)}$"
+    )
+    try:
+        actual_candidates = (
+            sorted(
+                os.path.join(directory, filename)
+                for filename in os.listdir(directory)
+                if sidecar_pattern.fullmatch(filename)
+            )
+            if os.path.isdir(directory)
+            else []
+        )
+    except OSError:
+        return None
+    if actual_candidates != candidates:
+        return None
+
+    if not reasoning_complete:
+        return None
+    if verdict == "MATCH" and bug_count == 0 and reasoning_complete:
+        return []
+    if verdict != "MISMATCH" or bug_count < 1:
+        return None
+
+    for candidate_path in candidates:
+        try:
+            with open(candidate_path, "r", encoding="utf-8") as f:
+                candidate = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(candidate, dict)
+            or set(candidate) != {"function", "verdict", "gaps"}
+            or candidate.get("function") != primary_function
+            or candidate.get("verdict") != "MISMATCH"
+            or not isinstance(candidate.get("gaps"), dict)
+            or set(candidate["gaps"]) != _ALL_BUGS_GAP_FIELDS
+            or not all(
+                isinstance(candidate["gaps"][field], str)
+                and candidate["gaps"][field].strip()
+                for field in _ALL_BUGS_GAP_FIELDS
+            )
+        ):
+            return None
+    return candidates
+
+
+class ResumeModeMismatchError(RuntimeError):
+    """Raised when resume would mix default and all-bugs results."""
+
+
+def _result_reasoning_mode(result):
+    """Return the readable primary result's reasoning mode, if recognizable."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("all_bugs") is True:
+        return "all-bugs"
+    if result.get("verdict") in {"MATCH", "MISMATCH", "ERROR"}:
+        return "default"
+    return None
+
+
+def _ensure_resume_result_mode(result, result_path, all_bugs):
+    """Reject reuse when a primary result belongs to the other reasoning mode."""
+    existing_mode = _result_reasoning_mode(result)
+    requested_mode = "all-bugs" if all_bugs else "default"
+    if existing_mode is not None and existing_mode != requested_mode:
+        existing_label = (
+            "an all-bugs workspace"
+            if existing_mode == "all-bugs"
+            else "a default-mode workspace"
+        )
+        original_command = (
+            "--resume --all-bugs"
+            if existing_mode == "all-bugs"
+            else "--resume without --all-bugs"
+        )
+        raise ResumeModeMismatchError(
+            f"Cannot resume {existing_label} in {requested_mode} mode. "
+            f"Re-run with {original_command}, or omit --resume to start a fresh "
+            f"{requested_mode} run. Existing result: {result_path}"
+        )
+
+
+def _ensure_resume_mode_compatible(output_dir, all_bugs):
+    """Check every readable primary result before a resumed pipeline mutates state."""
+    if not os.path.isdir(output_dir):
+        return
+    for root, _dirs, files in os.walk(output_dir):
+        for filename in files:
+            if not filename.endswith(".json"):
+                continue
+            result_path = os.path.join(root, filename)
+            if re.search(r"\.bug-\d{3}\.json$", filename):
+                if not all_bugs:
+                    raise ResumeModeMismatchError(
+                        "Cannot resume an all-bugs workspace in default mode. "
+                        "Re-run with --resume --all-bugs, or omit --resume to "
+                        "start a fresh default run. "
+                        f"Existing candidate: {result_path}"
+                    )
+                continue
+            try:
+                with open(result_path, "r", encoding="utf-8") as f:
+                    result = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            _ensure_resume_result_mode(result, result_path, all_bugs)
+
+
+def _terminal_validation_record_is_valid(validation, expected_bug_id):
+    """Return whether a terminal validation record belongs to one candidate."""
+    if not isinstance(validation, dict):
+        return False
+    if (
+        not isinstance(expected_bug_id, str)
+        or not expected_bug_id
+        or validation.get("id") != expected_bug_id
+        or validation.get("confirmation_status")
+        not in _TERMINAL_VALIDATION_STATUSES
+    ):
+        return False
+    if not _TERMINAL_VALIDATION_STRING_FIELDS.issubset(validation):
+        return False
+    if not all(
+        isinstance(validation[field], str)
+        for field in _TERMINAL_VALIDATION_STRING_FIELDS
+    ):
+        return False
+    attempts = validation.get("attempts")
+    return (
+        isinstance(attempts, int)
+        and not isinstance(attempts, bool)
+        and attempts > 0
+    )
+
+
+def _terminal_validation_is_valid(validation_path, expected_bug_id):
+    """Return whether a candidate's validation artifact is complete and terminal."""
+    try:
+        with open(validation_path, "r", encoding="utf-8") as f:
+            validation = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return _terminal_validation_record_is_valid(validation, expected_bug_id)
+
+
+def _get_incomplete_verification_files(
+    layer_files,
+    input_dir,
+    output_dir,
+    work_dir,
+    all_bugs=False,
+    bug_validation_enabled=True,
+):
     """Return layer files missing verification or required bug validation output."""
     incomplete = []
     for rel in layer_files:
         result_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
         try:
-            with open(result_path, "r") as f:
+            with open(result_path, "r", encoding="utf-8") as f:
                 result = json.load(f)
         except (OSError, json.JSONDecodeError):
             incomplete.append(rel)
             continue
 
+        if all_bugs:
+            candidates = _all_bugs_candidate_paths(result_path, result)
+            if candidates is None:
+                incomplete.append(rel)
+                continue
+            if not bug_validation_enabled:
+                continue
+            missing_validation = False
+            for candidate_path in candidates:
+                candidate_rel = os.path.relpath(candidate_path, output_dir)
+                bug_id = os.path.splitext(candidate_rel)[0].replace(os.sep, "--")
+                validation_path = os.path.join(
+                    work_dir, "bug_validation", f"{bug_id}.result.json"
+                )
+                if not _terminal_validation_is_valid(validation_path, bug_id):
+                    missing_validation = True
+                    break
+            if missing_validation:
+                incomplete.append(rel)
+            continue
+
+        if not bug_validation_enabled:
+            continue
         if result.get("verdict") != "MISMATCH":
             continue
 

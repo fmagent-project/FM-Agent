@@ -18,6 +18,7 @@ from typing import BinaryIO
 from urllib.parse import unquote, urlparse
 
 from config import settings
+from src.languages.base import BackendUnavailableError
 
 
 _FUNCTION_KIND = 12
@@ -696,17 +697,35 @@ def _analysis_or_empty(proj_dir: str) -> ErlangAnalysis:
     analysis = _analysis_or_none(proj_dir)
     return analysis or ErlangAnalysis(functions={}, edges={})
 
+def _analysis_or_raise(proj_dir: str) -> ErlangAnalysis:
+    """Run ELP analysis and raise BackendUnavailableError on failure.
+    Unlike _analysis_or_empty, this does not swallow backend failures. It is
+    used by callers (reconciliation) that cannot safely fall back to regex and
+    must skip the file instead of treating a failed backend as an empty result.
+    """
+    try:
+        return _analyze_project(proj_dir)
+    except BackendUnavailableError:
+        raise
+    except Exception as exc:
+        logging.warning("ELP Erlang analysis unavailable for %s: %s", proj_dir, exc)
+        raise BackendUnavailableError(
+            f"ELP Erlang analysis unavailable for {proj_dir}: {exc}"
+        ) from exc
 
 def batch_extract(proj_dir: str) -> dict | None:
     """Return extracted functions, or ``None`` when the ELP session failed."""
     analysis = _analysis_or_none(proj_dir)
     return None if analysis is None else analysis.functions
 
-
 def function_spans(proj_dir: str, filepath: str):
-    """Return ELP function ranges as 0-based inclusive source-line spans."""
+    """Return ELP function ranges as 0-based inclusive source-line spans.
+    Raises BackendUnavailableError when ELP cannot be consulted. Callers that
+    are about to delete orphaned specs must catch this and skip the file rather
+    than falling back to the regex extractor.
+    """
     path = os.path.abspath(filepath)
-    return _analysis_or_empty(proj_dir).spans.get(path)
+    return _analysis_or_raise(proj_dir).spans.get(path)
 
 
 def _callgraph_project_root(proj_dir: str) -> str:
