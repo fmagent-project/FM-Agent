@@ -167,7 +167,7 @@ def _findings_from_text(text: str) -> List[Dict[str, str]]:
     if "pidfd_getfd" in lower or "文件描述符盗取" in lower or "fd theft" in lower:
         add(
             "kernel_fd_theft",
-            "CWE-200/CWE-863",
+            "CWE-863",
             "pidfd_getfd/fd theft metadata",
             "attacker can copy a sensitive file descriptor across a permission-check gap",
         )

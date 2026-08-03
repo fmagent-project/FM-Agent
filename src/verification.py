@@ -33,6 +33,7 @@ EXT_TO_LANG = {
     ".dart": "Dart",
     ".js": "JavaScript", ".mjs": "JavaScript", ".cjs": "JavaScript",
     ".jsx": "JavaScript",
+    ".html": "JavaScript", ".htm": "JavaScript",
     ".ts": "TypeScript", ".mts": "TypeScript", ".cts": "TypeScript", ".tsx": "TypeScript",
     ".ets": "ArkTS",
     ".cuh": "CUDA",
