@@ -1,5 +1,6 @@
 """Stage 4 specification generation and verification orchestration."""
 
+import config
 import concurrent.futures
 import json
 import logging
@@ -112,7 +113,7 @@ def _run_spec_generation_batch(
 def run_spec_generation_and_verification(
     proj_dir, work_dir, input_dir, output_dir, script_dir, spec_prompts_dir,
     phases_data, resume=False, extra_call_edges=None, only_spec=False,
-    bug_validator_path=None,
+    bug_validator_path=None, all_bugs=False,
 ):
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
@@ -187,7 +188,14 @@ def run_spec_generation_and_verification(
                     # we stop here without running the reasoner/bug validation.
                     if not only_spec:
                         incomplete_verification = _get_incomplete_verification_files(
-                            layer_files, input_dir, output_dir, work_dir
+                            layer_files,
+                            input_dir,
+                            output_dir,
+                            work_dir,
+                            all_bugs=all_bugs,
+                            bug_validation_enabled=(
+                                config.BUG_VALIDATION_MAX_RETRIES > 0
+                            ),
                         )
                         if incomplete_verification:
                             logging.info(
@@ -201,6 +209,7 @@ def run_spec_generation_and_verification(
                                 already_processed=all_processed | layer_processed,
                                 resume=resume,
                                 bug_validator_path=bug_validator_path,
+                                all_bugs=all_bugs,
                             )
                             layer_processed.update(newly_processed)
                     break
@@ -245,6 +254,7 @@ def run_spec_generation_and_verification(
                             already_processed=all_processed | layer_processed,
                             resume=resume,
                             bug_validator_path=bug_validator_path,
+                            all_bugs=all_bugs,
                         )
                         layer_processed.update(newly_processed)
 

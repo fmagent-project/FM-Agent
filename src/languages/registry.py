@@ -11,30 +11,40 @@ from src.languages import javascript as _javascript
 from src.languages import typescript as _typescript
 from src.languages import erlang as _erlang
 
+from src.languages.base import BackendUnavailableError as _BackendUnavailableError
 
 @dataclass
 class LanguageHandler:
     """Extraction and call-graph backend for one language.
 
-    batch_extract(proj_dir)             -> {abs_filepath: [(func_name, body)]}
+    batch_extract(proj_dir)             -> {abs_filepath: [(func_name, body)]} | None
     call_edges(proj_dir)                -> {caller_fqn: {callee_fqns}}
     function_spans(proj_dir, filepath)  -> [(func_name, start_idx, end_idx)] | None
+    incremental_source_extract(proj_dir, sources)
+        -> {abs_filepath: [(func_name, body)]} | None
 
     Each function handles its own backend (e.g. codegraph) internally.
-    batch_extract / call_edges return an empty dict when the backend is
-    unavailable; function_spans returns None so the caller can fall back to the
-    regex extractor for that file.
+    batch_extract returns ``None`` when a semantic backend cannot safely
+    extract its sources, distinct from a successful empty dict. call_edges
+    returns an empty dict when its backend is unavailable; function_spans
+    returns None so the caller can fall back to the regex extractor for that
+    file, or raises BackendUnavailableError for languages where a regex
+    fallback is unsafe (e.g. Erlang/ELP) — callers that are about to delete
+    extracted-function artifacts should catch it and skip the file instead of
+    trusting an empty regex result.
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
-         and function_spans
+         function_spans, and optionally incremental_source_extract
       2. Import it here and add one entry to REGISTRY
     No other files need to change.
     """
     batch_extract: Callable
     call_edges: Callable
     function_spans: Callable
+    incremental_source_extract: Callable | None = None
 
+BackendUnavailableError = _BackendUnavailableError
 
 REGISTRY: dict = {
     "python":     LanguageHandler(batch_extract=_python.batch_extract,     call_edges=_python.call_edges,     function_spans=_python.function_spans),
@@ -45,23 +55,31 @@ REGISTRY: dict = {
     "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans),
     "javascript": LanguageHandler(batch_extract=_javascript.batch_extract, call_edges=_javascript.call_edges, function_spans=_javascript.function_spans),
     "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans),
-    "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans),
+    "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
 }
 
 
-def batch_extract_all(proj_dir: str) -> tuple:
+def batch_extract_all(proj_dir: str, include_unavailable: bool = False) -> tuple:
     """Call batch_extract for every registered language and merge results.
 
     Returns (funcs, langs) where funcs is {abs_filepath: [(func_name, body)]}
-    and langs is the set of language keys that returned data.
+    and langs is the set of language keys that returned data. When
+    ``include_unavailable`` is true, appends the set of languages whose
+    semantic extraction backend failed.
     """
     funcs = {}
     langs = set()
+    unavailable = set()
     for lang, handler in REGISTRY.items():
         result = handler.batch_extract(proj_dir)
+        if result is None:
+            unavailable.add(lang)
+            continue
         if result:
             funcs.update(result)
             langs.add(lang)
+    if include_unavailable:
+        return funcs, langs, unavailable
     return funcs, langs
 
 
@@ -72,12 +90,34 @@ def function_spans_for_file(proj_dir: str, filepath: str, lang_key: str):
     Returns [(func_name, start_idx, end_idx)] (0-indexed, inclusive) when
     codegraph indexes the file, or None when the language is unregistered,
     codegraph does not support it, or the file is not in the index — in every
-    such case the caller should fall back to the regex extractor.
+    such case the caller should fall back to the regex extractor. May raise
+    BackendUnavailableError for languages where the backend is required
+    and cannot be consulted (e.g. Erlang/ELP).
     """
     handler = REGISTRY.get(lang_key)
     if handler is None:
         return None
     return handler.function_spans(proj_dir, filepath)
+
+
+def supports_incremental_source_extraction(lang_key: str) -> bool:
+    """Return whether a language supplies semantic extraction for source snapshots."""
+    handler = REGISTRY.get(lang_key)
+    return handler is not None and handler.incremental_source_extract is not None
+
+
+def extract_incremental_sources(proj_dir: str, lang_key: str, sources: dict):
+    """Dispatch source-snapshot extraction to a language's registered backend.
+
+    The backend returns ``None`` when it is unavailable or fails, distinct from
+    a successful extraction whose individual source files contain no functions.
+    """
+    handler = REGISTRY.get(lang_key)
+    if handler is None or handler.incremental_source_extract is None:
+        raise ValueError(
+            f"Language {lang_key!r} has no incremental source extraction backend"
+        )
+    return handler.incremental_source_extract(proj_dir, sources)
 
 
 def call_edges_all(proj_dir: str, lang_keys) -> tuple:

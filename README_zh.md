@@ -152,7 +152,7 @@ FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无�
 ## 快速开始
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
 ```
 
 | 参数 | 描述 |
@@ -160,6 +160,7 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug
 | `proj_dir` | 待检测代码库的目录路径 |
 | `--resume` | 续跑上一次中断的运行，而非从头开始 |
 | `--incremental INTENT_FILE` | 以增量模式运行，参数值为描述本次修改目标的意图文件路径。 |
+| `--all-bugs` | 在发现不匹配后继续推理并报告每个候选 Bug。完整和增量模式会逐个验证；入口函数模式不执行 Bug Validation。 |
 | `--domain-knowledge FILE [FILE ...]` | 将额外的 Markdown 领域知识文件复制到本次运行中，并提供给 setup、规约生成和 Bug 验证 Agent。别名：`--knowledge`；可重复传入。 |
 | `--bug-validator FILE` | 使用自定义 Markdown 提示词执行 Bug 验证，替代内置的 `md/bug_validator.md`。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
@@ -197,7 +198,7 @@ FM-Agent 会将这些文件暂存到 `fm_agent/spec_prompts/domain_context/user_
 uv run python main.py <proj_dir> --bug-validator prompts/compiler_bug_validator.md
 ```
 
-该文件会替代内置 `md/bug_validator.md` 的验证指令。`--bug-validator` 的相对路径以启动 FM-Agent 命令时的当前目录为基准，而不是以 `proj_dir` 为基准。FM-Agent 仍会在每个 Bug 验证提示词中加入当前 Bug ID、目标验证结果，以及通过 `--domain-knowledge` 提供的领域知识。
+该文件会替代内置 `md/bug_validator.md` 的验证指令。使用自定义 `--bug-validator` 验证 `--all-bugs` 候选时，FM-Agent 会规定最终结果 JSON 的写入路径、必需字段及合法取值，以便可靠地读取和校验验证结果，并在 `--resume` 时安全复用。`--bug-validator` 的相对路径以启动 FM-Agent 命令时的当前目录为基准，而不是以 `proj_dir` 为基准。FM-Agent 仍会在每个 Bug 验证提示词中加入当前 Bug ID、目标验证结果，以及通过 `--domain-knowledge` 提供的领域知识。
 
 使用 `--submodule` 可以把完整运行或增量运行限制到指定项目子目录：
 
@@ -208,7 +209,19 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 
 `--submodule` 路径必须是 `proj_dir` 内部目录。该参数可与 `--resume`、`--isolate` 和 `--incremental` 一起使用，但不能与 `--entry-func` 一起使用。
 
-默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
+`--all-bugs` 可用于完整、增量或入口函数分析：
+
+```bash
+uv run python main.py <proj_dir> --all-bugs
+uv run python main.py <proj_dir> --incremental intent.md --all-bugs
+uv run python main.py <proj_dir> --entry-func src::main --all-bugs
+```
+
+该选项默认关闭。启用后，FM-Agent 会继续检查后续推理检查点，并为每个候选写出一个标准 mismatch 结果。完整和增量模式会分别验证每个候选；入口函数模式只报告候选及其数量，按设计不执行 Bug Validation。
+
+若主结果为 `path/to/function.json`，all-bugs 候选会写在同一目录下，依次命名为 `path/to/function.bug-001.json`、`bug-002.json` 等。主结果通过 `bug_count` 和 `reasoning_complete` 记录候选数量及推理是否完整。续跑时，完整的主结果就是 reasoning 阶段的检查点，只补跑尚未产生终态结果的候选验证；若 reasoning 中途停止，则只清理并重跑该函数的中间候选和验证，不影响其他已完成函数。
+
+默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。续跑时必须保持相同的推理模式：all-bugs 工作区需要使用 `--resume --all-bugs`；默认模式会拒绝恢复该工作区，避免已有候选及其验证记录与 legacy 输出混合。
 
 使用 `--only-spec` 可以在生成行为规约后即停止，跳过推理与 Bug 验证阶段。它会为每个函数生成相邻的 `.spec.json` 和 `.info.json` 元数据文件，而不在验证上花费时间，适用于只需要规约、或希望先审阅规约再运行完整分析的场景。该参数不能与 `--incremental` 一起使用，因为增量模式本质上是一个推理/Bug 验证流程。
 
@@ -293,7 +306,7 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 | Probe Script | 用于触发 Bug 的完整测试脚本 |
 | Probe Output | 执行测试脚本的输出 |
 
-`fm_agent/bug_validation/` 目录下的 `summary.json` 文件汇总了所有 Bug 结果，包括报告的Bug总数、已确认Bug数、未确认Bug数。
+`fm_agent/bug_validation/` 目录下的 `summary.json` 文件汇总了所有 Bug 结果，包括报告的 Bug 总数、已确认 Bug 数、未确认 Bug 数。在 `--all-bugs` 模式下，汇总还会报告待验证候选；缺失、损坏或尚未进入终态的验证结果会显示为 `pending`，而不会从统计中消失。默认模式的汇总行为保持不变。
 
 #### 日志文件（`fm_agent/fm_agent.log`）
 

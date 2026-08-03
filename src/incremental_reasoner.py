@@ -54,7 +54,19 @@ from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import CodeGraphExtractor, try_codegraph_init
-from .verification import _verify_single_file, _validate_single_bug, _generate_validation_summary, EXT_TO_LANG as _VERIFY_EXT_TO_LANG
+from .languages.registry import (
+    extract_incremental_sources,
+    supports_incremental_source_extraction,
+)
+from .verification import (
+    EXT_TO_LANG as _VERIFY_EXT_TO_LANG,
+    _generate_all_bugs_validation_summary,
+    _generate_validation_summary,
+    _validate_single_bug,
+    _validation_status,
+    _validation_targets,
+    _verify_single_file,
+)
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -345,6 +357,52 @@ def _codegraph_functions_at_revision(proj_dir, revision, file_languages):
         shutil.rmtree(parent_dir, ignore_errors=True)
 
 
+class _ChangedFunctionResults(dict):
+    """Changed-function mapping plus semantic backends that could not compare."""
+
+    def __init__(
+        self,
+        *args,
+        source_backend_languages=(),
+        unavailable_source_backend_languages=(),
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.source_backend_languages = frozenset(source_backend_languages)
+        self.unavailable_source_backend_languages = frozenset(
+            unavailable_source_backend_languages
+        )
+
+
+def _raise_if_incremental_source_backends_unavailable(
+    changed_functions, stage4_unavailable_backends=(),
+):
+    """Stop before downstream stages can consume stale semantic extraction."""
+    stale_extraction_backends = (
+        changed_functions.source_backend_languages
+        & frozenset(stage4_unavailable_backends)
+    )
+    unavailable_backends = (
+        changed_functions.unavailable_source_backend_languages
+        | stale_extraction_backends
+    )
+    if not unavailable_backends:
+        return
+
+    languages = ", ".join(sorted(unavailable_backends))
+    if stale_extraction_backends:
+        raise RuntimeError(
+            "Cannot safely complete incremental analysis because Stage 4 did "
+            f"not refresh extracted source files for: {languages}. Install or "
+            "repair the required language backend, then retry."
+        )
+    raise RuntimeError(
+        "Cannot safely complete incremental analysis because semantic source "
+        f"extraction is unavailable for: {languages}. Install or repair the "
+        "required language backend, then retry."
+    )
+
+
 def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     """
     Determine which functions changed between commit old_commit_id and the current working
@@ -357,12 +415,17 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     version, then compared by source text.
 
     Returns a dict mapping each changed file's absolute path to a dict with keys "added",
-    "removed", and "modified", each a sorted list of function names. For every
-    non-Erlang language that CodeGraph can index, both revisions are compared using
-    its class-qualified identifiers. Erlang and CodeGraph-unavailable files retain
-    the previous regex-based comparison. Files with no detectable function-level
-    change are omitted. Raises subprocess.CalledProcessError if proj_dir is not a
-    git repository or old_commit_id is not a valid commit.
+    "removed", and "modified", each a sorted list of function names. Languages
+    with a registered semantic source backend use it for both revisions; other
+    languages use CodeGraph when available, then the regex fallback. Files with
+    no detectable function-level change are omitted. If a registered semantic
+    source backend is unavailable, that language is omitted rather than passed
+    to a less-capable extractor; its key is recorded on the returned mapping's
+    ``unavailable_source_backend_languages`` attribute so the pipeline can
+    stop before silently skipping its changed functions. Raises
+    subprocess.CalledProcessError if proj_dir is not a git repository or
+    old_commit_id is not a valid commit, and RuntimeError if a registered source
+    backend cannot extract a changed revision.
     """
     # Pathspecs limiting git to recognized source-file extensions (e.g. "*.py", "*.cpp").
     pathspecs = [f"*.{ext}" for ext in EXT_TO_LANG]
@@ -393,19 +456,20 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         and _is_under_submodules(f, submodules)
     ]
 
-    # Erlang intentionally remains on its existing extraction path: its ELP
-    # integration has different project and tooling requirements. Every other
-    # changed language gets a CodeGraph comparison when both indexes are usable.
     file_languages = {
         rel_path: EXT_TO_LANG[rel_path.rsplit(".", 1)[-1]]
         for rel_path in files
         if "." in rel_path
         and rel_path.rsplit(".", 1)[-1] in EXT_TO_LANG
     }
+    source_backend_languages = {
+        lang_key for lang_key in set(file_languages.values())
+        if supports_incremental_source_extraction(lang_key)
+    }
     codegraph_file_languages = {
         rel_path: lang_key
         for rel_path, lang_key in file_languages.items()
-        if lang_key != "erlang"
+        if lang_key not in source_backend_languages
     }
     codegraph_langs = set(codegraph_file_languages.values())
     current_codegraph = (
@@ -447,23 +511,73 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         finally:
             os.unlink(tmp_path)
 
-    result = {}
+    current_source_batches = defaultdict(dict)
+    baseline_source_batches = defaultdict(dict)
+    for rel_path, lang_key in file_languages.items():
+        if lang_key not in source_backend_languages:
+            continue
+        abs_path = os.path.abspath(os.path.join(proj_dir, rel_path))
+        if os.path.exists(abs_path):
+            with open(abs_path, "r", errors="replace") as f:
+                current_source_batches[lang_key][abs_path] = f.read()
+        if _path_exists_in_commit(rel_path):
+            baseline_source_batches[lang_key][abs_path] = _git(
+                "show", f"{old_commit_id}:{rel_path}"
+            )
+
+    current_source_functions = {}
+    baseline_source_functions = {}
+    available_source_backend_languages = set()
+    unavailable_source_backend_languages = set()
+    for lang_key in sorted(source_backend_languages):
+        current_result = (
+            extract_incremental_sources(
+                proj_dir, lang_key, current_source_batches[lang_key]
+            ) if current_source_batches[lang_key] else {}
+        )
+        baseline_result = (
+            extract_incremental_sources(
+                proj_dir, lang_key, baseline_source_batches[lang_key]
+            ) if baseline_source_batches[lang_key] else {}
+        )
+        if current_result is None or baseline_result is None:
+            logging.warning(
+                "Incremental source extraction is unavailable for %s; "
+                "function-level comparison for that language is unsafe.",
+                lang_key,
+            )
+            unavailable_source_backend_languages.add(lang_key)
+            continue
+        current_source_functions[lang_key] = current_result
+        baseline_source_functions[lang_key] = baseline_result
+        available_source_backend_languages.add(lang_key)
+
+    result = _ChangedFunctionResults(
+        source_backend_languages=source_backend_languages,
+        unavailable_source_backend_languages=unavailable_source_backend_languages
+    )
     for rel_path in files:
         ext = rel_path.rsplit(".", 1)[-1] if "." in rel_path else ""
         lang_key = EXT_TO_LANG.get(ext)
         if not lang_key:
             continue
 
-        # Use CodeGraph for both revisions whenever it can index this non-Erlang
-        # file. This keeps the comparison identity identical to the extracted
-        # function filename (for example, ``LocalStorage::Flush``) and avoids
-        # bare-name collisions between same-named C++ members.
+        # Use CodeGraph for both revisions whenever this language does not supply
+        # a semantic source backend and CodeGraph can index the file. This keeps
+        # comparison identifiers aligned with extracted filenames (for example,
+        # ``LocalStorage::Flush``) and avoids bare-name collisions.
         abs_path = os.path.abspath(os.path.join(proj_dir, rel_path))
         current_exists = os.path.exists(abs_path)
         old_exists = _path_exists_in_commit(rel_path)
         rel_key = _normalized_relative_path(proj_dir, rel_path)
+        if lang_key in unavailable_source_backend_languages:
+            # Semantic-only languages cannot safely fall back to a local regex
+            # extractor. The caller will abort the incremental pipeline after
+            # retaining other languages' comparison results.
+            continue
+        uses_source_backend = lang_key in available_source_backend_languages
         use_codegraph = (
-            lang_key != "erlang"
+            not uses_source_backend
             and current_codegraph is not None
             and baseline_codegraph is not None
             and (not current_exists or current_coverage.get(rel_key, False))
@@ -474,18 +588,26 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
             new_funcs = current_codegraph.get(rel_key, {})
             old_funcs = baseline_codegraph.get(rel_key, {})
         else:
-            if lang_key != "erlang" and codegraph_langs:
+            if not uses_source_backend and codegraph_langs:
                 logging.warning(
                     "CodeGraph could not provide both revisions for %s; using "
                     "legacy regex comparison.", rel_path,
                 )
-            new_funcs = (
-                dict(extract_functions_from_file(abs_path, lang_key))
-                if current_exists else {}
-            )
-            old_funcs = (
-                _funcs_from_commit(rel_path, lang_key, ext) if old_exists else {}
-            )
+            if uses_source_backend:
+                new_funcs = dict(
+                    current_source_functions[lang_key].get(abs_path, ())
+                )
+                old_funcs = dict(
+                    baseline_source_functions[lang_key].get(abs_path, ())
+                )
+            else:
+                new_funcs = (
+                    dict(extract_functions_from_file(abs_path, lang_key))
+                    if current_exists else {}
+                )
+                old_funcs = (
+                    _funcs_from_commit(rel_path, lang_key, ext) if old_exists else {}
+                )
 
         added = sorted(n for n in new_funcs if n not in old_funcs)
         removed = sorted(n for n in old_funcs if n not in new_funcs)
@@ -595,22 +717,33 @@ def _modified_function_targets(
 
 def _reconcile_extracted_dir(proj_dir, abs_src):
     """Delete extracted-function files under abs_src's function directory that
-    codegraph no longer produces for it, then prune emptied directories.
+    the backend no longer produces for it, then prune emptied directories.
 
     ``valid`` is computed with the same backend (codegraph when it indexes the
     file, else regex) that run_extraction used to write the files, so their
     identifiers — and therefore the on-disk layout — agree; only genuinely orphaned
     files are removed. A source file that no longer exists yields an empty ``valid``
     set, so all of its extracted files are removed.
+
+    Returns True if reconciliation was performed, or False if the semantic backend
+    (e.g. ELP for Erlang) could not be consulted. In the latter case the file is
+    left untouched so that transient backend failures do not delete existing specs.
     """
     func_dir, ext = _src_rel_to_func_dir(proj_dir, abs_src)
     if not os.path.isdir(func_dir):
-        return
+        return True
 
     valid = set()
     lang_key = EXT_TO_LANG.get(ext)
     if lang_key and os.path.isfile(abs_src):
-        spans, _raw = _function_spans(abs_src, lang_key, proj_dir)
+        spans, _raw, backend_available = _function_spans(abs_src, lang_key, proj_dir)
+        if not backend_available:
+            logging.warning(
+                "ELP backend unavailable for %s; skipping reconciliation for this file "
+                "to avoid deleting existing specs.",
+                abs_src,
+            )
+            return False
         for ident, _s, _e in spans:
             # ident is the class-qualified, deduped identifier written by
             # run_extraction as a flat file that keeps the "::" in its name.
@@ -630,11 +763,12 @@ def _reconcile_extracted_dir(proj_dir, abs_src):
     for root, _dirs, _files in os.walk(func_dir, topdown=False):
         if root != func_dir and os.path.isdir(root) and not os.listdir(root):
             os.rmdir(root)
+    return True
 
 
 def _remove_stale_extracted(proj_dir, modified_functions):
     """
-    Reconcile the extracted-function tree against what codegraph now produces,
+    Reconcile the extracted-function tree against what the backends now produce,
     deleting any file that no longer corresponds to a current source function and
     pruning emptied directories.
 
@@ -645,6 +779,10 @@ def _remove_stale_extracted(proj_dir, modified_functions):
     qualified directory without changing the regex name or body, so the old
     qualified file would otherwise linger as a stale, orphaned spec. Reconciling by
     path rather than by (class-less) name handles it.
+
+    Returns a list of absolute source-file paths whose reconciliation was skipped
+    because the semantic backend could not be consulted. Callers should surface this
+    degraded coverage so users know existing specs were retained but not refreshed.
     """
     srcs = set(modified_functions)  # abs paths; includes deleted source files
     try:
@@ -655,8 +793,11 @@ def _remove_stale_extracted(proj_dir, modified_functions):
                     srcs.add(os.path.abspath(os.path.join(proj_dir, rel)))
     except (OSError, ValueError, KeyError):
         pass
+    skipped = []
     for abs_src in srcs:
-        _reconcile_extracted_dir(proj_dir, abs_src)
+        if not _reconcile_extracted_dir(proj_dir, abs_src):
+            skipped.append(abs_src)
+    return skipped
 
 
 def _topdown_ordered_fqns(work_dir, extra_call_edges=None):
@@ -699,6 +840,7 @@ def run_incremental_pipeline(
     extra_call_edges_path=None,
     bug_validator_path=None,
     plugin_config=None,
+    all_bugs=False,
 ):
     """
     Run the pipeline in incremental mode, intent_file_path is a file (absolute path) defining the goal of modification.
@@ -753,6 +895,7 @@ def run_incremental_pipeline(
             extra_call_edges_path=extra_call_edges_path,
             bug_validator_path=bug_validator_path,
             plugin_config=plugin_config,
+            all_bugs=all_bugs,
         )
         return
     logging.info("  -> previous full run found; proceeding with incremental analysis.")
@@ -821,7 +964,13 @@ def run_incremental_pipeline(
     # stale index would yield boundaries for the old code. try_codegraph_init rebuilds by
     # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
     try_codegraph_init(proj_dir)
-    run_extraction(proj_dir, work_dir=work_dir, force=True, verbose=True)
+    _written, _skipped, stage4_unavailable_backends = run_extraction(
+        proj_dir,
+        work_dir=work_dir,
+        force=True,
+        verbose=True,
+        return_unavailable_backends=True,
+    )
     logging.info("  -> function sources re-extracted; metadata sidecars retained.")
 
     # 5. Collect changed functions by comparing against the old version of functions in commit_id
@@ -836,12 +985,23 @@ def run_incremental_pipeline(
         "  -> %d changed file(s): %d added, %d modified, %d removed function(s).",
         len(changed_functions), n_added, n_modified, n_removed,
     )
+    _raise_if_incremental_source_backends_unavailable(
+        changed_functions, stage4_unavailable_backends
+    )
 
     # 5b. Delete extracted-function files for functions (or whole source files) that were
     #     removed since old_commit_id. Re-extraction never rewrites these, so without this
     #     they linger as stale specs and would pollute the file list and call graph below.
-    _remove_stale_extracted(proj_dir, changed_functions)
+    skipped_srcs = _remove_stale_extracted(proj_dir, changed_functions)
     logging.info("  -> stale extracted-function files for removed functions deleted.")
+    if skipped_srcs:
+        logging.warning(
+            "Reconciliation skipped for %d source file(s) because the semantic "
+            "backend was unavailable; existing specs retained.",
+            len(skipped_srcs),
+        )
+        for skipped_src in skipped_srcs:
+            logging.warning("  - %s", skipped_src)
 
     # 6. Update file list
     logging.info("[Stage 6/10] Collecting file list...")
@@ -887,16 +1047,29 @@ def run_incremental_pipeline(
 
     # 10. Run the verification stage only on the functions that satisfy one of the following conditions: 1) the function is changed; 2) the function spec is changed after step 9; 3) the callee spec of the function is changed.
     logging.info("[Stage 10/10] Verifying changed and affected functions...")
-    buggy_files = _verify_incremental_functions(
+    verification_result = _verify_incremental_functions(
         proj_dir, work_dir, changed_functions, updated_spec_files,
         submodules=submodules,
+        all_bugs=all_bugs,
         bug_validator_path=bug_validator_path,
     )
+    if all_bugs:
+        buggy_files, confirmed_bug_count = verification_result
+    else:
+        buggy_files = verification_result
+        confirmed_bug_count = len(buggy_files)
     logging.info("=" * 70)
-    logging.info(
-        "INCREMENTAL PIPELINE DONE: bug validation confirmed bugs in %d function(s).",
-        len(buggy_files),
-    )
+    if all_bugs:
+        logging.info(
+            "INCREMENTAL PIPELINE DONE: bug validation confirmed %d bug(s) in %d function(s).",
+            confirmed_bug_count,
+            len(buggy_files),
+        )
+    else:
+        logging.info(
+            "INCREMENTAL PIPELINE DONE: bug validation confirmed bugs in %d function(s).",
+            len(buggy_files),
+        )
     for bf in buggy_files:
         logging.info("  - %s", bf)
     logging.info("=" * 70)
@@ -928,14 +1101,14 @@ def _extracted_func_dir(extracted_base, src_rel):
 def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
                           result_relpath, stage, input_files):
     """
-    Run opencode to produce a JSON artifact and return the parsed JSON.
+    Run the configured CLI backend to produce a JSON artifact and return the parsed JSON.
 
     Writes prompt_content to proj_dir/prompt_relpath, removes any stale artifact at
-    proj_dir/result_relpath, then runs `opencode run --file <prompt> -- ...` (with the same
-    retry / result-artifact check used by the setup stage) until the agent writes the
-    result file. Returns the parsed JSON value, or None if opencode never produced the
-    artifact or it could not be parsed. Shared by the module- and file-selection steps of
-    collect_relevent_function_scope.
+    proj_dir/result_relpath, then runs the configured CLI backend with the prompt file
+    (with the same retry / result-artifact check used by the setup stage) until the agent
+    writes the result file. Returns the parsed JSON value, or None if the backend never
+    produced the artifact or it could not be parsed. Shared by the module- and
+    file-selection steps of collect_relevent_function_scope.
     """
     prompt_path = os.path.join(proj_dir, prompt_relpath)
     result_path = os.path.join(proj_dir, result_relpath)
@@ -965,12 +1138,12 @@ def _opencode_select_json(proj_dir, work_dir, prompt_relpath, prompt_content,
                 stage=stage,
                 input_files=input_files,
                 output_files=[result_relpath],
-                summary=f"OpenCode {stage} attempt {attempt}",
+                summary=f"CLI backend {stage} attempt {attempt}",
                 metadata={"attempt": attempt},
             )
         except subprocess.CalledProcessError as exc:
             logging.warning(
-                "%s: opencode exited with code %s (attempt %d/%d)",
+                "%s: CLI backend exited with code %s (attempt %d/%d)",
                 stage, exc.returncode, attempt, OPENCODE_MAX_RETRIES,
             )
 
@@ -1137,8 +1310,8 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
 
       1. Module selection — a direct LLM call is given the module descriptions (already
          parsed from phases.json) and picks the modules relevant to the intent.
-      2. File selection — for each relevant module, opencode reads that module's source
-         files and picks the files relevant to the intent.
+      2. File selection — for each relevant module, the CLI backend reads that
+         module's source files and picks the files relevant to the intent.
       3. Function selection — the function-localization algorithm from scope.py ranks the
          functions in each chosen file by relevance to the intent (heuristic signal scoring
          with call-graph and class-scope enrichments) and keeps the top-ranked functions
@@ -1150,14 +1323,14 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     Returns the selected extracted-function file paths (relative to the extracted_functions
     dir, matching the convention used elsewhere in this module), ordered by descending
     relevance score and truncated to the first `range` entries. Returns an empty list when
-    phases.json has no modules or opencode selects none / fails to produce a result.
+    phases.json has no modules or the CLI backend selects none / fails to produce a result.
     """
     work_dir = os.path.join(proj_dir, "fm_agent")
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
     phases_data = _load_phases(work_dir)
 
-    # Flatten every module across all phases so we can match opencode's selection back to
+    # Flatten every module across all phases so we can match the CLI backend's selection to
     # concrete modules (module names can repeat across phases, so keep the phase number too).
     modules = []  # list of (phase_num, module_dict)
     for phase_info in phases_data.get("phases", []):
@@ -1176,8 +1349,8 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
     logging.info("    [scope] pass 1/3: selecting relevant modules from %d module(s)...", len(modules))
 
     # Pass 1: module selection. The module descriptions are already parsed from phases.json
-    # above, so rather than have opencode read the file, inline the catalog and make a direct
-    # LLM call that returns the selection as JSON.
+    # above, so rather than have the CLI backend read the file, inline the catalog
+    # and make a direct LLM call that returns the selection as JSON.
     module_catalog = "\n".join(
         f"- phase {phase_num}, name `{module.get('name', '(unnamed)')}`: "
         f"{(module.get('description') or '').strip() or '(no description)'}"
@@ -1233,10 +1406,11 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
         len(relevant_modules),
     )
 
-    # Pass 2: file selection. For each relevant module, opencode reads that module's source
-    # files and narrows them to the files relevant to the intent. The result is a synthetic
-    # module dict carrying only the chosen source_files; on opencode failure we fall back to
-    # the module's full file list so the scope is never silently dropped.
+    # Pass 2: file selection. For each relevant module, the CLI backend reads that
+    # module's source files and narrows them to the files relevant to the intent.
+    # The result is a synthetic module dict carrying only the chosen source_files;
+    # on CLI backend failure we fall back to the module's full file list so the
+    # scope is never silently dropped.
     filtered_modules = []
     for idx, (phase_num, module) in enumerate(relevant_modules):
         module_name = module.get("name", f"module_{idx}")
@@ -1283,7 +1457,7 @@ def collect_relevent_function_scope(proj_dir, developer_intent, changed_function
                 if sf not in chosen:
                     chosen.append(sf)
         else:
-            # opencode failed for this module; keep all files rather than drop scope.
+            # The CLI backend failed for this module; keep all files rather than drop scope.
             chosen = list(source_files)
 
         if chosen:
@@ -1412,8 +1586,8 @@ def _project_call_graph(work_dir, extra_call_edges=None):
 
 def _resolve_callee_fqns(caller_fqn, callee_names, callees_map, edge_aliases_map=None):
     """
-    Map callee names reported by opencode (the .info.json entries whose expected spec changed)
-    back to the FQNs of caller_fqn's callees.
+    Map callee names reported by the CLI backend (the .info.json entries whose
+    expected spec changed) back to the FQNs of caller_fqn's callees.
 
     A callee is identified in .info.json by its name; this matches that name against
     the final component (stem) of each of caller_fqn's callee FQNs, case-insensitively, and
@@ -1442,8 +1616,8 @@ def _llm_check_spec_update(proj_dir, work_dir, idx, fqn, lang_key, comment_prefi
 
     The prompt inlines the entire function source, its current metadata sidecars, and the
     developer intent, so it needs no repository file access and is issued as a direct LLM
-    call (via _llm_select_json) rather than an opencode run. idx is used only to label the
-    traced exchange.
+    call via _llm_select_json rather than the repository-reading artifact workflow.
+    idx is used only to label the traced exchange.
 
     Returns the parsed result dict — keys: "spec_updated" (bool), "new_spec" (dict),
     "info_updated" (bool), "new_info" (dict), "updated_callees" (list[str]) — or None when
@@ -1536,7 +1710,8 @@ def _llm_check_caller_info_update(proj_dir, work_dir, idx, caller_fqn, callee_na
     consistency, not equality: the entry must merely not conflict with the new spec, and the
     entries for other callees are left untouched. The prompt inlines the callee's new spec
     and the caller's source/info sidecar, so it is issued as a direct LLM call (via
-    _llm_select_json) rather than an opencode run; idx only labels the traced exchange.
+    _llm_select_json) rather than the repository-reading artifact workflow; idx only
+    labels the traced exchange.
 
     Returns the parsed result dict — keys "info_updated" (bool) and "new_info" (dict) — or
     None when the LLM produced nothing usable.
@@ -1621,21 +1796,22 @@ def _collect_caller_context(fqn, callers_map, file_map, edge_aliases_map=None):
 def _opencode_generate_spec(proj_dir, work_dir, idx, fqn, lang_key, comment_prefix,
                             developer_intent, callee_names, source, caller_context):
     """
-    Ask opencode to generate brand-new .spec.json and .info.json objects from scratch for a
-    function that has no existing metadata sidecars — e.g. a function
+    Ask the configured CLI backend to generate brand-new .spec.json and .info.json
+    objects for a function that has no existing metadata sidecars — e.g. a function
     freshly added by the modification.
 
     Mirrors the full run's spec generation (run_pipeline Stage 6) but for a single function:
-    opencode reads the project's spec format rules (fm_agent/spec_prompts/system_prompt.md),
-    is given the same caller context the full run provides (each caller's .spec.json and what
-    that caller's .info.json expects from this function, in caller_context as returned by
-    _collect_caller_context), and produces the objects directly. Returns the parsed decision
-    in the SAME shape as _opencode_check_spec_update so the caller can splice and propagate it
-    identically.
+    The CLI backend reads the project's spec format rules
+    (fm_agent/spec_prompts/system_prompt.md), is given the same caller context the
+    full run provides (each caller's .spec.json and what that caller's .info.json
+    expects from this function, in caller_context as returned by
+    _collect_caller_context), and produces the objects directly. Returns the parsed
+    decision in the SAME shape as _opencode_check_spec_update so the caller can
+    splice and propagate it identically.
 
     Returns the parsed result dict — keys: "spec_updated" (bool, true when .spec.json was
     produced), "new_spec" (dict), "info_updated" (bool), "new_info" (dict), "updated_callees"
-    (list[str]) — or None when opencode produced nothing usable.
+    (list[str]) — or None when the CLI backend produced nothing usable.
     """
     result_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.json")
     prompt_relpath = os.path.join("fm_agent", f"spec_generate_{idx}.md")
@@ -1746,13 +1922,14 @@ def _update_specs_for_intent(
 
     Seeds from the changed functions (added/modified) and the relevant extracted-function
     files returned by collect_relevent_function_scope, then processes functions in top-down
-    order (callers before callees). For each function, opencode reads its current .spec.json
-    block and decides whether it must change to reflect developer_intent. A function with no
-    existing .spec.json (e.g. one freshly added by the modification) instead has a spec
-    generated from scratch the way the full run does. If a spec is written or generated, the
-    new .spec.json is written back (source untouched), and then:
+    order (callers before callees). For each function, the CLI backend reads its
+    current .spec.json block and decides whether it must change to reflect
+    developer_intent. A function with no existing .spec.json (e.g. one freshly
+    added by the modification) instead has a spec generated from scratch the way
+    the full run does. If a spec is written or generated, the new .spec.json is
+    written back (source untouched), and then:
 
-      - Downward: opencode decides whether the function's own .info.json (the expected
+      - Downward: the CLI backend decides whether the function's own .info.json (the expected
         specs of its callees) must change too, and any callee whose expected spec changed is
         queued to have its own spec file re-checked.
       - Upward: every caller's .info.json (which records this function as one of its
@@ -1799,7 +1976,7 @@ def _update_specs_for_intent(
         """
         Decide fqn's new metadata sidecars and return an apply-plan, or None to skip.
 
-        Makes the opencode LLM call (the slow part) but performs NO file writes, so a batch of
+        Makes the CLI backend call (the slow part) but performs NO file writes, so a batch of
         mutually independent functions can run this concurrently. The returned plan carries the
         exact file content to write plus what the serial apply phase needs for downward
         propagation; None means the function does not exist, is an unsupported language, or its
@@ -1847,17 +2024,19 @@ def _update_specs_for_intent(
             return None
 
         if old_info is None:
-            # Freshly generated: take the .info.json object opencode produced. Treat it as
-            # "updated" so its recorded callee expectations propagate downward below.
+            # Freshly generated: take the .info.json object the CLI backend
+            # produced. Treat it as "updated" so its recorded callee expectations
+            # propagate downward below.
             new_info = result.get("new_info")
             if not isinstance(new_info, dict):
                 new_info = {"callees": []}
             info_updated = True
         else:
-            # Keep the existing .info.json unless opencode rewrote it. A modified function may
-            # now call a different set of callees, so a fresh .info.json can legitimately be
-            # created even when the function previously had none (old_info is None) — gate on
-            # whether opencode produced a block, not on a prior block existing.
+            # Keep the existing .info.json unless the CLI backend rewrote it. A
+            # modified function may now call a different set of callees, so a fresh
+            # .info.json can legitimately be created even when the function previously
+            # had none (old_info is None) — gate on whether the CLI backend produced a
+            # block, not on a prior block existing.
             info_updated = bool(result.get("info_updated"))
             new_info = result.get("new_info") if info_updated else old_info
             if not isinstance(new_info, dict):
@@ -1879,7 +2058,7 @@ def _update_specs_for_intent(
         updates is a list of (callee_name, callee_new_spec). The entries are applied
         sequentially, re-reading the caller file between each, because they all edit the same
         file — so a single caller is one unit of work and DIFFERENT callers run concurrently
-        (see the batch loop). base_idx + offset gives each opencode call a unique artifact name.
+        (see the batch loop). base_idx + offset gives each CLI backend call a unique artifact name.
         Returns the caller's path if any reconciliation changed it, else None.
         """
         cpath = file_map.get(caller_fqn)
@@ -2020,6 +2199,7 @@ def _update_specs_for_intent(
 def _verify_incremental_functions(
     proj_dir, work_dir, changed_functions, updated_spec_files, submodules=None,
     bug_validator_path=None,
+    all_bugs=False,
 ):
     """
     Step 10: re-run the verification stage (reasoner + bug validation) on only the functions
@@ -2042,7 +2222,8 @@ def _verify_incremental_functions(
     updated) spec rather than reusing the cached verdict from the previous full run.
 
     A reasoner MISMATCH is only a candidate bug; each one is then handed to bug validation
-    (verification._validate_single_bug, an opencode pass) which confirms or rejects it.
+    (verification._validate_single_bug, using the configured CLI backend) which confirms or
+    rejects it.
 
     Returns the sorted list of extracted-function files (paths relative to the
     extracted_functions dir) whose reasoner MISMATCH was confirmed a bug by bug validation.
@@ -2079,7 +2260,7 @@ def _verify_incremental_functions(
         ]
     if not file_list:
         logging.info("    [verify] no functions require re-verification.")
-        return []
+        return ([], 0) if all_bugs else []
     logging.info("    [verify] running reasoner on %d function(s)...", len(file_list))
 
     # Drop stale verification results so the reasoner re-runs rather than reusing the cached
@@ -2097,7 +2278,14 @@ def _verify_incremental_functions(
     def _verify(rel):
         fpath = os.path.join(extracted_dir, rel)
         language = _VERIFY_EXT_TO_LANG.get(os.path.splitext(fpath)[1], "C")
-        _, verdict = _verify_single_file(fpath, extracted_dir, output_dir, language, work_dir=work_dir)
+        _, verdict = _verify_single_file(
+            fpath,
+            extracted_dir,
+            output_dir,
+            language,
+            work_dir=work_dir,
+            all_bugs=all_bugs,
+        )
         return rel, verdict
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -2114,12 +2302,66 @@ def _verify_incremental_functions(
 
     logging.info("    [verify] reasoner reported %d MISMATCH(es) (candidate bugs).", len(mismatches))
     if not mismatches:
-        return []
+        return ([], 0) if all_bugs else []
+
+    if all_bugs:
+        validation_targets = []
+        for rel in mismatches:
+            primary_rel = os.path.join(
+                os.path.relpath(output_dir, proj_dir),
+                os.path.splitext(rel)[0] + ".json",
+            )
+            validation_targets.extend(
+                (rel, target_rel)
+                for target_rel in _validation_targets(primary_rel, proj_dir, True)
+            )
+
+        logging.info(
+            "    [verify] validating %d candidate bug(s) with the configured CLI backend...",
+            len(validation_targets),
+        )
+
+        def _validate_candidate(function_rel, target_rel):
+            _validate_single_bug(
+                target_rel,
+                proj_dir,
+                work_dir,
+                bug_validator_path=bug_validator_path,
+            )
+            return function_rel, target_rel
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(_validate_candidate, function_rel, target_rel): (
+                    function_rel,
+                    target_rel,
+                )
+                for function_rel, target_rel in validation_targets
+            }
+            for future in concurrent.futures.as_completed(futures):
+                function_rel, target_rel = futures[future]
+                try:
+                    future.result()
+                except Exception:
+                    logging.exception("Bug validation failed for %s", target_rel)
+
+        _generate_all_bugs_validation_summary(work_dir)
+        confirmed_functions = set()
+        confirmed_bug_count = 0
+        for function_rel, target_rel in validation_targets:
+            if _validation_status(target_rel, work_dir) == "confirmed":
+                confirmed_functions.add(function_rel)
+                confirmed_bug_count += 1
+        return sorted(confirmed_functions), confirmed_bug_count
 
     # Bug validation: the reasoner's MISMATCH is only a candidate bug, so validate each one
-    # with opencode (_validate_single_bug writes work_dir/bug_validation/<bug_id>.result.json
-    # with a confirmation_status). Run them concurrently, bounded by MAX_WORKERS.
-    logging.info("    [verify] validating %d candidate bug(s) with opencode...", len(mismatches))
+    # with the configured CLI backend. _validate_single_bug writes
+    # work_dir/bug_validation/<bug_id>.result.json with a confirmation_status. Run them
+    # concurrently, bounded by MAX_WORKERS.
+    logging.info(
+        "    [verify] validating %d candidate bug(s) with the configured CLI backend...",
+        len(mismatches),
+    )
 
     def _validate(rel):
         result_json_rel = os.path.join(
