@@ -83,7 +83,16 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 
 设置 FM-Agent 和 OpenCode 共用的 LLM API 密钥。推荐使用 [OpenRouter](https://openrouter.ai/)：FM-Agent 会并发调用 LLM，而 OpenRouter 的 RPM（每分钟请求数）和 TPM（每分钟 Token 数）限制更宽松——不过任何兼容的 provider 都可以。
 
-把 API 密钥放进 `.env`（已 gitignore，FM-Agent 通过 python-dotenv 自动加载）；其余所有配置在 `fm-agent.toml` 里都有 committed 的默认值。复制模板：
+把 API 密钥放进 `.env`（已 gitignore，FM-Agent 通过 python-dotenv 自动加载）；其余所有配置在 `fm-agent.toml` 里都有 committed 的默认值。最简单的配置方式是运行交互式向导：
+
+```bash
+uv run python src/configure_llm.py
+```
+
+该向导会先展示预览、备份已有文件，然后更新当前生效的 FM-Agent TOML、把 API 密钥写入 `.env` 和供独立 OpenCode 使用的私有本地密钥文件，并同步对应的 OpenCode provider 到 `~/.config/opencode/opencode.json`（或当前平台上的等价路径），无需手写 JSON。
+若在向导中选择 `auto`、`codex-cli` 或 `claude-cli`，则会更新当前生效的 FM-Agent TOML 中的 backend，并清除项目 `.env` 里残留的非密钥 LLM 覆盖项；其中模型和 effort 的值会先迁移到 TOML。本地 CLI 使用自身认证，不需要 API 密钥或 OpenCode provider 配置。
+
+如果你更希望手动编辑文件，可以复制模板：
 
 ```bash
 cp .env.example .env
@@ -95,7 +104,15 @@ cp .env.example .env
 LLM_API_KEY=your-api-key-here
 ```
 
-非密钥配置——模型、endpoint、backend、provider 等——在 `fm-agent.toml` 的 `[llm]` 段,直接改它是永久生效的做法。若不想动这个被 git 跟踪的文件（比如你是 git clone、之后会 `git pull` 更新），可以用对应的环境变量覆盖,写在 `.env` 或 shell 里即可。优先级为 `env > .env > fm-agent.toml`；由于 `.env` 会盖过 toml,残留的旧值会覆盖你后来对 toml 的修改——所以改了 toml 不生效时,先检查 `.env`。详情及 OpenCode provider 配置见 [docs/config_llm.md](docs/config_llm.md)。
+非密钥配置——模型、endpoint、backend、provider 等——在 `fm-agent.toml` 的 `[llm]` 段，直接改它是永久生效的做法。若不想动这个被 git 跟踪的文件（比如你是 git clone、之后会 `git pull` 更新），可以用对应的环境变量覆盖，写在 `.env` 或 shell 里即可。优先级为 `env > .env > fm-agent.toml`；由于 `.env` 会盖过 toml，残留的旧值会覆盖你后来对 toml 的修改——所以改了 toml 不生效时，先检查 `.env`。向导会顺手清理常见的旧 LLM 覆盖变量，并在启动向导的 shell 已导出 LLM 变量时提示使用 `unset`，否则该变量仍会覆盖保存的配置。详情及 OpenCode provider 配置见 [docs/config_llm.md](docs/config_llm.md)。
+
+如需只修改某一项非密钥 LLM 配置，无需手动编辑文件。例如，将模型后端切换到本地 Codex CLI：
+
+```bash
+uv run python src/configure_llm.py set --backend codex-cli
+```
+
+该命令会预览并备份 `fm-agent.toml`，只修改命令中指定的配置项。它还支持 `--name`、`--provider`、`--base-url`、`--effort` 和 `--api-style`；完整语法见 [docs/config_llm.md](docs/config_llm.md)。若 `.env` 中仍有会覆盖本次 TOML 修改的旧值，命令会在写入前给出警告。
 
 上述所有依赖（Ubuntu 和 Python 除外）均可通过以下脚本一键安装：
 
@@ -111,7 +128,8 @@ Erlang 工具链不影响其他语言，因此默认不安装。如需自动安�
 
 该选项在 macOS 上使用 Homebrew；在 Ubuntu 上，当系统 OTP 缺失或版本过低时使用 RabbitMQ Team Erlang PPA。Ubuntu 配置已使用 Erlang/OTP 26+ 验证；macOS Erlang 配置尚未测试，将使用 Homebrew 选择的当前公式版本。Linux 下的 rebar3 和 ELP 会安装到 `~/.local/bin`，请确保新终端的 `PATH` 包含该目录。你也可以手动安装这些工具，确认 `rebar3 version` 和 `elp version` 可执行，并在需要时将 `ELP_COMMAND` 设置为 ELP 的绝对路径。
 
-FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无需手动编辑 `~/.config/opencode/opencode.json` 来设置模型或密钥（见 [docs/config_llm.md](docs/config_llm.md)）。
+FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无需手动编辑 `~/.config/opencode/opencode.json` 来设置模型或密钥。上面的配置向导仍然可以把该文件同步好，并把 API 密钥写入用户状态/配置目录下按 provider 区分的私有本地文件，方便独立使用 OpenCode（见 [docs/config_llm.md](docs/config_llm.md)）。
+如果你已经设置了 `OPENCODE_CONFIG`，向导会优先更新那个文件，而不是默认的全局路径。若未设置该变量但设置了 `OPENCODE_CONFIG_DIR`，向导会更新该目录中的 `opencode.jsonc`（存在时）或 `opencode.json`。
 
 **重要提示：** FM-Agent 会根据推理过程自动生成测试用例，以触发潜在 Bug，帮助开发者定位和修复问题。运行 FM-Agent 前，请确保目标代码库的测试环境已就绪。如需提供项目特定的验证指令，请使用 `--bug-validator`；否则，Agent 将自主决定测试用例的执行方式。
 
@@ -134,7 +152,7 @@ FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无�
 ## 快速开始
 
 ```bash
-uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
+uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
 ```
 
 | 参数 | 描述 |
@@ -142,6 +160,7 @@ uv run python main.py <proj_dir> [--resume] [--domain-knowledge FILE ...] [--bug
 | `proj_dir` | 待检测代码库的目录路径 |
 | `--resume` | 续跑上一次中断的运行，而非从头开始 |
 | `--incremental INTENT_FILE` | 以增量模式运行，参数值为描述本次修改目标的意图文件路径。 |
+| `--all-bugs` | 在发现不匹配后继续推理并报告每个候选 Bug。完整和增量模式会逐个验证；入口函数模式不执行 Bug Validation。 |
 | `--domain-knowledge FILE [FILE ...]` | 将额外的 Markdown 领域知识文件复制到本次运行中，并提供给 setup、规约生成和 Bug 验证 Agent。别名：`--knowledge`；可重复传入。 |
 | `--bug-validator FILE` | 使用自定义 Markdown 提示词执行 Bug 验证，替代内置的 `md/bug_validator.md`。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
@@ -165,7 +184,7 @@ FM-Agent 会将这些文件暂存到 `fm_agent/spec_prompts/domain_context/user_
 uv run python main.py <proj_dir> --bug-validator prompts/compiler_bug_validator.md
 ```
 
-该文件会替代内置 `md/bug_validator.md` 的验证指令。`--bug-validator` 的相对路径以启动 FM-Agent 命令时的当前目录为基准，而不是以 `proj_dir` 为基准。FM-Agent 仍会在每个 Bug 验证提示词中加入当前 Bug ID、目标验证结果，以及通过 `--domain-knowledge` 提供的领域知识。
+该文件会替代内置 `md/bug_validator.md` 的验证指令。使用自定义 `--bug-validator` 验证 `--all-bugs` 候选时，FM-Agent 会规定最终结果 JSON 的写入路径、必需字段及合法取值，以便可靠地读取和校验验证结果，并在 `--resume` 时安全复用。`--bug-validator` 的相对路径以启动 FM-Agent 命令时的当前目录为基准，而不是以 `proj_dir` 为基准。FM-Agent 仍会在每个 Bug 验证提示词中加入当前 Bug ID、目标验证结果，以及通过 `--domain-knowledge` 提供的领域知识。
 
 使用 `--submodule` 可以把完整运行或增量运行限制到指定项目子目录：
 
@@ -176,7 +195,19 @@ uv run python main.py <proj_dir> --incremental intent.md --submodule src/core sr
 
 `--submodule` 路径必须是 `proj_dir` 内部目录。该参数可与 `--resume`、`--isolate` 和 `--incremental` 一起使用，但不能与 `--entry-func` 一起使用。
 
-默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。
+`--all-bugs` 可用于完整、增量或入口函数分析：
+
+```bash
+uv run python main.py <proj_dir> --all-bugs
+uv run python main.py <proj_dir> --incremental intent.md --all-bugs
+uv run python main.py <proj_dir> --entry-func src::main --all-bugs
+```
+
+该选项默认关闭。启用后，FM-Agent 会继续检查后续推理检查点，并为每个候选写出一个标准 mismatch 结果。完整和增量模式会分别验证每个候选；入口函数模式只报告候选及其数量，按设计不执行 Bug Validation。
+
+若主结果为 `path/to/function.json`，all-bugs 候选会写在同一目录下，依次命名为 `path/to/function.bug-001.json`、`bug-002.json` 等。主结果通过 `bug_count` 和 `reasoning_complete` 记录候选数量及推理是否完整。续跑时，完整的主结果就是 reasoning 阶段的检查点，只补跑尚未产生终态结果的候选验证；若 reasoning 中途停止，则只清理并重跑该函数的中间候选和验证，不影响其他已完成函数。
+
+默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。续跑时必须保持相同的推理模式：all-bugs 工作区需要使用 `--resume --all-bugs`；默认模式会拒绝恢复该工作区，避免已有候选及其验证记录与 legacy 输出混合。
 
 使用 `--only-spec` 可以在生成行为规约后即停止，跳过推理与 Bug 验证阶段。它会为每个函数生成相邻的 `.spec.json` 和 `.info.json` 元数据文件，而不在验证上花费时间，适用于只需要规约、或希望先审阅规约再运行完整分析的场景。该参数不能与 `--incremental` 一起使用，因为增量模式本质上是一个推理/Bug 验证流程。
 
@@ -254,7 +285,7 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 | Probe Script | 用于触发 Bug 的完整测试脚本 |
 | Probe Output | 执行测试脚本的输出 |
 
-`fm_agent/bug_validation/` 目录下的 `summary.json` 文件汇总了所有 Bug 结果，包括报告的Bug总数、已确认Bug数、未确认Bug数。
+`fm_agent/bug_validation/` 目录下的 `summary.json` 文件汇总了所有 Bug 结果，包括报告的 Bug 总数、已确认 Bug 数、未确认 Bug 数。在 `--all-bugs` 模式下，汇总还会报告待验证候选；缺失、损坏或尚未进入终态的验证结果会显示为 `pending`，而不会从统计中消失。默认模式的汇总行为保持不变。
 
 #### 日志文件（`fm_agent/fm_agent.log`）
 

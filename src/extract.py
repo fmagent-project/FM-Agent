@@ -7,7 +7,9 @@ import logging
 
 from src.file_utils import is_file_ready, _is_test_file
 from src.languages.codegraph import canonicalize
-from src.languages.registry import batch_extract_all, function_spans_for_file
+from src.languages.registry import (
+    batch_extract_all, function_spans_for_file, BackendUnavailableError,
+)
 
 LANG_CONFIG = {
     "cpp": {
@@ -624,19 +626,20 @@ def extract_functions_from_file(filepath, lang_key):
 
 
 def _function_spans(filepath, lang_key, proj_dir=None):
-    """Return ``(spans, raw_lines)`` for a source file.
-
+    """Return ``(spans, raw_lines, backend_available)`` for a source file.
     ``spans`` is a list of ``(deduped_name, start_idx, end_idx)`` line ranges,
     one per function, named exactly as run_extraction names the extracted files
     (duplicate names get ``_1``, ``_2``, ... suffixes). ``raw_lines`` are the
     file's original lines (newline characters preserved) so callers can rewrite
-    the file by line index.
-
-    Function boundaries come from codegraph via the language registry when
-    ``proj_dir`` is given and codegraph indexes the file; otherwise they fall
-    back to the regex extractor (_extract_functions_brace / _indent). Both
-    backends yield the same (name, start_idx, end_idx) shape, so the dedup
-    naming below is identical regardless of which one is used.
+    the file by line index. ``backend_available`` is False when a semantic-only
+    backend (e.g. ELP for Erlang) could not be consulted, so callers about to
+    delete extracted-function artifacts must skip the file instead of trusting
+    the empty spans.
+    Function boundaries come from the language registry when ``proj_dir`` is
+    given and the backend indexes the file; otherwise they fall back to the regex
+    extractor (_extract_functions_brace / _indent). Both backends yield the same
+    (name, start_idx, end_idx) shape, so the dedup naming below is identical
+    regardless of which one is used.
     """
     lang_cfg = LANG_CONFIG[lang_key]
     with open(filepath, "r", errors="replace") as f:
@@ -644,16 +647,23 @@ def _function_spans(filepath, lang_key, proj_dir=None):
     # Extraction operates on newline-stripped lines; indices line up 1:1 with
     # raw_lines (readlines yields one entry per line).
     norm_lines = [l.rstrip("\n").rstrip("\r") for l in raw_lines]
-
+    backend_available = True
     raw_funcs = None
     if proj_dir is not None:
-        raw_funcs = function_spans_for_file(proj_dir, filepath, lang_key)
+        try:
+            raw_funcs = function_spans_for_file(proj_dir, filepath, lang_key)
+        except BackendUnavailableError:
+            backend_available = False
+            raw_funcs = []
     if raw_funcs is None:
         if lang_cfg["body"] == "brace":
             raw_funcs = _extract_functions_brace(norm_lines, lang_key, lang_cfg)
-        else:
+        elif lang_cfg["body"] == "indent":
             raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
-
+        else:
+            # Semantic-only language (e.g. Erlang) with no backend result.
+            # Do not fall back to regex; an empty list means no functions.
+            raw_funcs = []
     name_counts = {}
     spans = []
     for name, start, end in raw_funcs:
@@ -662,17 +672,22 @@ def _function_spans(filepath, lang_key, proj_dir=None):
         name_counts[cname] = count + 1
         deduped = cname if count == 0 else f"{cname}_{count}"
         spans.append((deduped, start, end))
-    return spans, raw_lines
+    return spans, raw_lines, backend_available
 
 
-def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
+def run_extraction(
+    proj_dir, work_dir=None, force=False, verbose=False,
+    return_unavailable_backends=False,
+):
     """Run function extraction on a project directory.
 
     Reads phases.json from work_dir (or proj_dir), extracts functions from
     source files in proj_dir, writes them to work_dir/extracted_functions/,
     and validates the output.
 
-    Returns (written_count, skipped_count).
+    Returns (written_count, skipped_count). When
+    ``return_unavailable_backends`` is true, appends the languages whose
+    semantic full-project extraction backend failed.
     """
     if work_dir is None:
         work_dir = proj_dir
@@ -683,7 +698,13 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
     with open(phases_path, 'r') as f:
         phases_data = json.load(f)
 
-    registry_funcs, registry_langs = batch_extract_all(proj_dir)
+    registry_result = batch_extract_all(
+        proj_dir, include_unavailable=return_unavailable_backends
+    )
+    if return_unavailable_backends:
+        registry_funcs, registry_langs, unavailable_backends = registry_result
+    else:
+        registry_funcs, registry_langs = registry_result
     registry_funcs = {
         os.path.normcase(os.path.normpath(path)): funcs
         for path, funcs in registry_funcs.items()
@@ -772,7 +793,10 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
 
     if written == 0 and skipped == 0:
         logging.error("Nothing was extracted — check phases.json source_files paths.")
-        return written, skipped
+        return (
+            (written, skipped, unavailable_backends)
+            if return_unavailable_backends else (written, skipped)
+        )
 
     # --- Validation (Step 2) ---
     validation_failures = _validate_extraction(output_base, registry_langs=registry_langs)
@@ -791,7 +815,10 @@ def run_extraction(proj_dir, work_dir=None, force=False, verbose=False):
         if verbose:
             print("Validation passed: every extracted file contains exactly one function.")
 
-    return written, skipped
+    return (
+        (written, skipped, unavailable_backends)
+        if return_unavailable_backends else (written, skipped)
+    )
 
 
 def _validate_extraction(extracted_dir, registry_langs=None):
