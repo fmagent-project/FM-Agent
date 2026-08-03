@@ -334,10 +334,7 @@ def build_prompt(
     lines.append("")
     lines.append(
         "For each function file `<function-file>`, "
-        "write TWO JSON files in the SAME directory. "
-        "`<function-file>` includes its original extension "
-        "(for example, `foo.py` must produce `foo.py.spec.json` "
-        "and `foo.py.info.json`):"
+        "write TWO JSON files in the SAME directory:"
     )
     lines.append("")
     lines.append("`<function-file>.spec.json`:")
