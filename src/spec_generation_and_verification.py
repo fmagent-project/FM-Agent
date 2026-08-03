@@ -62,6 +62,27 @@ def _invalidate_verification_artifacts(file_list, output_dir, work_dir):
             pass
 
 
+def _clear_stale_alternate_sidecars(function_paths):
+    """Remove bare sidecars before starting a new generation attempt.
+
+    A valid bare spec and info file can otherwise come from different retry
+    attempts. Clearing both before the producer starts makes any pair seen by
+    the batch finalizer belong to the current attempt.
+    """
+    alternate_paths = set()
+    for function_path in function_paths:
+        base = os.path.splitext(function_path)[0]
+        alternate_paths.add(f"{base}.spec.json")
+        alternate_paths.add(f"{base}.info.json")
+
+    for alternate_path in sorted(alternate_paths):
+        try:
+            os.remove(alternate_path)
+            logging.info("Removed stale alternate sidecar: %s", alternate_path)
+        except FileNotFoundError:
+            pass
+
+
 def _run_spec_generation_batch(
     proj_dir,
     work_dir,
@@ -277,6 +298,7 @@ def run_spec_generation_and_verification(
                         pending_rel_paths.append(rel)
                         pending_abs_paths.add(func_path)
 
+                _clear_stale_alternate_sidecars(pending_abs_paths)
                 _invalidate_verification_artifacts(
                     pending_rel_paths,
                     output_dir,
