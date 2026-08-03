@@ -132,13 +132,14 @@ def _write_facts_checkpoint(cache_dir: str, unit: FunctionUnit, facts: FactEnvel
 
 def _load_facts_checkpoint(cache_dir: str, unit: FunctionUnit) -> Optional[FactEnvelope]:
     """Load a previously-checkpointed FactEnvelope for `unit`, or None if absent
-    or unreadable (a corrupt/partial file is ignored so the unit is re-derived)."""
+    or unusable (a corrupt/partial/error file is ignored so the unit is re-derived)."""
     path = _facts_cache_path(cache_dir, unit)
     if not os.path.exists(path):
         return None
     try:
         with open(path) as fp:
-            return _deserialize_facts(json.load(fp))
+            facts = _deserialize_facts(json.load(fp))
+        return None if facts.status == "error" else facts
     except (OSError, json.JSONDecodeError, ValueError, KeyError, TypeError):
         return None
 
@@ -248,6 +249,19 @@ def _resolved_calls(
     return out
 
 
+def _has_uncacheable_callee(
+    unit: FunctionUnit,
+    facts_by_fn: Mapping[FunctionId, FactEnvelope],
+    uncacheable_fns: set,
+    program: ProgramIndex,
+) -> bool:
+    for site in program.calls_by_caller.get(unit.id, ()):
+        cf = facts_by_fn.get(site.callee)
+        if cf is not None and (cf.status == "error" or site.callee in uncacheable_fns):
+            return True
+    return False
+
+
 def _run_top_down_context_worklist(
     plugin: AnalysisPlugin,
     program: ProgramIndex,
@@ -343,16 +357,25 @@ def run_plugin(plugin: AnalysisPlugin, proj_dir: str, work_subdir: Optional[str]
     if verbose:
         print(f"[{name}] Stage 3/4: derive + compose (bottom-up)...")
     facts_by_fn: Dict[FunctionId, FactEnvelope] = {}
+    uncacheable_fns = set()
     resumed = 0
     derived = 0
     for unit in ordered:
         ctx = _make_context(program, unit, entrypoints)
+        has_uncacheable_callee = _has_uncacheable_callee(
+            unit, facts_by_fn, uncacheable_fns, program
+        )
         # Checkpoint stores ONLY the pre-compose abstraction (the sole expensive,
         # rate-limit-prone LLM step). Composition is deterministic and cheap, so
         # it is ALWAYS re-run below over the current facts_by_fn — this keeps the
         # cache independent of call-graph/compose changes and lets a resumed run
         # rebuild composition consistently from callees that may also be cached.
-        facts = _load_facts_checkpoint(cache_dir, unit)
+        #
+        # Do not load or write checkpoints for a caller whose prompt depends on
+        # an error callee (directly or through another uncached caller). If the
+        # callee succeeds on a later resume, every affected caller must be
+        # re-derived with the corrected callee facts.
+        facts = None if has_uncacheable_callee else _load_facts_checkpoint(cache_dir, unit)
         if facts is not None:
             resumed += 1
         else:
@@ -370,9 +393,11 @@ def run_plugin(plugin: AnalysisPlugin, proj_dir: str, work_subdir: Optional[str]
             # or rate-limit after this point never loses the LLM work. Do not
             # cache error facts from auth/balance/config failures; after the
             # operator fixes the root cause, a resumed run should retry them.
-            if facts.status != "error":
+            if facts.status != "error" and not has_uncacheable_callee:
                 _write_facts_checkpoint(cache_dir, unit, facts)
             derived += 1
+        if facts.status == "error" or has_uncacheable_callee:
+            uncacheable_fns.add(unit.id)
         resolved = _resolved_calls(unit, facts_by_fn, program)
         if resolved:
             facts = plugin.compose_calls(facts, resolved, ctx)

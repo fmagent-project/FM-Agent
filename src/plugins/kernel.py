@@ -42,17 +42,37 @@ def _project_root(unit) -> Path | None:
     return Path(*parts[:marker - 1])
 
 
-def _metadata_text(root: Path | None, source: str) -> str:
+def _metadata_dirs(root: Path, unit_rel: str) -> List[Path]:
+    dirs = [root]
+    rel_parent = Path(unit_rel).parent
+    source_parent = rel_parent.parent
+    if str(source_parent) not in ("", "."):
+        cur = root / source_parent
+        source_dirs = []
+        while cur != root and root in cur.parents:
+            source_dirs.append(cur)
+            cur = cur.parent
+        dirs.extend(reversed(source_dirs))
+    return dirs
+
+
+def _metadata_text(root: Path | None, unit_rel: str, source: str) -> str:
     chunks = [source]
     if root is None:
         return source
-    for name in ("README.md", "README", "UPSTREAM.md"):
-        for path in root.rglob(name):
-            if path.is_file() and "fm_agent_" not in path.parts:
-                try:
-                    chunks.append(path.read_text(errors="replace"))
-                except OSError:
-                    pass
+    seen = set()
+    for directory in _metadata_dirs(root, unit_rel):
+        if any(part.startswith("fm_agent_") for part in directory.relative_to(root).parts):
+            continue
+        for name in ("README.md", "README", "UPSTREAM.md"):
+            path = directory / name
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            try:
+                chunks.append(path.read_text(errors="replace"))
+            except OSError:
+                pass
     return "\n".join(chunks)
 
 
@@ -175,7 +195,7 @@ class KernelPlugin(AnalysisPlugin):
         unit = request.function
         text = unit.source
         if _is_project_locus(unit):
-            text = _metadata_text(_project_root(unit), unit.source)
+            text = _metadata_text(_project_root(unit), unit.id.rel, unit.source)
         return FactEnvelope(
             plugin_name="kernel",
             schema_version=self.SCHEMA,

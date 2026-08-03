@@ -45,17 +45,37 @@ def _project_root(unit) -> Path | None:
     return Path(*parts[:marker - 1])
 
 
-def _metadata_text(root: Path | None, source: str) -> str:
+def _metadata_dirs(root: Path, unit_rel: str) -> List[Path]:
+    dirs = [root]
+    rel_parent = Path(unit_rel).parent
+    source_parent = rel_parent.parent
+    if str(source_parent) not in ("", "."):
+        cur = root / source_parent
+        source_dirs = []
+        while cur != root and root in cur.parents:
+            source_dirs.append(cur)
+            cur = cur.parent
+        dirs.extend(reversed(source_dirs))
+    return dirs
+
+
+def _metadata_text(root: Path | None, unit_rel: str, source: str) -> str:
     chunks = [source]
     if root is None:
         return source
-    for name in ("README.md", "README", "UPSTREAM.md"):
-        for path in root.rglob(name):
-            if path.is_file() and "fm_agent_" not in path.parts:
-                try:
-                    chunks.append(path.read_text(errors="replace"))
-                except OSError:
-                    pass
+    seen = set()
+    for directory in _metadata_dirs(root, unit_rel):
+        if any(part.startswith("fm_agent_") for part in directory.relative_to(root).parts):
+            continue
+        for name in ("README.md", "README", "UPSTREAM.md"):
+            path = directory / name
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            try:
+                chunks.append(path.read_text(errors="replace"))
+            except OSError:
+                pass
     return "\n".join(chunks)
 
 
@@ -277,16 +297,31 @@ def _findings_from_text(text: str, source: str) -> List[Dict[str, str]]:
             "metadata/source mentions heap-buffer-overflow or CWE-122",
             "project describes heap memory access beyond the allocated object",
         )
-    explicit_bounds_access = _has_positive_term(lower, (
-        "out-of-bounds",
+    oob_read_signal = _has_positive_term(lower, (
+        "out-of-bounds read",
+        "out of bounds read",
+        "oob read",
+        "cwe-125",
         "越界读",
+    ))
+    oob_write_signal = _has_positive_term(lower, (
+        "out-of-bounds write",
+        "out of bounds write",
+        "oob write",
+        "cwe-787",
         "越界写",
     ))
-    cwe_bounds_only = (
-        not explicit_bounds_access
-        and _has_positive_term(lower, ("cwe-787", "cwe-125"))
+    generic_bounds_signal = _has_positive_term(lower, (
+        "out-of-bounds",
+        "out of bounds",
+        "oob",
+    ))
+    explicit_bounds_access = (
+        oob_read_signal
+        or oob_write_signal
+        or generic_bounds_signal
     )
-    bounds_signal = explicit_bounds_access or cwe_bounds_only
+    bounds_signal = explicit_bounds_access
     kernel_specialized = _kernel_specialized_domain(lower)
     if (
         bounds_signal
@@ -294,12 +329,27 @@ def _findings_from_text(text: str, source: str) -> List[Dict[str, str]]:
         and not memory_corruption_denied
         and (not kernel_specialized or _strong_memory_safety_domain(lower))
     ):
-        add(
-            "out_of_bounds_access",
-            "CWE-787/CWE-125",
-            "metadata/source mentions out-of-bounds access or CWE-787/CWE-125",
-            "project describes an access outside valid object bounds",
-        )
+        if oob_read_signal:
+            add(
+                "out_of_bounds_read",
+                "CWE-125",
+                "metadata/source mentions out-of-bounds read or CWE-125",
+                "project describes a read outside valid object bounds",
+            )
+        if oob_write_signal:
+            add(
+                "out_of_bounds_write",
+                "CWE-787",
+                "metadata/source mentions out-of-bounds write or CWE-787",
+                "project describes a write outside valid object bounds",
+            )
+        if not oob_read_signal and not oob_write_signal:
+            add(
+                "out_of_bounds_access",
+                "CWE-119",
+                "metadata/source mentions generic out-of-bounds access",
+                "project describes an access outside valid object bounds",
+            )
     if (
         _has_positive_term(lower, (
             "type confusion",
@@ -360,7 +410,7 @@ class MemSafetyPlugin(AnalysisPlugin):
         unit = request.function
         text = unit.source
         if _is_project_locus(unit):
-            text = _metadata_text(_project_root(unit), unit.source)
+            text = _metadata_text(_project_root(unit), unit.id.rel, unit.source)
         findings = _findings_from_text(text, unit.source)
         return FactEnvelope(
             plugin_name="memsafety",
