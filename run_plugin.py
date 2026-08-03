@@ -150,18 +150,18 @@ def _load_codex_style_config(path):
 def _apply_config_env(path):
     cfg = _load_codex_style_config(path)
     if cfg.get("model"):
-        os.environ.setdefault("LLM_MODEL", str(cfg["model"]))
+        os.environ["LLM_MODEL"] = str(cfg["model"])
     if cfg.get("model_reasoning_effort"):
-        os.environ.setdefault("LLM_EFFORT", str(cfg["model_reasoning_effort"]))
+        os.environ["LLM_EFFORT"] = str(cfg["model_reasoning_effort"])
     if cfg.get("disable_response_storage") is True:
-        os.environ.setdefault("LLM_DISABLE_RESPONSE_STORAGE", "true")
+        os.environ["LLM_DISABLE_RESPONSE_STORAGE"] = "true"
 
     provider_name = cfg.get("model_provider") or "OpenAI"
     provider = (cfg.get("model_providers") or {}).get(str(provider_name), {})
     if provider.get("base_url"):
-        os.environ.setdefault("LLM_API_BASE_URL", str(provider["base_url"]))
+        os.environ["LLM_API_BASE_URL"] = str(provider["base_url"])
     if provider.get("wire_api"):
-        os.environ.setdefault("LLM_API_MODE", str(provider["wire_api"]).lower())
+        os.environ["LLM_API_MODE"] = str(provider["wire_api"]).lower()
     if provider.get("requires_openai_auth") is True and not os.environ.get("LLM_API_KEY"):
         if os.environ.get("OPENAI_API_KEY"):
             os.environ["LLM_API_KEY"] = os.environ["OPENAI_API_KEY"]

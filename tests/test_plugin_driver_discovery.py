@@ -87,6 +87,8 @@ class PluginWorkDirectoryDiscoveryTests(unittest.TestCase):
             default_work = project / "fm_agent_authn"
             main_work = project / "fm_agent"
             prefix_sibling = project / "fm_agentx_authn"
+            top_level_source_pkg = project / "fm_agent_utils"
+            nested_source_pkg = project / "src/fm_agent_authn"
             for path in (
                 project / "app.py",
                 work / "results/nested/generated.py",
@@ -94,6 +96,8 @@ class PluginWorkDirectoryDiscoveryTests(unittest.TestCase):
                 default_work / "user.py",
                 main_work / "user.py",
                 prefix_sibling / "user.py",
+                top_level_source_pkg / "core.py",
+                nested_source_pkg / "core.py",
             ):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("def target():\n    return 1\n")
@@ -101,7 +105,13 @@ class PluginWorkDirectoryDiscoveryTests(unittest.TestCase):
             found = scan_source_files(str(project), excluded_root=str(work.resolve()))
 
             self.assertEqual(
-                ["active-work-copy/user.py", "app.py", "fm_agentx_authn/user.py"],
+                [
+                    "active-work-copy/user.py",
+                    "app.py",
+                    "fm_agent_utils/core.py",
+                    "fm_agentx_authn/user.py",
+                    "src/fm_agent_authn/core.py",
+                ],
                 found,
             )
 
