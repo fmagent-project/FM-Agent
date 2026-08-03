@@ -11,7 +11,13 @@ import time
 
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
-from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready, normalize_spec_filenames
+from src.file_utils import (
+    AmbiguousSidecarError,
+    _get_incomplete_verification_files,
+    _get_phase_files,
+    is_file_ready,
+    normalize_spec_filenames,
+)
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
@@ -63,6 +69,7 @@ def _run_spec_generation_batch(
     layer_idx,
     batch_rel_dir,
     batch_info,
+    normalization_candidates=None,
 ):
     # Run one batch end-to-end so the executor can refill slots as soon as a
     # batch finishes, instead of waiting for a whole chunk barrier.
@@ -132,6 +139,14 @@ def _run_spec_generation_batch(
         return result.returncode
     except subprocess.CalledProcessError as exc:
         return exc.returncode
+    finally:
+        # Publish valid extension-dropped sidecars before this Future becomes
+        # done. The existing streaming_reasoner can then verify this batch while
+        # other spec-generation batches are still running.
+        normalize_spec_filenames(
+            [os.path.join(proj_dir, func_rel) for func_rel in function_files],
+            all_function_files=normalization_candidates,
+        )
 
 
 def run_spec_generation_and_verification(
@@ -203,6 +218,9 @@ def run_spec_generation_and_verification(
                     layer_files.append(rel)
 
             layer_processed = set()
+            layer_function_paths = [
+                os.path.join(input_dir, rel) for rel in layer_files
+            ]
 
             for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
                 # Find batches with unspecced functions
@@ -230,6 +248,33 @@ def run_spec_generation_and_verification(
                             layer_processed.update(newly_processed)
                     break
 
+                # Any function entering spec generation has invalid or missing
+                # sidecars, so verification artifacts made from its previous
+                # sidecars are stale. Invalidate them before producers start so
+                # the running watcher cannot resume an old verdict when either
+                # canonical or normalized sidecars become ready.
+                pending_rel_paths = []
+                pending_rel_seen = set()
+                pending_abs_paths = set()
+                for batch_info in pending_batches:
+                    for func_rel in batch_info.get("functions", []):
+                        func_path = os.path.join(proj_dir, func_rel)
+                        if is_file_ready(func_path):
+                            continue
+                        rel = os.path.relpath(func_path, input_dir)
+                        if rel in pending_rel_seen:
+                            continue
+                        pending_rel_seen.add(rel)
+                        pending_rel_paths.append(rel)
+                        pending_abs_paths.add(func_path)
+
+                _invalidate_verification_artifacts(
+                    pending_rel_paths,
+                    output_dir,
+                    work_dir,
+                )
+                layer_processed.difference_update(pending_abs_paths)
+
                 # Submit all pending spec batches through a bounded executor so
                 # finished slots can immediately pick up the next batch.
                 spec_futures = []
@@ -254,6 +299,7 @@ def run_spec_generation_and_verification(
                                 layer_idx,
                                 batch_rel_dir,
                                 batch_info,
+                                layer_function_paths,
                             )
                         )
 
@@ -267,7 +313,7 @@ def run_spec_generation_and_verification(
                             input_dir, output_dir, file_list=layer_files,
                             proj_dir=proj_dir, work_dir=work_dir,
                             spec_procs=spec_futures,
-                            already_processed=all_processed | layer_processed,
+                            already_processed=(all_processed | layer_processed) - pending_abs_paths,
                             resume=resume,
                             bug_validator_path=bug_validator_path,
                         )
@@ -276,51 +322,10 @@ def run_spec_generation_and_verification(
                     for future in spec_futures:
                         try:
                             future.result()
+                        except AmbiguousSidecarError:
+                            raise
                         except Exception as exc:
                             logging.error(f"Spec generation task failed unexpectedly: {exc}")
-
-                normalized_paths = normalize_spec_filenames(
-                    [os.path.join(input_dir, rel) for rel in layer_files]
-                )
-
-                if normalized_paths:
-                    ready_to_verify = []
-                    normalized_abs = set()
-                    for func_path in normalized_paths:
-                        if not is_file_ready(func_path):
-                            logging.warning(
-                                "Normalized sidecars for %s are not ready; they will be retried.",
-                                func_path,
-                            )
-                            continue
-                        ready_to_verify.append(os.path.relpath(func_path, input_dir))
-                        normalized_abs.add(func_path)
-
-                    _invalidate_verification_artifacts(
-                        ready_to_verify,
-                        output_dir,
-                        work_dir,
-                    )
-                    layer_processed.difference_update(normalized_abs)
-
-                    if ready_to_verify and not only_spec:
-                        logging.info(
-                            "Forcing verification for %d normalized file(s).",
-                            len(ready_to_verify),
-                        )
-
-                        newly_processed = streaming_reasoner(
-                            input_dir,
-                            output_dir,
-                            file_list=ready_to_verify,
-                            proj_dir=proj_dir,
-                            work_dir=work_dir,
-                            spec_procs=None,
-                            already_processed=(all_processed | layer_processed) - normalized_abs,
-                            resume=False,
-                            bug_validator_path=bug_validator_path,
-                        )
-                        layer_processed.update(newly_processed)
 
                 # Check if any files in this layer received specs
                 specs_generated = sum(

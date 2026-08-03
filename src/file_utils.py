@@ -20,6 +20,10 @@ _CALLEE_FIELDS = {
 }
 
 
+class AmbiguousSidecarError(RuntimeError):
+    """Raised when an extension-dropped sidecar has multiple owners."""
+
+
 def _is_metadata_sidecar(file_path):
     """Return whether file_path is a function metadata sidecar."""
     return str(file_path).endswith(_METADATA_SIDECAR_SUFFIXES)
@@ -113,7 +117,7 @@ def _is_valid_sidecar_file(path):
     return False
 
 
-def normalize_spec_filenames(function_files):
+def normalize_spec_filenames(function_files, all_function_files=None):
     """Fix sidecar filenames where the LLM dropped the source extension.
 
     For each function file ``foo.rs`` the pipeline expects sidecars
@@ -126,7 +130,14 @@ def normalize_spec_filenames(function_files):
     with one from the latest attempt.
 
     Raises:
-        RuntimeError: If a bare sidecar could belong to multiple source files.
+        AmbiguousSidecarError: If a bare sidecar could belong to multiple
+            source files.
+
+    Args:
+        function_files: Function paths whose sidecars may be normalized.
+        all_function_files: Optional complete scope used to detect ambiguous bare
+            names. This lets one completed batch normalize its own outputs while
+            still checking collisions against the rest of the layer.
 
     Returns:
         list[str]: Function paths whose complete sidecar pair was replaced.
@@ -135,10 +146,16 @@ def normalize_spec_filenames(function_files):
         return []
 
     function_files = list(dict.fromkeys(function_files))
+    if all_function_files is None:
+        all_function_files = function_files
+    else:
+        all_function_files = list(dict.fromkeys(
+            [*all_function_files, *function_files]
+        ))
     normalized = []
 
     base_map = {}
-    for func_path in function_files:
+    for func_path in all_function_files:
         base = os.path.splitext(func_path)[0]
         base_map.setdefault(base, []).append(func_path)
 
@@ -151,7 +168,7 @@ def normalize_spec_filenames(function_files):
                 alt = f"{base}{suffix}"
                 expected = f"{func_path}{suffix}"
                 if os.path.isfile(alt) and not _is_valid_sidecar_file(expected):
-                    raise RuntimeError(
+                    raise AmbiguousSidecarError(
                         f"Ambiguous sidecar filename: {alt} could belong to "
                         f"multiple source files: {candidates}"
                     )
@@ -161,8 +178,9 @@ def normalize_spec_filenames(function_files):
         expected_spec = f"{func_path}.spec.json"
         expected_info = f"{func_path}.info.json"
 
-        if (_is_valid_sidecar_file(expected_spec)
-                and _is_valid_sidecar_file(expected_info)):
+        expected_spec_valid = _is_valid_sidecar_file(expected_spec)
+        expected_info_valid = _is_valid_sidecar_file(expected_info)
+        if expected_spec_valid and expected_info_valid:
             continue
 
         alt_spec = f"{base}.spec.json"
@@ -177,6 +195,23 @@ def normalize_spec_filenames(function_files):
                 )
             continue
 
+        # Keep at least one canonical sidecar invalid until the final replace.
+        # streaming_reasoner may be scanning concurrently with this batch
+        # finalizer, so it must never observe a ready old/new mixed pair.
+        if not expected_spec_valid:
+            replacements = (
+                (alt_info, expected_info),
+                (alt_spec, expected_spec),
+            )
+        else:
+            replacements = (
+                (alt_spec, expected_spec),
+                (alt_info, expected_info),
+            )
+        for alt, expected in replacements:
+            os.replace(alt, expected)
+
+        normalized.append(func_path)
         logging.info(
             "Normalized sidecar pair: (%s, %s) -> (%s, %s)",
             alt_spec,
@@ -184,9 +219,6 @@ def normalize_spec_filenames(function_files):
             expected_spec,
             expected_info,
         )
-        os.replace(alt_spec, expected_spec)
-        os.replace(alt_info, expected_info)
-        normalized.append(func_path)
 
     return normalized
 
