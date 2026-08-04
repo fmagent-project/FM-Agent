@@ -23,6 +23,7 @@ class LanguageHandler:
     incremental_source_extract(proj_dir, sources)
         -> {abs_filepath: [(func_name, body)]} | None
     split_blocks(func, granularity)      -> [chunk, ...] | None
+    remove_comments(code)               -> str | None
 
     Each function handles its own backend (e.g. codegraph) internally.
     batch_extract returns ``None`` when a semantic backend cannot safely
@@ -36,7 +37,8 @@ class LanguageHandler:
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
-         function_spans, and optionally incremental_source_extract / split_blocks
+         function_spans, and optionally incremental_source_extract / split_blocks /
+         remove_comments
       2. Import it here and add one entry to REGISTRY
     No other files need to change.
     """
@@ -45,6 +47,7 @@ class LanguageHandler:
     function_spans: Callable
     incremental_source_extract: Callable | None = None
     split_blocks: Callable | None = None
+    remove_comments: Callable | None = None
 
 BackendUnavailableError = _BackendUnavailableError
 
@@ -52,13 +55,24 @@ REGISTRY: dict = {
     "python":     LanguageHandler(batch_extract=_python.batch_extract,     call_edges=_python.call_edges,     function_spans=_python.function_spans),
     "go":         LanguageHandler(batch_extract=_go.batch_extract,         call_edges=_go.call_edges,         function_spans=_go.function_spans),
     "c":          LanguageHandler(batch_extract=_c.batch_extract,          call_edges=_c.call_edges,          function_spans=_c.function_spans, split_blocks=_c.split_blocks),
-    "cpp":        LanguageHandler(batch_extract=_cpp.batch_extract,        call_edges=_cpp.call_edges,        function_spans=_cpp.function_spans, split_blocks=_cpp.split_blocks),
+    "cpp":        LanguageHandler(batch_extract=_cpp.batch_extract,        call_edges=_cpp.call_edges,        function_spans=_cpp.function_spans, split_blocks=_cpp.split_blocks, remove_comments=_cpp.remove_comments),
     "java":       LanguageHandler(batch_extract=_java.batch_extract,       call_edges=_java.call_edges,       function_spans=_java.function_spans, split_blocks=_java.split_blocks),
     "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans, split_blocks=_rust.split_blocks),
     "javascript": LanguageHandler(batch_extract=_javascript.batch_extract, call_edges=_javascript.call_edges, function_spans=_javascript.function_spans, split_blocks=_javascript.split_blocks),
     "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans, split_blocks=_typescript.split_blocks),
     "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
 }
+
+
+def remove_comments_for_function(code: str, language: str | None) -> str | None:
+    """Use a language-specific comment remover, or request the legacy fallback."""
+    if not language:
+        return None
+    normalized_key = {"c++": "cpp"}.get(language.lower(), language.lower())
+    handler = REGISTRY.get(normalized_key)
+    if handler is None or handler.remove_comments is None:
+        return None
+    return handler.remove_comments(code)
 
 
 def batch_extract_all(proj_dir: str, include_unavailable: bool = False) -> tuple:
