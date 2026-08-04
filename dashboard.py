@@ -19,6 +19,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 import time
 from collections import deque, defaultdict
@@ -39,10 +40,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.progress_bar import ProgressBar
 from rich.align import Align
-from src.verification import (
-    _expected_all_bugs_validation_targets,
-    _validation_status,
-)
+from src.file_utils import _all_bugs_candidate_paths
+from src.verification import _validation_status
 
 
 STAGES = ["init", "generate_phases_json", "generate_domain_context", "spec_generation", "verification", "bug_validation"]
@@ -193,19 +192,27 @@ def _locate_workdir(proj_dir):
     return p / "fm_agent"
 
 
-def _has_all_bugs_results(results_dir):
-    """Return whether current reasoning artifacts use all-bugs mode."""
+def _discover_all_bugs_targets(results_dir):
+    """Return all-bugs mode and current targets from reasoning artifacts."""
     if not results_dir.is_dir():
-        return False
-    for path in results_dir.rglob("*.json"):
+        return False, []
+
+    all_bugs = False
+    targets = []
+    for path in sorted(results_dir.rglob("*.json")):
+        if re.search(r"\.bug-\d{3}\.json$", path.name):
+            continue
         try:
             with open(path, "r", encoding="utf-8") as f:
                 result = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(result, dict) and result.get("all_bugs") is True:
-            return True
-    return False
+            all_bugs = True
+            candidates = _all_bugs_candidate_paths(os.fspath(path), result)
+            if candidates:
+                targets.extend(candidates)
+    return all_bugs, sorted(targets)
 
 
 class State:
@@ -495,8 +502,8 @@ class State:
         self.bugs_pending = 0
 
         results_dir = self.workdir / "logic_verification_results"
-        all_bugs_targets = _expected_all_bugs_validation_targets(os.fspath(self.workdir))
-        if all_bugs_targets or _has_all_bugs_results(results_dir):
+        all_bugs, all_bugs_targets = _discover_all_bugs_targets(results_dir)
+        if all_bugs:
             for target_path in all_bugs_targets:
                 target_rel = os.path.relpath(target_path, results_dir)
                 status = _validation_status(
