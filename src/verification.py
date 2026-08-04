@@ -130,7 +130,7 @@ def streaming_reasoner(
                 submitted.add(file_path)
                 language = EXT_TO_LANG.get(ext, "C")
                 future = executor.submit(
-                    _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume
+                    _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume, all_bugs
                 )
                 reasoning_futures[future] = file_path
                 logging.info(f"Submitted: {file_path}")
