@@ -80,7 +80,6 @@ def streaming_reasoner(
     resume=False,
     bug_validator_path=None,
     all_bugs=False,
-    bug_validation_enabled=True,
 ):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
     if work_dir is None:
@@ -172,7 +171,6 @@ def streaming_reasoner(
                         if (
                             verdict == "MISMATCH"
                             and proj_dir is not None
-                            and bug_validation_enabled
                             and config.BUG_VALIDATION_MAX_RETRIES > 0
                         ):
                             rel = os.path.relpath(fpath, input_dir)
@@ -300,41 +298,13 @@ def streaming_reasoner(
         logging.info("Done.")
 
     # Generate validation summary after all work is done
-    if proj_dir is not None and bug_validation_enabled:
+    if proj_dir is not None:
         if all_bugs:
             _generate_all_bugs_validation_summary(work_dir)
         else:
             _generate_validation_summary(work_dir)
 
     return processed
-
-
-def _count_mismatch_candidates(results_dir, all_bugs=False):
-    """Count completed reasoner mismatch candidates without validating them."""
-    count = 0
-    if not os.path.isdir(results_dir):
-        return count
-
-    for root, _dirs, files in os.walk(results_dir):
-        for filename in files:
-            if not filename.endswith(".json"):
-                continue
-            try:
-                with open(os.path.join(root, filename), encoding="utf-8") as file:
-                    result = json.load(file)
-            except (OSError, ValueError):
-                continue
-
-            if all_bugs:
-                if (
-                    result.get("all_bugs") is True
-                    and result.get("verdict") == "MISMATCH"
-                    and result.get("reasoning_complete") is True
-                ):
-                    count += result.get("bug_count", 0)
-            elif result.get("verdict") == "MISMATCH":
-                count += 1
-    return count
 
 
 def _candidate_paths_for_output(output_path, bug_count):

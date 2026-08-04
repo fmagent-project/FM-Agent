@@ -1,4 +1,5 @@
 from src.call_graph_edges import load_call_edges
+from src.entry_reasoning_pipeline import run_entry_pipeline
 from src.file_utils import (
     collect_file_names,
     _has_source_code,
@@ -8,10 +9,7 @@ from src.file_utils import (
     _is_under_submodules,
     _ensure_resume_mode_compatible,
 )
-from src.verification import (
-    _count_mismatch_candidates,
-    _generate_all_bugs_validation_summary,
-)
+from src.verification import _generate_all_bugs_validation_summary
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
@@ -123,7 +121,6 @@ def run_pipeline(
     plugin_config=None,
     plugin_context=None,
     all_bugs=False,
-    bug_validation_enabled=True,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -450,7 +447,6 @@ def run_pipeline(
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
             all_bugs=all_bugs,
-            bug_validation_enabled=bug_validation_enabled,
         )
         if spec_stage is not None and spec_stage.output_hook is not None:
             run_plugin_hook(
@@ -464,24 +460,17 @@ def run_pipeline(
     # Print confirmed bug count (skipped in only-spec mode, which runs no
     # reasoning or bug validation).
     if not only_spec:
-        if not bug_validation_enabled:
-            candidates = _count_mismatch_candidates(
-                output_dir,
-                all_bugs=all_bugs,
-            )
-            print(f"[Pipeline] Candidate bugs: {candidates}")
-        elif all_bugs:
+        if all_bugs:
             # A resumed run may find every function and candidate validation
             # already complete, so no watcher runs to refresh the persistent
             # summary. Rebuild it from the current terminal records here.
             _generate_all_bugs_validation_summary(work_dir)
-        if bug_validation_enabled:
-            summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-            if os.path.exists(summary_path):
-                with open(summary_path, "r") as f:
-                    summary = json.load(f)
-                confirmed = summary.get("total_confirmed", 0)
-                print(f"[Pipeline] Confirmed bugs: {confirmed}")
+        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
+        if os.path.exists(summary_path):
+            with open(summary_path, "r") as f:
+                summary = json.load(f)
+            confirmed = summary.get("total_confirmed", 0)
+            print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
     if only_spec:
         print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
@@ -615,11 +604,8 @@ if __name__ == "__main__":
         sys.exit(0)
 
     selected_plugin = args.plugin
-    if selected_plugin is None and args.entry_func is not None:
-        selected_plugin = "entry_reasoning"
 
     plugin_config = None
-    bug_validation_enabled = True
     if selected_plugin:
         if not args.proj_dir:
             parser.error("the following arguments are required when --plugin is used: proj_dir")
@@ -631,8 +617,6 @@ if __name__ == "__main__":
             print(f"[Pipeline] ERROR: Plugin '{selected_plugin}' not found or invalid.")
             sys.exit(1)
         print(f"[Pipeline] Loaded plugin '{plugin_config.name}' v{plugin_config.version}")
-        if plugin_config.name == "entry_reasoning":
-            bug_validation_enabled = False
 
     if not args.proj_dir:
         parser.error("the following arguments are required: proj_dir")
@@ -681,6 +665,26 @@ if __name__ == "__main__":
         sys.exit(0)
 
     start_time = time.time()
+
+    # Entry-point mode uses its dedicated copy-and-trim pipeline. The selected
+    # general pipeline plugin, if any, still runs inside the trimmed project copy.
+    if args.entry_func is not None:
+        run_entry_pipeline(
+            proj_dir,
+            entry_func=args.entry_func,
+            end_funcs=args.end_func,
+            resume=resume,
+            domain_knowledge_files=domain_knowledge_files,
+            one_phase=args.one_phase,
+            extra_call_edges_path=extra_call_edges_path,
+            only_spec=args.only_spec,
+            bug_validator_path=bug_validator_path,
+            plugin_config=plugin_config,
+            all_bugs=args.all_bugs,
+        )
+        end_time = time.time()
+        logging.info(f"Total time: {end_time - start_time:.2f} seconds")
+        sys.exit(0)
 
     # Incremental mode diffs against the commit recorded by a previous run, and
     # --isolate snapshots the repo via a git worktree, so both require a git repo.
@@ -751,7 +755,6 @@ if __name__ == "__main__":
                     plugin_config=plugin_config,
                     plugin_context=plugin_context,
                     all_bugs=args.all_bugs,
-                    bug_validation_enabled=bug_validation_enabled,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
