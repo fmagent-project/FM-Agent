@@ -167,8 +167,22 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
+| `--estimate` | 不调用 LLM，仅扫描范围并输出基于历史数据的时间、LLM 调用次数、Token 与费用预估。 |
 
 `proj_dir` 必须是一个 git 仓库。
+
+### 运行前预估
+
+在消耗任何模型 Token 前检查计划分析的代码范围：
+
+```bash
+uv run python main.py <proj_dir> --estimate
+uv run python main.py <proj_dir> --estimate --submodule src/core src/runtime
+```
+
+预检会展示纳入和排除的目录、纳入/排除的源文件数量、通过本地抽取得到的近似函数数量，以及六个分析阶段。当存在已完成的历史运行时，FM-Agent 会按本次函数数量（缺失时退化为文件数量）缩放历史运行的实际耗时、LLM 调用次数、Token 用量和费用，并给出区间。所有预测值都会明确标注为 **ESTIMATE（估算）**；没有完整历史样本时会显示无法估算，而不会编造数值。
+
+成功运行的摘要会保存在 `fm_agent/history.jsonl`，并在全新运行清理工作目录时继续保留。正常运行也会在第一次 LLM 调用前生成 `fm_agent/estimate.json`，实时 Dashboard 会同时展示该预检和实际用量。
 
 如需在不修改 FM-Agent 内置提示词的情况下提供项目特定领域知识，可传入一个或多个 Markdown 文件：
 
@@ -255,10 +269,17 @@ python3 main.py <proj_dir> --incremental <intent_file>
 
 ### 实时监控面板
 
-FM-Agent 自带一个独立的实时 TUI 监控面板（[dashboard.py](dashboard.py)），用于在运行过程中可视化展示：各阶段进度、Token 用量与花费、prompt 缓存命中率，以及 Bug 验证结果。它读取 FM-Agent 写入 `fm_agent/` 目录下的 trace 文件，因此可在 `main.py` 运行期间于另一个终端中启动：
+FM-Agent 自带一个独立的实时 TUI 监控面板（[dashboard.py](dashboard.py)），用于在运行过程中可视化展示：运行前范围与估算、各阶段进度、Token 用量与花费、prompt 缓存命中率，以及 Bug 验证结果。它读取 FM-Agent 写入 `fm_agent/` 目录下的 trace 文件，因此可在 `main.py` 运行期间于另一个终端中启动：
 
 ```bash
 uv run python dashboard.py <proj_dir>
+```
+
+如需在不启动流水线、不调用 LLM 的情况下生成并展示一次运行前估算：
+
+```bash
+uv run python dashboard.py <proj_dir> --estimate
+uv run python dashboard.py <proj_dir> --estimate --submodule src/core src/runtime
 ```
 
 | 参数 | 描述 |

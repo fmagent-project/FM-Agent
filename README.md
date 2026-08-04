@@ -218,8 +218,30 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
+| `--estimate`                | Scan scope and print a history-based time, LLM-call, token, and cost estimate without making LLM calls. |
 
 `proj_dir` must be a git repository.
+
+### Pre-run estimate
+
+Inspect the planned source scope before spending any model tokens:
+
+```bash
+uv run python main.py <proj_dir> --estimate
+uv run python main.py <proj_dir> --estimate --submodule src/core src/runtime
+```
+
+The preflight lists included and excluded directories, included/excluded source
+file counts, an approximate function count from local extraction, and the six
+analysis stages. When completed runs are available, it scales their actual
+duration, LLM-call count, token usage, and cost by the current function count
+(falling back to file count) and reports a range. Every projected value is
+labelled **ESTIMATE**; with no completed history it reports that the estimate is
+unavailable instead of inventing a number.
+
+Successful-run summaries are retained in `fm_agent/history.jsonl` across fresh
+runs. A normal run also generates `fm_agent/estimate.json` before its first LLM
+stage, so the live dashboard can show the same preflight alongside actual usage.
 
 To provide project-specific domain knowledge without editing FM-Agent's built-in prompts, pass one or more Markdown files:
 
@@ -324,10 +346,18 @@ If `fm_agent/version.log` does not exist (no previous run to compare against), F
 
 ### Live Dashboard
 
-FM-Agent ships a standalone real-time TUI dashboard ([dashboard.py](dashboard.py)) that visualizes a run as it progresses: per-stage progress, token usage and cost, prompt-cache hit rate, and bug-validation verdicts. It reads the trace files FM-Agent writes under `fm_agent/`, so run it in a second terminal while `main.py` is going:
+FM-Agent ships a standalone real-time TUI dashboard ([dashboard.py](dashboard.py)) that visualizes a run as it progresses: pre-run scope and estimates, per-stage progress, token usage and cost, prompt-cache hit rate, and bug-validation verdicts. It reads the trace files FM-Agent writes under `fm_agent/`, so run it in a second terminal while `main.py` is going:
 
 ```bash
 uv run python dashboard.py <proj_dir>
+```
+
+To generate and display only the pre-run estimate, without starting the
+pipeline or making LLM calls:
+
+```bash
+uv run python dashboard.py <proj_dir> --estimate
+uv run python dashboard.py <proj_dir> --estimate --submodule src/core src/runtime
 ```
 
 | Argument    | Description                                                  |
