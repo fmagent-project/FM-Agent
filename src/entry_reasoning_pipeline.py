@@ -571,4 +571,3 @@ def _count_mismatches(results_dir, all_bugs=False):
             except (OSError, ValueError):
                 continue
     return count
-
