@@ -195,26 +195,3 @@ FM-Agent does not check:
 
 Plugins are trusted code, not sandboxed extensions. Top-level `plugin.py` code
 runs when plugins are loaded, including during `--list-plugin`.
-
-## Entry reasoning plugin
-
-The built-in plugin limits later reasoning to the call graph reachable from an
-entry function:
-
-```bash
-uv run python main.py <proj_dir> \
-  --plugin entry_reasoning \
-  --entry-func main-py::application_entry
-```
-
-`--entry-func` activates it automatically when no plugin is explicitly chosen:
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::application_entry
-```
-
-Use `--end-func` to retain only paths from the entry to reachable end
-functions. Stage 1 hooks compute the reachable call graph and narrow
-`phases.json`; the Stage 4 output hook filters the canonical function list.
-The plugin uses the standard pipeline and does not copy or trim source code.

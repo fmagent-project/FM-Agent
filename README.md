@@ -220,7 +220,7 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 | `--plugin NAME`             | Load a pipeline plugin from `plugins/NAME/`. |
 | `--list-plugin`             | List valid pipeline plugins and exit. |
-| `--entry-func FQN`          | Limit reasoning to functions reachable from an entry function. Automatically enables `entry_reasoning` when `--plugin` is omitted. |
+| `--entry-func FQN`          | Run the dedicated entry-point pipeline and limit reasoning to functions reachable from the entry function. |
 | `--end-func FQN [FQN ...]`  | Stop entry reasoning at one or more reachable end functions. |
 
 ### Pipeline plugins
@@ -238,8 +238,7 @@ configuration, execution modes, lifecycle, and trust boundary.
 
 ### Entry-point reasoning
 
-`--entry-func` automatically enables the built-in `entry_reasoning` plugin
-unless another plugin is explicitly selected:
+`--entry-func` runs the dedicated entry-point pipeline:
 
 ```bash
 uv run python main.py <proj_dir> \
@@ -254,8 +253,15 @@ uv run python main.py <proj_dir> \
   --end-func services/statistics-py::calculate_total
 ```
 
-Entry reasoning uses the standard pipeline and supports `--resume` and
-`--isolate`.
+The entry pipeline computes the reachable call chain in a throwaway selection
+copy, creates a separate `.fm-entry-run` project copy, removes unselected source
+files and functions from that copy, and runs the standard pipeline against the
+trimmed copy. It then copies the generated `fm_agent/` workspace back to the
+original project and discards both temporary copies. The original project
+sources are never modified.
+
+A general `--plugin NAME` may still be supplied; its stage hooks execute inside
+the trimmed run copy.
 
 `proj_dir` must be a git repository.
 

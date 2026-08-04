@@ -185,24 +185,3 @@ FM-Agent 不检查：
 
 插件是受信任代码，不是沙箱扩展。加载插件时会执行 `plugin.py` 顶层代码，包括
 执行 `--list-plugin` 时。
-
-## Entry Reasoning 插件
-
-内置插件把后续推理限制到入口函数可达的调用图：
-
-```bash
-uv run python main.py <proj_dir> \
-  --plugin entry_reasoning \
-  --entry-func main-py::application_entry
-```
-
-未显式选择插件时，`--entry-func` 会自动启用该插件：
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::application_entry
-```
-
-使用 `--end-func` 可以只保留入口到可达终止函数之间的路径。Stage 1 Hook 计算
-可达调用图并收敛 `phases.json`，Stage 4 output Hook 过滤标准函数列表。该插件使用
-标准 Pipeline，不复制或裁剪源代码。
