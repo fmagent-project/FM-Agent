@@ -16,6 +16,9 @@ dependencies = [
     "tree-sitter-c>=0.24,<0.25",
     "tree-sitter-java>=0.23.5,<0.24",
     "tree-sitter-javascript>=0.25,<0.26",
+    "tree-sitter-python>=0.25,<0.26",
+    "tree-sitter-go>=0.25,<0.26",
+    "tree-sitter-rust>=0.24,<0.25",
     "tree-sitter-typescript>=0.23.2,<0.24",
 ]
 
