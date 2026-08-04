@@ -504,7 +504,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
         )
 
     try:
-        func, spec, knowledge = parse_input_function(file_path)
+        func, spec, knowledge = parse_input_function(file_path, language)
         if not spec:
             return file_path, "SKIPPED"
 
