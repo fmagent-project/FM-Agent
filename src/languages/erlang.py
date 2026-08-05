@@ -330,12 +330,33 @@ class _SourceIndex:
 
     @classmethod
     def build(cls, source: str) -> _SourceIndex:
-        lines = source.splitlines(keepends=True)
+        # LSP recognizes only LF, CRLF, and CR as end-of-line sequences.
+        # str.splitlines() is deliberately broader: it also splits on vertical
+        # tabs, form feeds, NEL, and Unicode line/paragraph separators. Using it
+        # here would make ELP line numbers diverge from our source index whenever
+        # one of those characters appears in a comment, string, or generated file.
+        lines = []
         line_offsets = []
-        offset = 0
-        for line in lines:
-            line_offsets.append(offset)
-            offset += len(line)
+        line_start = 0
+        index = 0
+        while index < len(source):
+            char = source[index]
+            if char not in ("\r", "\n"):
+                index += 1
+                continue
+
+            line_offsets.append(line_start)
+            lines.append(source[line_start:index])
+            if char == "\r" and index + 1 < len(source) and source[index + 1] == "\n":
+                index += 2
+            else:
+                index += 1
+            line_start = index
+
+        # LSP positions can refer to the empty line after a terminal EOL. Keeping
+        # that final entry also gives empty documents a valid line zero.
+        line_offsets.append(line_start)
+        lines.append(source[line_start:])
         return cls(source=source, lines=lines, line_offsets=line_offsets)
 
     def position_to_offset(self, position: dict) -> int:
