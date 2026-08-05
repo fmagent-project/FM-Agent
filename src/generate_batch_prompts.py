@@ -333,12 +333,23 @@ def build_prompt(
     lines.append("## SPEC FORMAT (write JSON files; do NOT modify source files)")
     lines.append("")
     lines.append(
-        "For each function file `<function-file>`, "
-        "write TWO JSON files in the SAME directory. "
-        "`<function-file>` includes its original extension "
-        "(for example, `foo.py` must produce `foo.py.spec.json` "
-        "and `foo.py.info.json`):"
+        "For each function file, write TWO JSON files in the SAME directory."
     )
+    lines.append("")
+    lines.append(
+        "CRITICAL: The output filename MUST be exactly the function file name "
+        "INCLUDING its source extension (.rs, .cpp, .py, .c, etc.), with "
+        ".spec.json or .info.json appended. Do NOT remove, change, or "
+        "normalize the source file extension."
+    )
+    lines.append("")
+    lines.append("Examples:")
+    lines.append("  Preprocessor::preprocess_source.rs -> Preprocessor::preprocess_source.rs.spec.json")
+    lines.append("                                        Preprocessor::preprocess_source.rs.info.json")
+    lines.append("  calculate_average.py               -> calculate_average.py.spec.json")
+    lines.append("                                        calculate_average.py.info.json")
+    lines.append("  LocalStorage::Flush.cpp            -> LocalStorage::Flush.cpp.spec.json")
+    lines.append("                                        LocalStorage::Flush.cpp.info.json")
     lines.append("")
     lines.append("`<function-file>.spec.json`:")
     lines.append("```json")

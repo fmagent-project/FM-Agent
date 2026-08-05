@@ -123,6 +123,7 @@ def streaming_reasoner(
             reasoning_futures = {}
             validation_futures = {}
             submitted = set()
+            producers_done_observed = False
 
             while True:
                 # Scan for new ready files
@@ -260,6 +261,14 @@ def streaming_reasoner(
                 # Detect if spec generation subprocesses exited before all files are ready
                 _all_procs = spec_procs if spec_procs else None
                 if _all_procs is not None and all(_spec_task_done(p) for p in _all_procs):
+                    if not producers_done_observed:
+                        # A producer can publish its normalized sidecars and
+                        # become done between the scan at the top of this loop
+                        # and this check. Rescan once before deciding that any
+                        # remaining files are genuinely unready.
+                        producers_done_observed = True
+                        continue
+
                     unready = (expected_files or set()) - processed
                     if unready and not reasoning_futures and not validation_futures:
                         exit_codes = [_spec_task_exit_code(p) for p in _all_procs]
