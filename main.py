@@ -605,6 +605,9 @@ if __name__ == "__main__":
 
     selected_plugin = args.plugin
 
+    if selected_plugin and args.entry_func is not None:
+        parser.error("--plugin cannot be combined with --entry-func.")
+
     plugin_config = None
     if selected_plugin:
         if not args.proj_dir:
@@ -666,8 +669,7 @@ if __name__ == "__main__":
 
     start_time = time.time()
 
-    # Entry-point mode uses its dedicated copy-and-trim pipeline. The selected
-    # general pipeline plugin, if any, still runs inside the trimmed project copy.
+    # Entry-point mode uses its dedicated copy-and-trim pipeline.
     if args.entry_func is not None:
         run_entry_pipeline(
             proj_dir,
@@ -679,7 +681,6 @@ if __name__ == "__main__":
             extra_call_edges_path=extra_call_edges_path,
             only_spec=args.only_spec,
             bug_validator_path=bug_validator_path,
-            plugin_config=plugin_config,
             all_bugs=args.all_bugs,
         )
         end_time = time.time()
