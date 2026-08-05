@@ -516,18 +516,10 @@ def run_pipeline(
             validate_bugs=validate_bugs,
             all_bugs=all_bugs,
         )
-        if spec_stage is not None and spec_stage.output_hook is not None:
-            run_plugin_hook(
-                plugin_config.name,
-                "generate_specs_and_verification",
-                spec_stage.output_function,
-                spec_stage.output_hook,
-                proj_dir,
-            )
 
     # Print confirmed bug count (skipped in only-spec mode, which runs no
-    # reasoning or bug validation).
-    if not only_spec:
+    # reasoning or bug validation, and when validation is explicitly disabled).
+    if not only_spec and validate_bugs:
         if all_bugs:
             # A resumed run may find every function and candidate validation
             # already complete, so no watcher runs to refresh the persistent
@@ -554,6 +546,15 @@ def run_pipeline(
         print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
     else:
         print("[Pipeline] Done.")
+
+    if spec_stage is not None and spec_stage.output_hook is not None:
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_specs_and_verification",
+            spec_stage.output_function,
+            spec_stage.output_hook,
+            proj_dir,
+        )
 
 
 if __name__ == "__main__":
