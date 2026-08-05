@@ -218,6 +218,21 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
+| `--plugin NAME`             | Load a pipeline plugin from `plugins/NAME/`. |
+| `--list-plugin`             | List valid pipeline plugins and exit. |
+
+### Pipeline plugins
+
+FM-Agent plugins can pass, replace, or modify each of the six pipeline stages
+through trusted Python hooks. Every hook uses the same signature:
+
+```python
+def hook(proj_dir: str) -> None:
+    ...
+```
+
+See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
+configuration, execution modes, lifecycle, and trust boundary.
 
 `proj_dir` must be a git repository.
 

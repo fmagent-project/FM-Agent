@@ -1,5 +1,5 @@
-from src.entry_reasoning_pipeline import run_entry_pipeline
 from src.call_graph_edges import load_call_edges
+from src.entry_reasoning_pipeline import run_entry_pipeline
 from src.file_utils import (
     collect_file_names,
     _has_source_code,
@@ -21,6 +21,7 @@ from src.git import (
     _record_version,
 )
 from src.languages.codegraph import try_codegraph_init
+from src.plugin import run_plugin_hook
 from src.pipeline_setup import (
     _run_setup_extract,
     _run_generate_phases,
@@ -118,6 +119,7 @@ def run_pipeline(
     only_spec=False,
     bug_validator_path=None,
     plugin_config=None,
+    plugin_context=None,
     all_bugs=False,
 ):
     if not os.path.isdir(proj_dir):
@@ -149,6 +151,18 @@ def run_pipeline(
     if resume and not only_spec:
         _ensure_resume_mode_compatible(output_dir, all_bugs)
     os.makedirs(work_dir, exist_ok=True)
+    if plugin_config is not None:
+        plugin_context_path = os.path.join(work_dir, "plugin_context.json")
+        with open(plugin_context_path, "w", encoding="utf-8") as file:
+            json.dump(plugin_context or {}, file, indent=2)
+        if plugin_config.configure_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "configure",
+                plugin_config.configure_function,
+                plugin_config.configure_hook,
+                proj_dir,
+            )
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
     )
@@ -162,15 +176,45 @@ def run_pipeline(
     # Stage 2: generate domain context (input: phases.json → domain context files)
     phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
     context_stage = plugin_config.get_stage("generate_domain_context") if plugin_config else None
-    plugin_root = plugin_config.root if plugin_config else None
-
+    extraction_stage = plugin_config.get_stage("extract_functions") if plugin_config else None
+    file_list_stage = plugin_config.get_stage("collect_file_list") if plugin_config else None
+    topdown_stage = plugin_config.get_stage("generate_topdown_layers") if plugin_config else None
+    spec_stage = plugin_config.get_stage("generate_specs_and_verification") if plugin_config else None
     print("[Pipeline] Stage 1/6: Generating phase plan...")
-    _run_generate_phases(
-        proj_dir, work_dir, script_dir, resume=resume,
-        submodules=submodules,
-        plugin_stage=phase_stage,
-        plugin_root=plugin_root,
-    )
+    if phase_stage is not None and phase_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 1/6: Plugin stage "
+            "'generate_phase_plan' type=pass, skipping."
+        )
+    elif phase_stage is not None and phase_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_phase_plan",
+            phase_stage.replace_function,
+            phase_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if phase_stage is not None and phase_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_phase_plan",
+                phase_stage.input_function,
+                phase_stage.input_hook,
+                proj_dir,
+            )
+        _run_generate_phases(
+            proj_dir, work_dir, script_dir, resume=resume,
+            submodules=submodules,
+        )
+        if phase_stage is not None and phase_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_phase_plan",
+                phase_stage.output_function,
+                phase_stage.output_hook,
+                proj_dir,
+            )
 
     phases_modified = _post_process_phases(
         proj_dir, work_dir,
@@ -180,14 +224,42 @@ def run_pipeline(
     )
 
     print("[Pipeline] Stage 2/6: Generating domain context...")
-    _run_generate_domain_context(
-        proj_dir,
-        work_dir,
-        script_dir,
-        resume=resume and not phases_modified,
-        plugin_stage=context_stage,
-        plugin_root=plugin_root,
-    )
+    if context_stage is not None and context_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 2/6: Plugin stage "
+            "'generate_domain_context' type=pass, skipping."
+        )
+    elif context_stage is not None and context_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_domain_context",
+            context_stage.replace_function,
+            context_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if context_stage is not None and context_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_domain_context",
+                context_stage.input_function,
+                context_stage.input_hook,
+                proj_dir,
+            )
+        _run_generate_domain_context(
+            proj_dir,
+            work_dir,
+            script_dir,
+            resume=resume and not phases_modified,
+        )
+        if context_stage is not None and context_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_domain_context",
+                context_stage.output_function,
+                context_stage.output_hook,
+                proj_dir,
+            )
 
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
     # run_extraction (Stage 3) and generate_topdown_layers (Stage 5) read from it.
@@ -200,7 +272,37 @@ def run_pipeline(
     # force=False on resume preserves already-specced extracted files; on a fresh
     # run fm_agent/ was just wiped so it is equivalent to force=True.
     print("[Pipeline] Stage 3/6: Extracting functions from source files...")
-    run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
+    if extraction_stage is not None and extraction_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 3/6: Plugin stage "
+            "'extract_functions' type=pass, skipping."
+        )
+    elif extraction_stage is not None and extraction_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "extract_functions",
+            extraction_stage.replace_function,
+            extraction_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if extraction_stage is not None and extraction_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "extract_functions",
+                extraction_stage.input_function,
+                extraction_stage.input_hook,
+                proj_dir,
+            )
+        run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
+        if extraction_stage is not None and extraction_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "extract_functions",
+                extraction_stage.output_function,
+                extraction_stage.output_hook,
+                proj_dir,
+            )
 
     # Copy system_prompt.md to spec_prompts/system_prompt.md
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
@@ -225,11 +327,47 @@ def run_pipeline(
 
     print("[Pipeline] Stage 4/6: Collecting file list...")
     file_list_path = os.path.join(work_dir, "fm_agent_file_list.json")
-    file_list = collect_file_names(input_dir, file_list_path)
-    if submodules:
-        file_list = _write_file_names(
-            _get_all_phase_files(phases_data, input_dir), file_list_path
+    if file_list_stage is not None and file_list_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 4/6: Plugin stage "
+            "'collect_file_list' type=pass, skipping."
         )
+        with open(file_list_path, "r", encoding="utf-8") as file:
+            file_list = json.load(file)
+    elif file_list_stage is not None and file_list_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "collect_file_list",
+            file_list_stage.replace_function,
+            file_list_stage.replace_hook,
+            proj_dir,
+        )
+        with open(file_list_path, "r", encoding="utf-8") as file:
+            file_list = json.load(file)
+    else:
+        if file_list_stage is not None and file_list_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "collect_file_list",
+                file_list_stage.input_function,
+                file_list_stage.input_hook,
+                proj_dir,
+            )
+        file_list = collect_file_names(input_dir, file_list_path)
+        if submodules:
+            file_list = _write_file_names(
+                _get_all_phase_files(phases_data, input_dir), file_list_path
+            )
+        if file_list_stage is not None and file_list_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "collect_file_list",
+                file_list_stage.output_function,
+                file_list_stage.output_hook,
+                proj_dir,
+            )
+            with open(file_list_path, "r", encoding="utf-8") as file:
+                file_list = json.load(file)
 
     if not file_list:
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
@@ -237,27 +375,87 @@ def run_pipeline(
 
     # --- Stage 5: Generate topdown layers ---
     print("[Pipeline] Stage 5/6: Generating topdown layers...")
-    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+    if topdown_stage is not None and topdown_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 5/6: Plugin stage "
+            "'generate_topdown_layers' type=pass, skipping."
+        )
+    elif topdown_stage is not None and topdown_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_topdown_layers",
+            topdown_stage.replace_function,
+            topdown_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if topdown_stage is not None and topdown_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_topdown_layers",
+                topdown_stage.input_function,
+                topdown_stage.input_hook,
+                proj_dir,
+            )
+        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+        if topdown_stage is not None and topdown_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_topdown_layers",
+                topdown_stage.output_function,
+                topdown_stage.output_hook,
+                proj_dir,
+            )
 
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
     if only_spec:
         print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
     else:
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
-    run_spec_generation_and_verification(
-        proj_dir,
-        work_dir,
-        input_dir,
-        output_dir,
-        script_dir,
-        spec_prompts_dir,
-        phases_data,
-        resume=resume,
-        extra_call_edges=extra_call_edges,
-        only_spec=only_spec,
-        bug_validator_path=bug_validator_path,
-        all_bugs=all_bugs,
-    )
+    if spec_stage is not None and spec_stage.type == "pass":
+        print(
+            "[Pipeline] Stage 6/6: Plugin stage "
+            "'generate_specs_and_verification' type=pass, skipping."
+        )
+    elif spec_stage is not None and spec_stage.type == "replace":
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_specs_and_verification",
+            spec_stage.replace_function,
+            spec_stage.replace_hook,
+            proj_dir,
+        )
+    else:
+        if spec_stage is not None and spec_stage.input_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_specs_and_verification",
+                spec_stage.input_function,
+                spec_stage.input_hook,
+                proj_dir,
+            )
+        run_spec_generation_and_verification(
+            proj_dir,
+            work_dir,
+            input_dir,
+            output_dir,
+            script_dir,
+            spec_prompts_dir,
+            phases_data,
+            resume=resume,
+            extra_call_edges=extra_call_edges,
+            only_spec=only_spec,
+            bug_validator_path=bug_validator_path,
+            all_bugs=all_bugs,
+        )
+        if spec_stage is not None and spec_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_specs_and_verification",
+                spec_stage.output_function,
+                spec_stage.output_hook,
+                proj_dir,
+            )
 
     # Print confirmed bug count (skipped in only-spec mode, which runs no
     # reasoning or bug validation).
@@ -405,18 +603,22 @@ if __name__ == "__main__":
                 print(f"{name:<30} {plugin.version:<12} {stage_names}")
         sys.exit(0)
 
+    selected_plugin = args.plugin
+
+    if selected_plugin and args.entry_func is not None:
+        parser.error("--plugin cannot be combined with --entry-func.")
+
     plugin_config = None
-    if args.plugin:
+    if selected_plugin:
         if not args.proj_dir:
             parser.error("the following arguments are required when --plugin is used: proj_dir")
         from pathlib import Path
-        from src.plugin import load_plugins
+        from src.plugin import validate_plugin
         plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
-        plugins = load_plugins(Path(plugins_dir))
-        if args.plugin not in plugins:
-            print(f"[Pipeline] ERROR: Plugin '{args.plugin}' not found or invalid.")
+        plugin_config = validate_plugin(Path(plugins_dir) / selected_plugin)
+        if plugin_config is None:
+            print(f"[Pipeline] ERROR: Plugin '{selected_plugin}' not found or invalid.")
             sys.exit(1)
-        plugin_config = plugins[args.plugin]
         print(f"[Pipeline] Loaded plugin '{plugin_config.name}' v{plugin_config.version}")
 
     if not args.proj_dir:
@@ -427,6 +629,9 @@ if __name__ == "__main__":
     extra_call_edges_path = args.extra_edge
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
+    plugin_context = {
+        "extra_edge": extra_call_edges_path,
+    }
     try:
         bug_validator_path = _resolve_bug_validator_path(args.bug_validator)
     except ValueError as exc:
@@ -462,9 +667,7 @@ if __name__ == "__main__":
 
     start_time = time.time()
 
-    # Entry-point mode: reason only about the call graph reachable from a specific
-    # entry function. Runs directly against the project directory (no worktree
-    # isolation or incremental diffing).
+    # Entry-point mode uses its dedicated copy-and-trim pipeline.
     if args.entry_func is not None:
         run_entry_pipeline(
             proj_dir,
@@ -476,7 +679,6 @@ if __name__ == "__main__":
             extra_call_edges_path=extra_call_edges_path,
             only_spec=args.only_spec,
             bug_validator_path=bug_validator_path,
-            plugin_config=plugin_config,
             all_bugs=args.all_bugs,
         )
         end_time = time.time()
@@ -537,7 +739,6 @@ if __name__ == "__main__":
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     bug_validator_path=bug_validator_path,
-                    plugin_config=plugin_config,
                     all_bugs=args.all_bugs,
                 )
             else:
@@ -551,6 +752,7 @@ if __name__ == "__main__":
                     only_spec=args.only_spec,
                     bug_validator_path=bug_validator_path,
                     plugin_config=plugin_config,
+                    plugin_context=plugin_context,
                     all_bugs=args.all_bugs,
                 )
             # Record the commit that was processed. Written after the pipeline since
