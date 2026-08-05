@@ -169,8 +169,6 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 | `--plugin NAME` | 加载 `plugins/NAME/` 下的 Pipeline 插件。 |
 | `--list-plugin` | 列出有效的 Pipeline 插件并退出。 |
-| `--entry-func FQN` | 运行独立的入口函数 Pipeline，只分析入口函数可达的函数。 |
-| `--end-func FQN [FQN ...]` | 在一个或多个可达终止函数处截断入口调用链。 |
 
 ### Pipeline 插件
 
@@ -184,28 +182,6 @@ def hook(proj_dir: str) -> None:
 
 插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
 [Pipeline 插件](docs/plugins_zh.md)。
-
-### 入口函数推理
-
-`--entry-func` 会运行独立的入口函数 Pipeline：
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::application_entry
-```
-
-可以使用一个或多个终止函数截断选中的调用链：
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::application_entry \
-  --end-func services/statistics-py::calculate_total
-```
-
-入口函数 Pipeline 会在一次性选择副本中计算可达调用链，另外创建
-`.fm-entry-run` 项目副本，删除该副本中未选中的源文件和函数，再针对裁剪后的
-副本运行标准 Pipeline。完成后，它会把生成的 `fm_agent/` 工作区复制回原项目，
-并删除两个临时副本。原项目源码始终不会被修改。
 
 `proj_dir` 必须是一个 git 仓库。
 
