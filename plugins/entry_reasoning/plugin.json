@@ -1,0 +1,15 @@
+{
+  "name": "entry_reasoning",
+  "version": "V1.0",
+  "configure_function": "configure",
+  "stages": {
+    "generate_phase_plan": {
+      "type": "modify",
+      "input_function": "prepare_entry_scope"
+    },
+    "generate_specs_and_verification": {
+      "type": "modify",
+      "output_function": "publish_entry_results"
+    }
+  }
+}
