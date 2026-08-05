@@ -13,7 +13,6 @@ import time
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
 from src.file_utils import (
-    AmbiguousSidecarError,
     _get_incomplete_verification_files,
     _get_phase_files,
     is_file_ready,
@@ -354,8 +353,6 @@ def run_spec_generation_and_verification(
                     for future in spec_futures:
                         try:
                             future.result()
-                        except AmbiguousSidecarError:
-                            raise
                         except Exception as exc:
                             logging.error(f"Spec generation task failed unexpectedly: {exc}")
 

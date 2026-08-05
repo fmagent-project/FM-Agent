@@ -1,5 +1,4 @@
 import logging
-import os
 import json
 import os
 import re
@@ -41,10 +40,6 @@ _TERMINAL_VALIDATION_STRING_FIELDS = {
     "probe_stdout",
     "trigger_summary",
 }
-
-
-class AmbiguousSidecarError(RuntimeError):
-    """Raised when an extension-dropped sidecar has multiple owners."""
 
 
 def _is_metadata_sidecar(file_path):
@@ -150,11 +145,9 @@ def normalize_spec_filenames(function_files, all_function_files=None):
     When the mapping is unambiguous and both bare sidecars form a valid
     pair, this function replaces both expected sidecars together. Treating
     the pair as one unit avoids combining a sidecar from an earlier attempt
-    with one from the latest attempt.
-
-    Raises:
-        AmbiguousSidecarError: If a bare sidecar could belong to multiple
-            source files.
+    with one from the latest attempt. If a bare name has multiple possible
+    owners, both bare sidecars are removed and the canonical pairs remain
+    unready for the caller's bounded retry loop.
 
     Args:
         function_files: Function paths whose sidecars may be normalized.
@@ -182,22 +175,39 @@ def normalize_spec_filenames(function_files, all_function_files=None):
         base = os.path.splitext(func_path)[0]
         base_map.setdefault(base, []).append(func_path)
 
+    ambiguous_bases = {
+        base for base, candidates in base_map.items() if len(candidates) > 1
+    }
+    for base in sorted({os.path.splitext(path)[0] for path in function_files}):
+        if base not in ambiguous_bases:
+            continue
+
+        removed = []
+        for suffix in (".spec.json", ".info.json"):
+            alternate_path = f"{base}{suffix}"
+            try:
+                os.remove(alternate_path)
+                removed.append(alternate_path)
+            except FileNotFoundError:
+                pass
+
+        if removed:
+            logging.warning(
+                "Removed ambiguous extension-dropped sidecar file(s) %s; "
+                "they could belong to multiple source files: %s. Canonical "
+                "sidecars remain pending for retry.",
+                removed,
+                base_map[base],
+            )
+
     for func_path in function_files:
         base = os.path.splitext(func_path)[0]
-        candidates = base_map[base]
+        if base in ambiguous_bases:
+            # A bare sidecar can never be safely assigned to one of these
+            # functions. Leave every incomplete canonical pair unready so the
+            # existing bounded retry loop asks the producer to regenerate it.
+            continue
 
-        if len(candidates) > 1:
-            for suffix in (".spec.json", ".info.json"):
-                alt = f"{base}{suffix}"
-                expected = f"{func_path}{suffix}"
-                if os.path.isfile(alt) and not _is_valid_sidecar_file(expected):
-                    raise AmbiguousSidecarError(
-                        f"Ambiguous sidecar filename: {alt} could belong to "
-                        f"multiple source files: {candidates}"
-                    )
-
-    for func_path in function_files:
-        base = os.path.splitext(func_path)[0]
         expected_spec = f"{func_path}.spec.json"
         expected_info = f"{func_path}.info.json"
 
