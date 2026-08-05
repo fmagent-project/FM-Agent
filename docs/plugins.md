@@ -136,8 +136,6 @@ When a plugin is active, FM-Agent writes
 
 ```json
 {
-  "entry_func": null,
-  "end_funcs": [],
   "extra_edge": null
 }
 ```

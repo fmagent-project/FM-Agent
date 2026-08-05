@@ -129,8 +129,6 @@ Hook 通过标准项目文件修改输入或输出，不返回 Stage 数据。
 
 ```json
 {
-  "entry_func": null,
-  "end_funcs": [],
   "extra_edge": null
 }
 ```

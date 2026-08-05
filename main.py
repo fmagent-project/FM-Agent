@@ -630,8 +630,6 @@ if __name__ == "__main__":
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
     plugin_context = {
-        "entry_func": args.entry_func,
-        "end_funcs": args.end_func or [],
         "extra_edge": extra_call_edges_path,
     }
     try:
