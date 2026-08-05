@@ -504,8 +504,8 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     the index always reflects the current working tree rather than whatever code
     was present when it was last built. This is the safe default: callers read
     function bodies and spans from the index, and a stale one (e.g. after an
-    incremental run's tree changed, or after `_trim_project_in_place` edited the
-    sources) would yield boundaries for the wrong code. `codegraph init` on its
+    incremental run's tree changed or project sources were edited) would yield
+    boundaries for the wrong code. `codegraph init` on its
     own no-ops when `.codegraph/` already exists, so a rebuild requires clearing
     it first.
 
