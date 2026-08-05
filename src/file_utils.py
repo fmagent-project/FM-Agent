@@ -147,7 +147,10 @@ def normalize_spec_filenames(function_files, all_function_files=None):
     the pair as one unit avoids combining a sidecar from an earlier attempt
     with one from the latest attempt. If a bare name has multiple possible
     owners, both bare sidecars are removed and the canonical pairs remain
-    unready for the caller's bounded retry loop.
+    unready for the caller's bounded retry loop. An incomplete canonical pair
+    is never completed from bare sidecars in the same watcher invocation: all
+    four files are cleared so a reader that already loaded the old canonical
+    half cannot combine it with a newly published half.
 
     Args:
         function_files: Function paths whose sidecars may be normalized.
@@ -211,6 +214,8 @@ def normalize_spec_filenames(function_files, all_function_files=None):
         expected_spec = f"{func_path}.spec.json"
         expected_info = f"{func_path}.info.json"
 
+        expected_spec_exists = os.path.isfile(expected_spec)
+        expected_info_exists = os.path.isfile(expected_info)
         expected_spec_valid = _is_valid_sidecar_file(expected_spec)
         expected_info_valid = _is_valid_sidecar_file(expected_info)
         if expected_spec_valid and expected_info_valid:
@@ -228,20 +233,35 @@ def normalize_spec_filenames(function_files, all_function_files=None):
                 )
             continue
 
-        # Keep at least one canonical sidecar invalid until the final replace.
-        # streaming_reasoner may be scanning concurrently with this batch
-        # finalizer, so it must never observe a ready old/new mixed pair.
-        if not expected_spec_valid:
-            replacements = (
-                (alt_info, expected_info),
-                (alt_spec, expected_spec),
+        if expected_spec_exists or expected_info_exists:
+            # A concurrent readiness check may already have loaded the valid
+            # half of this incomplete canonical pair. Publishing the missing
+            # half now could make that reader accept an old/new pair. Remove
+            # both canonical and bare pairs, then let the next attempt generate
+            # a complete pair from a clean state before its watcher starts.
+            removed = []
+            for path in (expected_spec, expected_info, alt_spec, alt_info):
+                try:
+                    os.remove(path)
+                    removed.append(path)
+                except FileNotFoundError:
+                    pass
+            logging.warning(
+                "Removed conflicting canonical and extension-dropped sidecars "
+                "%s for %s; the complete pair remains pending for retry.",
+                removed,
+                func_path,
             )
-        else:
-            replacements = (
-                (alt_spec, expected_spec),
-                (alt_info, expected_info),
-            )
-        for alt, expected in replacements:
+            continue
+
+        # The retry coordinator removes incomplete canonical pairs before it
+        # starts producers and the streaming watcher. Publish info first and
+        # spec last so the canonical spec path acts as the readiness gate: once
+        # it becomes readable, both sidecars come from this attempt.
+        for alt, expected in (
+            (alt_info, expected_info),
+            (alt_spec, expected_spec),
+        ):
             os.replace(alt, expected)
 
         normalized.append(func_path)
