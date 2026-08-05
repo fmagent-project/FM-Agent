@@ -94,6 +94,83 @@ def _parse_spec_check_json(response):
     return False, None, None, data
 
 
+def _parse_all_bugs_spec_check_json(response):
+    """Parse the multi-violation response used by all-bugs checkpoints."""
+    try:
+        data = _load_spec_check_json(response)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"all-bugs spec-check response is not valid JSON: {exc}") from exc
+
+    required = ("verdict", "violations")
+    missing = [field for field in required if field not in data]
+    if missing:
+        raise ValueError(
+            "all-bugs spec-check JSON missing required field(s): "
+            + ", ".join(missing)
+        )
+
+    verdict = data.get("verdict")
+    if isinstance(verdict, str):
+        verdict = verdict.upper()
+    if verdict not in ("MATCH", "MISMATCH"):
+        raise ValueError(
+            "all-bugs spec-check JSON verdict must be MATCH or MISMATCH"
+        )
+
+    violations = data.get("violations")
+    if not isinstance(violations, list):
+        raise ValueError("all-bugs spec-check JSON violations must be an array")
+    if verdict == "MATCH" and violations:
+        raise ValueError(
+            "all-bugs spec-check MATCH JSON must contain an empty violations array"
+        )
+    if verdict == "MISMATCH" and not violations:
+        raise ValueError(
+            "all-bugs spec-check MISMATCH JSON requires at least one violation"
+        )
+
+    normalized = []
+    required_violation_fields = (
+        "counterexample",
+        "offending_statements",
+        "reason",
+    )
+    for index, violation in enumerate(violations, start=1):
+        if not isinstance(violation, dict):
+            raise ValueError(
+                f"all-bugs violation {index} must be a JSON object"
+            )
+        missing = [
+            field
+            for field in required_violation_fields
+            if field not in violation
+        ]
+        if missing:
+            raise ValueError(
+                f"all-bugs violation {index} missing required field(s): "
+                + ", ".join(missing)
+            )
+        invalid = [
+            field
+            for field in required_violation_fields
+            if not isinstance(violation.get(field), str)
+            or not violation[field].strip()
+        ]
+        if invalid:
+            raise ValueError(
+                f"all-bugs violation {index} requires non-empty string field(s): "
+                + ", ".join(invalid)
+            )
+        normalized.append({
+            field: violation[field].strip()
+            for field in required_violation_fields
+        })
+
+    data["verdict"] = verdict
+    data["violations"] = normalized
+    return verdict == "MISMATCH", normalized, data
+
+
 def _parse_post_condition_json(data):
     """Validate the structured response used to generate one block's post-condition."""
     if not isinstance(data, dict):
@@ -257,7 +334,7 @@ _LANGUAGE_EXPERTISE = {
 
 
 def _check_post_implies_spec(block, post_condition, spec_post_condition, knowledge, language,
-                             trace_dir=None, trace_meta=None):
+                             trace_dir=None, trace_meta=None, all_bugs=False):
     info_str = f"\nAdditional context:\n{knowledge}" if knowledge else ""
     lang_expertise = _LANGUAGE_EXPERTISE.get(language.lower(), f"You are an expert in logic, formal verification, and {language} programming. ")
     messages = [
@@ -273,12 +350,26 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             "  3. The code produces a wrong output value for a valid input.\n"
             "For each potential violation, construct a specific input, trace what the code does (A), and check if the specification (B) is satisfied.\n"
             "Return only a valid JSON object. Do not include markdown, tags, or prose. "
-            "Use exactly this schema: "
-            "{\"verdict\": \"MATCH|MISMATCH\", \"counterexample\": string|null, "
-            "\"offending_statements\": string|null, \"reason\": string}. "
-            "For MISMATCH, counterexample, offending_statements, and reason must be non-empty strings; "
-            "offending_statements must preserve any 'Line N:' prefixes from the code block. "
-            "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+            + (
+                "Use exactly this schema: "
+                "{\"verdict\": \"MATCH|MISMATCH\", \"violations\": "
+                "[{\"counterexample\": string, \"offending_statements\": string, "
+                "\"reason\": string}]}. For MISMATCH, return every independently "
+                "explainable violation found at this checkpoint, with all three fields "
+                "as non-empty strings. If exactly one violation exists, return a "
+                "one-item array. Do not duplicate the same underlying violation merely "
+                "because multiple concrete inputs trigger it. offending_statements must "
+                "preserve any 'Line N:' prefixes from the code block. For MATCH, return "
+                "an empty violations array."
+                if all_bugs
+                else
+                "Use exactly this schema: "
+                "{\"verdict\": \"MATCH|MISMATCH\", \"counterexample\": string|null, "
+                "\"offending_statements\": string|null, \"reason\": string}. "
+                "For MISMATCH, counterexample, offending_statements, and reason must be non-empty strings; "
+                "offending_statements must preserve any 'Line N:' prefixes from the code block. "
+                "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+            )
         )},
         {"role": "user", "content": (
             f"Programming language: {language}\n\n"
@@ -288,7 +379,14 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             f"{info_str}\n"
             "Is there a concrete valid input where the code's behavior violates the specification? "
             "Enumerate all cases required by condition B and check if condition A covers each one. "
-            "Provide a specific counterexample if any case is missing. Return only the JSON object."
+            + (
+                "Return every independently explainable mismatch in the violations array. "
+                "If no mismatch exists, return MATCH with an empty violations array. "
+                "Return only the JSON object."
+                if all_bugs
+                else
+                "Provide a specific counterexample if any case is missing. Return only the JSON object."
+            )
         )}
     ]
     trace_meta = trace_meta or {}
@@ -321,7 +419,15 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
         parsed_result = None
         parse_error = None
         try:
-            has_violation, stmts, reason, parsed_result = _parse_spec_check_json(response)
+            if all_bugs:
+                (
+                    has_violation,
+                    checkpoint_violations,
+                    parsed_result,
+                ) = _parse_all_bugs_spec_check_json(response)
+                stmts = reason = None
+            else:
+                has_violation, stmts, reason, parsed_result = _parse_spec_check_json(response)
             status = "mismatch" if has_violation else "success"
         except ValueError as exc:
             has_violation = None
@@ -348,6 +454,8 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
         }
         record_llm_exchange(trace_dir, event_id, event, messages, response)
         if has_violation is not None:
+            if all_bugs:
+                return checkpoint_violations
             if has_violation:
                 stmts = stmts or "(unable to extract)"
                 reason = reason or "(unable to extract)"
@@ -359,13 +467,23 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             {
                 "role": "user",
                 "content": (
-                    "Return only valid JSON with schema: "
-                    "{\"verdict\": \"MATCH|MISMATCH\", "
-                    "\"counterexample\": string|null, "
-                    "\"offending_statements\": string|null, "
-                    "\"reason\": string}. "
-                    "For MISMATCH, all evidence fields must be non-empty strings. "
-                    "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+                    (
+                        "Return only valid JSON with schema: "
+                        "{\"verdict\": \"MATCH|MISMATCH\", \"violations\": "
+                        "[{\"counterexample\": string, \"offending_statements\": string, "
+                        "\"reason\": string}]}. For MISMATCH, violations must contain "
+                        "at least one item and every field must be a non-empty string. "
+                        "For MATCH, violations must be an empty array."
+                        if all_bugs
+                        else
+                        "Return only valid JSON with schema: "
+                        "{\"verdict\": \"MATCH|MISMATCH\", "
+                        "\"counterexample\": string|null, "
+                        "\"offending_statements\": string|null, "
+                        "\"reason\": string}. "
+                        "For MISMATCH, all evidence fields must be non-empty strings. "
+                        "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+                    )
                 ),
             }
         ]

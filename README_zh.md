@@ -203,7 +203,7 @@ uv run python main.py <proj_dir> --incremental intent.md --all-bugs
 uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 ```
 
-该选项默认关闭。启用后，FM-Agent 会继续检查后续推理检查点，并为每个候选写出一个标准 mismatch 结果。完整和增量模式会分别验证每个候选；入口函数模式只报告候选及其数量，按设计不执行 Bug Validation。
+该选项默认关闭。启用后，每个推理检查点可以报告多个可独立说明的 violation，FM-Agent 会继续检查后续检查点，并为每个候选写出一个标准 mismatch 结果。完整和增量模式会分别验证每个候选；入口函数模式只报告候选及其数量，按设计不执行 Bug Validation。
 
 若主结果为 `path/to/function.json`，all-bugs 候选会写在同一目录下，依次命名为 `path/to/function.bug-001.json`、`bug-002.json` 等。主结果通过 `bug_count` 和 `reasoning_complete` 记录候选数量及推理是否完整。续跑时，完整的主结果就是 reasoning 阶段的检查点，只补跑尚未产生终态结果的候选验证；若 reasoning 中途停止，则只清理并重跑该函数的中间候选和验证，不影响其他已完成函数。
 

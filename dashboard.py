@@ -9,6 +9,7 @@ Usage:
 Reads:
     <workdir>/trace/events.jsonl          (FM-Agent native events)
     <workdir>/trace/opencode/*.jsonl      (lucentia opencode-trace records)
+    <workdir>/logic_verification_results/ (all-bugs validation targets)
     <workdir>/bug_validation/*.result.json (bug validation verdicts)
 
 Standalone — run in a second terminal while main.py is going.
@@ -18,6 +19,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 import time
 from collections import deque, defaultdict
@@ -38,6 +40,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.progress_bar import ProgressBar
 from rich.align import Align
+from src.file_utils import _all_bugs_candidate_paths
+from src.verification import _validation_status
 
 
 STAGES = ["init", "generate_phases_json", "generate_domain_context", "spec_generation", "verification", "bug_validation"]
@@ -188,6 +192,29 @@ def _locate_workdir(proj_dir):
     return p / "fm_agent"
 
 
+def _discover_all_bugs_targets(results_dir):
+    """Return all-bugs mode and current targets from reasoning artifacts."""
+    if not results_dir.is_dir():
+        return False, []
+
+    all_bugs = False
+    targets = []
+    for path in sorted(results_dir.rglob("*.json")):
+        if re.search(r"\.bug-\d{3}\.json$", path.name):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                result = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(result, dict) and result.get("all_bugs") is True:
+            all_bugs = True
+            candidates = _all_bugs_candidate_paths(os.fspath(path), result)
+            if candidates:
+                targets.extend(candidates)
+    return all_bugs, sorted(targets)
+
+
 class State:
     """Aggregated trace state. Mutated by tail_* methods on each refresh."""
 
@@ -227,7 +254,7 @@ class State:
         # Bug validation
         self.bugs_confirmed = 0
         self.bugs_not_confirmed = 0
-        self.bugs_pending = 0     # opencode call done but no result.json yet
+        self.bugs_pending = 0     # current target/call without a terminal result
 
     # ---------- events.jsonl tail ----------
     def tail_events(self):
@@ -472,6 +499,25 @@ class State:
     def scan_bugs(self):
         self.bugs_confirmed = 0
         self.bugs_not_confirmed = 0
+        self.bugs_pending = 0
+
+        results_dir = self.workdir / "logic_verification_results"
+        all_bugs, all_bugs_targets = _discover_all_bugs_targets(results_dir)
+        if all_bugs:
+            for target_path in all_bugs_targets:
+                target_rel = os.path.relpath(target_path, results_dir)
+                status = _validation_status(
+                    target_rel,
+                    os.fspath(self.workdir),
+                )
+                if status == "confirmed":
+                    self.bugs_confirmed += 1
+                elif status in ("not_confirmed", "error"):
+                    self.bugs_not_confirmed += 1
+                else:
+                    self.bugs_pending += 1
+            return
+
         if not self.bug_dir.exists():
             return
         for path in self.bug_dir.glob("*.result.json"):

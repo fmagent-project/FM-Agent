@@ -260,7 +260,7 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
         if _has_terminating_statement(block, language) or is_last_block:
             if all_bugs:
                 try:
-                    passed, stmts, post_cond, reason = _check_post_implies_spec(
+                    checkpoint_violations = _check_post_implies_spec(
                         block,
                         post_condition,
                         spec_post_condition,
@@ -268,6 +268,7 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
                         language,
                         trace_dir=trace_dir,
                         trace_meta=trace_meta,
+                        all_bugs=True,
                     )
                 except Exception as exc:
                     return {
@@ -279,6 +280,11 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
                         ),
                         "reasoning_complete": False,
                     }
+                violations.extend({
+                    "statements": violation["offending_statements"],
+                    "post_condition": post_condition,
+                    "reason": violation["reason"],
+                } for violation in checkpoint_violations)
             else:
                 passed, stmts, post_cond, reason = _check_post_implies_spec(
                     block,
@@ -289,14 +295,7 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
                     trace_dir=trace_dir,
                     trace_meta=trace_meta,
                 )
-            if not passed:
-                if all_bugs:
-                    violations.append({
-                        "statements": stmts,
-                        "post_condition": post_cond,
-                        "reason": reason,
-                    })
-                else:
+                if not passed:
                     return (
                         f"Verification FAILED.\n"
                         f"Statements triggering the violation:\n{stmts}\n\n"

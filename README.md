@@ -263,11 +263,12 @@ uv run python main.py <proj_dir> --incremental intent.md --all-bugs
 uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 ```
 
-The option is off by default. When enabled, FM-Agent continues through later
-reasoning checkpoints and writes one standard mismatch result per candidate.
-Full and incremental modes validate each candidate independently. Entry-point
-reasoning reports the candidates and their count but intentionally does not run
-bug validation.
+The option is off by default. When enabled, FM-Agent allows each reasoning
+checkpoint to report multiple independently explainable violations, continues
+through later checkpoints, and writes one standard mismatch result per
+candidate. Full and incremental modes validate each candidate independently.
+Entry-point reasoning reports the candidates and their count but intentionally
+does not run bug validation.
 
 For a result such as `path/to/function.json`, all-bugs candidates are written
 beside it as `path/to/function.bug-001.json`, `bug-002.json`, and so on. The
