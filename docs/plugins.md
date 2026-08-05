@@ -170,10 +170,9 @@ plugin authors should make hooks safe to repeat.
 In isolate mode hooks receive the isolated worktree path. The existing isolate
 workflow copies `fm_agent/` results back to the original project.
 
-Pipeline hooks are supported for full, resume, and isolate runs. The
-incremental pipeline does not receive plugin configuration or execute plugin
-hooks. Do not rely on `--plugin` or implicit Entry plugin activation during an
-incremental run.
+Pipeline hooks are supported for full, resume, and isolate runs. Entry and
+incremental pipelines do not receive plugin configuration or execute plugin
+hooks. `--plugin` cannot be combined with `--entry-func`.
 
 ## Validation and trust boundary
 

@@ -260,9 +260,6 @@ trimmed copy. It then copies the generated `fm_agent/` workspace back to the
 original project and discards both temporary copies. The original project
 sources are never modified.
 
-A general `--plugin NAME` may still be supplied; its stage hooks execute inside
-the trimmed run copy.
-
 `proj_dir` must be a git repository.
 
 To provide project-specific domain knowledge without editing FM-Agent's built-in prompts, pass one or more Markdown files:

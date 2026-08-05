@@ -162,8 +162,8 @@ ready 产物并跳过内部生成，边界 Hook 仍会执行，因此插件作�
 isolate 模式下 Hook 收到隔离 worktree 路径；现有 isolate 流程会把 `fm_agent/`
 结果复制回原项目。
 
-Pipeline Hook 支持 full、resume 和 isolate。incremental Pipeline 不接收插件配置，
-也不执行插件 Hook。增量运行中不要依赖 `--plugin` 或隐式启用 Entry 插件。
+Pipeline Hook 支持 full、resume 和 isolate。Entry 和 incremental Pipeline
+不接收插件配置，也不执行插件 Hook。`--plugin` 不能与 `--entry-func` 组合使用。
 
 ## 验证与信任边界
 

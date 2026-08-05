@@ -207,9 +207,6 @@ uv run python main.py <proj_dir> \
 副本运行标准 Pipeline。完成后，它会把生成的 `fm_agent/` 工作区复制回原项目，
 并删除两个临时副本。原项目源码始终不会被修改。
 
-仍可同时指定通用的 `--plugin NAME`；该插件的 Stage Hook 会在裁剪后的运行副本
-中执行。
-
 `proj_dir` 必须是一个 git 仓库。
 
 如需在不修改 FM-Agent 内置提示词的情况下提供项目特定领域知识，可传入一个或多个 Markdown 文件：
