@@ -113,7 +113,7 @@ def _run_spec_generation_batch(
 def run_spec_generation_and_verification(
     proj_dir, work_dir, input_dir, output_dir, script_dir, spec_prompts_dir,
     phases_data, resume=False, extra_call_edges=None, only_spec=False,
-    bug_validator_path=None, all_bugs=False,
+    bug_validator_path=None, validate_bugs=True, all_bugs=False,
 ):
     # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
     batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
@@ -194,7 +194,8 @@ def run_spec_generation_and_verification(
                             work_dir,
                             all_bugs=all_bugs,
                             bug_validation_enabled=(
-                                config.BUG_VALIDATION_MAX_RETRIES > 0
+                                validate_bugs
+                                and config.BUG_VALIDATION_MAX_RETRIES > 0
                             ),
                         )
                         if incomplete_verification:
@@ -209,6 +210,7 @@ def run_spec_generation_and_verification(
                                 already_processed=all_processed | layer_processed,
                                 resume=resume,
                                 bug_validator_path=bug_validator_path,
+                                validate_bugs=validate_bugs,
                                 all_bugs=all_bugs,
                             )
                             layer_processed.update(newly_processed)
@@ -254,6 +256,7 @@ def run_spec_generation_and_verification(
                             already_processed=all_processed | layer_processed,
                             resume=resume,
                             bug_validator_path=bug_validator_path,
+                            validate_bugs=validate_bugs,
                             all_bugs=all_bugs,
                         )
                         layer_processed.update(newly_processed)

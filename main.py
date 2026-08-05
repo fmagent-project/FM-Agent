@@ -118,6 +118,7 @@ def run_pipeline(
     extra_call_edges_path=None,
     only_spec=False,
     bug_validator_path=None,
+    validate_bugs=True,
     plugin_config=None,
     plugin_context=None,
     all_bugs=False,
@@ -446,6 +447,7 @@ def run_pipeline(
             extra_call_edges=extra_call_edges,
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
+            validate_bugs=validate_bugs,
             all_bugs=all_bugs,
         )
         if spec_stage is not None and spec_stage.output_hook is not None:
