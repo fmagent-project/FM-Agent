@@ -28,6 +28,7 @@ _entry_func: str | None = None
 _end_funcs: list[str] = []
 _extra_edge: str | None = None
 _all_bugs = False
+_READY_MARKER = ".entry_scope_ready"
 
 
 def configure(proj_dir: str) -> None:
@@ -81,6 +82,7 @@ def configure(proj_dir: str) -> None:
     _end_funcs = list(end_funcs)
     _extra_edge = extra_edge
     _all_bugs = all_bugs
+    add_test_file_exemption(_entry_func_source_rel(_entry_func))
 
 
 def _require_configured(proj_dir: str) -> None:
@@ -105,6 +107,9 @@ def prepare_entry_scope(proj_dir: str) -> None:
     )
     try_codegraph_init(proj_dir)
     _trim_project_in_place(proj_dir, all_by_source, keep_by_source)
+    marker_path = os.path.join(proj_dir, "fm_agent", _READY_MARKER)
+    with open(marker_path, "w", encoding="utf-8") as file:
+        file.write("ready\n")
 
 
 def publish_entry_results(proj_dir: str) -> None:
@@ -115,15 +120,21 @@ def publish_entry_results(proj_dir: str) -> None:
         return
     _require_configured(proj_dir)
 
-    run_work_dir = os.path.join(_entry_run_dir, "fm_agent")
-    original_work_dir = os.path.join(_original_proj_dir, "fm_agent")
-    if os.path.isdir(run_work_dir):
-        if os.path.isdir(original_work_dir):
-            shutil.rmtree(original_work_dir)
-        shutil.copytree(run_work_dir, original_work_dir, symlinks=True)
-        print(f"[EntryPlugin] Copied generated fm_agent/ to {original_work_dir}.")
-    shutil.rmtree(_entry_run_dir, ignore_errors=True)
-    _entry_run_dir = None
+    try:
+        run_work_dir = os.path.join(_entry_run_dir, "fm_agent")
+        original_work_dir = os.path.join(_original_proj_dir, "fm_agent")
+        ready_marker = os.path.join(run_work_dir, _READY_MARKER)
+        if os.path.isfile(ready_marker):
+            os.remove(ready_marker)
+        if os.path.isdir(run_work_dir):
+            if os.path.isdir(original_work_dir):
+                shutil.rmtree(original_work_dir)
+            shutil.copytree(run_work_dir, original_work_dir, symlinks=True)
+            print(f"[EntryPlugin] Copied generated fm_agent/ to {original_work_dir}.")
+        shutil.rmtree(_entry_run_dir, ignore_errors=True)
+        _entry_run_dir = None
+    finally:
+        clear_test_file_exemptions()
 
 
 def _restrict_to_chains(call_graph, entry_func, end_funcs):
