@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import json
 import shutil
@@ -17,7 +19,127 @@ from src.file_utils import (
     add_test_file_exemption,
     clear_test_file_exemptions,
 )
-import config
+
+
+_original_proj_dir: str | None = None
+_entry_run_dir: str | None = None
+_entry_func: str | None = None
+_end_funcs: list[str] = []
+_extra_edge: str | None = None
+_all_bugs = False
+_READY_MARKER = ".entry_scope_ready"
+
+
+def configure(proj_dir: str) -> None:
+    """Load and validate the entry run context created by ``main.py``."""
+    global _original_proj_dir, _entry_run_dir, _entry_func
+    global _end_funcs, _extra_edge, _all_bugs
+
+    context_path = os.path.join(proj_dir, "fm_agent", "plugin_context.json")
+    with open(context_path, encoding="utf-8") as file:
+        context = json.load(file)
+    if not isinstance(context, dict):
+        raise ValueError("plugin_context.json must contain a JSON object")
+
+    original_proj_dir = context.get("original_proj_dir")
+    entry_run_dir = context.get("entry_run_dir")
+    entry_func = context.get("entry_func")
+    end_funcs = context.get("end_funcs", [])
+    extra_edge = context.get("extra_edge")
+    all_bugs = context.get("all_bugs", False)
+
+    if not isinstance(original_proj_dir, str) or not original_proj_dir:
+        raise ValueError("original_proj_dir must be a non-empty string")
+    if not isinstance(entry_run_dir, str) or not entry_run_dir:
+        raise ValueError("entry_run_dir must be a non-empty string")
+    if not isinstance(entry_func, str) or not entry_func:
+        raise ValueError("entry_func must be a non-empty string")
+    if not isinstance(end_funcs, list) or any(
+        not isinstance(value, str) or not value for value in end_funcs
+    ):
+        raise ValueError("end_funcs must be a list of non-empty strings")
+    if extra_edge is not None and (
+        not isinstance(extra_edge, str) or not extra_edge
+    ):
+        raise ValueError("extra_edge must be a non-empty string or null")
+    if not isinstance(all_bugs, bool):
+        raise ValueError("all_bugs must be a boolean")
+
+    actual_proj_dir = os.path.abspath(proj_dir)
+    original_proj_dir = os.path.abspath(original_proj_dir)
+    entry_run_dir = os.path.abspath(entry_run_dir)
+    if actual_proj_dir != entry_run_dir:
+        raise ValueError("entry plugin must run in the configured entry_run_dir")
+    if entry_run_dir == original_proj_dir:
+        raise ValueError("entry plugin refuses to modify the original project")
+    if not entry_run_dir.endswith(".fm-entry-run"):
+        raise ValueError("entry_run_dir must end with '.fm-entry-run'")
+
+    _original_proj_dir = original_proj_dir
+    _entry_run_dir = entry_run_dir
+    _entry_func = entry_func
+    _end_funcs = list(end_funcs)
+    _extra_edge = extra_edge
+    _all_bugs = all_bugs
+    add_test_file_exemption(_entry_func_source_rel(_entry_func))
+
+
+def _require_configured(proj_dir: str) -> None:
+    """Require hooks to operate only on the configured isolated run copy."""
+    if _entry_run_dir is None or _original_proj_dir is None or _entry_func is None:
+        raise RuntimeError("entry_reasoning plugin has not been configured")
+    if os.path.abspath(proj_dir) != _entry_run_dir:
+        raise RuntimeError("entry_reasoning received an unexpected project directory")
+    if os.path.abspath(proj_dir) == _original_proj_dir:
+        raise RuntimeError("entry_reasoning refuses to modify the original project")
+
+
+def prepare_entry_scope(proj_dir: str) -> None:
+    """Select the entry call chain and trim the isolated project in place."""
+    _require_configured(proj_dir)
+    extra_call_edges = load_call_edges(_extra_edge)
+    all_by_source, keep_by_source = _select_functions_by_source(
+        proj_dir,
+        _entry_func,
+        _end_funcs,
+        extra_call_edges=extra_call_edges,
+    )
+    try_codegraph_init(proj_dir)
+    _trim_project_in_place(proj_dir, all_by_source, keep_by_source)
+    marker_path = os.path.join(proj_dir, "fm_agent", _READY_MARKER)
+    with open(marker_path, "w", encoding="utf-8") as file:
+        file.write("ready\n")
+
+
+def publish_entry_results(proj_dir: str) -> None:
+    """Copy entry results back to the original project and remove the run copy."""
+    global _entry_run_dir
+
+    if _entry_run_dir is None or not os.path.isdir(_entry_run_dir):
+        return
+    _require_configured(proj_dir)
+
+    try:
+        run_work_dir = os.path.join(_entry_run_dir, "fm_agent")
+        original_work_dir = os.path.join(_original_proj_dir, "fm_agent")
+        ready_marker = os.path.join(run_work_dir, _READY_MARKER)
+        if os.path.isfile(ready_marker):
+            os.remove(ready_marker)
+        mismatches = _count_mismatches(
+            os.path.join(run_work_dir, "logic_verification_results"),
+            all_bugs=_all_bugs,
+        )
+        if os.path.isdir(run_work_dir):
+            if os.path.isdir(original_work_dir):
+                shutil.rmtree(original_work_dir)
+            shutil.copytree(run_work_dir, original_work_dir, symlinks=True)
+            print(f"[EntryPlugin] Copied generated fm_agent/ to {original_work_dir}.")
+        shutil.rmtree(_entry_run_dir, ignore_errors=True)
+        _entry_run_dir = None
+        print(f"[EntryPlugin] Bugs (mismatches): {mismatches}")
+        print(f"[EntryPlugin] Done. Results in {original_work_dir}.")
+    finally:
+        clear_test_file_exemptions()
 
 
 def _restrict_to_chains(call_graph, entry_func, end_funcs):
@@ -244,94 +366,14 @@ def _make_run_copy(proj_dir, run_dir):
     os.replace(tmp_dir, run_dir)
 
 
-def run_entry_pipeline(
-    proj_dir,
-    entry_func=None,
-    end_funcs=None,
-    resume=False,
-    domain_knowledge_files=None,
-    one_phase=False,
-    extra_call_edges_path=None,
-    only_spec=False,
-    bug_validator_path=None,
-    all_bugs=False,
-):
-    """Run the entry-point-scoped reasoning pipeline.
-
-    Algorithm:
-      1. Collect the functions related to ``entry_func`` — those reachable from
-         it, optionally restricted to call chains ending at ``end_funcs`` — by
-         freshly extracting every function into a temporary workspace and
-         building the static call graph. No previous run_pipeline() is assumed.
-      2. Copy the project's sources into a separate run directory, then delete
-         the unrelated functions and source files from that copy. ``proj_dir``
-         itself is never modified.
-      3. Invoke the standard ``run_pipeline`` directly on the run directory:
-         because only the related functions remain, it naturally specs and
-         reasons about exactly that set, writing results to ``<run_dir>/fm_agent/``.
-         Entry reasoning intentionally does not perform bug validation.
-      4. Copy the generated ``fm_agent/`` workspace back into ``proj_dir`` and
-         discard the run directory. The copy-back runs even when the pipeline
-         fails, so partial results are preserved, and any stray edits the
-         pipeline's agents made stay confined to the discarded run directory.
-
-    The run directory lives beside the project at ``<proj_dir>.fm-entry-run``
-    while the pipeline runs and is removed afterwards; a leftover one from an
-    interrupted run is discarded and remade, since the pristine sources always
-    remain in ``proj_dir``.
-
-    Args:
-        proj_dir: path to the project directory.
-        entry_func: FQN of the entry point to start reasoning from.
-        end_funcs: list of FQNs at which to stop. If None (or empty), no chain
-            restriction is applied and the whole call graph reachable from
-            ``entry_func`` is selected.
-        resume: forwarded directly to the standard pipeline.
-        one_phase: forwarded directly to the standard pipeline.
-        all_bugs: report every mismatch candidate while keeping entry-mode bug
-            validation disabled.
-        extra_call_edges_path: optional file containing supplemental caller/callee
-            edges used for entry reachability and later top-down layer generation.
-    """
-    if entry_func is None:
-        raise ValueError("entry_func is required to run the entry pipeline")
-
-    proj_dir = os.path.abspath(proj_dir)
-    work_dir = os.path.join(proj_dir, "fm_agent")
-    config.BUG_VALIDATION_MAX_RETRIES = 0
-
-    # The entry_func's source file may match the test-file heuristics (a test
-    # directory or test-like name). Exempt it so neither the selection extraction
-    # below nor run_pipeline's extraction skips it — the entry point must always
-    # be reasoned about. Cleared in the finally so the exemption never leaks into
-    # a later run in the same process.
-    add_test_file_exemption(_entry_func_source_rel(entry_func))
-    try:
-        _run_entry_pipeline_inner(
-            proj_dir,
-            work_dir,
-            entry_func,
-            end_funcs,
-            resume,
-            domain_knowledge_files=domain_knowledge_files,
-            one_phase=one_phase,
-            extra_call_edges_path=extra_call_edges_path,
-            only_spec=only_spec,
-            bug_validator_path=bug_validator_path,
-            all_bugs=all_bugs,
-        )
-    finally:
-        clear_test_file_exemptions()
-
-
 def _enumerate_source_files(proj_dir):
     """List every supported, non-test source file under proj_dir (relative paths).
 
     Skips the fm_agent/ and .git/ directories and applies the same language and
     test-file filters run_extraction uses, so the returned files are exactly the
     ones that will yield extracted functions. The entry_func's source file is
-    still included when it looks like a test, because run_entry_pipeline
-    registers it as a test-file exemption before selection runs.
+    still included when it looks like a test, because configure registers it as
+    a test-file exemption before selection runs.
     """
     source_files = []
     for root, dirs, files in os.walk(proj_dir):
@@ -455,89 +497,6 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
         keep_by_source[_entry_func_source_rel(fqn)].add(_fqn_to_ident(fqn))
 
     return all_by_source, keep_by_source
-
-
-def _run_entry_pipeline_inner(
-    proj_dir,
-    work_dir,
-    entry_func,
-    end_funcs,
-    resume,
-    domain_knowledge_files=None,
-    one_phase=False,
-    extra_call_edges_path=None,
-    only_spec=False,
-    bug_validator_path=None,
-    all_bugs=False,
-):
-    """Body of run_entry_pipeline; runs with the entry source file exempted."""
-    # 1. Selection: extract fresh into a temp workspace and build the call graph.
-    extra_call_edges = load_call_edges(extra_call_edges_path)
-    all_by_source, keep_by_source = _select_functions_by_source(
-        proj_dir,
-        entry_func,
-        end_funcs,
-        extra_call_edges=extra_call_edges,
-    )
-
-    # 2. Copy the sources into a separate run directory, then trim that copy.
-    # proj_dir is left untouched throughout.
-    run_dir = proj_dir + ".fm-entry-run"
-    run_work_dir = os.path.join(run_dir, "fm_agent")
-    # _make_run_copy brings along an existing fm_agent/, so a resumed run finds
-    # the prior state in run_dir without any extra seeding here.
-    _make_run_copy(proj_dir, run_dir)
-    try:
-        # Build the codegraph index on the run copy before trimming so that
-        # _trim_project_in_place detects function names/spans with the same
-        # codegraph backend that _select_functions_by_source used to produce
-        # keep_by_source. Without it the trim would fall back to the regex
-        # extractor and could disagree with the selection (mismatched names or
-        # spans -> wrong functions kept/removed). Non-fatal: skips silently if
-        # codegraph is not installed (selection then also used regex, so the two
-        # stay consistent). run_pipeline rebuilds the index again after the trim
-        # edits these sources, so extraction sees the trimmed tree, not this one.
-        try_codegraph_init(run_dir)
-        _trim_project_in_place(run_dir, all_by_source, keep_by_source)
-
-        # 3. Run the standard pipeline directly on the run copy.
-        # Imported lazily to avoid a circular import (main imports
-        # run_entry_pipeline at module load).
-        from main import run_pipeline
-
-        # Force the entry point's source file into phases.json even if the setup
-        # agent omits it (e.g. because it looks like a test), so run_pipeline
-        # always extracts and reasons about the entry function.
-        run_pipeline(
-            run_dir,
-            resume=resume,
-            required_source_files=[_entry_func_source_rel(entry_func)],
-            domain_knowledge_files=domain_knowledge_files,
-            one_phase=one_phase,
-            extra_call_edges_path=extra_call_edges_path,
-            only_spec=only_spec,
-            bug_validator_path=bug_validator_path,
-            all_bugs=all_bugs,
-        )
-    finally:
-        # 4. Copy the generated fm_agent/ back into proj_dir, then discard the
-        # run directory. Runs even on failure so partial results are preserved.
-        if os.path.isdir(run_work_dir):
-            if os.path.isdir(work_dir):
-                shutil.rmtree(work_dir)
-            shutil.copytree(run_work_dir, work_dir, symlinks=True)
-            print(f"[EntryPipeline] Copied generated fm_agent/ to {work_dir}.")
-        shutil.rmtree(run_dir, ignore_errors=True)
-
-    # Report the bug count: the number of MISMATCH verdicts the reasoner wrote
-    # into fm_agent/logic_verification_results/.
-    mismatches = _count_mismatches(
-        os.path.join(work_dir, "logic_verification_results"),
-        all_bugs=all_bugs,
-    )
-    print(f"[EntryPipeline] Bugs (mismatches): {mismatches}")
-
-    print(f"[EntryPipeline] Done. Results in {work_dir}.")
 
 
 def _count_mismatches(results_dir, all_bugs=False):
