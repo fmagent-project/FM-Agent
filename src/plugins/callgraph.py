@@ -21,6 +21,7 @@ import json
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.extract import run_extraction, EXT_TO_LANG, LANG_CONFIG
+from src.plugins import registry
 from src.plugins.base import (
     CallSite,
     FunctionId,
@@ -48,18 +49,31 @@ def _path_is_within(path: str, root: str) -> bool:
         return False
 
 
+def _known_fm_agent_work_dir_names() -> set:
+    """Return FM-Agent runtime output directory names known to this driver."""
+    names = {"fm_agent"}
+    for plugin_name in registry.plugin_names():
+        manifest = registry.get_manifest(plugin_name)
+        names.add(manifest.get("work_subdir", f"fm_agent_{plugin_name}"))
+    return names
+
+
 def scan_source_files(proj_dir: str, excluded_root: Optional[str] = None) -> List[str]:
-    """Find supported source files, excluding one active plugin work tree."""
+    """Find supported source files, excluding FM-Agent runtime work trees."""
     source_exts = set(EXT_TO_LANG.keys())
+    project_root = _absolute_path(proj_dir)
     excluded = _absolute_path(excluded_root) if excluded_root else None
     if excluded and _path_is_within(proj_dir, excluded):
         return []
+    known_work_dirs = _known_fm_agent_work_dir_names()
     found = []
     for root, dirs, files in os.walk(proj_dir):
+        abs_root = _absolute_path(root)
         dirs[:] = [
             d for d in dirs
             if not d.startswith(".")
             and d not in {"node_modules", "__pycache__", "venv", ".venv"}
+            and not (abs_root == project_root and d in known_work_dirs)
             and not (excluded and _path_is_within(os.path.join(root, d), excluded))
         ]
         for fname in files:

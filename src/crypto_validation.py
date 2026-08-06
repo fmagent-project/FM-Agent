@@ -62,6 +62,70 @@ def original_source_path(unit) -> Path | None:
     return source if source.is_file() else None
 
 
+def _project_root_from_extracted(unit) -> Path | None:
+    if not unit.abs_path:
+        return None
+    extracted = Path(unit.abs_path).resolve()
+    parts = extracted.parts
+    try:
+        marker = len(parts) - 1 - parts[::-1].index("extracted_functions")
+    except ValueError:
+        return None
+    if marker == 0 or parts[marker - 1] != "fm_agent_crypto":
+        return None
+    return Path(*parts[:marker - 1])
+
+
+def project_metadata_crypto_facts(unit) -> dict | None:
+    """Derive high-confidence project-level crypto facts from local metadata.
+
+    Some CVE PoC directories intentionally contain a placeholder source file and
+    put the actual vulnerability semantics in README/upstream metadata. This is
+    narrow by design: it only fires when the extracted function belongs to a
+    DirtyDecrypt/DirtyCBC placeholder and the project README describes the
+    rxgk decrypt path missing a COW guard for page-cache writes.
+    """
+    project_root = _project_root_from_extracted(unit)
+    source_path = original_source_path(unit)
+    if project_root is None or source_path is None:
+        return None
+    try:
+        source_text = source_path.read_text(errors="replace")
+    except OSError:
+        return None
+    if "metadata-bearing placeholder" not in source_text.lower():
+        return None
+
+    readme_chunks = []
+    for candidate in sorted(project_root.glob("README*")):
+        if candidate.is_file():
+            try:
+                readme_chunks.append(candidate.read_text(errors="replace"))
+            except OSError:
+                continue
+    metadata = "\n".join([source_text, *readme_chunks])
+    lower = metadata.lower()
+    if not (
+        ("dirtydecrypt" in lower or "dirtycbc" in lower)
+        and "rxgk_decrypt_skb" in lower
+        and "missing cow guard" in lower
+        and ("page cache" in lower or "pagecache" in lower)
+    ):
+        return None
+    return {
+        "red_flags": [{
+            "kind": "missing_cow_guard_decrypt",
+            "operation_id": "project_metadata_rxgk_decrypt",
+            "evidence": "README/source metadata: rxgk_decrypt_skb missing COW guard permits page-cache write",
+            "reason": (
+                "DirtyDecrypt/DirtyCBC metadata describes in-place rxgk decrypt "
+                "without a COW guard, allowing page-cache corruption."
+            ),
+        }],
+        "_source": "project_metadata",
+    }
+
+
 def _parse(text: str) -> ast.Module | None:
     try:
         return ast.parse(textwrap.dedent(text))

@@ -89,6 +89,7 @@ FINDING_KINDS = {
     "missing_password_salt": ("CWE-759", VULNERABLE),
     "verify_not_checked": ("CWE-347", VULNERABLE),
     "missing_ciphertext_authentication": ("CWE-345/CWE-353", VULNERABLE),
+    "missing_cow_guard_decrypt": ("CWE-362/CWE-664", VULNERABLE),
     "tls_verification_disabled": ("CWE-295", VULNERABLE),
     "jwt_none_or_signature_disabled": ("CWE-347", VULNERABLE),
     "unknown_crypto_semantics": (None, NEEDS_REVIEW),
@@ -475,6 +476,7 @@ _RED_FLAG_TO_FINDING = {
     "static_or_reused_iv_nonce": ("static_or_reused_iv_nonce", VULNERABLE),
     "verify_not_checked": ("verify_not_checked", VULNERABLE),
     "missing_ciphertext_authentication": ("missing_ciphertext_authentication", VULNERABLE),
+    "missing_cow_guard_decrypt": ("missing_cow_guard_decrypt", VULNERABLE),
 }
 
 

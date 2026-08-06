@@ -9,7 +9,7 @@ import urllib.parse
 import logging
 from config import *
 from .cli_backend import is_cli_backend_enabled, run_agent_for_messages
-from openai import OpenAI, RateLimitError, BadRequestError
+from openai import OpenAI, RateLimitError, BadRequestError, APIStatusError
 from .trace_writer import (
     new_event_id,
     record_llm_exchange,
@@ -21,6 +21,7 @@ _llm_provider_client = _openrouter_client
 
 _MAX_RATE_LIMIT_RETRIES = 20
 _MAX_LLM_RETRIES = 5
+_NON_RETRYABLE_STATUS_CODES = {400, 401, 402, 403, 404}
 
 # Maximum output tokens for anthropic-native /v1/messages calls.
 # Anthropic requires this field; OpenAI-compatible layers often hide it, but the native endpoint needs it.
@@ -79,6 +80,57 @@ def _messages_to_anthropic(messages):
         elif role in ("user", "assistant"):
             out.append({"role": role, "content": content})
     return system_text, out
+
+
+def _messages_to_responses(messages):
+    """Split chat-style messages into Responses API instructions + input."""
+    instructions = []
+    user_input = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
+        if role == "system":
+            instructions.append(content)
+        elif role in ("user", "assistant", "developer"):
+            user_input.append({"role": role, "content": content})
+    return "\n\n".join(x for x in instructions if x), user_input or [{"role": "user", "content": ""}]
+
+
+def _responses_create(client, model, messages, extra):
+    instructions, response_input = _messages_to_responses(messages)
+    kwargs = dict(extra)
+    if instructions:
+        kwargs["instructions"] = instructions
+    if LLM_EFFORT:
+        kwargs["reasoning"] = {"effort": LLM_EFFORT}
+    if LLM_DISABLE_RESPONSE_STORAGE:
+        kwargs["store"] = False
+    response = client.responses.create(model=model, input=response_input, **kwargs)
+    text = getattr(response, "output_text", None)
+    if text is None:
+        chunks = []
+        for item in getattr(response, "output", []) or []:
+            for content in getattr(item, "content", []) or []:
+                value = getattr(content, "text", None)
+                if value:
+                    chunks.append(value)
+        text = "".join(chunks)
+    usage_obj = getattr(response, "usage", None)
+    usage = usage_obj.model_dump() if usage_obj else {}
+    return text or "", usage
+
+
+def _is_deepseek_model(model):
+    return (model or "").lower().startswith("deepseek")
+
+
+def _deepseek_effort(effort):
+    value = (effort or "").strip().lower()
+    if value in {"xhigh", "extra-high", "extra_high"}:
+        return "high"
+    return value
 
 
 def _anthropic_create(model, messages):
@@ -180,12 +232,42 @@ def _retry_create(client, model, messages):
         try:
             if use_anthropic:
                 return _anthropic_create(model, messages)
+            if LLM_API_MODE == "responses":
+                return _responses_create(client, model, messages, extra)
+            if LLM_EFFORT and _is_deepseek_model(model):
+                extra.setdefault("extra_body", {})
+                extra["extra_body"].setdefault("thinking", {"type": "enabled"})
+                extra["extra_body"]["reasoning_effort"] = _deepseek_effort(LLM_EFFORT)
             response = client.chat.completions.create(model=model, messages=messages, **extra)
             text = response.choices[0].message.content
             usage = response.usage.model_dump() if response.usage else {}
             return text, usage
         except BadRequestError:
             raise
+        except APIStatusError as exc:
+            status = getattr(exc, "status_code", None)
+            if status in _NON_RETRYABLE_STATUS_CODES:
+                raise RuntimeError(f"Non-retryable LLM API error {status}: {exc}") from exc
+            if status == 429:
+                rate_limit_attempts += 1
+                if rate_limit_attempts >= _MAX_RATE_LIMIT_RETRIES:
+                    raise RuntimeError(
+                        f"Rate limited after {_MAX_RATE_LIMIT_RETRIES} retries: {exc}"
+                    ) from exc
+                wait = min(2 ** (rate_limit_attempts - 1) * 5, 300) + random.uniform(1, 10)
+                logging.warning(f"LLM rate-limited, sleeping {wait:.1f}s (attempt {rate_limit_attempts})")
+                time.sleep(wait)
+                continue
+            transient_attempts += 1
+            if transient_attempts >= _MAX_LLM_RETRIES:
+                raise RuntimeError(
+                    f"LLM request failed after {_MAX_LLM_RETRIES} retries: {exc}"
+                ) from exc
+            wait = min(2 ** (transient_attempts - 1) * 5, 60) + random.uniform(1, 3)
+            logging.warning(
+                f"LLM API error ({type(exc).__name__}: {str(exc)[:120]}), "
+                f"sleeping {wait:.1f}s (attempt {transient_attempts})")
+            time.sleep(wait)
         except urllib.error.HTTPError as exc:
             status = exc.code
             body = _read_error_body(exc)  # the relay's raw error page (str(exc) drops it)

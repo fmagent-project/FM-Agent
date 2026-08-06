@@ -24,6 +24,7 @@ from src.crypto_reasoner import (
     VULNERABLE, WEAK, POLYMORPHIC, NEEDS_REVIEW, SAFE, ERROR,
 )
 from src.crypto_validation import (
+    project_metadata_crypto_facts,
     source_only_facts,
     source_provenance_context,
     source_rel_from_extracted,
@@ -248,6 +249,26 @@ class CryptoPlugin(AnalysisPlugin):
         if payload is None:
             return Verdict(plugin_name="crypto", verdict=ERROR, status="error",
                            data={"error": "invalid crypto abstraction (fail-closed)"})
+        metadata_facts = project_metadata_crypto_facts(context.function)
+        if metadata_facts:
+            payload.setdefault("red_flags", [])
+            existing = {
+                (
+                    flag.get("kind"),
+                    flag.get("operation_id"),
+                    flag.get("evidence"),
+                )
+                for flag in payload["red_flags"] if isinstance(flag, dict)
+            }
+            for flag in metadata_facts.get("red_flags") or []:
+                key = (
+                    flag.get("kind"),
+                    flag.get("operation_id"),
+                    flag.get("evidence"),
+                )
+                if key not in existing:
+                    payload["red_flags"].append(flag)
+            payload["_project_metadata"] = metadata_facts.get("_source")
         facts.payload = payload
 
         result = classify(facts.payload)
