@@ -1,0 +1,326 @@
+"""Call-graph construction helpers (shared by stage5 and stage6)."""
+
+import os
+import re
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Set, Tuple
+from src.extract import EXT_TO_LANG, LANG_CONFIG
+
+
+# --- local base types (self-contained, no dependency on src/plugins/) ---------
+
+@dataclass(frozen=True)
+class SourceSpan:
+    path: str
+    start_line: int = 0
+    end_line: int = 0
+
+
+@dataclass(frozen=True)
+class FunctionId:
+    rel: str
+    name: str
+    base_name: str
+    language: str
+
+
+@dataclass(frozen=True)
+class FunctionUnit:
+    id: FunctionId
+    source: str
+    signature_line: str
+    params: Sequence[str] = field(default_factory=tuple)
+    abs_path: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CallSite:
+    caller: FunctionId
+    callee: FunctionId
+    callee_name: str
+    order_index: int = 0
+    arg_bindings: Dict[str, str] = field(default_factory=dict)
+    span: Optional[SourceSpan] = None
+
+
+@dataclass(frozen=True)
+class ProgramIndex:
+    functions: Dict[FunctionId, FunctionUnit]
+    calls_by_caller: Dict[FunctionId, Sequence[CallSite]]
+    callers_by_callee: Dict[FunctionId, Sequence[CallSite]]
+    entrypoints: Sequence[FunctionId]
+
+_NAME_FIRST_LANGS = {"go"}
+
+
+# --- identity helpers ---------------------------------------------------------
+
+def base_name(n: str) -> str:
+    """Strip extract.py's dedupe suffix: foo_1 -> foo."""
+    return re.sub(r"_\d+$", "", n)
+
+
+def _signature_line(src: str, language: str) -> str:
+    """Best-effort first non-comment line as the function signature header."""
+    cfg = LANG_CONFIG.get(language.lower(), {})
+    cprefix = cfg.get("comment_prefix", "//")
+    for ln in src.splitlines():
+        s = ln.strip()
+        if not s or s.startswith(cprefix) or s.startswith("#") or s.startswith("*"):
+            continue
+        return s
+    lines = src.splitlines()
+    return lines[0] if lines else ""
+
+
+def _split_top_level(text: str, sep: str) -> List[str]:
+    """Split text on sep at paren/bracket/brace depth 0."""
+    out, depth, cur = [], 0, []
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        if ch == sep and depth == 0:
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur))
+    return out
+
+
+def extract_params(sig_line: str, language: Optional[str] = None) -> List[str]:
+    """Parse formal parameter names from a signature line.
+
+    Handles C/Java 'type name' and Go 'name type' conventions.
+    """
+    m = re.search(r"\(([^)]*)\)", sig_line or "")
+    if not m:
+        return []
+    inner = m.group(1).strip()
+    if not inner:
+        return []
+    name_first = (language or "").lower() in _NAME_FIRST_LANGS
+    params = []
+    for part in _split_top_level(inner, ","):
+        tok = part.strip()
+        if not tok or tok in ("void", "self", "cls"):
+            continue
+        tok = tok.split("=", 1)[0].strip()
+        if ":" in tok:
+            tok = tok.split(":", 1)[0].strip()
+            words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", tok)
+            if words:
+                params.append(words[0])
+            continue
+        words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", tok)
+        if words:
+            params.append(words[0] if name_first else words[-1])
+    return params
+
+
+# --- call-site parsing -------------------------------------------------------
+
+def find_call_arg_lists(src: str, callee_name: str) -> List[List[str]]:
+    """Return a list of argument-expression lists for each ``callee_name(...)`` call."""
+    calls = []
+    for m in re.finditer(rf"\b{re.escape(callee_name)}\s*\(", src):
+        if callee_name == "__init__" and m.start() > 0 and src[m.start() - 1] == ".":
+            continue
+        i = m.end() - 1
+        depth, j = 0, i
+        while j < len(src):
+            if src[j] == "(":
+                depth += 1
+            elif src[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        line_start = src.rfind("\n", 0, m.start()) + 1
+        prefix = src[line_start:m.start()]
+        remainder = src[j + 1:]
+        if _looks_like_declaration(prefix, remainder):
+            continue
+        inner = src[i + 1: j]
+        args = [a.strip() for a in _split_top_level(inner, ",")] if inner.strip() else []
+        calls.append(args)
+    return calls
+
+
+def _looks_like_declaration(line_prefix: str, remainder: str) -> bool:
+    if re.search(r"\b(?:def|function|func|fn)\b", line_prefix):
+        return True
+    if remainder.lstrip().startswith("{") and not re.search(
+        r"[.=]|\b(?:return|if|for|while|switch|new)\b", line_prefix
+    ):
+        return bool(re.search(r"[A-Za-z_][A-Za-z0-9_]*\s+$", line_prefix))
+    return False
+
+
+# --- FunctionUnit loading from extracted_functions/ ---------------------------
+
+def load_units_from_extracted(work_dir: str) -> List[FunctionUnit]:
+    """Load FunctionUnit list from Stage 3's extracted_functions/ directory.
+
+    Reuses FM-Agent's extraction output; never re-extracts.
+    """
+    input_dir = os.path.join(work_dir, "extracted_functions")
+    if not os.path.isdir(input_dir):
+        return []
+    units = []
+    for root, _, files in os.walk(input_dir):
+        for fname in files:
+            ext = fname.rsplit(".", 1)[-1] if "." in fname else ""
+            if ext not in EXT_TO_LANG:
+                continue
+            abs_path = os.path.join(root, fname)
+            rel = os.path.relpath(abs_path, input_dir)
+            try:
+                with open(abs_path, "r", errors="replace") as f:
+                    src = f.read()
+            except OSError:
+                continue
+            language = EXT_TO_LANG.get(ext, "C").lower()
+            sig = _signature_line(src, language)
+            name = os.path.splitext(fname)[0]
+            bn = base_name(name)
+            params = tuple(extract_params(sig, language))
+            fid = FunctionId(rel=rel, name=name, base_name=bn, language=language)
+            units.append(FunctionUnit(
+                id=fid, source=src, signature_line=sig,
+                params=params, abs_path=abs_path,
+            ))
+    return units
+
+
+# --- ProgramIndex construction ------------------------------------------------
+
+def _arg_bindings_for(unit: FunctionUnit, args: Sequence[str]) -> Dict[str, str]:
+    """Map callee formal sources (param:<name>) to caller actual arg expressions."""
+    binding: Dict[str, str] = {}
+    for idx, formal in enumerate(unit.params):
+        if idx < len(args):
+            binding[f"param:{formal}"] = args[idx]
+    return binding
+
+
+def build_program_index(units: List[FunctionUnit]) -> ProgramIndex:
+    """Build the call graph, reverse graph, and entrypoint set.
+
+    Edges are name-based (regex), matching call sites by callee BASE name.
+    Entrypoints = functions with no internal caller.
+    """
+    functions = {u.id: u for u in units}
+    calls_by_caller: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
+    callers_by_callee: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
+    called_internally: set = set()
+
+    for caller in units:
+        order = 0
+        for callee in units:
+            if callee.id == caller.id:
+                continue
+            cb = base_name(callee.id.name)
+            arg_lists = find_call_arg_lists(caller.source, cb)
+            if not arg_lists:
+                continue
+            called_internally.add(callee.id)
+            for args in arg_lists:
+                site = CallSite(
+                    caller=caller.id, callee=callee.id,
+                    callee_name=cb, order_index=order,
+                    arg_bindings=_arg_bindings_for(callee, args),
+                    span=SourceSpan(path=caller.id.rel),
+                )
+                calls_by_caller[caller.id].append(site)
+                callers_by_callee[callee.id].append(site)
+                order += 1
+
+    entrypoints = [u.id for u in units if u.id not in called_internally]
+    return ProgramIndex(
+        functions=functions,
+        calls_by_caller=calls_by_caller,
+        callers_by_callee=callers_by_callee,
+        entrypoints=entrypoints,
+    )
+
+
+# --- bottom-up ordering (with SCC detection) ----------------------------------
+
+def order_bottom_up(units: List[FunctionUnit]) -> Tuple[
+    List[FunctionUnit], List[List[dict]], List[FunctionUnit]
+]:
+    """Topological sort + SCC cycle detection + isolated-node identification.
+
+    Returns:
+        (ordered, cycles, unreachable)
+        ordered:      callee-before-caller linear order
+        cycles:       SCC groups (each [{rel, name}, ...])
+        unreachable:  functions with neither incoming nor outgoing edges
+    """
+    deps: Dict[FunctionId, Set[FunctionId]] = {u.id: set() for u in units}
+    by_id = {u.id: u for u in units}
+    for u in units:
+        for other in units:
+            if other.id == u.id:
+                continue
+            name = re.escape(base_name(other.id.name))
+            if re.search(rf"\b{name}\s*\(", u.source):
+                deps[u.id].add(other.id)
+
+    index, lowlink = {}, {}
+    stack, on_stack = [], set()
+    sccs = []
+    idx = [0]
+
+    def strongconnect(v: FunctionId):
+        index[v], lowlink[v] = idx[0], idx[0]
+        idx[0] += 1
+        stack.append(v)
+        on_stack.add(v)
+        for w in deps.get(v, set()):
+            if w not in index:
+                strongconnect(w)
+                lowlink[v] = min(lowlink[v], lowlink[w])
+            elif w in on_stack:
+                lowlink[v] = min(lowlink[v], index[w])
+        if lowlink[v] == index[v]:
+            scc = []
+            while True:
+                w = stack.pop()
+                on_stack.discard(w)
+                scc.append(w)
+                if w == v:
+                    break
+            sccs.append(scc)
+
+    for u in units:
+        if u.id not in index:
+            strongconnect(u.id)
+
+    cycles = []
+    ordered = []
+    for scc in sccs:
+        members = [{"rel": fid.rel, "name": fid.name} for fid in scc
+                   if fid in by_id]
+        if len(scc) > 1:
+            cycles.append(members)
+        else:
+            fid = scc[0]
+            if fid in deps.get(fid, set()):
+                cycles.append(members)
+            elif fid in by_id:
+                ordered.append(by_id[fid])
+
+    all_in_order = set()
+    for u in ordered:
+        all_in_order.add(u.id)
+    for scc in sccs:
+        for fid in scc:
+            if fid in by_id:
+                all_in_order.add(fid)
+    unreachable = [u for u in units if u.id not in all_in_order]
+
+    return ordered, cycles, unreachable

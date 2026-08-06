@@ -1,0 +1,21 @@
+{
+  "name": "ifc",
+  "version": "0.2.0",
+  "stages": {
+    "generate_phase_plan": {
+      "type": "replace",
+      "replace_function": "replace_generate_phase_plan"
+    },
+    "generate_domain_context": {
+      "type": "pass"
+    },
+    "generate_topdown_layers": {
+      "type": "replace",
+      "replace_function": "replace_generate_topdown_layers"
+    },
+    "generate_specs_and_verification": {
+      "type": "replace",
+      "replace_function": "replace_generate_specs_and_verification"
+    }
+  }
+}
