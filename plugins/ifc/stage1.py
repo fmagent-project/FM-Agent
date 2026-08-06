@@ -14,7 +14,13 @@ def _scan_source_files(proj_dir: str) -> List[str]:
         dirs[:] = [
             d for d in dirs
             if not d.startswith(".")
-            and d not in {"node_modules", "__pycache__", "venv", ".venv"}
+            and d not in {
+                "node_modules",
+                "__pycache__",
+                "venv",
+                ".venv",
+                "fm_agent",
+            }
         ]
         for fname in files:
             ext = fname.rsplit(".", 1)[-1] if "." in fname else ""

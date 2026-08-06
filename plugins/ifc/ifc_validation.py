@@ -822,7 +822,7 @@ def _enrich_constant_return(signature: dict, tree: ast.AST) -> None:
         _set_output(signature, "return", [], "return", "caller", replace=True)
         return_specs = [signature["outputs"]["return"]]
     for spec in return_specs:
-        spec["deps"] = []
+        spec.setdefault("deps", [])
         spec["const"] = LOW
         spec["declass"] = []
 
