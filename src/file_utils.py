@@ -313,14 +313,22 @@ def _terminal_validation_record_is_valid(validation, expected_bug_id):
     )
 
 
-def _terminal_validation_is_valid(validation_path, expected_bug_id):
+def _terminal_validation_is_valid(
+    validation_path, expected_bug_id, retry_errors=False
+):
     """Return whether a candidate's validation artifact is complete and terminal."""
     try:
         with open(validation_path, "r", encoding="utf-8") as f:
             validation = json.load(f)
     except (OSError, json.JSONDecodeError):
         return False
-    return _terminal_validation_record_is_valid(validation, expected_bug_id)
+    return (
+        _terminal_validation_record_is_valid(validation, expected_bug_id)
+        and not (
+            retry_errors
+            and validation.get("confirmation_status") == "error"
+        )
+    )
 
 
 def _get_incomplete_verification_files(
@@ -342,6 +350,10 @@ def _get_incomplete_verification_files(
             incomplete.append(rel)
             continue
 
+        if result.get("verdict") == "ERROR":
+            incomplete.append(rel)
+            continue
+
         if all_bugs:
             candidates = _all_bugs_candidate_paths(result_path, result)
             if candidates is None:
@@ -356,7 +368,9 @@ def _get_incomplete_verification_files(
                 validation_path = os.path.join(
                     work_dir, "bug_validation", f"{bug_id}.result.json"
                 )
-                if not _terminal_validation_is_valid(validation_path, bug_id):
+                if not _terminal_validation_is_valid(
+                    validation_path, bug_id, retry_errors=True
+                ):
                     missing_validation = True
                     break
             if missing_validation:
@@ -370,16 +384,20 @@ def _get_incomplete_verification_files(
 
         bug_id = os.path.splitext(rel)[0].replace(os.sep, "--").replace("/", "--")
         validation_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
-        if not _json_file_is_valid(validation_path):
+        if not _json_file_is_valid(validation_path, retry_errors=True):
             incomplete.append(rel)
     return incomplete
 
 
-def _json_file_is_valid(path):
+def _json_file_is_valid(path, retry_errors=False):
     try:
         with open(path, "r") as f:
-            json.load(f)
-        return True
+            data = json.load(f)
+        return not (
+            retry_errors
+            and isinstance(data, dict)
+            and data.get("confirmation_status") == "error"
+        )
     except (OSError, json.JSONDecodeError):
         return False
 
