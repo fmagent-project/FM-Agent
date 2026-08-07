@@ -483,7 +483,7 @@ if __name__ == "__main__":
         usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--all-bugs] "
-              "[--submodule PATH [PATH ...]] [--entry-func PATH] "
+              "[--submodule PATH [PATH ...]] [--entry-func PATH [PATH ...]] "
               "[--end-func PATH ...] [--extra-edge FILE] "
               "[--bug-validator FILE] [--only-spec] "
               "[--list-plugin] [--plugin NAME]",
@@ -549,8 +549,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--entry-func",
         metavar="PATH",
+        nargs="+",
         default=None,
-        help="function path of the entry point to start reasoning from.",
+        help="one or more function paths of the entry points to start reasoning from.",
     )
     parser.add_argument(
         "--end-func",
