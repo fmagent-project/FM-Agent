@@ -260,9 +260,10 @@ def run_entry_pipeline(
 
     Algorithm:
       1. Collect the functions related to ``entry_func`` — those reachable from
-         it, optionally restricted to call chains ending at ``end_funcs`` — by
-         freshly extracting every function into a temporary workspace and
-         building the static call graph. No previous run_pipeline() is assumed.
+         one or more entries, optionally restricted to call chains ending at
+         ``end_funcs`` — by freshly extracting every function into a temporary
+         workspace and building the static call graph. No previous run_pipeline()
+         is assumed.
       2. Copy the project's sources into a separate run directory, then delete
          the unrelated functions and source files from that copy. ``proj_dir``
          itself is never modified.
@@ -282,10 +283,10 @@ def run_entry_pipeline(
 
     Args:
         proj_dir: path to the project directory.
-        entry_func: FQN of the entry point to start reasoning from.
+        entry_func: FQN or list of FQNs of the entry points to start reasoning from.
         end_funcs: list of FQNs at which to stop. If None (or empty), no chain
-            restriction is applied and the whole call graph reachable from
-            ``entry_func`` is selected.
+            restriction is applied and the union reachable from ``entry_func``
+            is selected.
         resume: forwarded directly to the standard pipeline.
         one_phase: forwarded directly to the standard pipeline.
         all_bugs: report every mismatch candidate while keeping entry-mode bug
@@ -293,24 +294,32 @@ def run_entry_pipeline(
         extra_call_edges_path: optional file containing supplemental caller/callee
             edges used for entry reachability and later top-down layer generation.
     """
-    if entry_func is None:
+    if isinstance(entry_func, str):
+        entry_funcs = [entry_func]
+    else:
+        entry_funcs = list(entry_func or [])
+    entry_funcs = list(dict.fromkeys(entry_funcs))
+    if not entry_funcs:
         raise ValueError("entry_func is required to run the entry pipeline")
 
     proj_dir = os.path.abspath(proj_dir)
     work_dir = os.path.join(proj_dir, "fm_agent")
     config.BUG_VALIDATION_MAX_RETRIES = 0
 
-    # The entry_func's source file may match the test-file heuristics (a test
-    # directory or test-like name). Exempt it so neither the selection extraction
-    # below nor run_pipeline's extraction skips it — the entry point must always
-    # be reasoned about. Cleared in the finally so the exemption never leaks into
-    # a later run in the same process.
-    add_test_file_exemption(_entry_func_source_rel(entry_func))
+    # Entry source files may match the test-file heuristics (a test directory or
+    # test-like name). Exempt all of them so neither the selection extraction nor
+    # run_pipeline skips a requested entry. Cleared in the finally so exemptions
+    # never leak into a later run in the same process.
+    entry_source_files = list(dict.fromkeys(
+        _entry_func_source_rel(entry) for entry in entry_funcs
+    ))
+    for source_file in entry_source_files:
+        add_test_file_exemption(source_file)
     try:
         _run_entry_pipeline_inner(
             proj_dir,
             work_dir,
-            entry_func,
+            entry_funcs,
             end_funcs,
             resume,
             domain_knowledge_files=domain_knowledge_files,
@@ -329,9 +338,9 @@ def _enumerate_source_files(proj_dir):
 
     Skips the fm_agent/ and .git/ directories and applies the same language and
     test-file filters run_extraction uses, so the returned files are exactly the
-    ones that will yield extracted functions. The entry_func's source file is
-    still included when it looks like a test, because run_entry_pipeline
-    registers it as a test-file exemption before selection runs.
+    ones that will yield extracted functions. Entry source files are still
+    included when they look like tests, because run_entry_pipeline registers
+    them as test-file exemptions before selection runs.
     """
     source_files = []
     for root, dirs, files in os.walk(proj_dir):
@@ -344,13 +353,13 @@ def _enumerate_source_files(proj_dir):
     return sorted(source_files)
 
 
-def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edges=None):
-    """Select the functions reachable from entry_func, grouped by source file.
+def _select_functions_by_source(proj_dir, entry_funcs, end_funcs, extra_call_edges=None):
+    """Select the functions reachable from all entries, grouped by source file.
 
     Extracts a throwaway copy of proj_dir with the very machinery the main
     pipeline uses — ``run_extraction`` plus ``_build_call_graph`` from
     generate_topdown_layers, both codegraph-backed whenever a codegraph index
-    can be built — then builds the call graph rooted at ``entry_func``
+    can be built — then builds the union of call graphs rooted at ``entry_funcs``
     (optionally restricted to chains reaching ``end_funcs``) and returns two
     source-file-keyed groupings:
 
@@ -405,14 +414,16 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
         )
         all_fqns = {_file_to_fqn(fp, work_dir) for fp, _mod in phase_files}
 
-        if entry_func not in all_fqns:
+        missing_entries = [entry for entry in entry_funcs if entry not in all_fqns]
+        if missing_entries:
             raise ValueError(
-                f"entry_func {entry_func!r} not found among extracted functions under proj_dir"
+                f"entry_func(s) {missing_entries!r} not found among extracted "
+                "functions under proj_dir"
             )
 
-        # BFS the call graph reachable from the entry point.
+        # Multi-source BFS produces the union reachable from all entry points.
         call_graph = {}
-        queue = deque([entry_func])
+        queue = deque(entry_funcs)
         while queue:
             fqn = queue.popleft()
             if fqn in call_graph:
@@ -430,23 +441,25 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
     finally:
         shutil.rmtree(sel_dir, ignore_errors=True)
 
-    # Keep only functions on a call chain from entry_func to one of end_funcs.
+    # Keep only functions on a call chain from an entry to one of end_funcs.
     if end_funcs:
         unreachable = sorted(set(end_funcs) - set(call_graph))
-        call_graph = _restrict_to_chains(call_graph, entry_func, end_funcs)
+        call_graph = _restrict_to_chains(call_graph, entry_funcs[0], end_funcs)
         if unreachable:
             logging.warning(
-                "[EntryPipeline] %d end function(s) are not reachable from %s: %s",
-                len(unreachable), entry_func, ", ".join(unreachable[:5]),
+                "[EntryPipeline] %d end function(s) are not reachable from any "
+                "requested entry: %s",
+                len(unreachable), ", ".join(unreachable[:5]),
             )
         if not call_graph:
             raise ValueError(
-                f"none of the requested end_funcs are reachable from entry_func {entry_func!r}"
+                "none of the requested end_funcs are reachable from any "
+                "requested entry_func"
             )
 
     print(
         f"[EntryPipeline] Selected {len(call_graph)} of {len(all_fqns)} function(s) "
-        f"from entry {entry_func}."
+        f"from {len(entry_funcs)} entry function(s)."
     )
 
     # Map the selected FQNs back to their (source file, function identifier).
@@ -460,7 +473,7 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
 def _run_entry_pipeline_inner(
     proj_dir,
     work_dir,
-    entry_func,
+    entry_funcs,
     end_funcs,
     resume,
     domain_knowledge_files=None,
@@ -470,12 +483,12 @@ def _run_entry_pipeline_inner(
     bug_validator_path=None,
     all_bugs=False,
 ):
-    """Body of run_entry_pipeline; runs with the entry source file exempted."""
+    """Body of run_entry_pipeline; runs with entry source files exempted."""
     # 1. Selection: extract fresh into a temp workspace and build the call graph.
     extra_call_edges = load_call_edges(extra_call_edges_path)
     all_by_source, keep_by_source = _select_functions_by_source(
         proj_dir,
-        entry_func,
+        entry_funcs,
         end_funcs,
         extra_call_edges=extra_call_edges,
     )
@@ -505,13 +518,22 @@ def _run_entry_pipeline_inner(
         # run_entry_pipeline at module load).
         from main import run_pipeline
 
-        # Force the entry point's source file into phases.json even if the setup
-        # agent omits it (e.g. because it looks like a test), so run_pipeline
-        # always extracts and reasons about the entry function.
+        # Force surviving entry source files into phases.json even if the setup
+        # agent omits them (e.g. because they look like tests). An entry that
+        # cannot reach any requested end_func may have been pruned along with its
+        # source file, so do not reintroduce that nonexistent path into the plan.
+        entry_source_files = dict.fromkeys(
+            _entry_func_source_rel(entry) for entry in entry_funcs
+        )
+        required_source_files = [
+            source_file
+            for source_file in entry_source_files
+            if source_file in keep_by_source
+        ]
         run_pipeline(
             run_dir,
             resume=resume,
-            required_source_files=[_entry_func_source_rel(entry_func)],
+            required_source_files=required_source_files,
             domain_knowledge_files=domain_knowledge_files,
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
