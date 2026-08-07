@@ -169,7 +169,7 @@ def run_agent_for_messages(model, messages):
         input=command.stdin,
         cwd=cwd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -177,7 +177,9 @@ def run_agent_for_messages(model, messages):
         check=False,
     )
     if result.returncode != 0:
-        output = (result.stdout or "")[-4000:]
+        output = "\n".join(
+            part for part in (result.stdout, result.stderr) if part
+        ).strip()[-4000:]
         raise RuntimeError(
             f"{command.backend} exited with code {result.returncode}: {output}"
         )

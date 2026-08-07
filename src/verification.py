@@ -477,13 +477,16 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 if all_bugs
                 else None
             )
-            reusable = not all_bugs or (
-                candidates is not None
-                and _rebind_all_bugs_function_paths(
-                    output_path,
-                    existing,
-                    candidates,
-                    artifact_function,
+            reusable = verdict != "ERROR" and (
+                not all_bugs
+                or (
+                    candidates is not None
+                    and _rebind_all_bugs_function_paths(
+                        output_path,
+                        existing,
+                        candidates,
+                        artifact_function,
+                    )
                 )
             )
             if reusable:
@@ -721,10 +724,23 @@ def _validate_single_bug(
     # finishes this validation stage. Candidate identity is fixed by the
     # completed reasoning artifacts, so no content hash is needed here.
     if is_candidate and resume and os.path.exists(result_path):
-        if _terminal_validation_is_valid(result_path, bug_id):
+        if _terminal_validation_is_valid(
+            result_path, bug_id, retry_errors=True
+        ):
             logging.info(f"Bug validation already done, skipping: {bug_id}")
             return
         _clear_bug_validation_artifacts(work_dir, bug_id)
+
+    if not is_candidate and resume and os.path.exists(result_path):
+        try:
+            with open(result_path) as result_file:
+                existing_validation = json.load(result_file)
+            if existing_validation.get("confirmation_status") != "error":
+                logging.info(f"Bug validation already done, skipping: {bug_id}")
+                return
+            _clear_bug_validation_artifacts(work_dir, bug_id)
+        except (json.JSONDecodeError, OSError):
+            pass  # corrupted result — re-validate
 
     # Read either the user-selected validator or the built-in default.
     base_md_path = (
@@ -782,16 +798,6 @@ def _validate_single_bug(
         cwd=proj_dir,
         files=[prompt_path],
     )
-    # Preserve the legacy resume path exactly: a readable result is reusable
-    # without candidate-specific schema or content checks.
-    if not is_candidate and resume and os.path.exists(result_path):
-        try:
-            with open(result_path) as _f:
-                json.load(_f)
-            logging.info(f"Bug validation already done, skipping: {bug_id}")
-            return
-        except (json.JSONDecodeError, OSError):
-            pass  # corrupted result — re-validate
     try:
         max_attempts = config.BUG_VALIDATION_MAX_RETRIES
         for attempt in range(1, max_attempts + 1):
