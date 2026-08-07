@@ -518,12 +518,18 @@ def _run_entry_pipeline_inner(
         # run_entry_pipeline at module load).
         from main import run_pipeline
 
-        # Force all entry source files into phases.json even if the setup agent
-        # omits them (e.g. because they look like tests), so run_pipeline always
-        # extracts and reasons about every requested entry function.
-        required_source_files = list(dict.fromkeys(
+        # Force surviving entry source files into phases.json even if the setup
+        # agent omits them (e.g. because they look like tests). An entry that
+        # cannot reach any requested end_func may have been pruned along with its
+        # source file, so do not reintroduce that nonexistent path into the plan.
+        entry_source_files = dict.fromkeys(
             _entry_func_source_rel(entry) for entry in entry_funcs
-        ))
+        )
+        required_source_files = [
+            source_file
+            for source_file in entry_source_files
+            if source_file in keep_by_source
+        ]
         run_pipeline(
             run_dir,
             resume=resume,
