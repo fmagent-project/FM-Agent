@@ -165,6 +165,8 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--bug-validator FILE` | 使用自定义 Markdown 提示词执行 Bug 验证，替代内置的 `md/bug_validator.md`。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
+| `--entry-func FQN [FQN ...]` | 从一个或多个入口函数运行独立的入口函数 Pipeline。 |
+| `--end-func FQN [FQN ...]` | 与 `--entry-func` 一起使用时，只保留能够到达一个或多个终止函数的路径，并在这些函数处停止分析。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 | `--plugin NAME` | 加载 `plugins/NAME/` 下的 Pipeline 插件。 |
@@ -182,6 +184,41 @@ def hook(proj_dir: str) -> None:
 
 插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
 [Pipeline 插件](docs/plugins_zh.md)。
+
+### 入口函数分析
+
+必须将 `proj_dir` 放在 `--entry-func` 之前。单个入口函数仍然受支持：
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::application_entry
+```
+
+在一个 `--entry-func` 后传入多个 FQN，即可在一次运行中共同分析多个入口：
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b
+```
+
+不指定 `--end-func` 时，FM-Agent 会保留所有入口可达调用图的并集。重复入口
+会被忽略，多个入口共享的函数只分析一次。
+
+如需限制分析范围，可以传入一个或多个终止函数：
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b \
+  --end-func services-py::end_a services-py::end_b
+```
+
+指定终止函数后，FM-Agent 会保留所有有效 entry-to-end 路径的并集，并在指定
+的终止函数处结束各条保留路径。无法到达任何指定终止函数的入口不会进入最终
+分析范围。
+
+入口函数 Pipeline 会在一次性副本中计算需要保留的调用链，裁剪另一个运行副本
+中的源文件和函数，再针对该副本运行标准 Pipeline。完成后，它会把生成的
+`fm_agent/` 工作区复制回原项目，并删除两个临时副本。原项目源码始终不会被修改。
 
 `proj_dir` 必须是一个 git 仓库。
 

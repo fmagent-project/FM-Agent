@@ -216,6 +216,8 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--bug-validator FILE`       | Use a custom Markdown prompt for bug validation instead of the built-in `md/bug_validator.md`. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
+| `--entry-func FQN [FQN ...]` | Run the dedicated entry-point pipeline from one or more entry functions. |
+| `--end-func FQN [FQN ...]` | With `--entry-func`, retain paths that reach one or more end functions and stop analysis at those functions. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 | `--plugin NAME`             | Load a pipeline plugin from `plugins/NAME/`. |
@@ -233,6 +235,46 @@ def hook(proj_dir: str) -> None:
 
 See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
 configuration, execution modes, lifecycle, and trust boundary.
+
+### Entry-point analysis
+
+Place `proj_dir` before `--entry-func`. A single entry function remains
+supported:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::application_entry
+```
+
+Pass multiple FQNs after one `--entry-func` to analyze several entry points in
+one run:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b
+```
+
+Without `--end-func`, FM-Agent retains the union of the call graphs reachable
+from all entries. Duplicate entries are ignored, and functions shared by
+multiple entries are analyzed once.
+
+To bound the analysis, pass one or more end functions:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b \
+  --end-func services-py::end_a services-py::end_b
+```
+
+With end functions, FM-Agent retains the union of all valid entry-to-end paths
+and stops each retained path at its requested end. Entries that cannot reach
+any requested end are excluded from the final analysis scope.
+
+The entry pipeline computes the selected call chains in a throwaway copy,
+trims a separate run copy to the selected source files and functions, and runs
+the standard pipeline against that copy. It then copies the generated
+`fm_agent/` workspace back to the original project and removes both temporary
+copies. The original project sources are never modified.
 
 `proj_dir` must be a git repository.
 
