@@ -6,49 +6,97 @@ import os
 from .callgraph import (
     build_program_index,
     load_units_from_extracted,
-    merge_extra_edges,
     order_bottom_up,
 )
 
 
 def _load_extra_edges(work_dir: str) -> list:
-    """Load extra call edges from FM-Agent's plugin_context.json if present."""
+    """Load extra call edges via FM-Agent's shared ``load_call_edges`` parser."""
     ctx_path = os.path.join(work_dir, "plugin_context.json")
     if not os.path.isfile(ctx_path):
         return []
     with open(ctx_path, "r", encoding="utf-8") as f:
         ctx = json.load(f)
-    extra_edge = ctx.get("extra_edge", None)
-    if not extra_edge or not os.path.isfile(extra_edge):
+    extra_edge_path = ctx.get("extra_edge", None)
+    if not extra_edge_path or not os.path.exists(extra_edge_path):
         return []
-    try:
-        with open(extra_edge, "r", encoding="utf-8") as f:
-            edges = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-    if not isinstance(edges, list):
-        return []
-    # Convert to CallSite objects. The extra-edge format is a list of
-    # {"caller": "rel::name", "callee": "rel::name"} dicts.
-    from .callgraph import CallSite, FunctionId, SourceSpan
-    sites = []
-    for edge in edges:
-        if not isinstance(edge, dict):
+    from src.call_graph_edges import load_call_edges
+    return load_call_edges(extra_edge_path)
+
+
+def _resolve_fn_id(functions, fqn: str):
+    """Look up a FunctionId by its canonical ``path::func`` FQN label."""
+    if "::" not in fqn:
+        return None
+    parts = fqn.rsplit("::", 1)
+    if len(parts) != 2:
+        return None
+    rel_path, name = parts
+    for fid in functions:
+        if fid.name == name and fid.rel.endswith(rel_path):
+            return fid
+    return None
+
+
+def _merge_extra_edges(program, extra_edges):
+    """Merge user-supplied extra call edges into the ProgramIndex."""
+    if not extra_edges:
+        return program
+
+    by_caller = {cid: list(sites) for cid, sites in program.calls_by_caller.items()}
+    by_callee = {cid: list(sites) for cid, sites in program.callers_by_callee.items()}
+    funcs = program.functions
+
+    from .callgraph import CallSite, SourceSpan
+
+    for edge in extra_edges:
+        callee_fqn = edge.callee.fqn
+        callee_id = _resolve_fn_id(funcs, callee_fqn)
+        if callee_id is None:
             continue
-        caller_raw = edge.get("caller", "")
-        callee_raw = edge.get("callee", "")
-        if not caller_raw or not callee_raw:
-            continue
-        c_r, c_n = caller_raw.split("::", 1)
-        e_r, e_n = callee_raw.split("::", 1)
-        caller_id = FunctionId(rel=c_r, name=c_n, base_name=c_n, language="")
-        callee_id = FunctionId(rel=e_r, name=e_n, base_name=e_n, language="")
-        sites.append(CallSite(
-            caller=caller_id, callee=callee_id,
-            callee_name=e_n, order_index=0,
-            arg_bindings={}, span=SourceSpan(path=c_r),
-        ))
-    return sites
+
+        if edge.caller.fqn:
+            caller_id = _resolve_fn_id(funcs, edge.caller.fqn)
+            if caller_id is not None:
+                cname = callee_id.name.split("::")[-1]
+                existing = by_caller.setdefault(caller_id, [])
+                if not any(site.callee == callee_id for site in existing):
+                    site = CallSite(
+                        caller=caller_id, callee=callee_id,
+                        callee_name=cname,
+                        order_index=len(existing),
+                        arg_bindings={},
+                        span=SourceSpan(path=caller_id.rel),
+                    )
+                    existing.append(site)
+                    by_callee.setdefault(callee_id, []).append(site)
+
+        for name in edge.caller.callsite_names:
+            for caller_id, caller_unit in funcs.items():
+                if name in caller_unit.source or name == caller_id.name.split("::")[-1]:
+                    existing = by_caller.setdefault(caller_id, [])
+                    cname = callee_id.name.split("::")[-1]
+                    if not any(site.callee == callee_id for site in existing):
+                        site = CallSite(
+                            caller=caller_id, callee=callee_id,
+                            callee_name=cname,
+                            order_index=len(existing),
+                            arg_bindings={},
+                            span=SourceSpan(path=caller_id.rel),
+                        )
+                        existing.append(site)
+                        by_callee.setdefault(callee_id, []).append(site)
+
+    called = {sid for sites in by_callee.values() for site in sites for sid in (site.callee,)}
+    entrypoints = [fid for fid in funcs if fid not in called]
+
+    from .callgraph import ProgramIndex
+    return ProgramIndex(
+        functions=funcs,
+        calls_by_caller=by_caller,
+        callers_by_callee=by_callee,
+        entrypoints=entrypoints,
+    )
 
 
 def replace_generate_topdown_layers(proj_dir: str) -> None:
@@ -65,11 +113,11 @@ def replace_generate_topdown_layers(proj_dir: str) -> None:
 
     extra_edges = _load_extra_edges(work_dir)
     if extra_edges:
-        program = merge_extra_edges(program, extra_edges)
+        program = _merge_extra_edges(program, extra_edges)
 
     ordered, cycles, unreachable = order_bottom_up(units)
 
-    # --- program_index.json (no source — source stays in extracted_functions/) ---
+    # --- program_index.json (no source --- source stays in extracted_functions/) ---
     index = {
         "functions": {
             f"{u.id.rel}::{u.id.name}": {

@@ -12,18 +12,25 @@ from .ifc_reasoner import HIGH, LOW, UNKNOWN, _raw_input_labels
 def _arg_label(arg_expr: str, caller_raw_labels: Dict[str, str]) -> str:
     """Deterministically label a call-site argument expression in caller context.
 
-    - string/number literal -> Low
+    - string/number/bool/None literal -> Low
     - bare caller-parameter name -> that parameter's label
     - anything else -> Unknown (conservative)
     """
     expr = (arg_expr or "").strip()
-    if re.fullmatch(r'["\'].*["\']', expr) or re.fullmatch(r"[-+]?\d+(\.\d+)?", expr):
+
+    if (
+        re.fullmatch(r'["\'].*["\']', expr)
+        or re.fullmatch(r"[-+]?\d+(\.\d+)?", expr)
+        or expr in {"True", "False", "true", "false", "None", "null"}
+    ):
         return LOW
+
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
         key = f"param:{expr}"
         if key in caller_raw_labels:
             return caller_raw_labels[key]
         return UNKNOWN
+
     return UNKNOWN
 
 

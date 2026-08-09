@@ -305,41 +305,6 @@ def build_program_index(units: List[FunctionUnit]) -> ProgramIndex:
     )
 
 
-def merge_extra_edges(
-    program: ProgramIndex,
-    extra_edges: Sequence[CallSite],
-) -> ProgramIndex:
-    """Merge explicit extra call edges into a ProgramIndex."""
-    calls_by_caller = {
-        caller: list(calls)
-        for caller, calls in program.calls_by_caller.items()
-    }
-    callers_by_callee = {
-        callee: list(calls)
-        for callee, calls in program.callers_by_callee.items()
-    }
-    existing = {
-        (site.caller, site.callee, site.order_index)
-        for calls in calls_by_caller.values()
-        for site in calls
-    }
-    for site in extra_edges:
-        key = (site.caller, site.callee, site.order_index)
-        if key in existing:
-            continue
-        calls_by_caller.setdefault(site.caller, []).append(site)
-        callers_by_callee.setdefault(site.callee, []).append(site)
-        existing.add(key)
-    called = set(callers_by_callee)
-    entrypoints = [fid for fid in program.functions if fid not in called]
-    return ProgramIndex(
-        functions=program.functions,
-        calls_by_caller=calls_by_caller,
-        callers_by_callee=callers_by_callee,
-        entrypoints=entrypoints,
-    )
-
-
 # --- bottom-up ordering (with SCC detection) ----------------------------------
 
 def order_bottom_up(units: List[FunctionUnit]) -> Tuple[
