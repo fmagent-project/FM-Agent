@@ -1,7 +1,6 @@
 """IFC analysis helpers extracted from IfcPlugin SPI methods."""
 
 import ast
-import ast
 import re
 import textwrap
 from pathlib import Path
@@ -94,12 +93,22 @@ def summarize_for_caller(name: str, payload: dict) -> str:
     return f"{name}: " + ("; ".join(parts) if parts else "(no tracked outputs)")
 
 
-def _python_call_return_is_used(source: str, callee_name: str) -> Optional[bool]:
-    """Return whether a Python call's return value is actually consumed.
+def _python_call_return_usage(
+    source: str,
+    callee_name: str,
+    occurrence: int,
+) -> Optional[bool]:
+    """Return whether a specific Python call's return value is consumed.
+
+    Args:
+        source: Caller source code.
+        callee_name: Source-level callee name, e.g. ``check``.
+        occurrence: Zero-based occurrence among matching call sites.
 
     Returns:
-        True/False when Python AST analysis succeeds.
-        None when the source cannot be parsed or is not Python.
+        True if the return value is consumed.
+        False if it is discarded.
+        None if the source cannot be parsed.
     """
     try:
         tree = ast.parse(textwrap.dedent(source))
@@ -107,10 +116,11 @@ def _python_call_return_is_used(source: str, callee_name: str) -> Optional[bool]
         return None
 
     parents = {}
-    for parent_node in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent_node):
-            parents[child] = parent_node
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
 
+    matches = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -120,13 +130,21 @@ def _python_call_return_is_used(source: str, callee_name: str) -> Optional[bool]
             called = func.id
         elif isinstance(func, ast.Attribute):
             called = func.attr
-        if called != callee_name:
-            continue
-        parent = parents.get(node)
-        if isinstance(parent, ast.Expr):
-            return False
-        return True
-    return False
+        if called == callee_name:
+            matches.append(node)
+
+    if occurrence >= len(matches):
+        return None
+
+    node = matches[occurrence]
+    parent = parents.get(node)
+
+    # standalone: helper(password) — return value is discarded
+    if isinstance(parent, ast.Expr):
+        return False
+
+    # x = helper(...) / return helper(...) / foo(helper(...)) / etc.
+    return True
 
 
 def compose_calls(
@@ -135,44 +153,53 @@ def compose_calls(
     source: str,
     language: str,
 ) -> dict:
-    """Instantiate callee signatures at call sites with caller argument labels.
+    """Instantiate callee signatures at call sites.
 
-    Returns a copy of *facts* with composed outputs and ``_callee_resolutions``.
-
-    Unused callee return values are NOT propagated as caller outputs
-    (e.g. ``helper(password); return \"ok\"`` does not become a leak).
+    Each call site is composed independently — when the same callee is called
+    multiple times with different arguments or different return-value usage,
+    each call site gets its own output key.
     """
     if facts.get("status") != "ok" or not facts.get("payload"):
         return facts
+
     caller_raw = _raw_input_labels(facts["payload"])
     resolutions = []
     composed_outputs = dict(facts["payload"].get("outputs") or {})
-    called = _called_names(source, language)
+
+    call_occurrences = {}
 
     for ci, rc in enumerate(resolved_calls):
         callee_name = rc.get("callee_name", "")
-        if called is not None and callee_name not in called:
+        if not callee_name:
             continue
+
         callee_facts = rc.get("callee_facts", {})
         if callee_facts.get("status") != "ok" or not callee_facts.get("payload"):
             continue
+
+        order_index = rc.get("order_index", ci)
+        occurrence = call_occurrences.get(callee_name, 0)
+        call_occurrences[callee_name] = occurrence + 1
+
         binding = {
             formal: _arg_label(expr, caller_raw)
             for formal, expr in rc.get("arg_bindings", {}).items()
         }
         from .ifc_reasoner import instantiate_callee
         resolved = instantiate_callee(callee_facts["payload"], binding)
+
         resolutions.append({
             "callee": callee_name,
+            "order_index": order_index,
             "arg_binding": binding,
             "resolved_outputs": resolved,
         })
 
         return_used = True
         if language.lower() == "python":
-            parsed_usage = _python_call_return_is_used(source, callee_name)
-            if parsed_usage is not None:
-                return_used = parsed_usage
+            usage = _python_call_return_usage(source, callee_name, occurrence)
+            if usage is not None:
+                return_used = usage
 
         for channel, output in resolved.items():
             observability = output.get("observability")
@@ -180,7 +207,9 @@ def compose_calls(
                 continue
             if channel == "return" and not return_used:
                 continue
-            composed_outputs[f"callee:{callee_name}:{channel}"] = {
+
+            output_key = f"callee:{callee_name}:{order_index}:{channel}"
+            composed_outputs[output_key] = {
                 "deps": [],
                 "const": LOW if output.get("label") == LOW else HIGH,
                 "declass": ([{"anchor": "callee", "reason": "callee declassification"}]

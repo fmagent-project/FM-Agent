@@ -149,6 +149,7 @@ def replace_generate_specs_and_verification(proj_dir: str) -> None:
             resolved = [
                 {
                     "callee_name": cs.get("callee_name"),
+                    "order_index": cs.get("order_index", 0),
                     "arg_bindings": cs.get("arg_bindings", {}),
                     "callee_facts": facts_by_fn.get(
                         (cs.get("callee_rel"), cs.get("callee_name")), {}

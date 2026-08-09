@@ -257,28 +257,38 @@ def _arg_bindings_for(unit: FunctionUnit, args: Sequence[str]) -> Dict[str, str]
 def build_program_index(units: List[FunctionUnit]) -> ProgramIndex:
     """Build the call graph, reverse graph, and entrypoint set.
 
-    Edges are name-based (regex), matching call sites by callee BASE name.
-    Entrypoints = functions with no internal caller.
+    Source-level fallback matching is only used when a callable token
+    uniquely identifies one internal function. Ambiguous names are ignored
+    rather than inventing call edges.
     """
     functions = {u.id: u for u in units}
     calls_by_caller: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
     callers_by_callee: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
     called_internally: set = set()
 
+    # Group functions by their source-level callable token.
+    by_call_name: Dict[str, List[FunctionUnit]] = {}
+    for unit in units:
+        cn = _call_name(unit.id.name)
+        by_call_name.setdefault(cn, []).append(unit)
+
     for caller in units:
         order = 0
-        for callee in units:
+        for call_name, candidates in by_call_name.items():
+            # Only match when the name uniquely identifies one internal function.
+            if len(candidates) != 1:
+                continue
+            callee = candidates[0]
             if callee.id == caller.id:
                 continue
-            cb = _call_name(callee.id.name)
-            arg_lists = find_call_arg_lists(caller.source, cb)
+            arg_lists = find_call_arg_lists(caller.source, call_name)
             if not arg_lists:
                 continue
             called_internally.add(callee.id)
             for args in arg_lists:
                 site = CallSite(
                     caller=caller.id, callee=callee.id,
-                    callee_name=cb, order_index=order,
+                    callee_name=call_name, order_index=order,
                     arg_bindings=_arg_bindings_for(callee, args),
                     span=SourceSpan(path=caller.id.rel),
                 )
@@ -295,6 +305,41 @@ def build_program_index(units: List[FunctionUnit]) -> ProgramIndex:
     )
 
 
+def merge_extra_edges(
+    program: ProgramIndex,
+    extra_edges: Sequence[CallSite],
+) -> ProgramIndex:
+    """Merge explicit extra call edges into a ProgramIndex."""
+    calls_by_caller = {
+        caller: list(calls)
+        for caller, calls in program.calls_by_caller.items()
+    }
+    callers_by_callee = {
+        callee: list(calls)
+        for callee, calls in program.callers_by_callee.items()
+    }
+    existing = {
+        (site.caller, site.callee, site.order_index)
+        for calls in calls_by_caller.values()
+        for site in calls
+    }
+    for site in extra_edges:
+        key = (site.caller, site.callee, site.order_index)
+        if key in existing:
+            continue
+        calls_by_caller.setdefault(site.caller, []).append(site)
+        callers_by_callee.setdefault(site.callee, []).append(site)
+        existing.add(key)
+    called = set(callers_by_callee)
+    entrypoints = [fid for fid in program.functions if fid not in called]
+    return ProgramIndex(
+        functions=program.functions,
+        calls_by_caller=calls_by_caller,
+        callers_by_callee=callers_by_callee,
+        entrypoints=entrypoints,
+    )
+
+
 # --- bottom-up ordering (with SCC detection) ----------------------------------
 
 def order_bottom_up(units: List[FunctionUnit]) -> Tuple[
@@ -302,20 +347,25 @@ def order_bottom_up(units: List[FunctionUnit]) -> Tuple[
 ]:
     """Topological sort + SCC cycle detection + isolated-node identification.
 
-    Returns:
-        (ordered, cycles, unreachable)
-        ordered:      callee-before-caller linear order
-        cycles:       SCC groups (each [{rel, name}, ...])
-        unreachable:  functions with neither incoming nor outgoing edges
+    Ambiguous source-level callable names are not treated as call edges.
     """
     deps: Dict[FunctionId, Set[FunctionId]] = {u.id: set() for u in units}
     by_id = {u.id: u for u in units}
+
+    by_call_name: Dict[str, List[FunctionUnit]] = {}
+    for unit in units:
+        cn = _call_name(unit.id.name)
+        by_call_name.setdefault(cn, []).append(unit)
+
     for u in units:
-        for other in units:
+        for name, candidates in by_call_name.items():
+            if len(candidates) != 1:
+                continue
+            other = candidates[0]
             if other.id == u.id:
                 continue
-            name = re.escape(_call_name(other.id.name))
-            if re.search(rf"\b{name}\s*\(", u.source):
+            escaped = re.escape(name)
+            if re.search(rf"\b{escaped}\s*\(", u.source):
                 deps[u.id].add(other.id)
 
     index, lowlink = {}, {}
