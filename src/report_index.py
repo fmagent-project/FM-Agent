@@ -249,16 +249,26 @@ def _collect_analyses(work_dir):
 def _match_span(spans, fn):
     """Match a function name against codegraph spans; return ``L<start>-L<end>``.
 
-    Spans carry the extraction identifier (class-qualified, with a ``_N`` dedup
-    suffix for overloads). Try the exact name, a class-qualified suffix, then a
-    ``_N``-stripped retry; first hit wins.
+    ``get_function_spans`` returns the class-qualified identifier for every
+    overload without the ``_N`` dedup suffix, while the extracted-function files
+    (and hence ``fn``) carry it (``foo``, ``foo_1``, ...). Dedup the spans with
+    the same per-identifier counter in start-line order the extractor uses, so a
+    later overload's ``_N`` matches its own span instead of the first one. Then
+    try the exact name, a class-qualified suffix, and a ``_N``-stripped retry;
+    first hit wins.
     """
     if not spans:
         return ""
+    counts: dict = {}
+    deduped = []
+    for name, start, end in spans:
+        c = counts.get(name, 0)
+        counts[name] = c + 1
+        deduped.append((name if c == 0 else f"{name}_{c}", start, end))
     for candidate in (fn, re.sub(r"_\d+$", "", fn)):
         if not candidate:
             continue
-        for name, start, end in spans:
+        for name, start, end in deduped:
             if name == candidate or name.endswith("::" + candidate):
                 # codegraph spans are 0-indexed inclusive; display 1-indexed.
                 return f"L{start + 1}-L{end + 1}"

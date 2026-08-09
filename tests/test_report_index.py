@@ -213,6 +213,19 @@ class ReportIndexTest(unittest.TestCase):
         self.assertEqual(locate_workdir(self.base), self.work)
         self.assertEqual(locate_workdir(self.work), self.work)
 
+    def test_locate_workdir_prefers_fm_agent_child(self):
+        # A project root that itself carries a marker dir (e.g. its own trace/)
+        # must still resolve to <root>/fm_agent when that child holds artifacts,
+        # instead of treating the root itself as the workspace.
+        _build_fixture(self.work)
+        os.makedirs(os.path.join(self.base, "trace"), exist_ok=True)  # decoy
+        self.assertEqual(locate_workdir(self.base), self.work)
+        # An archived workspace (no fm_agent child) still resolves to itself.
+        archived = self.base + ".archived_01"
+        os.makedirs(os.path.join(archived, "trace"), exist_ok=True)
+        os.makedirs(os.path.join(archived, "bug_validation"), exist_ok=True)
+        self.assertEqual(locate_workdir(archived), archived)
+
     def test_path_mapping_helpers(self):
         path = "fm_agent/extracted_functions/src/engine/loader-cpp/loadData.cpp"
         self.assertEqual(_extracted_suffix(path), "src/engine/loader-cpp/loadData.cpp")
@@ -272,11 +285,25 @@ class ReportIndexTest(unittest.TestCase):
         self.assertEqual(_match_span(spans, "Flush"), "L12-L30")
         # class-qualified name matches its bare tail
         self.assertEqual(_match_span(spans, "Write"), "L41-L56")
-        # dedup suffix is stripped before retry
+        # dedup suffix is stripped before retry (single span -> its own span)
         self.assertEqual(_match_span([("Load", 3, 7)], "Load_1"), "L4-L8")
         # no match -> empty
         self.assertEqual(_match_span(spans, "Missing"), "")
         self.assertEqual(_match_span(None, "Flush"), "")
+
+    def test_match_span_overload_dedup(self):
+        # Spans from get_function_spans carry no _N suffix, so a later overload
+        # must be deduplicated in start-line order (as extraction does) to land
+        # on its own span instead of the first overload's line range.
+        spans = [("Foo", 3, 7), ("Foo", 20, 25)]
+        self.assertEqual(_match_span(spans, "Foo"), "L4-L8")
+        self.assertEqual(_match_span(spans, "Foo_1"), "L21-L26")
+        # a _N with no matching span falls back to the stripped-name retry
+        self.assertEqual(_match_span(spans, "Foo_2"), "L4-L8")
+        # class-qualified overloads dedup by the full identifier
+        spans = [("LocalStorage::Write", 40, 55), ("LocalStorage::Write", 70, 80)]
+        self.assertEqual(_match_span(spans, "LocalStorage::Write"), "L41-L56")
+        self.assertEqual(_match_span(spans, "LocalStorage::Write_1"), "L71-L81")
 
 
 if __name__ == "__main__":

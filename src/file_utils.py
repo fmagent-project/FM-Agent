@@ -84,18 +84,22 @@ def locate_workdir(proj_dir):
 
     Accepts a project root (probes ``<root>/fm_agent/``), an ``fm_agent/``
     directory itself, or an archived workspace (e.g. ``fm_agent.archived_xx``).
-    Detection is by the presence of any artifact marker subdirectory
-    (``trace/``, ``bug_validation/``, ``logic_verification_results/``) — more
-    robust than requiring ``trace/`` alone, since archived workspaces may have
-    been stripped of traces.
+    The ``fm_agent`` child is preferred whenever it holds artifacts, so a
+    project root that happens to contain its own ``trace/`` (or other marker)
+    directory is still resolved to its workspace rather than to itself. A
+    genuine workspace/archive argument has no ``fm_agent`` child, so it still
+    resolves to itself. Detection is by the presence of any artifact marker
+    subdirectory (``trace/``, ``bug_validation/``, ``logic_verification_results/``)
+    — more robust than requiring ``trace/`` alone, since archived workspaces may
+    have been stripped of traces.
     """
     p = os.path.abspath(proj_dir)
     markers = ("trace", "bug_validation", "logic_verification_results")
-    if any(os.path.isdir(os.path.join(p, m)) for m in markers):
-        return p
     cand = os.path.join(p, "fm_agent")
     if any(os.path.isdir(os.path.join(cand, m)) for m in markers):
         return cand
+    if any(os.path.isdir(os.path.join(p, m)) for m in markers):
+        return p
     return cand  # directory may not exist yet; caller validates
 
 
