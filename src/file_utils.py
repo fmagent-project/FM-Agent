@@ -3,6 +3,16 @@ import os
 import re
 
 
+# This module is also copied by the current full pipeline and imported as a
+# standalone helper from ``fm_agent/spec_prompts``. Source-package imports use
+# the canonical SoftwareSpecForm; the fallback preserves that copied runtime
+# until batch prompt generation moves in-process in the next refactor stage.
+if __package__:
+    from .spec_forms import SOFTWARE_SPEC_FORM
+else:
+    SOFTWARE_SPEC_FORM = None
+
+
 _METADATA_SIDECAR_SUFFIXES = (".spec.json", ".info.json")
 
 _SPEC_FIELDS = {
@@ -74,6 +84,8 @@ def collect_file_names(input_dir, output_path="file_list.json"):
 
 def _is_valid_spec_json(data):
     """Check that .spec.json contains exactly the supported fields."""
+    if SOFTWARE_SPEC_FORM is not None:
+        return SOFTWARE_SPEC_FORM.is_valid_spec_data(data)
     if not isinstance(data, dict):
         return False
     if set(data) != _SPEC_FIELDS:
@@ -83,6 +95,8 @@ def _is_valid_spec_json(data):
 
 def _is_valid_info_json(data):
     """Check that .info.json contains exactly the supported fields."""
+    if SOFTWARE_SPEC_FORM is not None:
+        return SOFTWARE_SPEC_FORM.is_valid_info_data(data)
     if not isinstance(data, dict) or set(data) != {"callees"}:
         return False
 
@@ -101,6 +115,9 @@ def _is_valid_info_json(data):
 
 def is_file_ready(file_path):
     """Return whether both metadata sidecars contain valid new-format JSON."""
+    if SOFTWARE_SPEC_FORM is not None:
+        return SOFTWARE_SPEC_FORM.validate(file_path).ready
+
     spec_path = f"{file_path}.spec.json"
     info_path = f"{file_path}.info.json"
 
