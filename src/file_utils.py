@@ -48,6 +48,57 @@ def is_file_ready(file_path):
     return spec_count >= 2 and info_count >= 2
 
 
+def _extracted_file_to_source_rel(extracted_rel):
+    """Map an extracted-function file path back to its source file (relative).
+
+    Inverse of the extraction layout: ``src/engine/loader-cpp/loadData.cpp``
+    (a function file) -> ``src/engine/loader.cpp`` (the source file). Extraction
+    builds the function directory by replacing the source filename's last dot
+    with a hyphen (``loader.cpp`` -> ``loader-cpp``). Member functions keep the
+    class qualifier in the flat filename (``.../loader-cpp/MyClass::method.cpp``),
+    so the ``<base>-<ext>`` directory is the function file's immediate parent; we
+    still locate it by scanning the path components from the right (matching a
+    component that ends in ``-<known extension>``) so the mapping is robust.
+    """
+    from src.extract import EXT_TO_LANG  # local import to avoid circular import
+
+    parts = extracted_rel.split(os.sep)
+    for i in range(len(parts) - 2, -1, -1):          # skip the trailing func file
+        comp = parts[i]
+        hyphen = comp.rfind("-")
+        if hyphen > 0 and comp[hyphen + 1:] in EXT_TO_LANG:
+            src_dir = os.sep.join(parts[:i])
+            source_base = comp[:hyphen] + "." + comp[hyphen + 1:]
+            return os.path.join(src_dir, source_base) if src_dir else source_base
+    # Fallback: original immediate-parent behaviour (no recognised -ext dir).
+    func_dir = os.path.dirname(extracted_rel)
+    src_dir = os.path.dirname(func_dir)
+    dir_name = os.path.basename(func_dir)
+    hyphen = dir_name.rfind("-")
+    source_base = dir_name[:hyphen] + "." + dir_name[hyphen + 1:] if hyphen > 0 else dir_name
+    return os.path.join(src_dir, source_base) if src_dir else source_base
+
+
+def locate_workdir(proj_dir):
+    """Resolve the fm_agent workspace directory for a project or run.
+
+    Accepts a project root (probes ``<root>/fm_agent/``), an ``fm_agent/``
+    directory itself, or an archived workspace (e.g. ``fm_agent.archived_xx``).
+    Detection is by the presence of any artifact marker subdirectory
+    (``trace/``, ``bug_validation/``, ``logic_verification_results/``) — more
+    robust than requiring ``trace/`` alone, since archived workspaces may have
+    been stripped of traces.
+    """
+    p = os.path.abspath(proj_dir)
+    markers = ("trace", "bug_validation", "logic_verification_results")
+    if any(os.path.isdir(os.path.join(p, m)) for m in markers):
+        return p
+    cand = os.path.join(p, "fm_agent")
+    if any(os.path.isdir(os.path.join(cand, m)) for m in markers):
+        return cand
+    return cand  # directory may not exist yet; caller validates
+
+
 # Directories that typically contain test code
 _TEST_DIR_NAMES = {
     "test", "tests", "__tests__", "testing", "test_helpers",

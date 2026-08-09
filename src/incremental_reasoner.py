@@ -882,6 +882,16 @@ def run_incremental_pipeline(
     for bf in buggy_files:
         logging.info("  - %s", bf)
     logging.info("=" * 70)
+
+    # Regenerate the static HTML report index for this incremental run. The
+    # verification stage above already wrote bug_validation/summary.json; a
+    # rendering problem must never fail the run.
+    try:
+        from src.report_index import generate_report_index
+        generate_report_index(work_dir)
+    except Exception as exc:
+        logging.warning("report.html generation skipped: %s", exc)
+
     return buggy_files
 
 

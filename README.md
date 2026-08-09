@@ -281,6 +281,44 @@ Each confirmed or investigated bug produces a Markdown report containing:
 
 A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results with counts of total reported, confirmed, not confirmed bugs.
 
+#### Report Index (`fm_agent/report.html`)
+
+Every completed run also writes a self-contained **`report.html`** at the top of
+the workspace. Open it directly in a browser:
+
+```bash
+xdg-open fm_agent/report.html     # Linux
+open fm_agent/report.html         # macOS
+```
+
+It indexes both the bug-validation reports (`fm_agent/bug_validation/<bug_id>.md`)
+and the per-function analysis results
+(`fm_agent/logic_verification_results/**/*.json`) from that run, with client-side
+interactions — no server and no network needed:
+
+- **Search** across report title, source file, function name, and code location.
+- **Filter** by type (bug / analysis), status, and source file; filters combine
+  with search and with each other.
+- **Sort** by status, source file, function, or code location.
+- **Expand/collapse** technical details per item, or use the global
+  *Expand all* / *Collapse all* controls. *Reset* clears search, filters, and
+  sorting.
+- Each row shows title, status, source file, function name, and code location
+  (a line range, when the codegraph index is available, otherwise `—`), and
+  links to the underlying report. The source file is mapped back to its original
+  project path (e.g. `src/engine/loader.cpp`, not the extracted copy under
+  `fm_agent/extracted_functions/`) and is rendered as a link that opens that
+  source file. Missing metadata is shown gracefully.
+
+Generation is deterministic and makes no LLM calls: the same artifacts always
+produce the same page, and you can regenerate it at any time from an existing
+run (including archived workspaces):
+
+```bash
+uv run python report_index.py <proj_dir>            # project root
+uv run python report_index.py <proj_dir>/fm_agent   # or the workspace directly
+```
+
 ## Important Notes
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.

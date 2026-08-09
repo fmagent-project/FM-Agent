@@ -520,6 +520,16 @@ def run_pipeline(
             confirmed = summary.get("total_confirmed", 0)
             print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
+    # Regenerate the static HTML report index from the completed artifacts.
+    # Runs in every completed mode (including --only-spec, which yields an
+    # empty-state page); a rendering problem must never fail the run.
+    try:
+        from src.report_index import generate_report_index
+        index_path = generate_report_index(work_dir)
+        print(f"[Pipeline] Report index written to {os.path.relpath(index_path, proj_dir)}")
+    except Exception as exc:
+        logging.warning("[Pipeline] report.html generation skipped: %s", exc)
+
     if only_spec:
         print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
     else:

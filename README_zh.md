@@ -256,6 +256,30 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 
 `fm_agent/bug_validation/` 目录下的 `summary.json` 文件汇总了所有 Bug 结果，包括报告的Bug总数、已确认Bug数、未确认Bug数。
 
+#### 报告索引页（`fm_agent/report.html`）
+
+每次运行结束后，还会在 workspace 根目录生成一个自包含的 **`report.html`**。直接用浏览器打开即可：
+
+```bash
+xdg-open fm_agent/report.html     # Linux
+open fm_agent/report.html         # macOS
+```
+
+该页面索引本次运行的全部两类报告——Bug 验证报告（`fm_agent/bug_validation/<bug_id>.md`）与逐函数分析结果（`fm_agent/logic_verification_results/**/*.json`），所有交互都在客户端完成，无需服务器或网络：
+
+- **搜索**：覆盖报告标题、源文件、函数名与代码位置。
+- **筛选**：按类型（bug / analysis）、状态、源文件筛选；可与搜索及其他筛选组合使用。
+- **排序**：按状态、源文件、函数或代码位置排序。
+- **折叠/展开**：逐条展开技术细节，也可用全局 *Expand all* / *Collapse all*；*Reset* 一键清除搜索、筛选与排序。
+- 每行显示标题、状态、源文件、函数名与代码位置（可用 codegraph 索引时给出行号区间，否则显示 `—`），并链接到对应详细报告。源文件会反推为项目内的原始源码路径（如 `src/engine/loader.cpp`，而非 `fm_agent/extracted_functions/` 下的提取副本），并渲染为可点击链接，直接打开该源码文件。缺失的元数据会优雅展示。
+
+生成过程是确定性的且**不调用 LLM**：同样的 artifacts 总是生成相同的页面，并且可以随时从既有运行（含归档 workspace）重新生成：
+
+```bash
+uv run python report_index.py <proj_dir>            # 项目根目录
+uv run python report_index.py <proj_dir>/fm_agent   # 或直接指定 workspace
+```
+
 #### 日志文件（`fm_agent/fm_agent.log`）
 
 单一日志文件记录完整的流水线执行过程，包括文件提取进度、推理任务的提交与完成情况、网络错误与重试，以及最终的推理统计摘要。日志级别为 `INFO`，格式为 `%(asctime)s [%(levelname)s] %(message)s`。
