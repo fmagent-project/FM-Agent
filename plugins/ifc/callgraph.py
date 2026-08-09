@@ -60,6 +60,25 @@ def base_name(n: str) -> str:
     return re.sub(r"_\d+$", "", n)
 
 
+def _call_name(name: str) -> str:
+    """Return the source-level callable token for a function identifier.
+
+    Keeps the qualified FunctionId unchanged while extracting the final
+    callable name used at source call sites.
+
+    Examples:
+        Class::check -> check
+        namespace::Class::check -> check
+        obj.check -> check
+    """
+    name = base_name(name)
+    if "::" in name:
+        name = name.rsplit("::", 1)[-1]
+    if "." in name:
+        name = name.rsplit(".", 1)[-1]
+    return name
+
+
 def _signature_line(src: str, language: str) -> str:
     """Best-effort first non-comment line as the function signature header."""
     cfg = LANG_CONFIG.get(language.lower(), {})
@@ -197,12 +216,41 @@ def load_units_from_extracted(work_dir: str) -> List[FunctionUnit]:
 
 # --- ProgramIndex construction ------------------------------------------------
 
+def _keyword_arg_name(arg: str) -> Optional[str]:
+    """Return the formal name for a keyword argument, if present."""
+    match = re.match(
+        r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)",
+        arg or "",
+    )
+    return match.group(1) if match else None
+
+
 def _arg_bindings_for(unit: FunctionUnit, args: Sequence[str]) -> Dict[str, str]:
-    """Map callee formal sources (param:<name>) to caller actual arg expressions."""
+    """Map callee formals to actual argument expressions.
+
+    Keyword arguments are matched by formal name first. Remaining positional
+    arguments are then assigned to the next unbound formal parameter.
+    """
     binding: Dict[str, str] = {}
-    for idx, formal in enumerate(unit.params):
-        if idx < len(args):
-            binding[f"param:{formal}"] = args[idx]
+    params = list(unit.params)
+
+    # Pass 1: keyword arguments.
+    positional_args = []
+    for arg in args:
+        keyword = _keyword_arg_name(arg)
+        if keyword is not None and keyword in params:
+            binding[f"param:{keyword}"] = arg.split("=", 1)[1].strip()
+        else:
+            positional_args.append(arg)
+
+    # Pass 2: positional arguments fill the remaining formals in order.
+    remaining_params = [
+        formal for formal in params
+        if f"param:{formal}" not in binding
+    ]
+    for formal, arg in zip(remaining_params, positional_args):
+        binding[f"param:{formal}"] = arg.strip()
+
     return binding
 
 
@@ -222,7 +270,7 @@ def build_program_index(units: List[FunctionUnit]) -> ProgramIndex:
         for callee in units:
             if callee.id == caller.id:
                 continue
-            cb = base_name(callee.id.name)
+            cb = _call_name(callee.id.name)
             arg_lists = find_call_arg_lists(caller.source, cb)
             if not arg_lists:
                 continue
@@ -266,7 +314,7 @@ def order_bottom_up(units: List[FunctionUnit]) -> Tuple[
         for other in units:
             if other.id == u.id:
                 continue
-            name = re.escape(base_name(other.id.name))
+            name = re.escape(_call_name(other.id.name))
             if re.search(rf"\b{name}\s*\(", u.source):
                 deps[u.id].add(other.id)
 

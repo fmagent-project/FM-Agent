@@ -1,6 +1,7 @@
 """IFC analysis helpers extracted from IfcPlugin SPI methods."""
 
 import ast
+import ast
 import re
 import textwrap
 from pathlib import Path
@@ -93,6 +94,41 @@ def summarize_for_caller(name: str, payload: dict) -> str:
     return f"{name}: " + ("; ".join(parts) if parts else "(no tracked outputs)")
 
 
+def _python_call_return_is_used(source: str, callee_name: str) -> Optional[bool]:
+    """Return whether a Python call's return value is actually consumed.
+
+    Returns:
+        True/False when Python AST analysis succeeds.
+        None when the source cannot be parsed or is not Python.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(source))
+    except (SyntaxError, TypeError, ValueError):
+        return None
+
+    parents = {}
+    for parent_node in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent_node):
+            parents[child] = parent_node
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        called = None
+        if isinstance(func, ast.Name):
+            called = func.id
+        elif isinstance(func, ast.Attribute):
+            called = func.attr
+        if called != callee_name:
+            continue
+        parent = parents.get(node)
+        if isinstance(parent, ast.Expr):
+            return False
+        return True
+    return False
+
+
 def compose_calls(
     facts: dict,
     resolved_calls: list,
@@ -102,6 +138,9 @@ def compose_calls(
     """Instantiate callee signatures at call sites with caller argument labels.
 
     Returns a copy of *facts* with composed outputs and ``_callee_resolutions``.
+
+    Unused callee return values are NOT propagated as caller outputs
+    (e.g. ``helper(password); return \"ok\"`` does not become a leak).
     """
     if facts.get("status") != "ok" or not facts.get("payload"):
         return facts
@@ -128,9 +167,18 @@ def compose_calls(
             "arg_binding": binding,
             "resolved_outputs": resolved,
         })
+
+        return_used = True
+        if language.lower() == "python":
+            parsed_usage = _python_call_return_is_used(source, callee_name)
+            if parsed_usage is not None:
+                return_used = parsed_usage
+
         for channel, output in resolved.items():
             observability = output.get("observability")
             if observability == "internal":
+                continue
+            if channel == "return" and not return_used:
                 continue
             composed_outputs[f"callee:{callee_name}:{channel}"] = {
                 "deps": [],
