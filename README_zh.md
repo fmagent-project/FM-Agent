@@ -185,43 +185,6 @@ def hook(proj_dir: str) -> None:
 插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
 [Pipeline 插件](docs/plugins_zh.md)。
 
-### 入口函数分析
-
-必须将 `proj_dir` 放在 `--entry-func` 之前。单个入口函数仍然受支持：
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::application_entry
-```
-
-在一个 `--entry-func` 后传入多个 FQN，即可在一次运行中共同分析多个入口：
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::entry_a api-py::entry_b
-```
-
-不指定 `--end-func` 时，FM-Agent 会保留所有入口可达调用图的并集。重复入口
-会被忽略，多个入口共享的函数只分析一次。
-
-如需限制分析范围，可以传入一个或多个终止函数：
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::entry_a api-py::entry_b \
-  --end-func services-py::end_a services-py::end_b
-```
-
-指定终止函数后，FM-Agent 会保留所有有效 entry-to-end 路径的并集，并在指定
-的终止函数处结束各条保留路径。无法到达任何指定终止函数的入口不会进入最终
-分析范围。
-
-入口函数 Pipeline 会在一次性副本中计算需要保留的调用链，裁剪另一个运行副本
-中的源文件和函数，再针对该副本运行标准 Pipeline。完成后，它会把生成的
-`fm_agent/` 工作区复制回原项目，并删除两个临时副本。原项目源码始终不会被修改。
-
-`proj_dir` 必须是一个 git 仓库。
-
 如需在不修改 FM-Agent 内置提示词的情况下提供项目特定领域知识，可传入一个或多个 Markdown 文件：
 
 ```bash

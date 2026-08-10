@@ -236,48 +236,6 @@ def hook(proj_dir: str) -> None:
 See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
 configuration, execution modes, lifecycle, and trust boundary.
 
-### Entry-point analysis
-
-Place `proj_dir` before `--entry-func`. A single entry function remains
-supported:
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::application_entry
-```
-
-Pass multiple FQNs after one `--entry-func` to analyze several entry points in
-one run:
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::entry_a api-py::entry_b
-```
-
-Without `--end-func`, FM-Agent retains the union of the call graphs reachable
-from all entries. Duplicate entries are ignored, and functions shared by
-multiple entries are analyzed once.
-
-To bound the analysis, pass one or more end functions:
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::entry_a api-py::entry_b \
-  --end-func services-py::end_a services-py::end_b
-```
-
-With end functions, FM-Agent retains the union of all valid entry-to-end paths
-and stops each retained path at its requested end. Entries that cannot reach
-any requested end are excluded from the final analysis scope.
-
-The entry pipeline computes the selected call chains in a throwaway copy,
-trims a separate run copy to the selected source files and functions, and runs
-the standard pipeline against that copy. It then copies the generated
-`fm_agent/` workspace back to the original project and removes both temporary
-copies. The original project sources are never modified.
-
-`proj_dir` must be a git repository.
-
 To provide project-specific domain knowledge without editing FM-Agent's built-in prompts, pass one or more Markdown files:
 
 ```bash
