@@ -67,3 +67,23 @@ class SpecForm(ABC):
     @abstractmethod
     def output_contract_prompt(self) -> str:
         """Render the form-specific output contract for a batch prompt."""
+
+    @abstractmethod
+    def system_prompt_path(self, script_dir: Path) -> Path:
+        """Return the source path for the form's staged system prompt."""
+
+    @abstractmethod
+    def workflow_prompt_path(self, script_dir: Path) -> Path:
+        """Return the source path for the form's staged workflow prompt."""
+
+    @abstractmethod
+    def generation_instruction(
+        self,
+        batch_prompt_rel: str,
+        attempt: int,
+    ) -> str:
+        """Render the agent instruction for one batch attempt."""
+
+    @abstractmethod
+    def trace_outputs(self, unit_files: Sequence[Path]) -> list[str]:
+        """Return the artifact paths expected from one traced batch."""

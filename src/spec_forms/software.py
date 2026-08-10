@@ -224,5 +224,45 @@ class SoftwareSpecForm(SpecForm):
             "5. Use the Write tool to save both JSON files",
         ])
 
+    def system_prompt_path(self, script_dir: Path) -> Path:
+        return Path(script_dir) / "md" / "system_prompt.md"
+
+    def workflow_prompt_path(self, script_dir: Path) -> Path:
+        return Path(script_dir) / "md" / "workflow_spec_step4_batch.md"
+
+    def generation_instruction(
+        self,
+        batch_prompt_rel: str,
+        attempt: int,
+    ) -> str:
+        fm_reminder = (
+            "IMPORTANT: fm_agent/ is your output workspace, not project source. "
+            "Do NOT modify any existing project files."
+        )
+        if attempt == 1:
+            return (
+                f"Process the batch prompt file at {batch_prompt_rel}. "
+                "Read it and fm_agent/spec_prompts/system_prompt.md, "
+                "generate behavioral specs for each function listed, "
+                "and write the .spec.json and .info.json files for each function. "
+                f"Do not modify the function source files. {fm_reminder}"
+            )
+        return (
+            f"Continue processing the batch prompt file at {batch_prompt_rel}. "
+            "Some functions may already have valid specs from a previous attempt. "
+            "Check each function listed in the batch prompt. Skip it only when both "
+            "its .spec.json and .info.json files contain valid JSON matching the "
+            "schemas in fm_agent/spec_prompts/system_prompt.md. If either sidecar "
+            "is missing, malformed, or schema-invalid, rewrite the complete "
+            ".spec.json and .info.json files for that function. "
+            f"Do not modify the function source files. {fm_reminder}"
+        )
+
+    def trace_outputs(self, unit_files: Sequence[Path]) -> list[str]:
+        paths = [self.artifact_paths(unit_file) for unit_file in unit_files]
+        return [str(path.self_spec) for path in paths] + [
+            str(path.dependency_info) for path in paths
+        ]
+
 
 SOFTWARE_SPEC_FORM = SoftwareSpecForm()
