@@ -13,6 +13,7 @@ from src.verification import _generate_all_bugs_validation_summary
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
+from src.spec_forms import SOFTWARE_SPEC_FORM, SpecGenerationConfig
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -190,6 +191,10 @@ def run_pipeline(
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     extra_call_edges = load_call_edges(extra_call_edges_path)
+    spec_generation_config = SpecGenerationConfig(
+        spec_form=SOFTWARE_SPEC_FORM,
+        enable_reasoning=True,
+    )
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -370,13 +375,8 @@ def run_pipeline(
                 proj_dir,
             )
 
-    # Copy system_prompt.md to spec_prompts/system_prompt.md
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
     os.makedirs(spec_prompts_dir, exist_ok=True)
-    shutil.copy2(
-        os.path.join(script_dir, "md", "system_prompt.md"),
-        os.path.join(spec_prompts_dir, "system_prompt.md"),
-    )
 
     phases_path = os.path.join(work_dir, "phases.json")
     with open(phases_path, "r") as f:
@@ -465,7 +465,8 @@ def run_pipeline(
             )
 
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
-    if only_spec:
+    run_reasoning = spec_generation_config.should_run_reasoning(only_spec)
+    if not run_reasoning:
         print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
     else:
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
@@ -499,6 +500,7 @@ def run_pipeline(
             script_dir,
             spec_prompts_dir,
             phases_data,
+            spec_generation_config,
             resume=resume,
             extra_call_edges=extra_call_edges,
             only_spec=only_spec,
@@ -514,9 +516,8 @@ def run_pipeline(
                 proj_dir,
             )
 
-    # Print confirmed bug count (skipped in only-spec mode, which runs no
-    # reasoning or bug validation).
-    if not only_spec:
+    # Print confirmed bug count only when downstream reasoning is enabled.
+    if run_reasoning:
         if all_bugs:
             # A resumed run may find every function and candidate validation
             # already complete, so no watcher runs to refresh the persistent
@@ -539,7 +540,7 @@ def run_pipeline(
     except Exception as exc:
         logging.warning("[Pipeline] report.html generation skipped: %s", exc)
 
-    if only_spec:
+    if not run_reasoning:
         print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
     else:
         print("[Pipeline] Done.")

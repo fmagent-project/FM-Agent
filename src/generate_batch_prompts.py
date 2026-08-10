@@ -342,7 +342,10 @@ def generate_batch_prompts(
                 prompt_funcs = [
                     fn
                     for fn in fn_batch
-                    if not spec_form.validate(work_dir / fn["file"]).ready
+                    if not spec_form.validate(
+                        work_dir / fn["file"],
+                        expected_dependencies=fn.get("all_callees", ()),
+                    ).ready
                 ]
                 skipped_functions += len(fn_batch) - len(prompt_funcs)
             out_path = output_dir / filename
