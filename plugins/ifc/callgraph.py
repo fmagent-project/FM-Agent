@@ -110,28 +110,53 @@ def _split_top_level(text: str, sep: str) -> List[str]:
 
 
 def extract_params(sig_line: str, language: Optional[str] = None) -> List[str]:
-    """Parse formal parameter names from a signature line.
+    """Parse formal parameter names from a function signature.
 
-    Handles C/Java 'type name' and Go 'name type' conventions.
+    Handles:
+      - C/Java: ``int foo(int x, char *name)``
+      - Go functions: ``func Foo(x string, n int)``
+      - Go methods: ``func (s *Server) Echo(x string)``
+      - Python: ``def foo(x, y=1)``
     """
-    m = re.search(r"\(([^)]*)\)", sig_line or "")
-    if not m:
-        return []
-    inner = m.group(1).strip()
+    language = (language or "").lower()
+    sig_line = sig_line or ""
+
+    if language == "go":
+        go_method = re.search(
+            r"\bfunc\s*\([^)]*\)\s*[A-Za-z_][A-Za-z0-9_]*\s*"
+            r"\(([^)]*)\)",
+            sig_line,
+        )
+        if go_method:
+            inner = go_method.group(1).strip()
+        else:
+            m = re.search(
+                r"\bfunc\s+[A-Za-z_][A-Za-z0-9_]*\s*\(([^)]*)\)",
+                sig_line,
+            )
+            if not m:
+                return []
+            inner = m.group(1).strip()
+    else:
+        m = re.search(r"\(([^)]*)\)", sig_line or "")
+        if not m:
+            return []
+        inner = m.group(1).strip()
+
     if not inner:
         return []
-    name_first = (language or "").lower() in _NAME_FIRST_LANGS
+
+    name_first = language in _NAME_FIRST_LANGS
     params = []
     for part in _split_top_level(inner, ","):
         tok = part.strip()
         if not tok or tok in ("void", "self", "cls"):
             continue
         tok = tok.split("=", 1)[0].strip()
-        if ":" in tok:
-            tok = tok.split(":", 1)[0].strip()
-            words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", tok)
-            if words:
-                params.append(words[0])
+        if ":" in tok and language == "python":
+            name = tok.split(":", 1)[0].strip()
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                params.append(name)
             continue
         words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", tok)
         if words:
@@ -386,4 +411,70 @@ def order_bottom_up(units: List[FunctionUnit]) -> Tuple[
                 all_in_order.add(fid)
     unreachable = [u for u in units if u.id not in all_in_order]
 
+    return ordered, cycles, unreachable
+
+
+def order_bottom_up_from_program(
+    program: ProgramIndex,
+) -> Tuple[List[FunctionUnit], List[List[dict]], List[FunctionUnit]]:
+    """Order functions using the already-resolved ProgramIndex.
+
+    Unlike ``order_bottom_up`` which re-scans source code, this uses the
+    resolved ``calls_by_caller`` edges — including those from extra edges.
+    """
+    units = list(program.functions.values())
+    deps: Dict[FunctionId, Set[FunctionId]] = {
+        fid: set() for fid in program.functions
+    }
+    for caller, calls in program.calls_by_caller.items():
+        if caller in deps:
+            for call in calls:
+                deps[caller].add(call.callee)
+
+    index, lowlink = {}, {}
+    stack, on_stack = [], set()
+    sccs = []
+    idx = [0]
+
+    def strongconnect(v):
+        index[v], lowlink[v] = idx[0], idx[0]
+        idx[0] += 1
+        stack.append(v)
+        on_stack.add(v)
+        for w in deps.get(v, set()):
+            if w not in index:
+                strongconnect(w)
+                lowlink[v] = min(lowlink[v], lowlink[w])
+            elif w in on_stack:
+                lowlink[v] = min(lowlink[v], index[w])
+        if lowlink[v] == index[v]:
+            scc = []
+            while True:
+                w = stack.pop()
+                on_stack.discard(w)
+                scc.append(w)
+                if w == v:
+                    break
+            sccs.append(scc)
+
+    for fid in program.functions:
+        if fid not in index:
+            strongconnect(fid)
+
+    cycles, ordered = [], []
+    by_id = program.functions
+    for scc in sccs:
+        members = [{"rel": fid.rel, "name": fid.name}
+                   for fid in scc if fid in by_id]
+        if len(scc) > 1:
+            cycles.append(members)
+        else:
+            fid = scc[0]
+            if fid in deps.get(fid, set()):
+                cycles.append(members)
+            elif fid in by_id:
+                ordered.append(by_id[fid])
+
+    all_ids = {fid for scc in sccs for fid in scc if fid in by_id}
+    unreachable = [u for u in units if u.id not in all_ids]
     return ordered, cycles, unreachable

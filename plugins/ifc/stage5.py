@@ -7,6 +7,7 @@ from .callgraph import (
     build_program_index,
     load_units_from_extracted,
     order_bottom_up,
+    order_bottom_up_from_program,
 )
 
 
@@ -25,16 +26,41 @@ def _load_extra_edges(work_dir: str) -> list:
 
 
 def _resolve_fn_id(functions, fqn: str):
-    """Look up a FunctionId by its canonical ``path::func`` FQN label."""
-    if "::" not in fqn:
+    """Resolve an external FQN to a local FunctionId.
+
+    Accepts both ``pkg/a.py::helper`` and ``pkg::a-py::helper`` formats.
+    Falls back to unique basename match when only one candidate exists.
+    """
+    if not isinstance(fqn, str) or "::" not in fqn:
         return None
     parts = fqn.rsplit("::", 1)
     if len(parts) != 2:
         return None
-    rel_path, name = parts
+    rel_raw, name = parts
+
+    # Normalize: pkg/a.py -> pkg/a-py matching extracted_functions layout
+    normalized_rel = rel_raw.replace("\\", "/")
+    if "/" in normalized_rel:
+        base = normalized_rel.rsplit("/", 1)[-1]
+        if "." in base:
+            last_dot = base.rfind(".")
+            normalized_rel = (normalized_rel.rsplit("/", 1)[0] + "/"
+                              + base[:last_dot] + "-" + base[last_dot + 1:])
+
+    # Exact match
     for fid in functions:
-        if fid.name == name and fid.rel.endswith(rel_path):
+        if fid.rel == normalized_rel and fid.name == name:
             return fid
+    for fid in functions:
+        if fid.name == name and fid.rel.replace("\\", "/").endswith(normalized_rel):
+            return fid
+
+    # Unique basename fallback
+    from .callgraph import _call_name
+    base_name = _call_name(name)
+    matches = [fid for fid in functions if _call_name(fid.name) == base_name]
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
@@ -114,8 +140,9 @@ def replace_generate_topdown_layers(proj_dir: str) -> None:
     extra_edges = _load_extra_edges(work_dir)
     if extra_edges:
         program = _merge_extra_edges(program, extra_edges)
-
-    ordered, cycles, unreachable = order_bottom_up(units)
+        ordered, cycles, unreachable = order_bottom_up_from_program(program)
+    else:
+        ordered, cycles, unreachable = order_bottom_up(units)
 
     # --- program_index.json (no source --- source stays in extracted_functions/) ---
     index = {
