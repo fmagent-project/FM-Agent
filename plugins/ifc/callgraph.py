@@ -41,6 +41,7 @@ class CallSite:
     order_index: int = 0
     arg_bindings: Dict[str, str] = field(default_factory=dict)
     span: Optional[SourceSpan] = None
+    exact: bool = False  # True when resolved by codegraph FQN, skip source re-scan
 
 
 @dataclass(frozen=True)
@@ -241,42 +242,57 @@ def extract_params(sig_line: str, language: Optional[str] = None) -> List[str]:
 # --- call-site parsing -------------------------------------------------------
 
 def _find_python_call_arg_lists(src: str, callee_name: str) -> List[List[str]]:
-    """Find Python calls using AST instead of substring matching."""
+    """Find Python calls using AST, restricted to top-level function scope.
+
+    Nested functions are NOT entered, so ``def inner(): helper(x)`` is never
+    attributed to the outer function.
+    """
     import ast
     import textwrap
     try:
         tree = ast.parse(textwrap.dedent(src))
     except (SyntaxError, TypeError, ValueError):
         return []
-    calls = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if isinstance(func, ast.Name):
-            name = func.id
-        elif isinstance(func, ast.Attribute):
-            name = func.attr
-        else:
-            continue
-        if name != callee_name:
-            continue
-        args = []
-        for arg in node.args:
-            try:
-                args.append(ast.unparse(arg))
-            except Exception:
-                args.append("")
-        for keyword in node.keywords:
-            if keyword.arg is None:
-                continue
-            try:
-                value = ast.unparse(keyword.value)
-            except Exception:
-                value = ""
-            args.append(f"{keyword.arg}={value}")
-        calls.append(args)
-    return calls
+
+    result = []
+
+    class NestedScope(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            return
+        visit_AsyncFunctionDef = visit_FunctionDef
+        visit_ClassDef = visit_FunctionDef
+        visit_Lambda = visit_FunctionDef
+
+    class CallVisitor(ast.NodeVisitor):
+        def visit_Call(self, node):
+            name = None
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            if name == callee_name:
+                args = []
+                for arg in node.args:
+                    try:
+                        args.append(ast.unparse(arg))
+                    except Exception:
+                        args.append("")
+                for kw in node.keywords:
+                    if kw.arg is not None:
+                        try:
+                            args.append(f"{kw.arg}={ast.unparse(kw.value)}")
+                        except Exception:
+                            pass
+                result.append(args)
+            # Stop at nested scopes; their calls belong to the inner function only.
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                       ast.ClassDef, ast.Lambda)):
+                    continue
+                self.visit(child)
+
+    CallVisitor().visit(tree)
+    return result
 
 
 def find_call_arg_lists(
@@ -423,7 +439,7 @@ def build_program_index(
     callers_by_callee: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
     resolved_pairs: Set[tuple] = set()
 
-    # ---- Layer 1: exact codegraph FQN edges ----
+    # ---- Layer 1: exact codegraph FQN edges (trust the FQN, skip source re-scan) ----
     for edge in exact_edges or []:
         caller_id = resolve_fqn(functions, edge.get("caller", ""))
         callee_id = resolve_fqn(functions, edge.get("callee", ""))
@@ -433,19 +449,17 @@ def build_program_index(
         if pair in resolved_pairs:
             continue
         resolved_pairs.add(pair)
-        caller, callee = functions[caller_id], functions[callee_id]
-        call_name = _call_name(callee.id.name)
-        arg_lists = find_call_arg_lists(caller.source, call_name, language=caller.id.language) or [[]]
-        for args in arg_lists:
-            site = CallSite(
-                caller=caller_id, callee=callee_id,
-                callee_name=call_name,
-                order_index=len(calls_by_caller[caller_id]),
-                arg_bindings=_arg_bindings_for(callee, args),
-                span=SourceSpan(path=caller_id.rel),
-            )
-            calls_by_caller[caller_id].append(site)
-            callers_by_callee[callee_id].append(site)
+        call_name = _call_name(functions[callee_id].id.name)
+        site = CallSite(
+            caller=caller_id, callee=callee_id,
+            callee_name=call_name,
+            order_index=len(calls_by_caller[caller_id]),
+            arg_bindings={},
+            span=SourceSpan(path=caller_id.rel),
+            exact=True,
+        )
+        calls_by_caller[caller_id].append(site)
+        callers_by_callee[callee_id].append(site)
 
     # ---- Layer 2: extra edges ----
     for edge in extra_edges or []:
