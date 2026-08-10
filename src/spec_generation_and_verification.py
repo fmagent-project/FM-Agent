@@ -18,6 +18,7 @@ from src.generate_batch_prompts import generate_batch_prompts
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
+from src.spec_forms import SOFTWARE_SPEC_FORM
 from src.verification import streaming_reasoner
 
 
@@ -153,12 +154,13 @@ def run_spec_generation_and_verification(
         for layer_idx in range(total_layers):
             print(f"[Pipeline] Stage 6/6: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
 
-            # Generate batch prompts for this layer. On resume, skip functions
-            # that were already specced in a previous run.
+            # Generate batch prompts in-process. Stage C will replace this
+            # temporary software form with the resolved Stage 6 strategy.
             manifest = generate_batch_prompts(
                 work_dir=Path(work_dir),
                 phase=phase_num,
                 layers_spec=str(layer_idx),
+                spec_form=SOFTWARE_SPEC_FORM,
                 output_dir=Path(batch_dir),
                 resume=resume,
             )

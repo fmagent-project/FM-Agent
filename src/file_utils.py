@@ -2,31 +2,10 @@ import json
 import os
 import re
 
-
-# This module is also copied by the current full pipeline and imported as a
-# standalone helper from ``fm_agent/spec_prompts``. Source-package imports use
-# the canonical SoftwareSpecForm; the fallback preserves that copied runtime
-# until batch prompt generation moves in-process in the next refactor stage.
-if __package__:
-    from .spec_forms import SOFTWARE_SPEC_FORM
-else:
-    SOFTWARE_SPEC_FORM = None
+from .spec_forms import SOFTWARE_SPEC_FORM
 
 
 _METADATA_SIDECAR_SUFFIXES = (".spec.json", ".info.json")
-
-_SPEC_FIELDS = {
-    "signature",
-    "pre_condition",
-    "post_condition",
-}
-
-_CALLEE_FIELDS = {
-    "name",
-    "signature",
-    "pre_condition",
-    "post_condition",
-}
 
 _ALL_BUGS_GAP_FIELDS = {
     "spec_claim",
@@ -84,55 +63,17 @@ def collect_file_names(input_dir, output_path="file_list.json"):
 
 def _is_valid_spec_json(data):
     """Check that .spec.json contains exactly the supported fields."""
-    if SOFTWARE_SPEC_FORM is not None:
-        return SOFTWARE_SPEC_FORM.is_valid_spec_data(data)
-    if not isinstance(data, dict):
-        return False
-    if set(data) != _SPEC_FIELDS:
-        return False
-    return all(isinstance(data[field], str) for field in _SPEC_FIELDS)
+    return SOFTWARE_SPEC_FORM.is_valid_spec_data(data)
 
 
 def _is_valid_info_json(data):
     """Check that .info.json contains exactly the supported fields."""
-    if SOFTWARE_SPEC_FORM is not None:
-        return SOFTWARE_SPEC_FORM.is_valid_info_data(data)
-    if not isinstance(data, dict) or set(data) != {"callees"}:
-        return False
-
-    callees = data["callees"]
-    if not isinstance(callees, list):
-        return False
-
-    for callee in callees:
-        if not isinstance(callee, dict) or set(callee) != _CALLEE_FIELDS:
-            return False
-        if not all(isinstance(callee[field], str) for field in _CALLEE_FIELDS):
-            return False
-
-    return True
+    return SOFTWARE_SPEC_FORM.is_valid_info_data(data)
 
 
 def is_file_ready(file_path):
     """Return whether both metadata sidecars contain valid new-format JSON."""
-    if SOFTWARE_SPEC_FORM is not None:
-        return SOFTWARE_SPEC_FORM.validate(file_path).ready
-
-    spec_path = f"{file_path}.spec.json"
-    info_path = f"{file_path}.info.json"
-
-    if not os.path.isfile(spec_path) or not os.path.isfile(info_path):
-        return False
-
-    try:
-        with open(spec_path, "r", encoding="utf-8") as file:
-            spec = json.load(file)
-        with open(info_path, "r", encoding="utf-8") as file:
-            info = json.load(file)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-
-    return _is_valid_spec_json(spec) and _is_valid_info_json(info)
+    return SOFTWARE_SPEC_FORM.validate(file_path).ready
 
 
 # Directories that typically contain test code
