@@ -148,10 +148,32 @@ def resolve_fqn(functions, fqn: str):
 
 
 def _signature_line(src: str, language: str) -> str:
-    """Best-effort first non-comment line as the function signature header."""
-    cfg = LANG_CONFIG.get(language.lower(), {})
+    """Return the function signature header, accumulating multi-line Python defs.
+
+    For Python, scans through the closing colon of the def statement so
+    multi-line parameter lists are captured.
+    """
+    language = (language or "").lower()
+    cfg = LANG_CONFIG.get(language, {})
     cprefix = cfg.get("comment_prefix", "//")
-    for ln in src.splitlines():
+    lines = src.splitlines()
+
+    if language == "python":
+        collected = []
+        collecting = False
+        for ln in lines:
+            s = ln.strip()
+            if not collecting and (s.startswith("def ") or s.startswith("async def ")):
+                collecting = True
+            if collecting:
+                collected.append(ln)
+                if ":" in ln:
+                    break
+        if collected:
+            return "\n".join(collected).strip()
+        return lines[0] if lines else ""
+
+    for ln in lines:
         s = ln.strip()
         if (
             not s
@@ -160,10 +182,9 @@ def _signature_line(src: str, language: str) -> str:
             or s.startswith("*")
         ):
             continue
-        if language.lower() == "python" and s.startswith("@"):
+        if language == "python" and s.startswith("@"):
             continue
         return s
-    lines = src.splitlines()
     return lines[0] if lines else ""
 
 
@@ -439,7 +460,10 @@ def build_program_index(
     callers_by_callee: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
     resolved_pairs: Set[tuple] = set()
 
-    # ---- Layer 1: exact codegraph FQN edges (trust the FQN, skip source re-scan) ----
+    # ---- Layer 1: exact codegraph FQN edges ----
+    # Trust the FQN for caller/callee identity, but recover the actual call
+    # arguments by scanning the caller source, indexed by order_index. This
+    # preserves per-callsite arg_bindings for instantiate_callee (IFC data flow).
     for edge in exact_edges or []:
         caller_id = resolve_fqn(functions, edge.get("caller", ""))
         callee_id = resolve_fqn(functions, edge.get("callee", ""))
@@ -449,12 +473,21 @@ def build_program_index(
         if pair in resolved_pairs:
             continue
         resolved_pairs.add(pair)
-        call_name = _call_name(functions[callee_id].id.name)
+        caller, callee = functions[caller_id], functions[callee_id]
+        call_name = _call_name(callee.id.name)
+        arg_lists = find_call_arg_lists(
+            caller.source, call_name, language=caller.id.language)
+        if not arg_lists:
+            arg_lists = [[]]
+        order_index = len(calls_by_caller[caller_id])
+        # Match the Nth source call site to this edge (call sites are appended
+        # in source order). Fall back to first call site when unknown.
+        args = arg_lists[order_index] if order_index < len(arg_lists) else arg_lists[0]
         site = CallSite(
             caller=caller_id, callee=callee_id,
             callee_name=call_name,
-            order_index=len(calls_by_caller[caller_id]),
-            arg_bindings={},
+            order_index=order_index,
+            arg_bindings=_arg_bindings_for(callee, args),
             span=SourceSpan(path=caller_id.rel),
             exact=True,
         )
