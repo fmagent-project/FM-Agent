@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import hashlib
+import ipaddress
 import os
 import re
 import shutil
@@ -87,6 +88,25 @@ def adapter_for_api_style(api_style: ApiStyle) -> str:
     raise ConfigWizardError(f"Unsupported API style: {api_style}")
 
 
+_HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+
+
+def _valid_hostname(hostname: str) -> bool:
+    try:
+        ipaddress.ip_address(hostname)
+        return True
+    except ValueError:
+        pass
+
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii").rstrip(".")
+    except UnicodeError:
+        return False
+    if not ascii_hostname or len(ascii_hostname) > 253:
+        return False
+    return all(_HOST_LABEL_RE.fullmatch(label) for label in ascii_hostname.split("."))
+
+
 def validate_base_url(url: str) -> None:
     try:
         parsed = urlparse(url)
@@ -96,7 +116,11 @@ def validate_base_url(url: str) -> None:
         raise ConfigWizardError(
             f"Base URL must be an absolute http(s) URL with a valid hostname and port, got: {url!r}"
         ) from exc
-    if parsed.scheme not in ("http", "https") or not hostname:
+    if (
+        parsed.scheme not in ("http", "https")
+        or not hostname
+        or not _valid_hostname(hostname)
+    ):
         raise ConfigWizardError(
             f"Base URL must be an absolute http(s) URL with a valid hostname and port, got: {url!r}"
         )
