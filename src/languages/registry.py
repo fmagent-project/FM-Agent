@@ -132,7 +132,14 @@ def call_edges_all(proj_dir: str, lang_keys) -> tuple:
         if lang not in REGISTRY:
             continue
         result = REGISTRY[lang].call_edges(proj_dir)
-        if result is not None:
-            langs.add(lang)
+        if result is None:
+            continue
+        langs.add(lang)
+        if isinstance(result, dict):
+            # Legacy format: {caller: {callee, ...}}
+            for caller, callees in result.items():
+                for callee in callees:
+                    edges.append({"caller": caller, "callee": callee, "kind": "call"})
+        elif isinstance(result, list):
             edges.extend(result)
     return edges, langs

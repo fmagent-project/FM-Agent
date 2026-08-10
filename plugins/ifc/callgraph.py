@@ -152,7 +152,14 @@ def _signature_line(src: str, language: str) -> str:
     cprefix = cfg.get("comment_prefix", "//")
     for ln in src.splitlines():
         s = ln.strip()
-        if not s or s.startswith(cprefix) or s.startswith("#") or s.startswith("*"):
+        if (
+            not s
+            or s.startswith(cprefix)
+            or s.startswith("#")
+            or s.startswith("*")
+        ):
+            continue
+        if language.lower() == "python" and s.startswith("@"):
             continue
         return s
     lines = src.splitlines()
@@ -428,7 +435,7 @@ def build_program_index(
         resolved_pairs.add(pair)
         caller, callee = functions[caller_id], functions[callee_id]
         call_name = _call_name(callee.id.name)
-        arg_lists = find_call_arg_lists(caller.source, call_name) or [[]]
+        arg_lists = find_call_arg_lists(caller.source, call_name, language=caller.id.language) or [[]]
         for args in arg_lists:
             site = CallSite(
                 caller=caller_id, callee=callee_id,
@@ -454,7 +461,7 @@ def build_program_index(
         matched = False
         for name in callsite_names:
             call_name = _call_name(str(name))
-            arg_lists = find_call_arg_lists(caller.source, call_name)
+            arg_lists = find_call_arg_lists(caller.source, call_name, language=caller.id.language)
             if not arg_lists:
                 continue
             for args in arg_lists:
@@ -497,7 +504,7 @@ def build_program_index(
             pair = (caller.id, callee.id)
             if pair in resolved_pairs:
                 continue
-            arg_lists = find_call_arg_lists(caller.source, call_name)
+            arg_lists = find_call_arg_lists(caller.source, call_name, language=caller.id.language)
             if not arg_lists:
                 continue
             for args in arg_lists:
