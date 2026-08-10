@@ -1,14 +1,38 @@
-"""Stage 5 replace: build ProgramIndex from extracted functions."""
+"""Stage 5 replace: build ProgramIndex from extracted functions.
+
+Uses codegraph edges as the primary call-graph source, extra edges as
+secondary, and regex fallback only for unresolved calls.
+"""
 
 import json
 import os
 
 from .callgraph import (
     build_program_index,
+    function_fqn,
     load_units_from_extracted,
-    order_bottom_up,
     order_bottom_up_from_program,
+    resolve_fqn,
 )
+
+
+def _load_codegraph_edges(proj_dir: str, units) -> list:
+    """Load exact call edges from FM-Agent's codegraph index."""
+    try:
+        from src.languages.codegraph import CodeGraphExtractor
+    except ImportError:
+        return []
+    extractor = CodeGraphExtractor.from_proj_dir(proj_dir)
+    if extractor is None:
+        return []
+    languages = sorted({unit.id.language for unit in units})
+    edges = []
+    for lang in languages:
+        try:
+            edges.extend(extractor.get_call_edges(lang))
+        except Exception as exc:
+            print(f"[ifc] codegraph edge query failed for {lang}: {exc}")
+    return edges
 
 
 def _load_extra_edges(work_dir: str) -> list:
@@ -25,108 +49,58 @@ def _load_extra_edges(work_dir: str) -> list:
     return load_call_edges(extra_edge_path)
 
 
-def _resolve_fn_id(functions, fqn: str):
-    """Resolve an external FQN to a local FunctionId.
+def _normalize_extra_edges(extra_edges, functions) -> list:
+    """Convert extra-edge objects to shared ``{caller, callee, kind}`` dicts.
 
-    Accepts both ``pkg/a.py::helper`` and ``pkg::a-py::helper`` formats.
-    Falls back to unique basename match when only one candidate exists.
+    When an edge has no explicit caller FQN, resolve it via callsite_names
+    by looking for actual call expressions in source code.
     """
-    if not isinstance(fqn, str) or "::" not in fqn:
-        return None
-    parts = fqn.rsplit("::", 1)
-    if len(parts) != 2:
-        return None
-    rel_raw, name = parts
-
-    # Normalize: pkg/a.py -> pkg/a-py matching extracted_functions layout
-    normalized_rel = rel_raw.replace("\\", "/")
-    if "/" in normalized_rel:
-        base = normalized_rel.rsplit("/", 1)[-1]
-        if "." in base:
-            last_dot = base.rfind(".")
-            normalized_rel = (normalized_rel.rsplit("/", 1)[0] + "/"
-                              + base[:last_dot] + "-" + base[last_dot + 1:])
-
-    # Exact match
-    for fid in functions:
-        if fid.rel == normalized_rel and fid.name == name:
-            return fid
-    for fid in functions:
-        if fid.name == name and fid.rel.replace("\\", "/").endswith(normalized_rel):
-            return fid
-
-    # Unique basename fallback
-    from .callgraph import _call_name
-    base_name = _call_name(name)
-    matches = [fid for fid in functions if _call_name(fid.name) == base_name]
-    if len(matches) == 1:
-        return matches[0]
-    return None
-
-
-def _merge_extra_edges(program, extra_edges):
-    """Merge user-supplied extra call edges into the ProgramIndex."""
-    if not extra_edges:
-        return program
-
-    by_caller = {cid: list(sites) for cid, sites in program.calls_by_caller.items()}
-    by_callee = {cid: list(sites) for cid, sites in program.callers_by_callee.items()}
-    funcs = program.functions
-
-    from .callgraph import CallSite, SourceSpan
+    result = []
+    fn_by_fqn = {function_fqn(fid): fid for fid in functions}
+    from .callgraph import find_call_arg_lists, _call_name
 
     for edge in extra_edges:
-        callee_fqn = edge.callee.fqn
-        callee_id = _resolve_fn_id(funcs, callee_fqn)
+        callee_fqn = getattr(edge.callee, "fqn", None)
+        if not callee_fqn:
+            continue
+        callee_id = resolve_fqn(functions, callee_fqn)
         if callee_id is None:
             continue
 
-        if edge.caller.fqn:
-            caller_id = _resolve_fn_id(funcs, edge.caller.fqn)
+        caller = getattr(edge, "caller", None)
+        if caller is None:
+            continue
+        caller_fqn = getattr(caller, "fqn", None)
+
+        if caller_fqn:
+            caller_id = resolve_fqn(functions, caller_fqn)
             if caller_id is not None:
-                cname = callee_id.name.split("::")[-1]
-                existing = by_caller.setdefault(caller_id, [])
-                if not any(site.callee == callee_id for site in existing):
-                    site = CallSite(
-                        caller=caller_id, callee=callee_id,
-                        callee_name=cname,
-                        order_index=len(existing),
-                        arg_bindings={},
-                        span=SourceSpan(path=caller_id.rel),
-                    )
-                    existing.append(site)
-                    by_callee.setdefault(callee_id, []).append(site)
+                result.append({
+                    "caller": function_fqn(caller_id),
+                    "callee": function_fqn(callee_id),
+                    "kind": "extra",
+                })
+            continue
 
-        for name in edge.caller.callsite_names:
-            for caller_id, caller_unit in funcs.items():
-                if name in caller_unit.source or name == caller_id.name.split("::")[-1]:
-                    existing = by_caller.setdefault(caller_id, [])
-                    cname = callee_id.name.split("::")[-1]
-                    if not any(site.callee == callee_id for site in existing):
-                        site = CallSite(
-                            caller=caller_id, callee=callee_id,
-                            callee_name=cname,
-                            order_index=len(existing),
-                            arg_bindings={},
-                            span=SourceSpan(path=caller_id.rel),
-                        )
-                        existing.append(site)
-                        by_callee.setdefault(callee_id, []).append(site)
+        # callsite_name-only resolution
+        for call_name in getattr(caller, "callsite_names", []) or []:
+            for fid, unit in functions.items():
+                arg_lists = find_call_arg_lists(
+                    unit.source, call_name,
+                    language=unit.id.language)
+                if arg_lists:
+                    result.append({
+                        "caller": function_fqn(fid),
+                        "callee": function_fqn(callee_id),
+                        "kind": "extra",
+                        "callsite_name": call_name,
+                    })
 
-    called = {sid for sites in by_callee.values() for site in sites for sid in (site.callee,)}
-    entrypoints = [fid for fid in funcs if fid not in called]
-
-    from .callgraph import ProgramIndex
-    return ProgramIndex(
-        functions=funcs,
-        calls_by_caller=by_caller,
-        callers_by_callee=by_callee,
-        entrypoints=entrypoints,
-    )
+    return result
 
 
 def replace_generate_topdown_layers(proj_dir: str) -> None:
-    """Build ProgramIndex + bottom-up ordering, persist to fm_agent/ifc/."""
+    """Build ProgramIndex + SCC ordering, persist to fm_agent/ifc/."""
     work_dir = os.path.join(proj_dir, "fm_agent")
     ifc_dir = os.path.join(work_dir, "ifc")
     os.makedirs(ifc_dir, exist_ok=True)
@@ -135,32 +109,37 @@ def replace_generate_topdown_layers(proj_dir: str) -> None:
     if not units:
         return
 
-    program = build_program_index(units)
+    # Layer 1: exact codegraph edges
+    codegraph_edges = _load_codegraph_edges(proj_dir, units)
 
+    # Layer 2: extra edges
     extra_edges = _load_extra_edges(work_dir)
-    if extra_edges:
-        program = _merge_extra_edges(program, extra_edges)
-        ordered, cycles, unreachable = order_bottom_up_from_program(program)
-    else:
-        ordered, cycles, unreachable = order_bottom_up(units)
+    normalized_extra = _normalize_extra_edges(extra_edges, {u.id: u for u in units})
 
-    # --- program_index.json (no source --- source stays in extracted_functions/) ---
+    # Build unified ProgramIndex
+    all_edges = codegraph_edges + normalized_extra
+    program = build_program_index(units, exact_edges=all_edges)
+
+    # Order from the final ProgramIndex (never re-scan source)
+    ordered, cycles, unreachable = order_bottom_up_from_program(program)
+
+    # --- program_index.json ---
     index = {
         "functions": {
-            f"{u.id.rel}::{u.id.name}": {
-                "rel": u.id.rel, "name": u.id.name,
-                "base_name": u.id.base_name, "language": u.id.language,
+            function_fqn(fid): {
+                "rel": fid.rel, "name": fid.name,
+                "base_name": fid.base_name, "language": fid.language,
                 "signature_line": u.signature_line,
                 "params": list(u.params),
             }
-            for u in units
+            for fid, u in program.functions.items()
         },
         "calls_by_caller": {
-            f"{fid.rel}::{fid.name}": [
+            function_fqn(fid): [
                 {
                     "callee_rel": cs.callee.rel,
                     "callee_name": cs.callee.name,
-                    "callee_id": f"{cs.callee.rel}::{cs.callee.name}",
+                    "callee_id": function_fqn(cs.callee),
                     "order_index": cs.order_index,
                     "arg_bindings": dict(cs.arg_bindings),
                 }
@@ -170,15 +149,17 @@ def replace_generate_topdown_layers(proj_dir: str) -> None:
             if calls
         },
         "entrypoints": [
-            f"{e.rel}::{e.name}" for e in program.entrypoints
+            function_fqn(e) for e in program.entrypoints
         ],
     }
 
-    # --- bottom_up_order.json (with cycles + unreachable) ---
+    # --- bottom_up_order.json ---
     order = {
         "order": [{"rel": u.id.rel, "name": u.id.name} for u in ordered],
         "cycles": cycles,
-        "unreachable": [{"rel": u.id.rel, "name": u.id.name} for u in unreachable],
+        "unreachable": [
+            {"rel": u.id.rel, "name": u.id.name} for u in unreachable
+        ],
     }
 
     with open(os.path.join(ifc_dir, "program_index.json"), "w", encoding="utf-8") as f:

@@ -379,42 +379,27 @@ class CodeGraphExtractor:
             for name, qualified_name, start, end in rows
         ]
 
-    def get_call_edges(self, lang_key: str) -> dict:
-        """Return {caller_fqn: {callee_fqn, ...}} for the given language.
+    def get_call_edges(self, lang_key: str) -> list:
+        """Return precisely resolved call edges for the given language.
 
-        Each FQN matches generate_topdown_layers._file_to_fqn for the
-        corresponding extracted function (``dir::file-ext::dedup_name``). Edges
-        are resolved by codegraph NODE ID (not by bare name), so the precise
-        caller/callee identity codegraph computed — which file, which same-named
-        sibling — is preserved end-to-end. This lets the call-graph builder use
-        the edges directly instead of re-resolving bare names against every
-        same-named function (which collapsed siblings and over-approximated
-        across files).
+        Each edge preserves exact codegraph node identity through the extracted-
+        function FQN. No bare-name resolution is performed here.
 
-        Constructor calls are synthesised from `instantiates` edges: when a
-        function instantiates a class, the corresponding constructor method is
-        added as a callee.  See _CONSTRUCTOR_FILTER for per-language details.
-
-        NOTE: codegraph itself collapses calls to same-named classes in different
-        files onto the first definition (a codegraph resolver limitation for C++,
-        not addressable here — see issues/codegraph-samename-class-resolution).
+        Returns a list of ``{"caller": fqn, "callee": fqn, "kind": "calls"}``.
         """
         cg_langs = _CG_LANG.get(lang_key)
         if not cg_langs:
-            return {}
+            return []
 
         conn = sqlite3.connect(self._db)
         cur = conn.cursor()
         placeholders = ",".join("?" * len(cg_langs))
 
-        # Map every function/method node to its FQN once, using the same per-file
-        # dedup as get_functions_by_file, then resolve edges by node id.
         fqn_of = _node_fqn_map(cur, cg_langs)
+        result = []
+        seen = set()
 
-        result = defaultdict(set)
-
-        # Query 1: regular function/method calls, kept as (source_id, target_id)
-        # so each endpoint resolves to its exact node's FQN.
+        # Query 1: regular function/method calls.
         cur.execute(
             f"""
             SELECT e.source, e.target
@@ -426,12 +411,15 @@ class CodeGraphExtractor:
         )
         for src_id, tgt_id in cur.fetchall():
             caller, callee = fqn_of.get(src_id), fqn_of.get(tgt_id)
-            if caller and callee:
-                result[caller].add(callee)
+            if not caller or not callee:
+                continue
+            key = (caller, callee, "calls")
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append({"caller": caller, "callee": callee, "kind": "calls"})
 
         # Query 2: constructor calls synthesised from instantiates edges.
-        # For each `caller instantiates ClassName` edge, find the constructor
-        # method inside that class and add it as a synthetic callee.
         ctor_filter = _CONSTRUCTOR_FILTER.get(lang_key)
         if ctor_filter:
             cur.execute(
@@ -450,11 +438,16 @@ class CodeGraphExtractor:
             )
             for src_id, ctor_id in cur.fetchall():
                 caller, callee = fqn_of.get(src_id), fqn_of.get(ctor_id)
-                if caller and callee:
-                    result[caller].add(callee)
+                if not caller or not callee:
+                    continue
+                key = (caller, callee, "constructor")
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.append({"caller": caller, "callee": callee, "kind": "constructor"})
 
         conn.close()
-        return dict(result)
+        return result
 
 
 def _codegraph_cmd() -> str:

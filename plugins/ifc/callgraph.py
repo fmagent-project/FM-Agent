@@ -79,6 +79,46 @@ def _call_name(name: str) -> str:
     return name
 
 
+def function_fqn(fid: FunctionId) -> str:
+    """Serialize FunctionId for cross-module FQN matching."""
+    return f"{fid.rel}::{fid.name}"
+
+
+def resolve_fqn(functions, fqn: str):
+    """Resolve a codegraph/extra-edge FQN to a local FunctionId.
+
+    Accepts both ``pkg/a.py::helper`` and ``pkg::a-py::helper`` formats.
+    Falls back to unique suffix/basename match; ambiguous names return None.
+    """
+    if not isinstance(fqn, str) or "::" not in fqn:
+        return None
+    # Exact serialized identity
+    for fid in functions:
+        if fqn == function_fqn(fid):
+            return fid
+    rel_raw, name = fqn.rsplit("::", 1)
+    rel_raw = rel_raw.replace("\\", "/")
+    # Direct source-path match
+    for fid in functions:
+        if fid.name == name and fid.rel.replace("\\", "/") == rel_raw:
+            return fid
+    # Convert source path: pkg/a.py → pkg/a-py
+    parts = rel_raw.split("/")
+    if parts and "." in parts[-1]:
+        stem, ext = parts[-1].rsplit(".", 1)
+        parts[-1] = f"{stem}-{ext}"
+        normalized = "/".join(parts)
+        for fid in functions:
+            if fid.name == name and fid.rel.replace("\\", "/") == normalized:
+                return fid
+    # Unique basename fallback
+    candidates = [fid for fid in functions if fid.name == name
+                  and fid.rel.replace("\\", "/").endswith(rel_raw)]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 def _signature_line(src: str, language: str) -> str:
     """Best-effort first non-comment line as the function signature header."""
     cfg = LANG_CONFIG.get(language.lower(), {})
@@ -166,8 +206,58 @@ def extract_params(sig_line: str, language: Optional[str] = None) -> List[str]:
 
 # --- call-site parsing -------------------------------------------------------
 
-def find_call_arg_lists(src: str, callee_name: str) -> List[List[str]]:
-    """Return a list of argument-expression lists for each ``callee_name(...)`` call."""
+def _find_python_call_arg_lists(src: str, callee_name: str) -> List[List[str]]:
+    """Find Python calls using AST instead of substring matching."""
+    import ast
+    import textwrap
+    try:
+        tree = ast.parse(textwrap.dedent(src))
+    except (SyntaxError, TypeError, ValueError):
+        return []
+    calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name):
+            name = func.id
+        elif isinstance(func, ast.Attribute):
+            name = func.attr
+        else:
+            continue
+        if name != callee_name:
+            continue
+        args = []
+        for arg in node.args:
+            try:
+                args.append(ast.unparse(arg))
+            except Exception:
+                args.append("")
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                continue
+            try:
+                value = ast.unparse(keyword.value)
+            except Exception:
+                value = ""
+            args.append(f"{keyword.arg}={value}")
+        calls.append(args)
+    return calls
+
+
+def find_call_arg_lists(
+    src: str,
+    callee_name: str,
+    language: Optional[str] = None,
+) -> List[List[str]]:
+    """Return a list of argument-expression lists for each ``callee_name(...)`` call.
+
+    For Python, uses AST so identifiers inside strings/comments and
+    declarations are never treated as calls.
+    """
+    if (language or "").lower() == "python":
+        return _find_python_call_arg_lists(src, callee_name)
+
     calls = []
     for m in re.finditer(rf"\b{re.escape(callee_name)}\s*\(", src):
         if callee_name == "__init__" and m.start() > 0 and src[m.start() - 1] == ".":
@@ -279,49 +369,89 @@ def _arg_bindings_for(unit: FunctionUnit, args: Sequence[str]) -> Dict[str, str]
     return binding
 
 
-def build_program_index(units: List[FunctionUnit]) -> ProgramIndex:
-    """Build the call graph, reverse graph, and entrypoint set.
+def build_program_index(
+    units: List[FunctionUnit],
+    exact_edges: Optional[Sequence[dict]] = None,
+) -> ProgramIndex:
+    """Build ProgramIndex from extracted units.
 
-    Source-level fallback matching is only used when a callable token
-    uniquely identifies one internal function. Ambiguous names are ignored
-    rather than inventing call edges.
+    Edge resolution priority:
+        1. exact_edges from codegraph (FQN → FQN, node-ID resolved)
+        2. regex/source fallback for unresolved calls
+
+    Exact codegraph identities are never re-resolved by bare name.
+    Ambiguous source-level names are rejected (fail-closed).
     """
     functions = {u.id: u for u in units}
+    fn_by_fqn = {function_fqn(fid): fid for fid in functions}
+
     calls_by_caller: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
     callers_by_callee: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
-    called_internally: set = set()
+    exact_pairs: Set[tuple] = set()
 
-    # Group functions by their source-level callable token.
+    # Layer 1: exact codegraph/extended edges
+    for edge in exact_edges or []:
+        caller_id = fn_by_fqn.get(edge["caller"])
+        callee_id = fn_by_fqn.get(edge["callee"])
+        if caller_id is None or callee_id is None:
+            continue
+        pair = (caller_id, callee_id)
+        if pair in exact_pairs:
+            continue
+        exact_pairs.add(pair)
+
+        call_name = _call_name(callee_id.name)
+        arg_lists = find_call_arg_lists(
+            functions[caller_id].source, call_name,
+            language=caller_id.language)
+        if not arg_lists:
+            arg_lists = [[]]
+        for args in arg_lists:
+            site = CallSite(
+                caller=caller_id, callee=callee_id,
+                callee_name=call_name,
+                order_index=len(calls_by_caller[caller_id]),
+                arg_bindings=_arg_bindings_for(functions[callee_id], args),
+                span=SourceSpan(path=caller_id.rel),
+            )
+            calls_by_caller[caller_id].append(site)
+            callers_by_callee[callee_id].append(site)
+
+    # Layer 2: regex fallback (unique-name only)
     by_call_name: Dict[str, List[FunctionUnit]] = {}
     for unit in units:
         cn = _call_name(unit.id.name)
         by_call_name.setdefault(cn, []).append(unit)
 
     for caller in units:
-        order = 0
         for call_name, candidates in by_call_name.items():
-            # Only match when the name uniquely identifies one internal function.
             if len(candidates) != 1:
                 continue
             callee = candidates[0]
             if callee.id == caller.id:
                 continue
-            arg_lists = find_call_arg_lists(caller.source, call_name)
+            pair = (caller.id, callee.id)
+            if pair in exact_pairs:
+                continue
+            arg_lists = find_call_arg_lists(
+                caller.source, call_name,
+                language=caller.id.language)
             if not arg_lists:
                 continue
-            called_internally.add(callee.id)
             for args in arg_lists:
                 site = CallSite(
                     caller=caller.id, callee=callee.id,
-                    callee_name=call_name, order_index=order,
+                    callee_name=call_name,
+                    order_index=len(calls_by_caller[caller.id]),
                     arg_bindings=_arg_bindings_for(callee, args),
                     span=SourceSpan(path=caller.id.rel),
                 )
                 calls_by_caller[caller.id].append(site)
                 callers_by_callee[callee.id].append(site)
-                order += 1
+            exact_pairs.add(pair)
 
-    entrypoints = [u.id for u in units if u.id not in called_internally]
+    called = {s.callee for sites in callers_by_callee.values() for s in sites}
+    entrypoints = [fid for fid in functions if fid not in called]
     return ProgramIndex(
         functions=functions,
         calls_by_caller=calls_by_caller,

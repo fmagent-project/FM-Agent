@@ -101,23 +101,21 @@ def replace_generate_specs_and_verification(proj_dir: str) -> None:
     units = load_units_from_extracted(work_dir)
     source_by_fn = {(u.id.rel, u.id.name): u for u in units}
 
-    # Build calls_by_fn lookup from program_index
+    # Rebuild calls_by_fn using function metadata (never split("::"))
+    fn_meta = program.get("functions", {})
     calls_by_fn: Dict[tuple, list] = {}
     for caller_key, calls in program.get("calls_by_caller", {}).items():
-        try:
-            rel, name = caller_key.split("::", 1)
-        except ValueError:
+        meta = fn_meta.get(caller_key)
+        if not meta:
             continue
-        cid = (rel, name)
+        cid = (meta["rel"], meta["name"])
         calls_by_fn.setdefault(cid, []).extend(calls)
 
-    all_refs = ordered + [
-        item for cycle in cycles for item in cycle
-    ] + list(unreachable)
-
-    # ---- Pass 1: derive + compose (bottom-up) ----
+    # ---- Pass 1a: derive raw facts (all functions independently) ----
     facts_by_fn: Dict[tuple, dict] = {}
-    for ref in all_refs:
+    for ref in ordered + [
+        item for cycle in cycles for item in cycle
+    ] + list(unreachable):
         fn_key = (ref["rel"], ref["name"])
         fn_unit = source_by_fn.get(fn_key)
         if fn_unit is None:
@@ -126,8 +124,26 @@ def replace_generate_specs_and_verification(proj_dir: str) -> None:
                 "error": "source not found in extracted_functions",
             }
             continue
+        facts_by_fn[fn_key] = _call_llm_with_retries(
+            fn_unit.source, fn_unit.signature_line,
+            fn_unit.id.language, "",
+            model,
+        )
 
-        # Build callee context from already-derived callees
+    # ---- Pass 1b: compose (SCC-aware) ----
+    # For acyclic functions and SCCs, compose callee facts now that
+    # every member has raw facts.
+    for ref in ordered + [
+        item for cycle in cycles for item in cycle
+    ] + list(unreachable):
+        fn_key = (ref["rel"], ref["name"])
+        fn_unit = source_by_fn.get(fn_key)
+        if fn_unit is None:
+            continue
+        facts = facts_by_fn.get(fn_key)
+        if not facts or facts.get("status") != "ok" or not facts.get("payload"):
+            continue
+
         callee_summaries_text = ""
         for cs in calls_by_fn.get(fn_key, []):
             callee_key = (cs.get("callee_rel"), cs.get("callee_name"))
@@ -137,33 +153,34 @@ def replace_generate_specs_and_verification(proj_dir: str) -> None:
                     cs["callee_name"], cf["payload"]
                 )
 
-        # Derive flow signature
-        facts = _call_llm_with_retries(
-            fn_unit.source, fn_unit.signature_line,
-            fn_unit.id.language, callee_summaries_text,
-            model,
-        )
+        if callee_summaries_text:
+            facts = _call_llm_with_retries(
+                fn_unit.source, fn_unit.signature_line,
+                fn_unit.id.language, callee_summaries_text,
+                model,
+            )
 
-        # Compose: instantiate callee signatures at call sites
-        if facts.get("status") == "ok" and facts.get("payload"):
-            resolved = [
-                {
-                    "callee_name": cs.get("callee_name"),
-                    "order_index": cs.get("order_index", 0),
-                    "arg_bindings": cs.get("arg_bindings", {}),
-                    "callee_facts": facts_by_fn.get(
-                        (cs.get("callee_rel"), cs.get("callee_name")), {}
-                    ),
-                }
-                for cs in calls_by_fn.get(fn_key, [])
-                if (cs.get("callee_rel"), cs.get("callee_name")) in facts_by_fn
-            ]
-            if resolved:
-                facts = compose_calls(
-                    facts, resolved, fn_unit.source, fn_unit.id.language
-                )
-
+        resolved = [
+            {
+                "callee_name": cs.get("callee_name"),
+                "order_index": cs.get("order_index", 0),
+                "arg_bindings": cs.get("arg_bindings", {}),
+                "callee_facts": facts_by_fn.get(
+                    (cs.get("callee_rel"), cs.get("callee_name")), {}
+                ),
+            }
+            for cs in calls_by_fn.get(fn_key, [])
+            if (cs.get("callee_rel"), cs.get("callee_name")) in facts_by_fn
+        ]
+        if resolved:
+            facts = compose_calls(
+                facts, resolved, fn_unit.source, fn_unit.id.language
+            )
         facts_by_fn[fn_key] = facts
+
+    all_refs = ordered + [
+        item for cycle in cycles for item in cycle
+    ] + list(unreachable)
 
     # ---- Pass 2: check + write ----
     counts: Dict[str, int] = {}
