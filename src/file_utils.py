@@ -1,6 +1,35 @@
-import os
 import json
+import os
 import re
+
+
+# All-bugs validation artifacts share these invariants: a primary result marks
+# ``all_bugs: true`` and writes one ``*.bug-NNN.json`` candidate per violation
+# (verification.py), and every bug-validation result must carry a terminal
+# ``confirmation_status`` plus the string fields below (md/bug_validator.md).
+_TERMINAL_VALIDATION_STATUSES = {
+    "confirmed",
+    "not_confirmed",
+    "error",
+}
+
+_TERMINAL_VALIDATION_STRING_FIELDS = {
+    "source_file",
+    "function_name",
+    "probe_script",
+    "detail_file",
+    "probe_stdout",
+    "trigger_summary",
+}
+
+# Field names a candidate's ``gaps`` dict carries; at least one must be a
+# non-empty string for the candidate to be considered usable.
+_ALL_BUGS_GAP_FIELDS = (
+    "spec_claim",
+    "actual_behavior",
+    "code_evidence",
+    "trigger_condition",
+)
 
 
 def _write_file_names(file_names, output_path):
@@ -21,31 +50,58 @@ def collect_file_names(input_dir, output_path="file_list.json"):
     file_names = []
     for root, _, files in os.walk(input_dir):
         for fname in files:
+            if _is_metadata_sidecar(fname):
+                continue
             full_path = os.path.join(root, fname)
             rel_path = os.path.relpath(full_path, input_dir)
             file_names.append(rel_path)
     return _write_file_names(file_names, output_path)
 
 
-def is_file_ready(file_path):
-    """Check if a file has [SPEC] ... [SPEC] and [INFO] ... [INFO] headers."""
-    try:
-        with open(file_path, 'r') as f:
-            content = f.read()
-    except (OSError, UnicodeDecodeError):
+def _is_valid_spec_json(data):
+    """Check that .spec.json contains exactly the supported fields."""
+    if not isinstance(data, dict):
+        return False
+    if set(data) != _SPEC_FIELDS:
+        return False
+    return all(isinstance(data[field], str) for field in _SPEC_FIELDS)
+
+
+def _is_valid_info_json(data):
+    """Check that .info.json contains exactly the supported fields."""
+    if not isinstance(data, dict) or set(data) != {"callees"}:
         return False
 
-    lines = content.splitlines()
-    spec_count = 0
-    info_count = 0
+    callees = data["callees"]
+    if not isinstance(callees, list):
+        return False
 
-    for line in lines:
-        if '[SPEC]' in line:
-            spec_count += 1
-        if '[INFO]' in line:
-            info_count += 1
+    for callee in callees:
+        if not isinstance(callee, dict) or set(callee) != _CALLEE_FIELDS:
+            return False
+        if not all(isinstance(callee[field], str) for field in _CALLEE_FIELDS):
+            return False
 
-    return spec_count >= 2 and info_count >= 2
+    return True
+
+
+def is_file_ready(file_path):
+    """Return whether both metadata sidecars contain valid new-format JSON."""
+    spec_path = f"{file_path}.spec.json"
+    info_path = f"{file_path}.info.json"
+
+    if not os.path.isfile(spec_path) or not os.path.isfile(info_path):
+        return False
+
+    try:
+        with open(spec_path, "r", encoding="utf-8") as file:
+            spec = json.load(file)
+        with open(info_path, "r", encoding="utf-8") as file:
+            info = json.load(file)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+
+    return _is_valid_spec_json(spec) and _is_valid_info_json(info)
 
 
 def _extracted_file_to_source_rel(extracted_rel):
@@ -103,6 +159,108 @@ def locate_workdir(proj_dir):
     return cand  # directory may not exist yet; caller validates
 
 
+def _all_bugs_candidate_paths(result_path, result):
+    """Return deterministic candidate paths for a valid all-bugs result."""
+    if not isinstance(result, dict) or result.get("all_bugs") is not True:
+        return None
+    verdict = result.get("verdict")
+    bug_count = result.get("bug_count")
+    reasoning_complete = result.get("reasoning_complete", True)
+    primary_function = result.get("function")
+    if not isinstance(primary_function, str) or not primary_function:
+        return None
+    if not isinstance(bug_count, int) or isinstance(bug_count, bool):
+        return None
+    if not isinstance(reasoning_complete, bool):
+        return None
+    stem, ext = os.path.splitext(result_path)
+    candidates = [f"{stem}.bug-{index:03d}{ext}" for index in range(1, bug_count + 1)]
+    directory = os.path.dirname(result_path)
+    basename = os.path.basename(stem)
+    sidecar_pattern = re.compile(
+        rf"^{re.escape(basename)}\.bug-\d{{3}}{re.escape(ext)}$"
+    )
+    try:
+        actual_candidates = (
+            sorted(
+                os.path.join(directory, filename)
+                for filename in os.listdir(directory)
+                if sidecar_pattern.fullmatch(filename)
+            )
+            if os.path.isdir(directory)
+            else []
+        )
+    except OSError:
+        return None
+    if actual_candidates != candidates:
+        return None
+
+    if not reasoning_complete:
+        return None
+    if verdict == "MATCH" and bug_count == 0 and reasoning_complete:
+        return []
+    if verdict != "MISMATCH" or bug_count < 1:
+        return None
+
+    for candidate_path in candidates:
+        try:
+            with open(candidate_path, "r", encoding="utf-8") as f:
+                candidate = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(candidate, dict)
+            or set(candidate) != {"function", "verdict", "gaps"}
+            or candidate.get("function") != primary_function
+            or candidate.get("verdict") != "MISMATCH"
+            or not isinstance(candidate.get("gaps"), dict)
+            or not any(
+                isinstance(candidate["gaps"].get(field), str)
+                and candidate["gaps"][field].strip()
+                for field in _ALL_BUGS_GAP_FIELDS
+            )
+        ):
+            return None
+    return candidates
+
+
+def _terminal_validation_record_is_valid(validation, expected_bug_id):
+    """Return whether a terminal validation record belongs to one candidate."""
+    if not isinstance(validation, dict):
+        return False
+    if (
+        not isinstance(expected_bug_id, str)
+        or not expected_bug_id
+        or validation.get("id") != expected_bug_id
+        or validation.get("confirmation_status")
+        not in _TERMINAL_VALIDATION_STATUSES
+    ):
+        return False
+    if not _TERMINAL_VALIDATION_STRING_FIELDS.issubset(validation):
+        return False
+    if not all(
+        isinstance(validation[field], str)
+        for field in _TERMINAL_VALIDATION_STRING_FIELDS
+    ):
+        return False
+    attempts = validation.get("attempts")
+    return (
+        isinstance(attempts, int)
+        and not isinstance(attempts, bool)
+        and 1 <= attempts <= 10
+    )
+
+
+def _terminal_validation_is_valid(validation_path, expected_bug_id):
+    """Return whether a candidate's validation artifact is complete and terminal."""
+    try:
+        with open(validation_path, "r", encoding="utf-8") as f:
+            validation = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return _terminal_validation_record_is_valid(validation, expected_bug_id)
+
+
 # Directories that typically contain test code
 _TEST_DIR_NAMES = {
     "test", "tests", "__tests__", "testing", "test_helpers",
@@ -142,18 +300,214 @@ def clear_test_file_exemptions():
     _TEST_FILE_EXEMPTIONS.clear()
 
 
-def _get_incomplete_verification_files(layer_files, input_dir, output_dir, work_dir):
+def _all_bugs_candidate_paths(result_path, result):
+    """Return deterministic candidate paths for a valid all-bugs result."""
+    if not isinstance(result, dict) or result.get("all_bugs") is not True:
+        return None
+    verdict = result.get("verdict")
+    bug_count = result.get("bug_count")
+    reasoning_complete = result.get("reasoning_complete", True)
+    primary_function = result.get("function")
+    if not isinstance(primary_function, str) or not primary_function:
+        return None
+    if not isinstance(bug_count, int) or isinstance(bug_count, bool):
+        return None
+    if not isinstance(reasoning_complete, bool):
+        return None
+    stem, ext = os.path.splitext(result_path)
+    candidates = [f"{stem}.bug-{index:03d}{ext}" for index in range(1, bug_count + 1)]
+    directory = os.path.dirname(result_path)
+    basename = os.path.basename(stem)
+    sidecar_pattern = re.compile(
+        rf"^{re.escape(basename)}\.bug-\d{{3}}{re.escape(ext)}$"
+    )
+    try:
+        actual_candidates = (
+            sorted(
+                os.path.join(directory, filename)
+                for filename in os.listdir(directory)
+                if sidecar_pattern.fullmatch(filename)
+            )
+            if os.path.isdir(directory)
+            else []
+        )
+    except OSError:
+        return None
+    if actual_candidates != candidates:
+        return None
+
+    if not reasoning_complete:
+        return None
+    if verdict == "MATCH" and bug_count == 0 and reasoning_complete:
+        return []
+    if verdict != "MISMATCH" or bug_count < 1:
+        return None
+
+    for candidate_path in candidates:
+        try:
+            with open(candidate_path, "r", encoding="utf-8") as f:
+                candidate = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(candidate, dict)
+            or set(candidate) != {"function", "verdict", "gaps"}
+            or candidate.get("function") != primary_function
+            or candidate.get("verdict") != "MISMATCH"
+            or not isinstance(candidate.get("gaps"), dict)
+            or set(candidate["gaps"]) != _ALL_BUGS_GAP_FIELDS
+            or not all(
+                isinstance(candidate["gaps"][field], str)
+                and candidate["gaps"][field].strip()
+                for field in _ALL_BUGS_GAP_FIELDS
+            )
+        ):
+            return None
+    return candidates
+
+
+class ResumeModeMismatchError(RuntimeError):
+    """Raised when resume would mix default and all-bugs results."""
+
+
+def _result_reasoning_mode(result):
+    """Return the readable primary result's reasoning mode, if recognizable."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("all_bugs") is True:
+        return "all-bugs"
+    if result.get("verdict") in {"MATCH", "MISMATCH", "ERROR"}:
+        return "default"
+    return None
+
+
+def _ensure_resume_result_mode(result, result_path, all_bugs):
+    """Reject reuse when a primary result belongs to the other reasoning mode."""
+    existing_mode = _result_reasoning_mode(result)
+    requested_mode = "all-bugs" if all_bugs else "default"
+    if existing_mode is not None and existing_mode != requested_mode:
+        existing_label = (
+            "an all-bugs workspace"
+            if existing_mode == "all-bugs"
+            else "a default-mode workspace"
+        )
+        original_command = (
+            "--resume --all-bugs"
+            if existing_mode == "all-bugs"
+            else "--resume without --all-bugs"
+        )
+        raise ResumeModeMismatchError(
+            f"Cannot resume {existing_label} in {requested_mode} mode. "
+            f"Re-run with {original_command}, or omit --resume to start a fresh "
+            f"{requested_mode} run. Existing result: {result_path}"
+        )
+
+
+def _ensure_resume_mode_compatible(output_dir, all_bugs):
+    """Check every readable primary result before a resumed pipeline mutates state."""
+    if not os.path.isdir(output_dir):
+        return
+    for root, _dirs, files in os.walk(output_dir):
+        for filename in files:
+            if not filename.endswith(".json"):
+                continue
+            result_path = os.path.join(root, filename)
+            if re.search(r"\.bug-\d{3}\.json$", filename):
+                if not all_bugs:
+                    raise ResumeModeMismatchError(
+                        "Cannot resume an all-bugs workspace in default mode. "
+                        "Re-run with --resume --all-bugs, or omit --resume to "
+                        "start a fresh default run. "
+                        f"Existing candidate: {result_path}"
+                    )
+                continue
+            try:
+                with open(result_path, "r", encoding="utf-8") as f:
+                    result = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            _ensure_resume_result_mode(result, result_path, all_bugs)
+
+
+def _terminal_validation_record_is_valid(validation, expected_bug_id):
+    """Return whether a terminal validation record belongs to one candidate."""
+    if not isinstance(validation, dict):
+        return False
+    if (
+        not isinstance(expected_bug_id, str)
+        or not expected_bug_id
+        or validation.get("id") != expected_bug_id
+        or validation.get("confirmation_status")
+        not in _TERMINAL_VALIDATION_STATUSES
+    ):
+        return False
+    if not _TERMINAL_VALIDATION_STRING_FIELDS.issubset(validation):
+        return False
+    if not all(
+        isinstance(validation[field], str)
+        for field in _TERMINAL_VALIDATION_STRING_FIELDS
+    ):
+        return False
+    attempts = validation.get("attempts")
+    return (
+        isinstance(attempts, int)
+        and not isinstance(attempts, bool)
+        and attempts > 0
+    )
+
+
+def _terminal_validation_is_valid(validation_path, expected_bug_id):
+    """Return whether a candidate's validation artifact is complete and terminal."""
+    try:
+        with open(validation_path, "r", encoding="utf-8") as f:
+            validation = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return _terminal_validation_record_is_valid(validation, expected_bug_id)
+
+
+def _get_incomplete_verification_files(
+    layer_files,
+    input_dir,
+    output_dir,
+    work_dir,
+    all_bugs=False,
+    bug_validation_enabled=True,
+):
     """Return layer files missing verification or required bug validation output."""
     incomplete = []
     for rel in layer_files:
         result_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
         try:
-            with open(result_path, "r") as f:
+            with open(result_path, "r", encoding="utf-8") as f:
                 result = json.load(f)
         except (OSError, json.JSONDecodeError):
             incomplete.append(rel)
             continue
 
+        if all_bugs:
+            candidates = _all_bugs_candidate_paths(result_path, result)
+            if candidates is None:
+                incomplete.append(rel)
+                continue
+            if not bug_validation_enabled:
+                continue
+            missing_validation = False
+            for candidate_path in candidates:
+                candidate_rel = os.path.relpath(candidate_path, output_dir)
+                bug_id = os.path.splitext(candidate_rel)[0].replace(os.sep, "--")
+                validation_path = os.path.join(
+                    work_dir, "bug_validation", f"{bug_id}.result.json"
+                )
+                if not _terminal_validation_is_valid(validation_path, bug_id):
+                    missing_validation = True
+                    break
+            if missing_validation:
+                incomplete.append(rel)
+            continue
+
+        if not bug_validation_enabled:
+            continue
         if result.get("verdict") != "MISMATCH":
             continue
 
@@ -195,7 +549,7 @@ def _get_phase_files(phases_data, phase_num, input_dir):
                 for root, _dirs, fnames in os.walk(extracted_dir):
                     for fname in sorted(fnames):
                         fpath = os.path.join(root, fname)
-                        if os.path.isfile(fpath):
+                        if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
                             phase_files.append(os.path.relpath(fpath, input_dir))
     return phase_files
 
