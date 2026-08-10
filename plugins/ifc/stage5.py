@@ -1,18 +1,12 @@
-"""Stage 5 replace: build ProgramIndex from extracted functions.
-
-Uses codegraph edges as the primary call-graph source, extra edges as
-secondary, and regex fallback only for unresolved calls.
-"""
+"""Stage 5 replace: build ProgramIndex from all available call-graph edges."""
 
 import json
 import os
 
 from .callgraph import (
     build_program_index,
-    function_fqn,
     load_units_from_extracted,
     order_bottom_up_from_program,
-    resolve_fqn,
 )
 
 
@@ -30,77 +24,46 @@ def _load_codegraph_edges(proj_dir: str, units) -> list:
     for lang in languages:
         try:
             edges.extend(extractor.get_call_edges(lang))
-        except Exception as exc:
-            print(f"[ifc] codegraph edge query failed for {lang}: {exc}")
+        except Exception:
+            pass
     return edges
 
 
 def _load_extra_edges(work_dir: str) -> list:
-    """Load extra call edges via FM-Agent's shared ``load_call_edges`` parser."""
+    """Load plugin/user-supplied extra call edges."""
     ctx_path = os.path.join(work_dir, "plugin_context.json")
     if not os.path.isfile(ctx_path):
         return []
     with open(ctx_path, "r", encoding="utf-8") as f:
         ctx = json.load(f)
-    extra_edge_path = ctx.get("extra_edge", None)
+    extra_edge_path = ctx.get("extra_edge")
     if not extra_edge_path or not os.path.exists(extra_edge_path):
         return []
-    from src.call_graph_edges import load_call_edges
-    return load_call_edges(extra_edge_path)
-
-
-def _normalize_extra_edges(extra_edges, functions) -> list:
-    """Convert extra-edge objects to shared ``{caller, callee, kind}`` dicts.
-
-    When an edge has no explicit caller FQN, resolve it via callsite_names
-    by looking for actual call expressions in source code.
-    """
+    from src.call_graph_edges import load_call_edges, CallEdge
+    edges = load_call_edges(extra_edge_path)
+    # Convert CallEdge objects to plain dicts for build_program_index
     result = []
-    fn_by_fqn = {function_fqn(fid): fid for fid in functions}
-    from .callgraph import find_call_arg_lists, _call_name
-
-    for edge in extra_edges:
-        callee_fqn = getattr(edge.callee, "fqn", None)
+    for e in edges:
+        if not isinstance(e, CallEdge):
+            continue
+        callee_fqn = getattr(e.callee, "fqn", None)
         if not callee_fqn:
             continue
-        callee_id = resolve_fqn(functions, callee_fqn)
-        if callee_id is None:
-            continue
-
-        caller = getattr(edge, "caller", None)
-        if caller is None:
-            continue
-        caller_fqn = getattr(caller, "fqn", None)
-
-        if caller_fqn:
-            caller_id = resolve_fqn(functions, caller_fqn)
-            if caller_id is not None:
-                result.append({
-                    "caller": function_fqn(caller_id),
-                    "callee": function_fqn(callee_id),
-                    "kind": "extra",
-                })
-            continue
-
-        # callsite_name-only resolution
-        for call_name in getattr(caller, "callsite_names", []) or []:
-            for fid, unit in functions.items():
-                arg_lists = find_call_arg_lists(
-                    unit.source, call_name,
-                    language=unit.id.language)
-                if arg_lists:
-                    result.append({
-                        "caller": function_fqn(fid),
-                        "callee": function_fqn(callee_id),
-                        "kind": "extra",
-                        "callsite_name": call_name,
-                    })
-
+        caller_fqn = getattr(e.caller, "fqn", None) or ""
+        callsite_names = list(getattr(e.caller, "callsite_names", []) or [])
+        result.append({
+            "caller": caller_fqn,
+            "callee": callee_fqn,
+            "callsite_names": callsite_names,
+        })
     return result
 
 
 def replace_generate_topdown_layers(proj_dir: str) -> None:
-    """Build ProgramIndex + SCC ordering, persist to fm_agent/ifc/."""
+    """Build and persist the unified ProgramIndex.
+
+    Pipeline: codegraph exact FQN edges → extra edges → regex fallback → ProgramIndex.
+    """
     work_dir = os.path.join(proj_dir, "fm_agent")
     ifc_dir = os.path.join(work_dir, "ifc")
     os.makedirs(ifc_dir, exist_ok=True)
@@ -109,24 +72,22 @@ def replace_generate_topdown_layers(proj_dir: str) -> None:
     if not units:
         return
 
-    # Layer 1: exact codegraph edges
     codegraph_edges = _load_codegraph_edges(proj_dir, units)
-
-    # Layer 2: extra edges
     extra_edges = _load_extra_edges(work_dir)
-    normalized_extra = _normalize_extra_edges(extra_edges, {u.id: u for u in units})
 
-    # Build unified ProgramIndex
-    all_edges = codegraph_edges + normalized_extra
-    program = build_program_index(units, exact_edges=all_edges)
+    program = build_program_index(
+        units,
+        exact_edges=codegraph_edges,
+        extra_edges=extra_edges,
+    )
 
-    # Order from the final ProgramIndex (never re-scan source)
+    # Always order from ProgramIndex — never fall back to re-scanning source
     ordered, cycles, unreachable = order_bottom_up_from_program(program)
 
-    # --- program_index.json ---
+    # Serialize with canonical FQN keys
     index = {
         "functions": {
-            function_fqn(fid): {
+            f"{fid.rel}::{fid.name}": {
                 "rel": fid.rel, "name": fid.name,
                 "base_name": fid.base_name, "language": fid.language,
                 "signature_line": u.signature_line,
@@ -135,11 +96,11 @@ def replace_generate_topdown_layers(proj_dir: str) -> None:
             for fid, u in program.functions.items()
         },
         "calls_by_caller": {
-            function_fqn(fid): [
+            f"{fid.rel}::{fid.name}": [
                 {
                     "callee_rel": cs.callee.rel,
                     "callee_name": cs.callee.name,
-                    "callee_id": function_fqn(cs.callee),
+                    "callee_id": f"{cs.callee.rel}::{cs.callee.name}",
                     "order_index": cs.order_index,
                     "arg_bindings": dict(cs.arg_bindings),
                 }
@@ -149,17 +110,13 @@ def replace_generate_topdown_layers(proj_dir: str) -> None:
             if calls
         },
         "entrypoints": [
-            function_fqn(e) for e in program.entrypoints
+            f"{e.rel}::{e.name}" for e in program.entrypoints
         ],
     }
-
-    # --- bottom_up_order.json ---
     order = {
         "order": [{"rel": u.id.rel, "name": u.id.name} for u in ordered],
         "cycles": cycles,
-        "unreachable": [
-            {"rel": u.id.rel, "name": u.id.name} for u in unreachable
-        ],
+        "unreachable": [{"rel": u.id.rel, "name": u.id.name} for u in unreachable],
     }
 
     with open(os.path.join(ifc_dir, "program_index.json"), "w", encoding="utf-8") as f:

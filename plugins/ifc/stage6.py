@@ -101,15 +101,24 @@ def replace_generate_specs_and_verification(proj_dir: str) -> None:
     units = load_units_from_extracted(work_dir)
     source_by_fn = {(u.id.rel, u.id.name): u for u in units}
 
-    # Rebuild calls_by_fn using function metadata (never split("::"))
-    fn_meta = program.get("functions", {})
-    calls_by_fn: Dict[tuple, list] = {}
-    for caller_key, calls in program.get("calls_by_caller", {}).items():
-        meta = fn_meta.get(caller_key)
-        if not meta:
+    # Build fn_by_fqn from Stage 5's functions metadata (never split("::"))
+    fn_meta = program.get("functions", {}) or {}
+    fn_by_fqn = {}
+    for _, meta in fn_meta.items():
+        if not isinstance(meta, dict):
             continue
-        cid = (meta["rel"], meta["name"])
-        calls_by_fn.setdefault(cid, []).extend(calls)
+        rel = meta.get("rel")
+        name = meta.get("name")
+        if not rel or not name:
+            continue
+        fn_by_fqn[f"{rel}::{name}"] = (rel, name)
+
+    calls_by_fn: Dict[tuple, list] = {}
+    for caller_fqn, calls in (program.get("calls_by_caller", {}) or {}).items():
+        caller_key = fn_by_fqn.get(caller_fqn)
+        if caller_key is None:
+            continue
+        calls_by_fn.setdefault(caller_key, []).extend(calls)
 
     # ---- Pass 1a: derive raw facts (all functions independently) ----
     facts_by_fn: Dict[tuple, dict] = {}

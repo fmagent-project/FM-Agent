@@ -80,42 +80,69 @@ def _call_name(name: str) -> str:
 
 
 def function_fqn(fid: FunctionId) -> str:
-    """Serialize FunctionId for cross-module FQN matching."""
-    return f"{fid.rel}::{fid.name}"
+    """Canonical FQN: ``<extracted-rel-path>::<function-name>``.
+
+    Example: ``pkg/file-py::helper``
+    """
+    return f"{fid.rel.replace(chr(92), '/')}::{fid.name}"
+
+
+def normalize_external_fqn(fqn: str) -> str:
+    """Normalize a codegraph/external FQN to ProgramIndex canonical format.
+
+    Codegraph encodes dir separators as ``::``, producing:
+        ``pkg::file-py::helper``
+
+    ProgramIndex uses filesystem paths:
+        ``pkg/file-py::helper``
+
+    External edge sources may refer to original source files:
+        ``pkg/a.py::helper`` → ``pkg/a-py::helper``
+    """
+    if not isinstance(fqn, str):
+        return ""
+    fqn = fqn.strip()
+    if not fqn or "::" not in fqn:
+        return fqn
+    path_part, fn_name = fqn.rsplit("::", 1)
+    path_part = path_part.replace("\\", "/")
+    # Codegraph path: ``pkg::file-py`` → ``pkg/file-py``
+    if "::" in path_part:
+        path_part = path_part.replace("::", "/")
+    # Source path: ``pkg/a.py`` → ``pkg/a-py``
+    parts = path_part.split("/")
+    if parts and "." in parts[-1]:
+        stem, ext = parts[-1].rsplit(".", 1)
+        if stem and ext:
+            parts[-1] = f"{stem}-{ext}"
+        path_part = "/".join(parts)
+    return f"{path_part}::{fn_name}"
 
 
 def resolve_fqn(functions, fqn: str):
-    """Resolve a codegraph/extra-edge FQN to a local FunctionId.
+    """Resolve an external FQN to a local FunctionId via exact FQN matching.
 
-    Accepts both ``pkg/a.py::helper`` and ``pkg::a-py::helper`` formats.
-    Falls back to unique suffix/basename match; ambiguous names return None.
+    Performs FQN normalization before lookup. Does NOT fall back to
+    basename/callable-name guessing --- that belongs in the regex fallback layer.
     """
-    if not isinstance(fqn, str) or "::" not in fqn:
+    if not isinstance(fqn, str):
         return None
-    # Exact serialized identity
+    canonical = normalize_external_fqn(fqn)
+    if not canonical or "::" not in canonical:
+        return None
+    dir_fqn, fn_name = canonical.rsplit("::", 1)
+
+    fn_by_fqn = {function_fqn(fid): fid for fid in functions}
+    if canonical in fn_by_fqn:
+        return fn_by_fqn[canonical]
+
+    # function_fqn uses fid.rel (e.g. ``src/api-py/handle_login.py``) while
+    # codegraph FQN maps to the directory (e.g. ``src/api-py``).  Match by
+    # (dirname of fid.rel, fid.name).
     for fid in functions:
-        if fqn == function_fqn(fid):
+        fid_dir = os.path.dirname(fid.rel).replace("\\", "/")
+        if fid_dir == dir_fqn and fid.name == fn_name:
             return fid
-    rel_raw, name = fqn.rsplit("::", 1)
-    rel_raw = rel_raw.replace("\\", "/")
-    # Direct source-path match
-    for fid in functions:
-        if fid.name == name and fid.rel.replace("\\", "/") == rel_raw:
-            return fid
-    # Convert source path: pkg/a.py → pkg/a-py
-    parts = rel_raw.split("/")
-    if parts and "." in parts[-1]:
-        stem, ext = parts[-1].rsplit(".", 1)
-        parts[-1] = f"{stem}-{ext}"
-        normalized = "/".join(parts)
-        for fid in functions:
-            if fid.name == name and fid.rel.replace("\\", "/") == normalized:
-                return fid
-    # Unique basename fallback
-    candidates = [fid for fid in functions if fid.name == name
-                  and fid.rel.replace("\\", "/").endswith(rel_raw)]
-    if len(candidates) == 1:
-        return candidates[0]
     return None
 
 
@@ -372,57 +399,94 @@ def _arg_bindings_for(unit: FunctionUnit, args: Sequence[str]) -> Dict[str, str]
 def build_program_index(
     units: List[FunctionUnit],
     exact_edges: Optional[Sequence[dict]] = None,
+    extra_edges: Optional[Sequence[dict]] = None,
 ) -> ProgramIndex:
-    """Build ProgramIndex from extracted units.
+    """Build a unified ProgramIndex from all available edge sources.
 
-    Edge resolution priority:
-        1. exact_edges from codegraph (FQN → FQN, node-ID resolved)
-        2. regex/source fallback for unresolved calls
+    Resolution priority:
+        1. exact codegraph FQN edges
+        2. extra/user-supplied edges
+        3. unique source-level callable fallback
 
-    Exact codegraph identities are never re-resolved by bare name.
+    Exact FQN edges are never replaced by name guessing.
     Ambiguous source-level names are rejected (fail-closed).
     """
     functions = {u.id: u for u in units}
-    fn_by_fqn = {function_fqn(fid): fid for fid in functions}
-
     calls_by_caller: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
     callers_by_callee: Dict[FunctionId, List[CallSite]] = {u.id: [] for u in units}
-    exact_pairs: Set[tuple] = set()
+    resolved_pairs: Set[tuple] = set()
 
-    # Layer 1: exact codegraph/extended edges
+    # ---- Layer 1: exact codegraph FQN edges ----
     for edge in exact_edges or []:
-        caller_id = fn_by_fqn.get(edge["caller"])
-        callee_id = fn_by_fqn.get(edge["callee"])
-        if caller_id is None or callee_id is None:
+        caller_id = resolve_fqn(functions, edge.get("caller", ""))
+        callee_id = resolve_fqn(functions, edge.get("callee", ""))
+        if caller_id is None or callee_id is None or caller_id == callee_id:
             continue
         pair = (caller_id, callee_id)
-        if pair in exact_pairs:
+        if pair in resolved_pairs:
             continue
-        exact_pairs.add(pair)
-
-        call_name = _call_name(callee_id.name)
-        arg_lists = find_call_arg_lists(
-            functions[caller_id].source, call_name,
-            language=caller_id.language)
-        if not arg_lists:
-            arg_lists = [[]]
+        resolved_pairs.add(pair)
+        caller, callee = functions[caller_id], functions[callee_id]
+        call_name = _call_name(callee.id.name)
+        arg_lists = find_call_arg_lists(caller.source, call_name) or [[]]
         for args in arg_lists:
             site = CallSite(
                 caller=caller_id, callee=callee_id,
                 callee_name=call_name,
                 order_index=len(calls_by_caller[caller_id]),
-                arg_bindings=_arg_bindings_for(functions[callee_id], args),
+                arg_bindings=_arg_bindings_for(callee, args),
                 span=SourceSpan(path=caller_id.rel),
             )
             calls_by_caller[caller_id].append(site)
             callers_by_callee[callee_id].append(site)
 
-    # Layer 2: regex fallback (unique-name only)
+    # ---- Layer 2: extra edges ----
+    for edge in extra_edges or []:
+        caller_id = resolve_fqn(functions, edge.get("caller", ""))
+        callee_id = resolve_fqn(functions, edge.get("callee", ""))
+        if caller_id is None or callee_id is None or caller_id == callee_id:
+            continue
+        pair = (caller_id, callee_id)
+        if pair in resolved_pairs:
+            continue
+        caller, callee = functions[caller_id], functions[callee_id]
+        callsite_names = edge.get("callsite_names", []) or []
+        matched = False
+        for name in callsite_names:
+            call_name = _call_name(str(name))
+            arg_lists = find_call_arg_lists(caller.source, call_name)
+            if not arg_lists:
+                continue
+            for args in arg_lists:
+                site = CallSite(
+                    caller=caller_id, callee=callee_id,
+                    callee_name=call_name,
+                    order_index=len(calls_by_caller[caller_id]),
+                    arg_bindings=_arg_bindings_for(callee, args),
+                    span=SourceSpan(path=caller_id.rel),
+                )
+                calls_by_caller[caller_id].append(site)
+                callers_by_callee[callee_id].append(site)
+                matched = True
+        if not callsite_names:
+            site = CallSite(
+                caller=caller_id, callee=callee_id,
+                callee_name=_call_name(callee.id.name),
+                order_index=len(calls_by_caller[caller_id]),
+                arg_bindings=_arg_bindings_for(callee, ()),
+                span=SourceSpan(path=caller_id.rel),
+            )
+            calls_by_caller[caller_id].append(site)
+            callers_by_callee[callee_id].append(site)
+            matched = True
+        if matched:
+            resolved_pairs.add(pair)
+
+    # ---- Layer 3: regex fallback (unique-name only) ----
     by_call_name: Dict[str, List[FunctionUnit]] = {}
     for unit in units:
         cn = _call_name(unit.id.name)
         by_call_name.setdefault(cn, []).append(unit)
-
     for caller in units:
         for call_name, candidates in by_call_name.items():
             if len(candidates) != 1:
@@ -431,11 +495,9 @@ def build_program_index(
             if callee.id == caller.id:
                 continue
             pair = (caller.id, callee.id)
-            if pair in exact_pairs:
+            if pair in resolved_pairs:
                 continue
-            arg_lists = find_call_arg_lists(
-                caller.source, call_name,
-                language=caller.id.language)
+            arg_lists = find_call_arg_lists(caller.source, call_name)
             if not arg_lists:
                 continue
             for args in arg_lists:
@@ -448,7 +510,7 @@ def build_program_index(
                 )
                 calls_by_caller[caller.id].append(site)
                 callers_by_callee[callee.id].append(site)
-            exact_pairs.add(pair)
+            resolved_pairs.add(pair)
 
     called = {s.callee for sites in callers_by_callee.values() for s in sites}
     entrypoints = [fid for fid in functions if fid not in called]
