@@ -46,3 +46,24 @@ class SpecForm(ABC):
         expected_dependencies: Sequence[str] = (),
     ) -> SpecValidationResult:
         """Check artifact completeness without modifying the artifacts."""
+
+    @abstractmethod
+    def read_self_spec(self, unit_file: Path) -> str | None:
+        """Return caller-facing self-spec context, or ``None`` if unreadable."""
+
+    @abstractmethod
+    def read_dependency_expectation(
+        self,
+        caller_file: Path,
+        callee_fqn: str,
+        aliases: Sequence[str] = (),
+    ) -> str | None:
+        """Return one caller's expectation for a callee, if recorded."""
+
+    @abstractmethod
+    def batch_intro(self, language: str) -> str:
+        """Render the form-specific introduction for a batch prompt."""
+
+    @abstractmethod
+    def output_contract_prompt(self) -> str:
+        """Render the form-specific output contract for a batch prompt."""
