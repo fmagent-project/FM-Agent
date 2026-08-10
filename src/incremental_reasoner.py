@@ -839,7 +839,6 @@ def run_incremental_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     bug_validator_path=None,
-    plugin_config=None,
     all_bugs=False,
 ):
     """
@@ -894,7 +893,6 @@ def run_incremental_pipeline(
             one_phase=one_phase,
             extra_call_edges_path=extra_call_edges_path,
             bug_validator_path=bug_validator_path,
-            plugin_config=plugin_config,
             all_bugs=all_bugs,
         )
         return
@@ -951,7 +949,6 @@ def run_incremental_pipeline(
         proj_dir, work_dir, script_dir,
         is_incremental=True, submodules=submodules,
         one_phase=one_phase,
-        plugin_config=plugin_config,
     )
     logging.info("  -> phases.json regenerated.")
 

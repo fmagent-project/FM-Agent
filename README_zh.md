@@ -168,6 +168,21 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 | `--estimate` | 不调用 LLM，仅扫描范围并输出基于历史数据的时间、LLM 调用次数、Token 与费用预估。 |
+| `--plugin NAME` | 加载 `plugins/NAME/` 下的 Pipeline 插件。 |
+| `--list-plugin` | 列出有效的 Pipeline 插件并退出。 |
+
+### Pipeline 插件
+
+FM-Agent 插件可以通过受信任的 Python Hook 跳过、替换或修改六个 Pipeline
+Stage。所有 Hook 使用统一签名：
+
+```python
+def hook(proj_dir: str) -> None:
+    ...
+```
+
+插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
+[Pipeline 插件](docs/plugins_zh.md)。
 
 `proj_dir` 必须是一个 git 仓库。
 
