@@ -120,6 +120,23 @@ def extract_incremental_sources(proj_dir: str, lang_key: str, sources: dict):
     return handler.incremental_source_extract(proj_dir, sources)
 
 
+def normalize_call_edges(edges) -> list:
+    """Normalize language-backend call edges into FM-Agent standard format.
+
+    Accepts both the legacy dict form ``{caller: {callee, ...}}`` and the
+    list form ``[{"caller": ..., "callee": ..., "kind": ...}]``.
+    """
+    if isinstance(edges, dict):
+        out = []
+        for caller, callees in edges.items():
+            for callee in callees:
+                out.append({"caller": caller, "callee": callee, "kind": "call"})
+        return out
+    if isinstance(edges, list):
+        return [e for e in edges if isinstance(e, dict)]
+    return []
+
+
 def call_edges_all(proj_dir: str, lang_keys) -> tuple:
     """Call call_edges for each language in lang_keys and merge results.
 
@@ -135,11 +152,5 @@ def call_edges_all(proj_dir: str, lang_keys) -> tuple:
         if result is None:
             continue
         langs.add(lang)
-        if isinstance(result, dict):
-            # Legacy format: {caller: {callee, ...}}
-            for caller, callees in result.items():
-                for callee in callees:
-                    edges.append({"caller": caller, "callee": callee, "kind": "call"})
-        elif isinstance(result, list):
-            edges.extend(result)
+        edges.extend(normalize_call_edges(result))
     return edges, langs

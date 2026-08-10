@@ -10,22 +10,18 @@ from .callgraph import (
 )
 
 
-def _load_codegraph_edges(proj_dir: str, units) -> list:
-    """Load exact call edges from FM-Agent's codegraph index."""
+def _load_language_edges(proj_dir: str, units) -> list:
+    """Load exact call edges from FM-Agent's language registry.
+
+    Covers both codegraph-based backends (Python/C/C++/...) and specialized
+    backends (e.g. Erlang) via the shared ``call_edges_all`` registry.
+    """
     try:
-        from src.languages.codegraph import CodeGraphExtractor
+        from src.languages.registry import call_edges_all
     except ImportError:
         return []
-    extractor = CodeGraphExtractor.from_proj_dir(proj_dir)
-    if extractor is None:
-        return []
     languages = sorted({unit.id.language for unit in units})
-    edges = []
-    for lang in languages:
-        try:
-            edges.extend(extractor.get_call_edges(lang))
-        except Exception:
-            pass
+    edges, _langs = call_edges_all(proj_dir, languages)
     return edges
 
 
@@ -72,7 +68,7 @@ def replace_generate_topdown_layers(proj_dir: str) -> None:
     if not units:
         return
 
-    codegraph_edges = _load_codegraph_edges(proj_dir, units)
+    codegraph_edges = _load_language_edges(proj_dir, units)
     extra_edges = _load_extra_edges(work_dir)
 
     program = build_program_index(
