@@ -20,18 +20,17 @@ from src.file_utils import (
 import config
 
 
-def _restrict_to_chains(call_graph, entry_func, end_funcs):
-    """Keep only functions lying on a call chain from entry_func to an end_func.
+def _restrict_to_chains(call_graph, end_funcs):
+    """Keep only functions lying on a call chain from an entry to an end_func.
 
-    A function is retained iff it is reachable from ``entry_func`` (already
-    guaranteed by ``call_graph``) *and* it can reach one of ``end_funcs`` — i.e.
-    it sits on some path ``entry_func -> ... -> end_func``. The ``end_funcs`` are
-    treated as terminal: their outgoing edges are dropped so chains stop there.
+    A function is retained iff it is reachable from a requested entry (already
+    guaranteed by ``call_graph``) *and* it can reach one of ``end_funcs``. The
+    ``end_funcs`` are treated as terminal: their outgoing edges are dropped so
+    chains stop there.
 
     Args:
-        call_graph: dict mapping FQN -> sorted list of callee FQNs, rooted at
-            entry_func (as built in _select_functions_by_source).
-        entry_func: FQN of the entry point.
+        call_graph: dict mapping FQN -> sorted list of callee FQNs reachable
+            from the requested entries.
         end_funcs: list of FQNs at which to stop. If falsy, call_graph is
             returned unchanged.
 
@@ -444,7 +443,7 @@ def _select_functions_by_source(proj_dir, entry_funcs, end_funcs, extra_call_edg
     # Keep only functions on a call chain from an entry to one of end_funcs.
     if end_funcs:
         unreachable = sorted(set(end_funcs) - set(call_graph))
-        call_graph = _restrict_to_chains(call_graph, entry_funcs[0], end_funcs)
+        call_graph = _restrict_to_chains(call_graph, end_funcs)
         if unreachable:
             logging.warning(
                 "[EntryPipeline] %d end function(s) are not reachable from any "
