@@ -14,6 +14,10 @@ from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
 from src.spec_forms import SOFTWARE_SPEC_FORM, SpecGenerationConfig
+from src.spec_forms.config import (
+    _bind_spec_generation_config,
+    _validate_spec_generation_config,
+)
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -210,8 +214,6 @@ def run_pipeline(
         if initial_history is None:
             preserved_history = preserve_history_before_clean(work_dir)
         _clean_previous_run(work_dir)
-    if resume and not only_spec:
-        _ensure_resume_mode_compatible(output_dir, all_bugs)
     os.makedirs(work_dir, exist_ok=True)
     if preserved_history:
         write_history(work_dir, preserved_history)
@@ -227,13 +229,30 @@ def run_pipeline(
         with open(plugin_context_path, "w", encoding="utf-8") as file:
             json.dump(plugin_context or {}, file, indent=2)
         if plugin_config.configure_hook is not None:
-            run_plugin_hook(
-                plugin_config.name,
-                "configure",
-                plugin_config.configure_function,
-                plugin_config.configure_hook,
-                proj_dir,
-            )
+            with _bind_spec_generation_config(spec_generation_config):
+                run_plugin_hook(
+                    plugin_config.name,
+                    "configure",
+                    plugin_config.configure_function,
+                    plugin_config.configure_hook,
+                    proj_dir,
+                )
+    try:
+        _validate_spec_generation_config(spec_generation_config)
+    except ValueError as exc:
+        if (
+            plugin_config is not None
+            and plugin_config.configure_hook is not None
+        ):
+            raise RuntimeError(
+                f"Plugin '{plugin_config.name}' configured an invalid "
+                f"specification strategy: {exc}"
+            ) from exc
+        raise RuntimeError(
+            f"Invalid built-in specification strategy: {exc}"
+        ) from exc
+    if resume and spec_generation_config.should_run_reasoning(only_spec):
+        _ensure_resume_mode_compatible(output_dir, all_bugs)
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
     )
