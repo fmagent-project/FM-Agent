@@ -328,19 +328,29 @@ def _collect_analyses(work_dir):
 def _match_span(spans, fn):
     """Match a function name against codegraph spans; return ``L<start>-L<end>``.
 
-    Spans carry the extraction identifier (class-qualified, with a ``_N`` dedup
-    suffix for overloads). Try the exact name, a class-qualified suffix, then a
-    ``_N``-stripped retry; first hit wins.
+    ``get_function_spans`` returns one span per node with the base extraction
+    identifier (no ``_N`` suffix), so overloads yield several same-named spans
+    in line order. An exact match wins first (covers genuine names that end in
+    ``_N``). Otherwise, if ``fn`` carries a ``_N`` dedup suffix, strip it and
+    take the Nth same-named span (extraction and codegraph are both
+    line-ordered, so the index lines up); without a suffix, the first
+    same-named span wins.
     """
     if not spans:
         return ""
-    for candidate in (fn, re.sub(r"_\d+$", "", fn)):
-        if not candidate:
-            continue
+    for name, start, end in spans:
+        if name == fn or name.endswith("::" + fn):
+            # codegraph spans are 0-indexed inclusive; display 1-indexed.
+            return f"L{start + 1}-L{end + 1}"
+    m = re.match(r"^(.*)_(\d+)$", fn)
+    if m:
+        base, idx = m.group(1), int(m.group(2))
+        matched = 0
         for name, start, end in spans:
-            if name == candidate or name.endswith("::" + candidate):
-                # codegraph spans are 0-indexed inclusive; display 1-indexed.
-                return f"L{start + 1}-L{end + 1}"
+            if name == base or name.endswith("::" + base):
+                if matched == idx:
+                    return f"L{start + 1}-L{end + 1}"
+                matched += 1
     return ""
 
 
