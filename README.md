@@ -375,6 +375,33 @@ mode, the summary additionally reports pending candidates; a missing, corrupt,
 or non-terminal validation is pending instead of disappearing from the totals.
 Default-mode summary behavior is unchanged.
 
+#### Interactive Report Index (`fm_agent/report.html`)
+
+A single self-contained `report.html` is generated automatically at the end of
+every full pipeline run (spec-only mode included), aggregating both the bug
+validation results and the per-function logic verification results into one
+browseable page. It is rendered purely from the run artifacts — no LLM calls,
+no network, no extra dependencies — and is byte-deterministic: the same
+artifacts always produce the same page.
+
+Each row shows the report title, a status badge, the source file (linked back
+to the original source), the function name, and a code location. The page
+supports:
+
+- **Search** across title, source file, function name, and code location
+- **Filter** by status (`confirmed` / `not_confirmed` / `error` / `pending`,
+  or `MATCH` / `MISMATCH` / `ERROR` / `SKIPPED`) and by source file
+- **Sort** by status, source file, function name, or code location
+- **Expand / collapse** individual reports or all reports at once, plus a
+  reset button
+
+The page is written to `fm_agent/report.html`; open it in a browser. It can
+also be regenerated on demand from any existing run's artifacts with
+`uv run python report.py <proj_dir>` (or pass an `fm_agent/` workspace or an
+archived-workspace directory directly). The incremental pipeline
+(`--incremental`) does not run the auto-generation hook — regenerate the page
+manually with the same command.
+
 ## Important Notes
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
