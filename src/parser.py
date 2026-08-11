@@ -64,8 +64,6 @@ def _remove_func_comments(code):
     in_block_comment = False
     in_string = False
     string_delimiter = ""
-    in_raw_string = False
-    raw_string_hashes = 0
     line_start = True
 
     while index < len(code):
@@ -82,41 +80,6 @@ def _remove_func_comments(code):
                 line_start = True
             index += 1
             continue
-
-        if in_raw_string:
-            closing_delimiter = '"' + '#' * raw_string_hashes
-            if code.startswith(closing_delimiter, index):
-                result.append(closing_delimiter)
-                index += len(closing_delimiter)
-                in_raw_string = False
-                line_start = False
-            else:
-                result.append(char)
-                line_start = char == '\n'
-                index += 1
-            continue
-
-        # Rust raw strings use r"...", r#"..."#, etc.; byte raw strings add b.
-        raw_prefix_length = (
-            2 if char == 'b' and next_char == 'r' else 1 if char == 'r' else 0
-        )
-        if raw_prefix_length and (
-            index == 0 or not (code[index - 1].isalnum() or code[index - 1] == '_')
-        ):
-            delimiter_index = index + raw_prefix_length
-            while delimiter_index < len(code) and code[delimiter_index] == '#':
-                delimiter_index += 1
-            if (
-                delimiter_index < len(code)
-                and delimiter_index - index - raw_prefix_length < 256
-                and code[delimiter_index] == '"'
-            ):
-                raw_string_hashes = delimiter_index - index - raw_prefix_length
-                result.append(code[index : delimiter_index + 1])
-                index = delimiter_index + 1
-                in_raw_string = True
-                line_start = False
-                continue
 
         if in_string:
             result.append(char)
