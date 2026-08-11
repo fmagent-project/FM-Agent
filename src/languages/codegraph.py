@@ -9,6 +9,7 @@ REGISTRY in src/languages/registry.py. No other files need to change.
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -474,6 +475,65 @@ def _codegraph_cmd() -> str:
     return local if os.access(local, os.X_OK) else "codegraph"
 
 
+_CODEGRAPH_CONFIG_FILE = "codegraph.json"
+_WORK_DIR_NAME = "fm_agent"
+
+
+def _ensure_workdir_excluded(proj_dir: str) -> None:
+    """Declare FM-Agent's own work directory as excluded in ``codegraph.json``.
+
+    FM-Agent writes its artifacts to ``<proj>/fm_agent/``, inside the tree
+    codegraph indexes and outside its default skip list, so every extracted
+    function lands in the index a second time next to the source it came from.
+    Ordering the run around it does not help: ``codegraph init`` picks up what a
+    previous run left behind, and the MCP daemon's file watcher syncs artifacts
+    in as they are written. ``codegraph.json`` is codegraph's own exclude
+    mechanism and both paths honour it.
+
+    Only the exclude entry is added; an existing config — or anything unexpected
+    in it — is left as it is, since the project's own config outranks this.
+    """
+    config_path = os.path.join(proj_dir, _CODEGRAPH_CONFIG_FILE)
+    config = {}
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        logging.warning("Leaving %s untouched (unreadable): %s", config_path, exc)
+        return
+
+    if not isinstance(config, dict):
+        logging.warning("Leaving %s untouched (not a JSON object).", config_path)
+        return
+
+    pattern = f"{_WORK_DIR_NAME}/"
+    excludes = config.get("exclude", [])
+    if not isinstance(excludes, list):
+        # codegraph ignores a non-array "exclude" too; rewriting it would discard
+        # whatever the project meant to put there.
+        logging.warning('Leaving %s untouched ("exclude" is not an array).', config_path)
+        return
+    if pattern in excludes:
+        return
+
+    config["exclude"] = excludes + [pattern]
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+            f.write("\n")
+    except OSError as exc:
+        logging.warning("Could not write %s: %s", config_path, exc)
+        return
+    # Writing into the project under analysis is worth saying out loud — this is
+    # the one file FM-Agent adds outside its own work directory.
+    print(
+        f'[Pipeline] Excluded "{pattern}" in {_CODEGRAPH_CONFIG_FILE} '
+        "so codegraph does not index FM-Agent's own artifacts."
+    )
+
+
 def _warn_on_codegraph_version_mismatch(cmd: str) -> None:
     """Warn (never fail) when the codegraph about to run is not the version pinned
     in ``fm-agent.toml``'s ``[codegraph].version`` — e.g. a stale build shadowing
@@ -528,6 +588,9 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     else:
         print("[Pipeline] Building codegraph index...")
     cmd = _codegraph_cmd()
+    if shutil.which(cmd) is None:
+        return  # codegraph not installed; do not leave a stray config behind
+    _ensure_workdir_excluded(proj_dir)
     _warn_on_codegraph_version_mismatch(cmd)
     try:
         result = subprocess.run(
