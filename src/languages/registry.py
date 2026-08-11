@@ -156,9 +156,14 @@ def _normalize_span(span) -> dict:
 
 
 def _edge_dedup_key(d: dict) -> tuple:
-    """Dedup key at call-site granularity (mirrors codegraph.py)."""
+    """Dedup key at call-site granularity (mirrors codegraph.py).
+
+    Includes language so edges from different backends (e.g. C and C++)
+    with the same caller/callee/span are not merged away.
+    """
     span = d.get("span") if isinstance(d.get("span"), dict) else {}
     return (
+        d.get("language"),
         d.get("caller"),
         d.get("callee"),
         d.get("kind", "call"),
