@@ -377,15 +377,6 @@ def run_pipeline(
         os.path.join(script_dir, "md", "system_prompt.md"),
         os.path.join(spec_prompts_dir, "system_prompt.md"),
     )
-    shutil.copy2(
-        os.path.join(script_dir, "src", "generate_batch_prompts.py"),
-        os.path.join(spec_prompts_dir, "generate_batch_prompts.py"),
-    )
-    # generate_batch_prompts.py imports is_file_ready from this module at runtime.
-    shutil.copy2(
-        os.path.join(script_dir, "src", "file_utils.py"),
-        os.path.join(spec_prompts_dir, "file_utils.py"),
-    )
 
     phases_path = os.path.join(work_dir, "phases.json")
     with open(phases_path, "r") as f:
