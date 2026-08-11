@@ -51,6 +51,11 @@ from .generate_batch_prompts import (
     extract_spec_block,
 )
 from .opencode_trace import run_opencode_traced
+from .validation_core import (
+    LegacyCompletionPolicy,
+    OutcomeLoadError,
+    load_legacy_compatibility_outcome,
+)
 from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import CodeGraphExtractor, try_codegraph_init
@@ -2392,13 +2397,14 @@ def _verify_incremental_functions(
     for rel in mismatches:
         bug_id = os.path.splitext(rel)[0].replace(os.sep, "--").replace("/", "--")
         result_path = os.path.join(bug_validation_dir, f"{bug_id}.result.json")
-        if not os.path.exists(result_path):
-            continue
         try:
-            with open(result_path) as rf:
-                data = json.load(rf)
-        except (ValueError, OSError):
+            loaded = load_legacy_compatibility_outcome(
+                result_path,
+                policy=LegacyCompletionPolicy.DEFAULT_RESUME,
+            )
+        except OutcomeLoadError:
             continue
+        data = loaded.value
         if data.get("confirmation_status") == "confirmed":
             confirmed.append(rel)
 

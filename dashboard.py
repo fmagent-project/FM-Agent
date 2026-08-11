@@ -24,6 +24,11 @@ from collections import deque, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.validation_core import (
+    LegacyCompletionPolicy,
+    load_legacy_compatibility_outcome,
+)
+
 try:
     import litellm
     _MODEL_COST = litellm.model_cost
@@ -476,10 +481,13 @@ class State:
             return
         for path in self.bug_dir.glob("*.result.json"):
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    d = json.load(f)
+                loaded = load_legacy_compatibility_outcome(
+                    path,
+                    policy=LegacyCompletionPolicy.DEFAULT_RESUME,
+                )
             except Exception:
                 continue
+            d = loaded.value
             status = (d.get("confirmation_status") or "").lower()
             if "not" in status:
                 self.bugs_not_confirmed += 1

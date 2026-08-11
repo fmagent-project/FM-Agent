@@ -25,22 +25,6 @@ _ALL_BUGS_GAP_FIELDS = {
     "trigger_condition",
 }
 
-_TERMINAL_VALIDATION_STATUSES = {
-    "confirmed",
-    "not_confirmed",
-    "error",
-}
-
-_TERMINAL_VALIDATION_STRING_FIELDS = {
-    "source_file",
-    "function_name",
-    "probe_script",
-    "detail_file",
-    "probe_stdout",
-    "trigger_summary",
-}
-
-
 def _is_metadata_sidecar(file_path):
     """Return whether file_path is a function metadata sidecar."""
     return str(file_path).endswith(_METADATA_SIDECAR_SUFFIXES)
@@ -288,39 +272,28 @@ def _ensure_resume_mode_compatible(output_dir, all_bugs):
 
 def _terminal_validation_record_is_valid(validation, expected_bug_id):
     """Return whether a terminal validation record belongs to one candidate."""
-    if not isinstance(validation, dict):
-        return False
-    if (
-        not isinstance(expected_bug_id, str)
-        or not expected_bug_id
-        or validation.get("id") != expected_bug_id
-        or validation.get("confirmation_status")
-        not in _TERMINAL_VALIDATION_STATUSES
-    ):
-        return False
-    if not _TERMINAL_VALIDATION_STRING_FIELDS.issubset(validation):
-        return False
-    if not all(
-        isinstance(validation[field], str)
-        for field in _TERMINAL_VALIDATION_STRING_FIELDS
-    ):
-        return False
-    attempts = validation.get("attempts")
-    return (
-        isinstance(attempts, int)
-        and not isinstance(attempts, bool)
-        and attempts > 0
-    )
+    from .validation_core import legacy_all_bugs_record_is_valid
+
+    return legacy_all_bugs_record_is_valid(validation, expected_bug_id)
 
 
 def _terminal_validation_is_valid(validation_path, expected_bug_id):
     """Return whether a candidate's validation artifact is complete and terminal."""
+    from .validation_core import (
+        LegacyCompletionPolicy,
+        OutcomeLoadError,
+        load_legacy_compatibility_outcome,
+    )
+
     try:
-        with open(validation_path, "r", encoding="utf-8") as f:
-            validation = json.load(f)
-    except (OSError, json.JSONDecodeError):
+        load_legacy_compatibility_outcome(
+            validation_path,
+            policy=LegacyCompletionPolicy.ALL_BUGS_TERMINAL,
+            expected_bug_id=expected_bug_id,
+        )
+    except OutcomeLoadError:
         return False
-    return _terminal_validation_record_is_valid(validation, expected_bug_id)
+    return True
 
 
 def _get_incomplete_verification_files(
@@ -332,6 +305,12 @@ def _get_incomplete_verification_files(
     bug_validation_enabled=True,
 ):
     """Return layer files missing verification or required bug validation output."""
+    from .validation_core import (
+        LegacyCompletionPolicy,
+        OutcomeLoadError,
+        load_legacy_compatibility_outcome,
+    )
+
     incomplete = []
     for rel in layer_files:
         result_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
@@ -370,7 +349,12 @@ def _get_incomplete_verification_files(
 
         bug_id = os.path.splitext(rel)[0].replace(os.sep, "--").replace("/", "--")
         validation_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
-        if not _json_file_is_valid(validation_path):
+        try:
+            load_legacy_compatibility_outcome(
+                validation_path,
+                policy=LegacyCompletionPolicy.DEFAULT_RESUME,
+            )
+        except OutcomeLoadError:
             incomplete.append(rel)
     return incomplete
 

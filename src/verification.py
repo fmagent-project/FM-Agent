@@ -4,9 +4,14 @@ from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
 from .file_utils import (
     _all_bugs_candidate_paths,
-    _terminal_validation_is_valid,
-    _terminal_validation_record_is_valid,
     is_file_ready,
+)
+from .validation_core import (
+    LegacyCompletionPolicy,
+    LegacyPromptTerminal,
+    OutcomeLoadError,
+    OutcomeLoadErrorCode,
+    load_legacy_compatibility_outcome,
 )
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
 from .llm_client import build_llm_cli_command
@@ -218,9 +223,28 @@ def streaming_reasoner(
                         bug_id = _bug_id_from_result_path(result_json_rel)
                         result_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
                         confirmed = False
-                        if os.path.exists(result_path):
-                            with open(result_path) as rf:
-                                result_data = json.load(rf)
+                        try:
+                            loaded_result = load_legacy_compatibility_outcome(
+                                result_path,
+                                policy=(
+                                    LegacyCompletionPolicy.ALL_BUGS_TERMINAL
+                                    if all_bugs
+                                    else LegacyCompletionPolicy.DEFAULT_RESUME
+                                ),
+                                expected_bug_id=bug_id if all_bugs else None,
+                            )
+                        except OutcomeLoadError as exc:
+                            if exc.code is not OutcomeLoadErrorCode.MISSING:
+                                raise ValueError(
+                                    "bug validation result is unreadable or has "
+                                    f"the wrong artifact family: {exc.code.value}"
+                                ) from exc
+                        else:
+                            result_data = (
+                                loaded_result.record
+                                if isinstance(loaded_result, LegacyPromptTerminal)
+                                else loaded_result.value
+                            )
                             confirmed = result_data.get("confirmation_status") == "confirmed"
                         candidate_suffix = ""
                         if all_bugs:
@@ -654,13 +678,14 @@ def _validation_status(result_json_rel, work_dir):
     bug_id = _bug_id_from_result_path(result_json_rel)
     result_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
     try:
-        with open(result_path, "r") as f:
-            result = json.load(f)
-    except (OSError, json.JSONDecodeError):
+        loaded = load_legacy_compatibility_outcome(
+            result_path,
+            policy=LegacyCompletionPolicy.ALL_BUGS_TERMINAL,
+            expected_bug_id=bug_id,
+        )
+    except OutcomeLoadError:
         return None
-    if not _terminal_validation_record_is_valid(result, bug_id):
-        return None
-    return result["confirmation_status"]
+    return loaded.reported_status
 
 
 def _all_bugs_custom_validator_result_contract(bug_id):
@@ -720,11 +745,19 @@ def _validate_single_bug(
     # Candidate resume mirrors the legacy stage checkpoint: a terminal result
     # finishes this validation stage. Candidate identity is fixed by the
     # completed reasoning artifacts, so no content hash is needed here.
-    if is_candidate and resume and os.path.exists(result_path):
-        if _terminal_validation_is_valid(result_path, bug_id):
+    if is_candidate and resume:
+        try:
+            load_legacy_compatibility_outcome(
+                result_path,
+                policy=LegacyCompletionPolicy.ALL_BUGS_TERMINAL,
+                expected_bug_id=bug_id,
+            )
+        except OutcomeLoadError as exc:
+            if exc.code is not OutcomeLoadErrorCode.MISSING:
+                _clear_bug_validation_artifacts(work_dir, bug_id)
+        else:
             logging.info(f"Bug validation already done, skipping: {bug_id}")
             return
-        _clear_bug_validation_artifacts(work_dir, bug_id)
 
     # Read either the user-selected validator or the built-in default.
     base_md_path = (
@@ -782,16 +815,19 @@ def _validate_single_bug(
         cwd=proj_dir,
         files=[prompt_path],
     )
-    # Preserve the legacy resume path exactly: a readable result is reusable
-    # without candidate-specific schema or content checks.
-    if not is_candidate and resume and os.path.exists(result_path):
+    # Preserve the prompt-era resume rule for unversioned results: any readable
+    # JSON is reusable. Explicit archive/current formats never fall back here.
+    if not is_candidate and resume:
         try:
-            with open(result_path) as _f:
-                json.load(_f)
+            load_legacy_compatibility_outcome(
+                result_path,
+                policy=LegacyCompletionPolicy.DEFAULT_RESUME,
+            )
+        except OutcomeLoadError:
+            pass
+        else:
             logging.info(f"Bug validation already done, skipping: {bug_id}")
             return
-        except (json.JSONDecodeError, OSError):
-            pass  # corrupted result — re-validate
     try:
         max_attempts = config.BUG_VALIDATION_MAX_RETRIES
         for attempt in range(1, max_attempts + 1):
@@ -825,11 +861,25 @@ def _validate_single_bug(
                     exc,
                 )
 
-            if os.path.exists(result_path):
-                if not is_candidate or _terminal_validation_is_valid(
-                    result_path, bug_id
-                ):
-                    return
+            completion_policy = (
+                LegacyCompletionPolicy.ALL_BUGS_TERMINAL
+                if is_candidate
+                else LegacyCompletionPolicy.DEFAULT_POST_AGENT
+            )
+            try:
+                load_legacy_compatibility_outcome(
+                    result_path,
+                    policy=completion_policy,
+                    expected_bug_id=bug_id if is_candidate else None,
+                )
+            except OutcomeLoadError as exc:
+                load_error = exc
+            else:
+                return
+            if (
+                is_candidate
+                and load_error.code is not OutcomeLoadErrorCode.MISSING
+            ):
                 logging.warning(
                     "bug_validation wrote a non-terminal result for %s on attempt %d/%d",
                     bug_id,
@@ -938,11 +988,14 @@ def _generate_validation_summary(work_dir):
             continue
         fpath = os.path.join(validation_dir, fname)
         try:
-            with open(fpath, "r") as f:
-                record = json.load(f)
-            bugs.append(record)
-        except (OSError, json.JSONDecodeError) as exc:
-            logging.warning(f"Could not read {fpath}: {exc}")
+            loaded = load_legacy_compatibility_outcome(
+                fpath,
+                policy=LegacyCompletionPolicy.DEFAULT_RESUME,
+            )
+        except OutcomeLoadError as exc:
+            logging.warning("Could not read %s: %s", fpath, exc.code.value)
+        else:
+            bugs.append(loaded.to_json_value())
 
     confirmed = sum(1 for b in bugs if b.get("confirmation_status") == "confirmed")
     not_confirmed = sum(1 for b in bugs if b.get("confirmation_status") == "not_confirmed")
@@ -993,14 +1046,19 @@ def _generate_all_bugs_validation_summary(work_dir):
         record = None
         validation_error = "missing_or_invalid_result"
         try:
-            with open(result_path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            if _terminal_validation_record_is_valid(loaded, bug_id):
-                record = loaded
-            else:
+            loaded = load_legacy_compatibility_outcome(
+                result_path,
+                policy=LegacyCompletionPolicy.ALL_BUGS_TERMINAL,
+                expected_bug_id=bug_id,
+            )
+        except OutcomeLoadError as exc:
+            if exc.code not in {
+                OutcomeLoadErrorCode.MISSING,
+                OutcomeLoadErrorCode.INVALID_JSON,
+            }:
                 validation_error = "invalid_result"
-        except (OSError, json.JSONDecodeError):
-            pass
+        else:
+            record = loaded.to_json_value()
         if record is None:
             record = _pending_all_bugs_validation_record(
                 target_path,

@@ -7,6 +7,9 @@ cd "$PROJECT_DIR"
 
 uv run python -m unittest -v \
   tests.test_bug_validation_legacy_compatibility \
-  tests.test_validator_legacy_golden
+  tests.test_validator_legacy_golden \
+  tests.test_validation_outcome_loader
+
+uv run python src/generate_batch_prompts.py --help >/dev/null
 
 git diff --check
