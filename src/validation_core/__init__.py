@@ -15,10 +15,25 @@ from .outcome_loader import (
     load_archived_legacy_certificate,
     load_legacy_compatibility_outcome,
 )
+from .routing import AdapterResolver, ValidationRouter
+from .contracts.routing import (
+    GenericAdapterKind,
+    PresetRef,
+    RoutingDecision,
+    RoutingReasonCode,
+    RoutingRequest,
+    TrustedPresetRecord,
+    ValidationEngine,
+    ValidationRoutingError,
+    ValidationRoutingErrorCode,
+)
 
 __all__ = [
     "ArchivedLegacyCCCCertificate",
+    "AdapterResolver",
     "ArtifactFamily",
+    "GenericAdapterKind",
+    "PresetRef",
     "LegacyBindingCheck",
     "LegacyBindingState",
     "LegacyCompletionPolicy",
@@ -26,7 +41,15 @@ __all__ = [
     "LegacyPromptTerminal",
     "OutcomeLoadError",
     "OutcomeLoadErrorCode",
+    "RoutingDecision",
+    "RoutingReasonCode",
+    "RoutingRequest",
+    "TrustedPresetRecord",
     "TrustClass",
+    "ValidationEngine",
+    "ValidationRouter",
+    "ValidationRoutingError",
+    "ValidationRoutingErrorCode",
     "legacy_all_bugs_record_is_valid",
     "load_archived_legacy_certificate",
     "load_legacy_compatibility_outcome",
