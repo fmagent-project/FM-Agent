@@ -127,11 +127,24 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 
 
 def _opencode_env(work_dir, event_id):
+    from .languages.codegraph import _codegraph_cmd
+
     env = os.environ.copy()
     trace_dir = os.path.abspath(os.path.join(_trace_dir(work_dir), "opencode"))
     os.makedirs(trace_dir, exist_ok=True)
     env["TRACE_DIR"] = trace_dir
     env["TRACE_FILENAME"] = event_id
+    # oh-my-openagent registers codegraph as an MCP server, and that server keeps
+    # the project's index in sync while OpenCode runs — but it resolves its own
+    # binary, checking OMO_CODEGRAPH_BIN first and falling back to a bare PATH
+    # lookup last. Naming the pinned build here makes the process that WRITES the
+    # index the same one FM-Agent READS it with, instead of relying on bin_dir
+    # happening to be on PATH. Only set when the pinned build is actually present
+    # (_codegraph_cmd falls back to a bare name): pointing the variable at a
+    # non-existent file makes omo skip the MCP server entirely.
+    codegraph_bin = _codegraph_cmd()
+    if os.path.isabs(codegraph_bin):
+        env.setdefault("OMO_CODEGRAPH_BIN", codegraph_bin)
     provider_config = _opencode_provider_config()
     if provider_config is not None:
         # Make the resolved key available under LLM_API_KEY so the injected
