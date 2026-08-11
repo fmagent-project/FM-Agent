@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Callable
 
+import logging
+
 from src.languages import python as _python
 from src.languages import go as _go
 from src.languages import c as _c
@@ -120,27 +122,99 @@ def extract_incremental_sources(proj_dir: str, lang_key: str, sources: dict):
     return handler.incremental_source_extract(proj_dir, sources)
 
 
+_logger = logging.getLogger(__name__)
+
+# 允许透传的 edge 字段（内部缓存字段如 _internal_cache 会被过滤）
+_ALLOWED_EDGE_FIELDS = {
+    "caller", "callee", "kind", "language",
+    "span", "arg_bindings", "order_index",
+}
+
+
+def normalize_call_edges(edges, language=None) -> list:
+    """Normalize language-backend call edges into FM-Agent standard format.
+
+    Accepts:
+      - dict form:      {caller: {callee, ...}} / {caller: "callee_str"}
+      - list form:      [{"caller": ..., "callee": ..., "kind": ...}]
+      - custom objects: 可转换为 dict 的 edge object（保留额外字段）
+
+    Returns a list of normalized edge dicts. Malformed edges are skipped with
+    a warning (never silently dropped — this is shared infrastructure).
+    """
+    if edges is None:
+        return []
+
+    # dict form: {caller: {callee, ...}} / {caller: "callee_str"}
+    if isinstance(edges, dict):
+        out = []
+        for caller, callees in edges.items():
+            if isinstance(callees, str):
+                callees = [callees]          # 兼容 {caller: "callee_str"}
+            elif not isinstance(callees, (list, set, tuple)):
+                _logger.warning("Skipping malformed call edge (unknown container): %r", callees)
+                continue
+            for callee in callees:
+                out.append({
+                    "caller": caller,
+                    "callee": callee,
+                    "kind": "call",
+                    "language": language,
+                })
+        return out
+
+    # list form: normalized dicts or edge objects
+    if isinstance(edges, list):
+        out = []
+        for e in edges:
+            if isinstance(e, dict):
+                d = dict(e)
+                # schema 校验：缺 caller/callee 跳过（不静默——基础设施层要留日志）
+                if "caller" not in d or "callee" not in d:
+                    _logger.warning("Skipping malformed call edge: %s", d)
+                    continue
+                d.setdefault("kind", "call")
+                if language:
+                    d.setdefault("language", language)
+                out.append(d)
+            else:
+                # custom object: 优先 __dict__ 且按白名单过滤内部字段
+                if hasattr(e, "__dict__"):
+                    d = {
+                        k: v
+                        for k, v in e.__dict__.items()
+                        if k in _ALLOWED_EDGE_FIELDS
+                    }
+                else:
+                    d = {}
+                    for key in _ALLOWED_EDGE_FIELDS:
+                        val = getattr(e, key, None)
+                        if val is not None:
+                            d[key] = val
+                if "caller" in d and "callee" in d:
+                    d.setdefault("kind", "call")
+                    if language:
+                        d.setdefault("language", language)
+                    out.append(d)
+        return out
+
+    return []
+
+
 def call_edges_all(proj_dir: str, lang_keys) -> tuple:
     """Call call_edges for each language in lang_keys and merge results.
 
-    Returns (edges, langs) where edges is {caller_fqn: {callee_fqns}} and langs is
-    the set of language keys codegraph handled (it returned a dict, even if empty
-    — None means the backend was unavailable and the caller should use regex).
+    Returns (edges, langs) where edges is a list of normalized edge dicts and
+    langs is the set of language keys codegraph handled.
     """
-    edges = {}
+    edges = []
     langs = set()
     for lang in lang_keys:
         if lang not in REGISTRY:
             continue
         result = REGISTRY[lang].call_edges(proj_dir)
-        # A handler returns None when its backend (codegraph) is unavailable, and
-        # a dict (possibly empty) when it handled the language. Treat "handled but
-        # no edges" as codegraph-authoritative — add the language to `langs` so the
-        # caller uses the codegraph path — instead of falling back to regex, which
-        # would otherwise invent edges (e.g. match a function's own signature) for
-        # a genuinely call-free project.
-        if result is not None:
-            langs.add(lang)
-            for key, callees in result.items():
-                edges.setdefault(key, set()).update(callees)
+        if result is None:
+            continue
+        langs.add(lang)
+        edges.extend(normalize_call_edges(result, language=lang))
     return edges, langs

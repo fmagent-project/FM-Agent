@@ -313,7 +313,11 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
     edge_aliases_map = defaultdict(lambda: defaultdict(set))  # callee -> caller -> aliases
 
     phase_langs = {_detect_lang_from_ext(fp) for fp, _ in phase_files if _detect_lang_from_ext(fp)}
-    registry_edges, registry_langs = call_edges_all(proj_dir, phase_langs)
+    registry_edges_list, registry_langs = call_edges_all(proj_dir, phase_langs)
+    # codegraph edges are [{"caller": fqn, "callee": fqn, "kind": k}, ...]
+    registry_edges: dict = {}
+    for edge in registry_edges_list:
+        registry_edges.setdefault(edge["caller"], set()).add(edge["callee"])
 
     for filepath, module_name in phase_files:
         fqn = fqn_map[filepath]
