@@ -1,0 +1,1507 @@
+{
+  "corpus_schema_version": 1,
+  "baseline": {
+    "repository_ref": "private/multirun",
+    "git_commit": "29eb099c01e6b6ef2f8e68ebc41608184b9f13d4",
+    "submission_schema_version": 3,
+    "result_schema_version": 3,
+    "sidecar_schema_version": 5,
+    "gate_version": "boundary-witness-v6",
+    "toolchain_descriptor_version": 2
+  },
+  "normalization_policy": {
+    "ignored_fields": [
+      "timestamp",
+      "duration_ms",
+      "attempt_path",
+      "uuid"
+    ],
+    "path_tokens": [
+      "$PROJECT",
+      "$ATTEMPT",
+      "$SCRATCH"
+    ]
+  },
+  "required_capabilities": [
+    "schema_fast_path",
+    "identity",
+    "target_evidence",
+    "phenomenon_matrix",
+    "l1_classification",
+    "inner_outer_lifecycle",
+    "artifact_binding",
+    "resume_consumers",
+    "legacy_known_gaps"
+  ],
+  "fixtures": {
+    "submissions": {
+      "not_confirmed": {
+        "schema_version": 3,
+        "id": "bug1",
+        "function_id": "bug1",
+        "confirmation_status": "not_confirmed",
+        "attempts": 1,
+        "notes": "cannot trigger"
+      },
+      "confirmed_l1_run_exit": {
+        "schema_version": 3,
+        "id": "bug1",
+        "function_id": "bug1",
+        "confirmation_status": "confirmed",
+        "grade": "L1",
+        "witness": {
+          "probe": "fm_agent/bug_validation/_probe_bug1.c",
+          "call_index": 0,
+          "captured_input": {
+            "self_flags": 0
+          },
+          "actual_output": "false",
+          "spec_violation_claim": "the observed output violates the proposed contract"
+        },
+        "phenomenon": {
+          "mode": "run",
+          "standard": "c11",
+          "extra_args": [],
+          "expected_kind": "run_exit_differs"
+        },
+        "l1_patch": "fm_agent/bug_validation/bug1.l1.patch",
+        "attempts": 1,
+        "notes": ""
+      },
+      "confirmed_l0_run_exit": {
+        "schema_version": 3,
+        "id": "bug1",
+        "function_id": "bug1",
+        "confirmation_status": "confirmed",
+        "grade": "L0",
+        "witness": {
+          "probe": "fm_agent/bug_validation/_probe_bug1.c",
+          "call_index": 0,
+          "captured_input": {
+            "self_flags": 0
+          },
+          "actual_output": "false",
+          "spec_violation_claim": "the observed output violates the proposed contract"
+        },
+        "phenomenon": {
+          "mode": "run",
+          "standard": "c11",
+          "extra_args": [],
+          "expected_kind": "run_exit_differs"
+        },
+        "l1_patch": null,
+        "attempts": 1,
+        "notes": ""
+      }
+    },
+    "records": {
+      "one_call_false": [
+        {
+          "manifest_id": "bug1",
+          "span_id": 1,
+          "input": {
+            "self_flags": 0
+          },
+          "return": "false"
+        }
+      ],
+      "interleaved_calls": [
+        {
+          "manifest_id": "bug1",
+          "span_id": 11,
+          "thread": 1,
+          "input": {
+            "self_flags": 0
+          },
+          "return": "false"
+        },
+        {
+          "manifest_id": "bug1",
+          "span_id": 12,
+          "thread": 2,
+          "input": {
+            "self_flags": 8
+          },
+          "return": "true"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "case_id": "gate.not_confirmed_fast_path",
+      "capability": "schema_fast_path",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_not_confirmed_passes_schema_and_identity_only"
+      ],
+      "submission_ref": "not_confirmed",
+      "input_mutations": [],
+      "drivers": {},
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.schema_v2_pre_execution_reject",
+      "capability": "schema_fast_path",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_schema_v2_is_rejected_before_execution",
+        "tests/test_submission_schema.py::test_schema_v2_is_rejected"
+      ],
+      "submission_ref": "not_confirmed",
+      "input_mutations": [
+        {
+          "op": "replace",
+          "path": "/schema_version",
+          "value": 2
+        }
+      ],
+      "drivers": {},
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "schema",
+          "reason_contains": "schema_version"
+        },
+        "external_calls": [],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.identity_mismatch",
+      "capability": "identity",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_rejects_submission_identity_mismatch"
+      ],
+      "submission_ref": "not_confirmed",
+      "input_mutations": [
+        {
+          "op": "replace",
+          "path": "/id",
+          "value": "other"
+        }
+      ],
+      "drivers": {},
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "identity",
+          "reason_contains": "requested validation context"
+        },
+        "external_calls": [],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.exact_boundary_l1_accept",
+      "capability": "target_evidence",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_accepts_exact_automatic_witness",
+        "tests/test_check_submission.py::test_successful_l1_verification_retains_l1_grade"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "replay": {
+          "kind": "records",
+          "records_ref": "one_call_false"
+        },
+        "coverage": {
+          "kind": "count",
+          "value": 1
+        },
+        "phenomenon": {
+          "kind": "observation",
+          "value": "run_exit_differs"
+        },
+        "l1": {
+          "kind": "accept"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [
+          "replay",
+          "coverage",
+          "phenomenon",
+          "l1"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.witness_output_mismatch",
+      "capability": "target_evidence",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_rejects_tampered_actual_output"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [
+        {
+          "op": "replace",
+          "path": "/witness/actual_output",
+          "value": "true"
+        }
+      ],
+      "drivers": {
+        "replay": {
+          "kind": "records",
+          "records_ref": "one_call_false"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "replay",
+          "reason_contains": "actual_output"
+        },
+        "external_calls": [
+          "replay",
+          "coverage"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.coverage_count_mismatch",
+      "capability": "target_evidence",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_rejects_trace_without_matching_independent_coverage"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "replay": {
+          "kind": "records",
+          "records_ref": "one_call_false"
+        },
+        "coverage": {
+          "kind": "count",
+          "value": 2
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "L0",
+          "reason_contains": "coverage count"
+        },
+        "external_calls": [
+          "replay",
+          "coverage"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.phenomenon_kind_mismatch",
+      "capability": "target_evidence",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_rejects_observed_phenomenon_kind_mismatch"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "replay": {
+          "kind": "records",
+          "records_ref": "one_call_false"
+        },
+        "coverage": {
+          "kind": "count",
+          "value": 1
+        },
+        "phenomenon": {
+          "kind": "observation",
+          "value": "stdout_differs"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "phenomenon",
+          "reason_contains": "does not match declared"
+        },
+        "external_calls": [
+          "replay",
+          "coverage",
+          "phenomenon"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.direct_l0_hard_reject_after_evidence",
+      "capability": "l1_classification",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_rejects_confirmed_l0_without_a_patch_attempt"
+      ],
+      "submission_ref": "confirmed_l0_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "replay": {
+          "kind": "records",
+          "records_ref": "one_call_false"
+        },
+        "coverage": {
+          "kind": "count",
+          "value": 1
+        },
+        "phenomenon": {
+          "kind": "observation",
+          "value": "run_exit_differs"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "L1-attempt",
+          "reason_contains": "must first submit"
+        },
+        "external_calls": [
+          "replay",
+          "coverage",
+          "phenomenon"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L0",
+          "inner_final_grade": "L0",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.l1_behavior_failure_downgrades_l0",
+      "capability": "l1_classification",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_l1_failure_downgrades_to_l0"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "replay": {
+          "kind": "records",
+          "records_ref": "one_call_false"
+        },
+        "coverage": {
+          "kind": "count",
+          "value": 1
+        },
+        "phenomenon": {
+          "kind": "observation",
+          "value": "run_exit_differs"
+        },
+        "l1": {
+          "kind": "rejection",
+          "check": "L1",
+          "reason": "patched compiler still shows a difference"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [
+          "replay",
+          "coverage",
+          "phenomenon",
+          "l1"
+        ],
+        "submission_mutations": [
+          {
+            "op": "replace",
+            "path": "/grade",
+            "value": "L0"
+          },
+          {
+            "op": "replace",
+            "path": "/l1_patch",
+            "value": null
+          },
+          {
+            "op": "replace",
+            "path": "/notes",
+            "value": "[L1 downgraded to L0: patched compiler still shows a difference]"
+          }
+        ],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L0",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.l1_attempt_invalid_hard_reject",
+      "capability": "l1_classification",
+      "entrypoint": "gate",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_invalid_patch_attempt_is_rejected_instead_of_downgraded",
+        "tests/test_l1_verifier.py::test_comment_only_patch_is_not_a_downgrade_eligible_attempt"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "l1": {
+          "kind": "rejection",
+          "check": "L1-attempt",
+          "reason": "patch does not change the parsed target function body"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "L1-attempt",
+          "reason_contains": "does not change"
+        },
+        "external_calls": [
+          "replay",
+          "coverage",
+          "phenomenon",
+          "l1"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "gate.condition_a_not_mechanical",
+      "capability": "legacy_known_gaps",
+      "entrypoint": "gate",
+      "parity_policy": "legacy_known_gap",
+      "source_tests": [
+        "tests/test_check_submission.py::test_condition_a_requires_no_harness_contract"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [
+        {
+          "op": "replace",
+          "path": "/witness/spec_violation_claim",
+          "value": "unverified natural-language claim"
+        }
+      ],
+      "drivers": {
+        "replay": {
+          "kind": "records",
+          "records_ref": "one_call_false"
+        },
+        "coverage": {
+          "kind": "count",
+          "value": 1
+        },
+        "phenomenon": {
+          "kind": "observation",
+          "value": "run_exit_differs"
+        },
+        "l1": {
+          "kind": "accept"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [
+          "replay",
+          "coverage",
+          "phenomenon",
+          "l1"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "flow.inner_reject_does_not_run_outer",
+      "capability": "inner_outer_lifecycle",
+      "entrypoint": "flow",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_gate_wiring.py::test_new_agent_sessions_are_only_used_after_one_exits_rejected"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [
+        {
+          "op": "remove",
+          "path": "/witness",
+          "value": null
+        }
+      ],
+      "drivers": {
+        "inner": {
+          "kind": "rejection",
+          "check": "schema"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "schema",
+          "reason_contains": "witness"
+        },
+        "external_calls": [
+          "inner"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": true
+        }
+      }
+    },
+    {
+      "case_id": "flow.inner_reject_then_fix_same_session",
+      "capability": "inner_outer_lifecycle",
+      "entrypoint": "flow",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_gate_wiring.py::test_bad_then_good_submission_stays_in_one_agent_session"
+      ],
+      "submission_ref": "not_confirmed",
+      "input_mutations": [],
+      "drivers": {
+        "submissions": [
+          "schema_invalid",
+          "not_confirmed"
+        ]
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [
+          "inner",
+          "inner",
+          "outer"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "original_submission",
+          "outer_calls": 1,
+          "published": true,
+          "same_agent_retry": true,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "flow.inner_downgrade_preserves_outer_l1",
+      "capability": "inner_outer_lifecycle",
+      "entrypoint": "flow",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_validation_recheck.py::test_outer_recheck_materializes_l0_from_the_preserved_l1_attempt"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "inner_l1": {
+          "kind": "rejection",
+          "check": "L1"
+        },
+        "outer_l1": {
+          "kind": "rejection",
+          "check": "L1"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [
+          "inner:replay",
+          "inner:coverage",
+          "inner:phenomenon",
+          "inner:l1",
+          "outer:replay",
+          "outer:coverage",
+          "outer:phenomenon",
+          "outer:l1"
+        ],
+        "submission_mutations": [
+          {
+            "op": "replace",
+            "path": "/grade",
+            "value": "L0"
+          },
+          {
+            "op": "replace",
+            "path": "/l1_patch",
+            "value": null
+          }
+        ],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L0",
+          "outer_candidate": "original_submission",
+          "outer_calls": 1,
+          "published": true,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "flow.outer_reject_starts_fresh_attempt_on_budget",
+      "capability": "inner_outer_lifecycle",
+      "entrypoint": "flow",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_gate_wiring.py::test_outer_harness_rechecks_result_after_live_acceptance",
+        "tests/test_gate_wiring.py::test_new_agent_sessions_are_only_used_after_one_exits_rejected"
+      ],
+      "submission_ref": "not_confirmed",
+      "input_mutations": [],
+      "drivers": {
+        "inner": {
+          "kind": "accept"
+        },
+        "outer": {
+          "kind": "rejection",
+          "check": "schema"
+        },
+        "attempt_budget_remaining": true
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "schema",
+          "reason_contains": "candidate unreadable"
+        },
+        "external_calls": [
+          "inner",
+          "outer",
+          "new_agent_attempt"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "original_submission",
+          "outer_calls": 1,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": true
+        }
+      }
+    },
+    {
+      "case_id": "flow.direct_scratch_candidate_bypasses_submit",
+      "capability": "legacy_known_gaps",
+      "entrypoint": "flow",
+      "parity_policy": "intentional_cutover_delta",
+      "source_tests": [
+        "tests/test_gate_wiring.py::test_candidate_without_trace_is_still_rechecked_and_published"
+      ],
+      "submission_ref": "not_confirmed",
+      "input_mutations": [],
+      "drivers": {
+        "agent_write": "accepted-submission.json",
+        "submit_command_called": false
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [
+          "outer"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "original_submission",
+          "outer_calls": 1,
+          "published": true,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "phenomenon.preprocess_normalized_text_diff",
+      "capability": "phenomenon_matrix",
+      "entrypoint": "phenomenon",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_phenomenon_runner.py::test_preprocess_compares_normalized_stdout"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "mode": "preprocess",
+        "ccc": {
+          "rc": 0,
+          "stdout": "int x;"
+        },
+        "gcc": {
+          "rc": 0,
+          "stdout": "long x;"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": "preprocess_differs",
+          "reason_contains": null
+        },
+        "external_calls": [
+          "ccc",
+          "gcc"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "phenomenon.syntax_accept_reject",
+      "capability": "phenomenon_matrix",
+      "entrypoint": "phenomenon",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_phenomenon_runner.py::test_syntax_one_compile_failure_is_accept_reject"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "mode": "syntax",
+        "ccc": {
+          "rc": 1
+        },
+        "gcc": {
+          "rc": 0
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": "accept_reject_differs",
+          "reason_contains": null
+        },
+        "external_calls": [
+          "ccc",
+          "gcc"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "phenomenon.asm_success_output_ignored",
+      "capability": "phenomenon_matrix",
+      "entrypoint": "phenomenon",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_phenomenon_runner.py::test_asm_and_object_do_not_compare_successful_outputs"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "mode": "asm",
+        "ccc": {
+          "rc": 0,
+          "artifact": "different-a"
+        },
+        "gcc": {
+          "rc": 0,
+          "artifact": "different-b"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "no_phenomenon",
+          "check": null,
+          "reason_contains": "no observable difference"
+        },
+        "external_calls": [
+          "ccc",
+          "gcc"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "phenomenon.object_success_output_ignored",
+      "capability": "phenomenon_matrix",
+      "entrypoint": "phenomenon",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_phenomenon_runner.py::test_asm_and_object_do_not_compare_successful_outputs"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "mode": "object",
+        "ccc": {
+          "rc": 0,
+          "artifact": "different-a"
+        },
+        "gcc": {
+          "rc": 0,
+          "artifact": "different-b"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "no_phenomenon",
+          "check": null,
+          "reason_contains": "no observable difference"
+        },
+        "external_calls": [
+          "ccc",
+          "gcc"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "phenomenon.run_build_accept_reject",
+      "capability": "phenomenon_matrix",
+      "entrypoint": "phenomenon",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_phenomenon_runner.py::test_one_run_build_failure_is_build_accept_reject"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "mode": "run",
+        "ccc_build": {
+          "rc": 1
+        },
+        "gcc_build": {
+          "rc": 0
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": "build_accept_reject_differs",
+          "reason_contains": null
+        },
+        "external_calls": [
+          "ccc:build",
+          "gcc:build"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "phenomenon.run_exit_diff",
+      "capability": "phenomenon_matrix",
+      "entrypoint": "phenomenon",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_phenomenon_runner.py::test_run_classifies_compile_and_runtime_phases"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "mode": "run",
+        "ccc": {
+          "build_rc": 0,
+          "run_rc": 1,
+          "stdout": ""
+        },
+        "gcc": {
+          "build_rc": 0,
+          "run_rc": 0,
+          "stdout": ""
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": "run_exit_differs",
+          "reason_contains": null
+        },
+        "external_calls": [
+          "ccc:build",
+          "gcc:build",
+          "ccc:run",
+          "gcc:run"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "phenomenon.run_stdout_diff",
+      "capability": "phenomenon_matrix",
+      "entrypoint": "phenomenon",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_phenomenon_runner.py::test_run_stdout_difference_requires_both_builds_and_equal_exit"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "mode": "run",
+        "ccc": {
+          "build_rc": 0,
+          "run_rc": 0,
+          "stdout": "wrong"
+        },
+        "gcc": {
+          "build_rc": 0,
+          "run_rc": 0,
+          "stdout": "right"
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": "stdout_differs",
+          "reason_contains": null
+        },
+        "external_calls": [
+          "ccc:build",
+          "gcc:build",
+          "ccc:run",
+          "gcc:run"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "phenomenon.both_compilers_fail",
+      "capability": "phenomenon_matrix",
+      "entrypoint": "phenomenon",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_phenomenon_runner.py::test_both_compilers_fail_is_never_a_phenomenon"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "mode": "syntax",
+        "ccc": {
+          "rc": 1
+        },
+        "gcc": {
+          "rc": 1
+        }
+      },
+      "expected": {
+        "decision": {
+          "kind": "no_phenomenon",
+          "check": null,
+          "reason_contains": "both compilers failed"
+        },
+        "external_calls": [
+          "ccc",
+          "gcc"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "trace.interleaved_span_pairing",
+      "capability": "target_evidence",
+      "entrypoint": "trace_parser",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_interleaved_threads_pair_by_unique_span_id"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "records_ref": "interleaved_calls"
+      },
+      "expected": {
+        "decision": {
+          "kind": "accept",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [
+          "parse_records"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "trace.missing_return_fails_closed",
+      "capability": "target_evidence",
+      "entrypoint": "trace_parser",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_check_submission.py::test_missing_return_fails_closed"
+      ],
+      "submission_ref": null,
+      "input_mutations": [],
+      "drivers": {
+        "trace": "entry_without_matching_return"
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "replay",
+          "reason_contains": "missing return"
+        },
+        "external_calls": [
+          "parse_records"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "l1.non_building_patch_hard_reject",
+      "capability": "l1_classification",
+      "entrypoint": "l1",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_l1_verifier.py::test_non_building_patch_is_not_a_downgrade_eligible_attempt"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "patch": "target_body_change",
+        "build": "failure"
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "L1-attempt",
+          "reason_contains": "does not build"
+        },
+        "external_calls": [
+          "apply_patch",
+          "build"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "l1.patch_still_differs_downgrade_eligible",
+      "capability": "l1_classification",
+      "entrypoint": "l1",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_l1_verifier.py::test_rejects_when_patch_does_not_close_difference"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "patch": "valid_target_body_change",
+        "build": "success",
+        "phenomenon_after_patch": "still_present"
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "L1",
+          "reason_contains": "still shows"
+        },
+        "external_calls": [
+          "apply_patch",
+          "build",
+          "phenomenon"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "l1.sanity_output_change_downgrade_eligible",
+      "capability": "l1_classification",
+      "entrypoint": "l1",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_l1_verifier.py::test_sanity_compares_stdout_and_stderr_not_only_exit_code"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "patch": "valid_target_body_change",
+        "build": "success",
+        "phenomenon_after_patch": "closed",
+        "sanity": "stdout_changed"
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "L1",
+          "reason_contains": "sanity"
+        },
+        "external_calls": [
+          "apply_patch",
+          "build",
+          "phenomenon",
+          "sanity"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "artifact.bound_inputs_fail_closed_on_tamper",
+      "capability": "artifact_binding",
+      "entrypoint": "artifact",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_validation_artifacts.py::test_result_or_sidecar_tampering_fails_closed",
+        "tests/test_validation_artifacts.py::test_changed_logic_source_manifest_or_audit_fails_closed",
+        "tests/test_validation_artifacts.py::test_confirmed_probe_is_bound_to_the_sidecar",
+        "tests/test_validation_artifacts.py::test_l1_patch_is_bound_to_the_sidecar"
+      ],
+      "submission_ref": "confirmed_l1_run_exit",
+      "input_mutations": [],
+      "drivers": {
+        "published_versions": {
+          "result": 3,
+          "sidecar": 5,
+          "gate": "boundary-witness-v6"
+        },
+        "tampered_inputs": [
+          "result",
+          "sidecar",
+          "source",
+          "reasoning",
+          "manifest",
+          "toolchain",
+          "probe",
+          "patch",
+          "sanity_corpus"
+        ]
+      },
+      "expected": {
+        "decision": {
+          "kind": "reject",
+          "check": "binding",
+          "reason_contains": "hash"
+        },
+        "external_calls": [
+          "load_verified_artifact"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": "L1",
+          "inner_final_grade": "L1",
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "consumer.current_verified_artifact_skips",
+      "capability": "resume_consumers",
+      "entrypoint": "consumer",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_gate_wiring.py::test_resume_skips_current_verified_artifact_without_gate",
+        "tests/test_resume_bug_validation.py::test_resume_with_nothing_missing_does_not_resolve_tools_or_gate"
+      ],
+      "submission_ref": "not_confirmed",
+      "input_mutations": [],
+      "drivers": {
+        "artifact": "current_verified_v5"
+      },
+      "expected": {
+        "decision": {
+          "kind": "skip",
+          "check": null,
+          "reason_contains": null
+        },
+        "external_calls": [
+          "load_verified_artifact"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": true,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": false
+        }
+      }
+    },
+    {
+      "case_id": "consumer.raw_or_tampered_artifact_reruns",
+      "capability": "resume_consumers",
+      "entrypoint": "consumer",
+      "parity_policy": "must_match",
+      "source_tests": [
+        "tests/test_gate_wiring.py::test_resume_replaces_raw_result_with_fresh_validation",
+        "tests/test_gate_wiring.py::test_resume_replaces_invalid_certificate_with_fresh_validation",
+        "tests/test_validation_consumers.py::test_completeness_requires_verified_gate_not_parseable_json"
+      ],
+      "submission_ref": "not_confirmed",
+      "input_mutations": [],
+      "drivers": {
+        "artifact": "raw_or_tampered"
+      },
+      "expected": {
+        "decision": {
+          "kind": "rerun",
+          "check": "binding",
+          "reason_contains": null
+        },
+        "external_calls": [
+          "load_verified_artifact",
+          "agent"
+        ],
+        "submission_mutations": [],
+        "flow": {
+          "requested_grade": null,
+          "inner_final_grade": null,
+          "outer_candidate": "none",
+          "outer_calls": 0,
+          "published": false,
+          "same_agent_retry": false,
+          "new_attempt_on_budget": true
+        }
+      }
+    }
+  ]
+}
