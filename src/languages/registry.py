@@ -188,6 +188,7 @@ def normalize_call_edges(edges, language=None) -> list:
     if edges is None:
         return []
 
+    out = []
     seen = set()
 
     def _append(d: dict) -> None:
@@ -205,7 +206,6 @@ def normalize_call_edges(edges, language=None) -> list:
 
     # dict form: {caller: {callee, ...}} / {caller: "callee_str"}
     if isinstance(edges, dict):
-        out = []
         for caller, callees in edges.items():
             if isinstance(callees, str):
                 callees = [callees]          # 兼容 {caller: "callee_str"}
@@ -223,7 +223,6 @@ def normalize_call_edges(edges, language=None) -> list:
 
     # list form: normalized dicts or edge objects
     if isinstance(edges, list):
-        out = []
         for e in edges:
             if isinstance(e, dict):
                 d = dict(e)
