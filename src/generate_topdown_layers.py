@@ -315,9 +315,14 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
     phase_langs = {_detect_lang_from_ext(fp) for fp, _ in phase_files if _detect_lang_from_ext(fp)}
     registry_edges_list, registry_langs = call_edges_all(proj_dir, phase_langs)
     # codegraph edges are [{"caller": fqn, "callee": fqn, "kind": k}, ...]
-    registry_edges: dict = {}
+    # normalize_call_edges guarantees caller/callee are present, but use .get()
+    # defensively in case an edge bypasses the normalization layer.
+    registry_edges = defaultdict(set)
     for edge in registry_edges_list:
-        registry_edges.setdefault(edge["caller"], set()).add(edge["callee"])
+        caller = edge.get("caller")
+        callee = edge.get("callee")
+        if caller and callee:
+            registry_edges[caller].add(callee)
 
     for filepath, module_name in phase_files:
         fqn = fqn_map[filepath]

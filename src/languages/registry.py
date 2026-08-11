@@ -130,6 +130,43 @@ _ALLOWED_EDGE_FIELDS = {
     "span", "arg_bindings", "order_index",
 }
 
+# span 内部的标准字段名（不同后端可能叫 file/path/source_file，统一到 file）
+_SPAN_FIELD_ALIASES = {
+    "file": ("file", "path", "source_file", "filename"),
+    "start_line": ("start_line", "line"),
+    "start_column": ("start_column", "col", "column"),
+}
+
+
+def _normalize_span(span) -> dict:
+    """Unify span field names: {file, start_line, start_column}."""
+    if not isinstance(span, dict):
+        return span
+    out = {}
+    for canonical, aliases in _SPAN_FIELD_ALIASES.items():
+        for a in aliases:
+            if a in span and span[a] is not None:
+                out[canonical] = span[a]
+                break
+    # 保留未识别字段（向后兼容）
+    for k, v in span.items():
+        if k not in {x for aliases in _SPAN_FIELD_ALIASES.values() for x in aliases}:
+            out[k] = v
+    return out
+
+
+def _edge_dedup_key(d: dict) -> tuple:
+    """Dedup key at call-site granularity (mirrors codegraph.py)."""
+    span = d.get("span") if isinstance(d.get("span"), dict) else {}
+    return (
+        d.get("caller"),
+        d.get("callee"),
+        d.get("kind", "call"),
+        span.get("file"),
+        span.get("start_line"),
+        span.get("start_column"),
+    )
+
 
 def normalize_call_edges(edges, language=None) -> list:
     """Normalize language-backend call edges into FM-Agent standard format.
@@ -141,9 +178,25 @@ def normalize_call_edges(edges, language=None) -> list:
 
     Returns a list of normalized edge dicts. Malformed edges are skipped with
     a warning (never silently dropped — this is shared infrastructure).
+    Dedup is applied at call-site granularity so the function is idempotent.
     """
     if edges is None:
         return []
+
+    seen = set()
+
+    def _append(d: dict) -> None:
+        # span 字段名统一
+        if "span" in d and isinstance(d["span"], dict):
+            d["span"] = _normalize_span(d["span"])
+        # language 空字符串规范化：非空 language 参数覆盖空值
+        if not d.get("language") and language:
+            d["language"] = language
+        key = _edge_dedup_key(d)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(d)
 
     # dict form: {caller: {callee, ...}} / {caller: "callee_str"}
     if isinstance(edges, dict):
@@ -155,7 +208,7 @@ def normalize_call_edges(edges, language=None) -> list:
                 _logger.warning("Skipping malformed call edge (unknown container): %r", callees)
                 continue
             for callee in callees:
-                out.append({
+                _append({
                     "caller": caller,
                     "callee": callee,
                     "kind": "call",
@@ -174,28 +227,18 @@ def normalize_call_edges(edges, language=None) -> list:
                     _logger.warning("Skipping malformed call edge: %s", d)
                     continue
                 d.setdefault("kind", "call")
-                if language:
-                    d.setdefault("language", language)
-                out.append(d)
+                _append(d)
             else:
-                # custom object: 优先 __dict__ 且按白名单过滤内部字段
-                if hasattr(e, "__dict__"):
-                    d = {
-                        k: v
-                        for k, v in e.__dict__.items()
-                        if k in _ALLOWED_EDGE_FIELDS
-                    }
-                else:
-                    d = {}
-                    for key in _ALLOWED_EDGE_FIELDS:
+                # custom object: 统一走 getattr（兼容 __dict__ / __slots__ / @property）
+                d = {}
+                for key in _ALLOWED_EDGE_FIELDS:
+                    if hasattr(e, key):
                         val = getattr(e, key, None)
                         if val is not None:
                             d[key] = val
                 if "caller" in d and "callee" in d:
                     d.setdefault("kind", "call")
-                    if language:
-                        d.setdefault("language", language)
-                    out.append(d)
+                    _append(d)
         return out
 
     return []
@@ -205,10 +248,12 @@ def call_edges_all(proj_dir: str, lang_keys) -> tuple:
     """Call call_edges for each language in lang_keys and merge results.
 
     Returns (edges, langs) where edges is a list of normalized edge dicts and
-    langs is the set of language keys codegraph handled.
+    langs is the set of language keys codegraph handled. Edges are deduped
+    across language backends at call-site granularity.
     """
     edges = []
     langs = set()
+    seen = set()
     for lang in lang_keys:
         if lang not in REGISTRY:
             continue
@@ -216,5 +261,10 @@ def call_edges_all(proj_dir: str, lang_keys) -> tuple:
         if result is None:
             continue
         langs.add(lang)
-        edges.extend(normalize_call_edges(result, language=lang))
+        for edge in normalize_call_edges(result, language=lang):
+            key = _edge_dedup_key(edge)
+            if key in seen:
+                continue
+            seen.add(key)
+            edges.append(edge)
     return edges, langs
