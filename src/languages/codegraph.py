@@ -406,15 +406,19 @@ class CodeGraphExtractor:
 
         # Query 1: regular function/method calls, kept as (source_id, target_id)
         # so each endpoint resolves to its exact node's FQN.
-        # ORDER BY is required so that multiple call sites of the same callee are
-        # returned in source order (aligns with AST/regex arg-list extraction).
+        # Call-site coordinates come from the EDGE (e.line/e.col), not the caller
+        # function node (s.start_line is the function DEFINITION location). The
+        # caller node provides the source FILE identity (the call site is always
+        # inside the caller's file), while the edge provides the precise
+        # call-site line/column. ORDER BY the edge coordinates so multiple call
+        # sites of the same callee are returned in true source order.
         cur.execute(
             f"""
-            SELECT e.source, e.target, s.file_path, s.start_line, s.start_column
+            SELECT e.source, e.target, s.file_path, e.line, e.col
             FROM edges e
             JOIN nodes s ON e.source = s.id
             WHERE e.kind = 'calls' AND s.language IN ({placeholders})
-            ORDER BY s.file_path, s.start_line, s.start_column
+            ORDER BY s.file_path, e.line, e.col
             """,
             cg_langs,
         )
@@ -422,7 +426,7 @@ class CodeGraphExtractor:
             caller, callee = fqn_of.get(src_id), fqn_of.get(tgt_id)
             if not caller or not callee:
                 continue
-            # key 包含行列号，区分同一函数内对同一 callee 的多次不同调用点，
+            # key 包含调用点坐标，区分同一函数内对同一 callee 的多次不同调用点，
             # 否则第 2 次及以后的调用会被误判为重复而丢弃（order_index/arg_bindings 失效）
             key = (caller, callee, "calls", file_path, start_line, start_col)
             if key in seen:
@@ -442,11 +446,15 @@ class CodeGraphExtractor:
         # Query 2: constructor calls synthesised from instantiates edges.
         # For each `caller instantiates ClassName` edge, find the constructor
         # method inside that class and add it as a synthetic callee.
+        # instantiates edges may lack call-site coordinates, so fall back to the
+        # caller node's definition location when the edge coordinates are NULL.
         ctor_filter = _CONSTRUCTOR_FILTER.get(lang_key)
         if ctor_filter:
             cur.execute(
                 f"""
-                SELECT e.source, ctor.id, s.file_path, s.start_line, s.start_column
+                SELECT e.source, ctor.id, s.file_path,
+                       COALESCE(e.line, s.start_line),
+                       COALESCE(e.col, s.start_column)
                 FROM edges e
                 JOIN nodes s   ON e.source = s.id
                 JOIN nodes cls ON e.target = cls.id AND cls.kind = 'class'
@@ -455,7 +463,8 @@ class CodeGraphExtractor:
                                AND ctor.kind IN ('method', 'function')
                 WHERE e.kind = 'instantiates' AND s.language IN ({placeholders})
                 AND {ctor_filter}
-                ORDER BY s.file_path, s.start_line, s.start_column
+                ORDER BY s.file_path, COALESCE(e.line, s.start_line),
+                          COALESCE(e.col, s.start_column)
                 """,
                 cg_langs,
             )
@@ -463,7 +472,7 @@ class CodeGraphExtractor:
                 caller, callee = fqn_of.get(src_id), fqn_of.get(ctor_id)
                 if not caller or not callee:
                     continue
-                # key 含行列号，区分同一函数内对同一构造器的多次调用点
+                # key 含调用点坐标，区分同一函数内对同一构造器的多次调用点
                 key = (caller, callee, "constructor", file_path, start_line, start_col)
                 if key in seen:
                     continue
