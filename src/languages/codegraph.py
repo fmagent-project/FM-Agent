@@ -410,7 +410,7 @@ class CodeGraphExtractor:
         # returned in source order (aligns with AST/regex arg-list extraction).
         cur.execute(
             f"""
-            SELECT e.source, e.target, s.start_line, s.start_column
+            SELECT e.source, e.target, s.file_path, s.start_line, s.start_column
             FROM edges e
             JOIN nodes s ON e.source = s.id
             WHERE e.kind = 'calls' AND s.language IN ({placeholders})
@@ -418,11 +418,13 @@ class CodeGraphExtractor:
             """,
             cg_langs,
         )
-        for src_id, tgt_id, start_line, start_col in cur.fetchall():
+        for src_id, tgt_id, file_path, start_line, start_col in cur.fetchall():
             caller, callee = fqn_of.get(src_id), fqn_of.get(tgt_id)
             if not caller or not callee:
                 continue
-            key = (caller, callee, "calls")
+            # key 包含行列号，区分同一函数内对同一 callee 的多次不同调用点，
+            # 否则第 2 次及以后的调用会被误判为重复而丢弃（order_index/arg_bindings 失效）
+            key = (caller, callee, "calls", file_path, start_line, start_col)
             if key in seen:
                 continue
             seen.add(key)
@@ -430,7 +432,11 @@ class CodeGraphExtractor:
                 "caller": caller,
                 "callee": callee,
                 "kind": "calls",
-                "span": {"start_line": start_line, "start_column": start_col},
+                "span": {
+                    "file": file_path,
+                    "start_line": start_line,
+                    "start_column": start_col,
+                },
             })
 
         # Query 2: constructor calls synthesised from instantiates edges.
@@ -440,7 +446,7 @@ class CodeGraphExtractor:
         if ctor_filter:
             cur.execute(
                 f"""
-                SELECT e.source, ctor.id, s.start_line, s.start_column
+                SELECT e.source, ctor.id, s.file_path, s.start_line, s.start_column
                 FROM edges e
                 JOIN nodes s   ON e.source = s.id
                 JOIN nodes cls ON e.target = cls.id AND cls.kind = 'class'
@@ -453,11 +459,12 @@ class CodeGraphExtractor:
                 """,
                 cg_langs,
             )
-            for src_id, ctor_id, start_line, start_col in cur.fetchall():
+            for src_id, ctor_id, file_path, start_line, start_col in cur.fetchall():
                 caller, callee = fqn_of.get(src_id), fqn_of.get(ctor_id)
                 if not caller or not callee:
                     continue
-                key = (caller, callee, "constructor")
+                # key 含行列号，区分同一函数内对同一构造器的多次调用点
+                key = (caller, callee, "constructor", file_path, start_line, start_col)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -465,7 +472,11 @@ class CodeGraphExtractor:
                     "caller": caller,
                     "callee": callee,
                     "kind": "constructor",
-                    "span": {"start_line": start_line, "start_column": start_col},
+                    "span": {
+                        "file": file_path,
+                        "start_line": start_line,
+                        "start_column": start_col,
+                    },
                 })
 
         conn.close()
