@@ -1,7 +1,10 @@
 """Specification artifact contracts used by the pipeline."""
 
 from .base import SpecArtifactPaths, SpecForm, SpecValidationResult
-from .config import SpecGenerationConfig
+from .config import (
+    SpecGenerationConfig,
+    configure_current_spec_generation,
+)
 from .software import SOFTWARE_SPEC_FORM, SoftwareSpecForm
 
 __all__ = [
@@ -11,4 +14,5 @@ __all__ = [
     "SpecForm",
     "SpecGenerationConfig",
     "SpecValidationResult",
+    "configure_current_spec_generation",
 ]
