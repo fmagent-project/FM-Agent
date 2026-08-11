@@ -631,8 +631,8 @@ function rowEl(it) {
     render();
   });
 
-  head.appendChild(badge('kind ' + it.kind, it.kind));
-  head.appendChild(badge('status ' + it.status, it.status));
+  head.appendChild(badge('kind-' + it.kind, it.kind));
+  head.appendChild(badge('status-' + it.status, it.status));
   const title = document.createElement('span');
   title.className = 'title';
   title.textContent = it.title;
