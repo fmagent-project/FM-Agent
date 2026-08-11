@@ -12,7 +12,6 @@ import hashlib
 import logging
 import os
 import re
-import shutil
 import sqlite3
 import subprocess
 from collections import defaultdict
@@ -498,16 +497,14 @@ def _warn_on_codegraph_version_mismatch(cmd: str) -> None:
 
 
 def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
-    """Build the codegraph index for proj_dir with `codegraph init`.
+    """Build the codegraph index for proj_dir.
 
-    By default (``force=True``) any existing index is discarded and rebuilt, so
-    the index always reflects the current working tree rather than whatever code
-    was present when it was last built. This is the safe default: callers read
+    By default (``force=True``) an existing index is rebuilt from scratch, so the
+    index always reflects the current working tree rather than whatever code was
+    present when it was last built. This is the safe default: callers read
     function bodies and spans from the index, and a stale one (e.g. after an
     incremental run's tree changed or project sources were edited) would yield
-    boundaries for the wrong code. `codegraph init` on its
-    own no-ops when `.codegraph/` already exists, so a rebuild requires clearing
-    it first.
+    boundaries for the wrong code.
 
     Pass ``force=False`` to keep an existing index and only build when it is
     absent — an opt-in optimization for callers that know the tree is unchanged
@@ -521,17 +518,25 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     if os.path.exists(db_path):
         if not force:
             return
-        # Existing index may reflect stale sources; remove it so `codegraph init`
-        # rebuilds against the current tree instead of skipping.
-        shutil.rmtree(codegraph_dir, ignore_errors=True)
+        # `codegraph index` is the full rebuild — "same result as a fresh init",
+        # but it discards codegraph.db itself instead of the directory holding it.
+        # Clearing `.codegraph/` here is what used to make `init` rebuild rather
+        # than no-op, and it silently stopped working once that directory became a
+        # symlink into oh-my-openagent's store: shutil.rmtree refuses to remove a
+        # symlink and ignore_errors=True swallowed the error, so the run reported a
+        # rebuild that never happened.
+        action = "index"
         print("[Pipeline] Rebuilding codegraph index for current working tree...")
     else:
+        # `index` rebuilds an initialized project and errors out otherwise, so the
+        # first build still goes through `init`.
+        action = "init"
         print("[Pipeline] Building codegraph index...")
     cmd = _codegraph_cmd()
     _warn_on_codegraph_version_mismatch(cmd)
     try:
         result = subprocess.run(
-            [cmd, "init"], cwd=proj_dir, capture_output=True, text=True
+            [cmd, action], cwd=proj_dir, capture_output=True, text=True
         )
     except FileNotFoundError:
         return  # codegraph not installed
@@ -539,6 +544,7 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
         print("[Pipeline] codegraph index built.")
     else:
         logging.warning(
-            "codegraph init failed (non-fatal, falling back to regex): %s",
+            "codegraph %s failed (non-fatal, falling back to regex): %s",
+            action,
             result.stderr[:300],
         )
