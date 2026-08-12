@@ -138,7 +138,12 @@ def run_spec_generation_and_verification(
     for phase_info in sorted(phases_data["phases"], key=lambda p: p["phase"]):
         phase_num = phase_info["phase"]
         phase_name = phase_info["name"]
-        phase_files = _get_phase_files(phases_data, phase_num, input_dir)
+        phase_files = _get_phase_files(
+            phases_data,
+            phase_num,
+            input_dir,
+            spec_form=spec_form,
+        )
 
         if not phase_files:
             logging.info(f"Phase {phase_num} ({phase_name}): no extracted files, skipping.")
@@ -149,7 +154,12 @@ def run_spec_generation_and_verification(
             spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
         )
         if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
+            generate_topdown_layers(
+                work_dir,
+                [phase_num],
+                extra_call_edges=extra_call_edges,
+                spec_form=spec_form,
+            )
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
         total_layers = layers_data.get("total_layers", 1)

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from pathlib import Path
 
 from .spec_forms import SOFTWARE_SPEC_FORM
 
@@ -35,6 +36,38 @@ def _is_metadata_sidecar(file_path):
     return str(file_path).endswith(_METADATA_SIDECAR_SUFFIXES)
 
 
+def _normalized_file_path(file_path):
+    """Return a stable comparison key for a local file path."""
+    return os.path.normcase(
+        os.path.abspath(os.path.normpath(os.fspath(file_path)))
+    )
+
+
+def _exclude_spec_artifacts(file_paths, spec_form=SOFTWARE_SPEC_FORM):
+    """Exclude configured spec artifacts from a collection of analysis units.
+
+    ``SpecForm`` exposes a forward mapping from a unit to its artifacts, so the
+    full candidate collection is needed to identify custom artifact paths.  The
+    fixed software suffix check remains for compatibility with orphaned legacy
+    sidecars whose original unit is no longer present.
+    """
+    file_paths = list(file_paths)
+    configured_artifacts = set()
+    for file_path in file_paths:
+        artifacts = spec_form.artifact_paths(Path(file_path))
+        configured_artifacts.add(_normalized_file_path(artifacts.self_spec))
+        configured_artifacts.add(
+            _normalized_file_path(artifacts.dependency_info)
+        )
+
+    return [
+        file_path
+        for file_path in file_paths
+        if not _is_metadata_sidecar(file_path)
+        and _normalized_file_path(file_path) not in configured_artifacts
+    ]
+
+
 def _write_file_names(file_names, output_path):
     """Write sorted, de-duplicated file names to output_path."""
     file_names = sorted(dict.fromkeys(file_names))
@@ -45,19 +78,25 @@ def _write_file_names(file_names, output_path):
     return file_names
 
 
-def collect_file_names(input_dir, output_path="file_list.json"):
+def collect_file_names(
+    input_dir,
+    output_path="file_list.json",
+    *,
+    spec_form=SOFTWARE_SPEC_FORM,
+):
     """Collect all file names under input_dir and write them to a JSON file.
 
     Each entry contains the relative path starting from input_dir.
     """
-    file_names = []
+    file_paths = []
     for root, _, files in os.walk(input_dir):
         for fname in files:
-            if _is_metadata_sidecar(fname):
-                continue
             full_path = os.path.join(root, fname)
-            rel_path = os.path.relpath(full_path, input_dir)
-            file_names.append(rel_path)
+            file_paths.append(full_path)
+    file_names = [
+        os.path.relpath(file_path, input_dir)
+        for file_path in _exclude_spec_artifacts(file_paths, spec_form)
+    ]
     return _write_file_names(file_names, output_path)
 
 
@@ -342,7 +381,13 @@ def _json_file_is_valid(path):
         return False
 
 
-def _get_phase_files(phases_data, phase_num, input_dir):
+def _get_phase_files(
+    phases_data,
+    phase_num,
+    input_dir,
+    *,
+    spec_form=SOFTWARE_SPEC_FORM,
+):
     """Return relative paths of extracted function files for a given phase."""
     phase = next(p for p in phases_data["phases"] if p["phase"] == phase_num)
     phase_files = []
@@ -364,12 +409,20 @@ def _get_phase_files(phases_data, phase_num, input_dir):
                 for root, _dirs, fnames in os.walk(extracted_dir):
                     for fname in sorted(fnames):
                         fpath = os.path.join(root, fname)
-                        if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
-                            phase_files.append(os.path.relpath(fpath, input_dir))
-    return phase_files
+                        if os.path.isfile(fpath):
+                            phase_files.append(fpath)
+    return [
+        os.path.relpath(file_path, input_dir)
+        for file_path in _exclude_spec_artifacts(phase_files, spec_form)
+    ]
 
 
-def _get_all_phase_files(phases_data, input_dir):
+def _get_all_phase_files(
+    phases_data,
+    input_dir,
+    *,
+    spec_form=SOFTWARE_SPEC_FORM,
+):
     """Return extracted function files reachable from all phases in phases.json."""
     phase_files = []
     seen = set()
@@ -377,7 +430,12 @@ def _get_all_phase_files(phases_data, input_dir):
         phase_num = phase_info.get("phase")
         if phase_num is None:
             continue
-        for rel in _get_phase_files(phases_data, phase_num, input_dir):
+        for rel in _get_phase_files(
+            phases_data,
+            phase_num,
+            input_dir,
+            spec_form=spec_form,
+        ):
             if rel not in seen:
                 seen.add(rel)
                 phase_files.append(rel)

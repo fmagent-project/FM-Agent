@@ -4,12 +4,14 @@ import re
 import sys
 import shutil
 import logging
+from pathlib import Path
 
-from src.file_utils import is_file_ready, _is_test_file
+from src.file_utils import _is_test_file
 from src.languages.codegraph import canonicalize
 from src.languages.registry import (
     batch_extract_all, function_spans_for_file, BackendUnavailableError,
 )
+from src.spec_forms import SOFTWARE_SPEC_FORM
 
 LANG_CONFIG = {
     "cpp": {
@@ -677,7 +679,7 @@ def _function_spans(filepath, lang_key, proj_dir=None):
 
 def run_extraction(
     proj_dir, work_dir=None, force=False, verbose=False,
-    return_unavailable_backends=False,
+    return_unavailable_backends=False, *, spec_form=SOFTWARE_SPEC_FORM,
 ):
     """Run function extraction on a project directory.
 
@@ -687,7 +689,9 @@ def run_extraction(
 
     Returns (written_count, skipped_count). When
     ``return_unavailable_backends`` is true, appends the languages whose
-    semantic full-project extraction backend failed.
+    semantic full-project extraction backend failed. On resume, ``spec_form``
+    determines whether an existing extracted unit has complete artifacts and
+    must be preserved.
     """
     if work_dir is None:
         work_dir = proj_dir
@@ -775,9 +779,13 @@ def run_extraction(
             # maps "/" -> "_", and falls back to "_function" for empty names.
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
 
-            # Skip only when the extracted file already has valid .spec.json and
-            # .info.json sidecars.
-            if not force and os.path.exists(out_file) and is_file_ready(out_file):
+            # Preserve an extracted unit when the active form reports complete
+            # artifacts. This keeps resumed source and specs from diverging.
+            if (
+                not force
+                and os.path.exists(out_file)
+                and spec_form.validate(Path(out_file)).ready
+            ):
                 if verbose:
                     print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
                 skipped += 1

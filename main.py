@@ -384,7 +384,13 @@ def run_pipeline(
                 extraction_stage.input_hook,
                 proj_dir,
             )
-        run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
+        run_extraction(
+            proj_dir,
+            work_dir=work_dir,
+            force=not resume,
+            verbose=True,
+            spec_form=spec_generation_config.spec_form,
+        )
         if extraction_stage is not None and extraction_stage.output_hook is not None:
             run_plugin_hook(
                 plugin_config.name,
@@ -429,10 +435,19 @@ def run_pipeline(
                 file_list_stage.input_hook,
                 proj_dir,
             )
-        file_list = collect_file_names(input_dir, file_list_path)
+        file_list = collect_file_names(
+            input_dir,
+            file_list_path,
+            spec_form=spec_generation_config.spec_form,
+        )
         if submodules:
             file_list = _write_file_names(
-                _get_all_phase_files(phases_data, input_dir), file_list_path
+                _get_all_phase_files(
+                    phases_data,
+                    input_dir,
+                    spec_form=spec_generation_config.spec_form,
+                ),
+                file_list_path,
             )
         if file_list_stage is not None and file_list_stage.output_hook is not None:
             run_plugin_hook(
@@ -473,7 +488,11 @@ def run_pipeline(
                 topdown_stage.input_hook,
                 proj_dir,
             )
-        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+        generate_topdown_layers(
+            work_dir,
+            extra_call_edges=extra_call_edges,
+            spec_form=spec_generation_config.spec_form,
+        )
         if topdown_stage is not None and topdown_stage.output_hook is not None:
             run_plugin_hook(
                 plugin_config.name,

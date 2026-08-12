@@ -7,8 +7,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from src.extract import EXT_TO_LANG, LANG_CONFIG
-from src.file_utils import _is_metadata_sidecar
+from src.file_utils import _exclude_spec_artifacts
 from src.languages.registry import call_edges_all
+from src.spec_forms import SOFTWARE_SPEC_FORM
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +27,12 @@ def _load_phases(proj_dir):
 # 1.2 Collect files per phase
 # ---------------------------------------------------------------------------
 
-def _collect_phase_files(proj_dir, phase_data):
+def _collect_phase_files(
+    proj_dir,
+    phase_data,
+    *,
+    spec_form=SOFTWARE_SPEC_FORM,
+):
     """For a phase, collect all extracted function file paths.
 
     Returns list of (file_path, module_name) tuples.
@@ -57,10 +63,20 @@ def _collect_phase_files(proj_dir, phase_data):
             for root, _dirs, fnames in os.walk(func_dir):
                 for fname in fnames:
                     fpath = os.path.join(root, fname)
-                    if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
+                    if os.path.isfile(fpath):
                         results.append((fpath, module_name))
 
-    return results
+    included_paths = set(
+        _exclude_spec_artifacts(
+            (file_path for file_path, _module_name in results),
+            spec_form,
+        )
+    )
+    return [
+        (file_path, module_name)
+        for file_path, module_name in results
+        if file_path in included_paths
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -650,13 +666,20 @@ def _compute_layers(phase_fqns, callees_map, callers_map):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None):
+def generate_topdown_layers(
+    proj_dir,
+    phase_numbers=None,
+    extra_call_edges=None,
+    *,
+    spec_form=SOFTWARE_SPEC_FORM,
+):
     """Generate topdown layer JSON files for the specified phases (or all phases).
 
     Args:
         proj_dir: project root directory
         phase_numbers: list of phase numbers to process, or None for all
         extra_call_edges: optional iterable of supplemental caller/callee edges
+        spec_form: active specification form used to exclude artifact files
 
     Returns:
         list of output file paths written
@@ -669,7 +692,11 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
     # Build global stem->FQN mapping across ALL phases for all_callees
     global_stem_to_fqns = defaultdict(set)
     for pi in phases_data["phases"]:
-        for filepath, _ in _collect_phase_files(proj_dir, pi):
+        for filepath, _ in _collect_phase_files(
+            proj_dir,
+            pi,
+            spec_form=spec_form,
+        ):
             fqn = _file_to_fqn(filepath, proj_dir)
             stem = fqn.split("::")[-1]
             global_stem_to_fqns[stem].add(fqn)
@@ -684,7 +711,11 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
             continue
 
         # 1.2 Collect files
-        phase_files = _collect_phase_files(proj_dir, phase_info)
+        phase_files = _collect_phase_files(
+            proj_dir,
+            phase_info,
+            spec_form=spec_form,
+        )
         if not phase_files:
             logging.warning(f"Phase {phase_num} ({phase_name}): no extracted files found, skipping.")
             continue
