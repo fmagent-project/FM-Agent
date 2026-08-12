@@ -1,5 +1,6 @@
 import re
 from config import *
+from .languages.registry import split_blocks_for_function
 from .prompts import _generate_block_post_condition, _check_post_implies_spec
 
 
@@ -29,10 +30,20 @@ def _compute_brace_depth_per_line(lines):
     """
     depths = []
     depth = 0
+    in_block_comment = False
     for line in lines:
         i = 0
         while i < len(line):
             ch = line[i]
+            # A block comment may span lines. While inside one, only its closing
+            # delimiter is syntax; every other character, including braces, is text.
+            if in_block_comment:
+                if ch == '*' and i + 1 < len(line) and line[i + 1] == '/':
+                    in_block_comment = False
+                    i += 2
+                else:
+                    i += 1
+                continue
             # Skip string literals
             if ch == '"':
                 i += 1
@@ -62,13 +73,8 @@ def _compute_brace_depth_per_line(lines):
                 break
             # Block comment
             if ch == '/' and i + 1 < len(line) and line[i + 1] == '*':
+                in_block_comment = True
                 i += 2
-                while i < len(line):
-                    if line[i] == '*' and i + 1 < len(line) and line[i + 1] == '/':
-                        i += 2
-                        break
-                    i += 1
-                # If block comment spans lines, we ignore braces inside it (simplified)
                 continue
             if ch == '{':
                 depth += 1
@@ -83,6 +89,10 @@ def _split_into_blocks_braced(func, language):
     """
     Split function body into blocks respecting syntactic boundaries.
     """
+
+    syntax_blocks = split_blocks_for_function(func, language, GRANULARITY)
+    if syntax_blocks is not None:
+        return syntax_blocks
 
     python_like = {"python"}
 

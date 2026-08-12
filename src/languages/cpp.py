@@ -1,4 +1,88 @@
+import re
+
 from src.languages.codegraph import CodeGraphExtractor
+
+
+_LINE_PREFIX = re.compile(r"^Line \d+: ?")
+
+
+def _line_end(node) -> int:
+    """Return the inclusive source line containing ``node``'s end."""
+    row, column = node.end_point
+    return row - 1 if column == 0 and row > node.start_point[0] else row
+
+
+def _function_block_nodes(root):
+    """Return safe top-level C++ block boundaries for one function."""
+    stack = list(reversed(root.named_children))
+    while stack:
+        node = stack.pop()
+        if node.type == "function_definition":
+            body = node.child_by_field_name("body")
+            if body is not None and body.type == "compound_statement":
+                return [child for child in body.named_children if child.type != "comment"]
+            if body is not None and body.type == "try_statement":
+                return [body]
+            function_try = next(
+                (child for child in node.named_children if child.type == "try_statement"),
+                None,
+            )
+            if function_try is not None:
+                return [function_try]
+            return None
+        stack.extend(reversed(node.named_children))
+    return None
+
+
+def split_blocks(func: str, granularity: int) -> list[str] | None:
+    """Split a C++ function at complete top-level syntax nodes.
+
+    ``func`` may carry the ``Line N:`` prefixes added by ``parser.py``. They are
+    removed only for parsing; returned chunks retain the original prompt text.
+    Returning ``None`` asks the caller to use its regex/brace-depth fallback.
+    """
+    try:
+        import tree_sitter_cpp as ts_cpp
+        from tree_sitter import Language, Parser
+    except (ImportError, OSError):
+        return None
+
+    prompt_lines = func.strip().split("\n")
+    if len(prompt_lines) <= granularity:
+        return [func.strip()]
+
+    source = "\n".join(_LINE_PREFIX.sub("", line) for line in prompt_lines)
+    try:
+        parser = Parser(Language(ts_cpp.language()))
+        tree = parser.parse(source.encode("utf-8"))
+    except (TypeError, UnicodeError, ValueError):
+        return None
+
+    if tree.root_node.has_error:
+        return None
+
+    block_nodes = _function_block_nodes(tree.root_node)
+    if not block_nodes:
+        return None
+
+    boundaries = sorted({_line_end(node) for node in block_nodes})
+    blocks = []
+    start = 0
+    total = len(prompt_lines)
+    while start < total:
+        if total - start <= granularity * 2:
+            blocks.append("\n".join(prompt_lines[start:]))
+            break
+
+        split_at = next((end for end in boundaries if end >= start + granularity), None)
+        if split_at is None or split_at >= total - 1:
+            blocks.append("\n".join(prompt_lines[start:]))
+            break
+
+        blocks.append("\n".join(prompt_lines[start : split_at + 1]))
+        start = split_at + 1
+
+    return blocks
 
 
 def batch_extract(proj_dir: str) -> dict:
