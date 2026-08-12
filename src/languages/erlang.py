@@ -433,7 +433,7 @@ def _fingerprint_digest(fingerprint: tuple) -> str:
 def _persist_analysis(proj_dir: str, fingerprint: tuple, analysis: ErlangAnalysis):
     """Persist successful ELP output for diagnostics and reproducible inspection."""
     root = os.path.abspath(proj_dir)
-    output_dir = os.path.join(root, ".codegraph")
+    output_dir = os.path.join(root, "fm_agent")
     output_path = os.path.join(output_dir, "erlang_callgraph.json")
 
     functions = []
@@ -690,6 +690,7 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
 
 def _analyze_project(proj_dir: str) -> ErlangAnalysis:
     root = os.path.abspath(proj_dir)
+    files = _erlang_files(root)
     fingerprint = _project_fingerprint(root)
     with _CACHE_LOCK:
         cached = _CACHE.get(root)
@@ -697,10 +698,11 @@ def _analyze_project(proj_dir: str) -> ErlangAnalysis:
             return cached[1]
 
     analysis = _analyze_project_uncached(root)
-    try:
-        _persist_analysis(root, fingerprint, analysis)
-    except OSError as exc:
-        logging.warning("Unable to persist ELP Erlang call graph for %s: %s", root, exc)
+    if files:
+        try:
+            _persist_analysis(root, fingerprint, analysis)
+        except OSError as exc:
+            logging.warning("Unable to persist ELP Erlang call graph for %s: %s", root, exc)
     with _CACHE_LOCK:
         _CACHE[root] = (fingerprint, analysis)
     return analysis
