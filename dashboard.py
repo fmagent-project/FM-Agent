@@ -5,8 +5,10 @@ Usage:
     uv run python dashboard.py <proj_dir>                        # live: <proj_dir>/fm_agent/
     uv run python dashboard.py <proj_dir>/fm_agent.archived_xx   # any workspace dir (auto-detected by trace/ subdir)
     uv run python dashboard.py <proj_dir> --refresh 1.0          # refresh every 1.0s
+    uv run python dashboard.py <proj_dir> --estimate             # one-shot pre-run estimate
 
 Reads:
+    <workdir>/estimate.json              (scope and history-based estimates)
     <workdir>/trace/events.jsonl          (FM-Agent native events)
     <workdir>/trace/opencode/*.jsonl      (lucentia opencode-trace records)
     <workdir>/bug_validation/*.result.json (bug validation verdicts)
@@ -38,6 +40,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.progress_bar import ProgressBar
 from rich.align import Align
+
+from src.run_estimate import SCHEMA_VERSION, write_preflight_estimate
 
 
 STAGES = ["init", "generate_phases_json", "generate_domain_context", "spec_generation", "verification", "bug_validation"]
@@ -180,28 +184,50 @@ def _locate_workdir(proj_dir):
     Accepts either:
       - A project root: dashboard looks for <root>/fm_agent/ (the live workspace).
       - A workspace directly (any name like fm_agent.opus_partial_*): detected
-        by the presence of a `trace/` subdir, used as-is.
+        by a `trace/` subdir or a valid FM-Agent estimate manifest, used as-is.
     """
     p = Path(proj_dir).resolve()
-    if (p / "trace").is_dir():
+    if (p / "trace").is_dir() or _has_preflight_manifest(p / "estimate.json"):
         return p
     return p / "fm_agent"
+
+
+def _has_preflight_manifest(path):
+    """Return whether path is an FM-Agent estimate manifest, not a namesake."""
+    try:
+        estimate = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(estimate, dict)
+        and estimate.get("schema_version") == SCHEMA_VERSION
+        and isinstance(estimate.get("project"), str)
+        and isinstance(estimate.get("scope"), dict)
+        and isinstance(estimate.get("analysis_stages"), list)
+        and isinstance(estimate.get("estimate"), dict)
+    )
 
 
 class State:
     """Aggregated trace state. Mutated by tail_* methods on each refresh."""
 
-    def __init__(self, proj_dir):
+    def __init__(self, proj_dir, workdir=None):
         self.proj_dir = Path(proj_dir).resolve()
-        self.workdir = _locate_workdir(self.proj_dir)
+        self.workdir = (
+            Path(workdir).resolve()
+            if workdir is not None
+            else _locate_workdir(self.proj_dir)
+        )
         self.trace_dir = self.workdir / "trace"
         self.events_path = self.trace_dir / "events.jsonl"
         self.opencode_dir = self.trace_dir / "opencode"
         self.bug_dir = self.workdir / "bug_validation"
+        self.estimate_path = self.workdir / "estimate.json"
 
         # Tail offsets
         self._events_offset = 0
         self._opencode_offsets = {}      # filename → byte offset
+        self._estimate_mtime_ns = None
 
         # Aggregates
         self.first_event_time = None
@@ -228,6 +254,26 @@ class State:
         self.bugs_confirmed = 0
         self.bugs_not_confirmed = 0
         self.bugs_pending = 0     # opencode call done but no result.json yet
+        self.estimate = None
+        self.load_estimate()
+
+    def load_estimate(self):
+        """Load a newly created or refreshed pre-run estimate manifest."""
+        try:
+            mtime_ns = self.estimate_path.stat().st_mtime_ns
+        except OSError:
+            return
+        if mtime_ns == self._estimate_mtime_ns:
+            return
+        try:
+            with open(self.estimate_path, "r", encoding="utf-8") as f:
+                estimate = json.load(f)
+        except (OSError, ValueError):
+            return
+        if not isinstance(estimate, dict):
+            return
+        self.estimate = estimate
+        self._estimate_mtime_ns = mtime_ns
 
     # ---------- events.jsonl tail ----------
     def tail_events(self):
@@ -521,6 +567,106 @@ def render_header(state):
     return Panel(Text.from_markup("  •  ".join(parts)), border_style="cyan")
 
 
+def _fmt_range(value, formatter):
+    if not isinstance(value, dict):
+        return "history unavailable"
+    return f"{formatter(value.get('low'))} – {formatter(value.get('high'))}"
+
+
+def _directory_summary(directories, limit=3):
+    values = []
+    for item in directories or []:
+        values.append(item.get("path", "") if isinstance(item, dict) else str(item))
+    values = [value for value in values if value]
+    if not values:
+        return "(none)"
+    shown = ", ".join(values[:limit])
+    if len(values) > limit:
+        shown += f", … +{len(values) - limit}"
+    return shown
+
+
+def render_preflight(state):
+    estimate = state.estimate
+    if not estimate:
+        return Panel(
+            Align.center(
+                Text.from_markup(
+                    "[dim](no pre-run estimate; run main.py <proj> --estimate)[/]"
+                ),
+                vertical="middle",
+            ),
+            title="Pre-run Scope & ESTIMATE",
+            border_style="magenta",
+        )
+
+    scope = estimate.get("scope") or {}
+    prediction = estimate.get("estimate") or {}
+    scope_table = Table(show_header=False, expand=True, pad_edge=False, box=None)
+    scope_table.add_column("item", style="cyan", no_wrap=True)
+    scope_table.add_column("value", overflow="ellipsis")
+    scope_table.add_row(
+        "included dirs",
+        _directory_summary(scope.get("included_directories")),
+    )
+    scope_table.add_row(
+        "excluded dirs",
+        _directory_summary(scope.get("excluded_directories")),
+    )
+    scope_table.add_row(
+        "source files",
+        f"[green]{scope.get('included_file_count', 0)} included[/] / "
+        f"[dim]{scope.get('excluded_file_count', 0)} excluded[/]",
+    )
+    function_suffix = " [dim](local estimate)[/]" if scope.get(
+        "function_count_is_estimate"
+    ) else ""
+    scope_table.add_row(
+        "functions",
+        f"[bold]~{scope.get('function_count', 0)}[/]{function_suffix}",
+    )
+    stage_labels = [
+        f"{stage.get('number')}. {stage.get('name')} ({stage.get('kind')})"
+        for stage in estimate.get("analysis_stages") or []
+    ]
+    scope_table.add_row("analysis stages", " → ".join(stage_labels))
+
+    prediction_table = Table(show_header=False, expand=True, pad_edge=False, box=None)
+    prediction_table.add_column("metric", style="magenta", no_wrap=True)
+    prediction_table.add_column("ESTIMATE", justify="right", style="bold")
+    prediction_table.add_row(
+        "time",
+        _fmt_range(prediction.get("duration_seconds"), _fmt_duration),
+    )
+    prediction_table.add_row(
+        "LLM calls",
+        _fmt_range(prediction.get("llm_calls"), lambda value: str(int(value))),
+    )
+    prediction_table.add_row(
+        "tokens",
+        _fmt_range(prediction.get("tokens"), _fmt_tokens),
+    )
+    prediction_table.add_row(
+        "cost",
+        _fmt_range(prediction.get("cost_usd"), _fmt_cost),
+    )
+    prediction_table.add_row(
+        "basis",
+        f"{prediction.get('based_on_runs', 0)} completed historical run(s)",
+    )
+
+    content = Table.grid(expand=True, padding=(0, 2))
+    content.add_column(ratio=3)
+    content.add_column(ratio=2)
+    content.add_row(scope_table, prediction_table)
+    return Panel(
+        content,
+        title="[bold magenta]Pre-run Scope & ESTIMATE[/]",
+        subtitle="[dim]ranges are estimates, not quotas[/]",
+        border_style="magenta",
+    )
+
+
 def render_stages(state):
     table = Table(show_header=True, header_style="bold", expand=True, pad_edge=False)
     table.add_column("Stage", style="cyan", no_wrap=True)
@@ -718,6 +864,7 @@ def build_layout(state):
     layout = Layout()
     layout.split_column(
         Layout(render_header(state), name="header", size=3),
+        Layout(render_preflight(state), name="preflight", size=10),
         Layout(name="top", size=stages_h),
         Layout(name="mid", size=tokens_h),
         Layout(render_recent(state), name="footer"),
@@ -743,10 +890,36 @@ def main():
                     help=("Either a target codebase (monitors <proj_dir>/fm_agent/) "
                           "or a workspace directly (any dir containing a trace/ subdir)"))
     ap.add_argument("--refresh", type=float, default=1.5, help="Refresh seconds (default 1.5)")
+    ap.add_argument(
+        "--estimate",
+        action="store_true",
+        help="generate and display a one-shot pre-run estimate without LLM calls",
+    )
+    ap.add_argument(
+        "--submodule",
+        metavar="PATH",
+        nargs="+",
+        default=None,
+        help="limit estimate scope to project-relative subdirectories",
+    )
     args = ap.parse_args()
 
-    state = State(args.proj_dir)
-    if not state.trace_dir.exists():
+    estimate_workdir = None
+    if args.estimate:
+        project_dir = Path(args.proj_dir).resolve()
+        estimate_workdir = project_dir / "fm_agent_estimate"
+        write_preflight_estimate(
+            str(project_dir),
+            estimate_workdir,
+            submodules=args.submodule,
+        )
+
+    state = State(args.proj_dir, workdir=estimate_workdir)
+    if args.estimate:
+        Console().print(render_preflight(state))
+        return
+
+    if not state.trace_dir.exists() and not state.estimate_path.exists():
         print(f"trace dir not found: {state.trace_dir}", file=sys.stderr)
         print("Has the pipeline started yet? (waiting…)", file=sys.stderr)
 
@@ -755,6 +928,7 @@ def main():
               screen=True) as live:
         try:
             while True:
+                state.load_estimate()
                 state.tail_events()
                 state.tail_opencode()
                 state.scan_bugs()
