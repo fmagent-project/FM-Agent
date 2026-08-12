@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 from .base import SpecForm
+from .software import SoftwareSpecForm
 
 
 @dataclass
@@ -82,4 +83,16 @@ def _validate_spec_generation_config(
     ):
         raise ValueError(
             "SpecForm.schema_version must be a non-empty string"
+        )
+    # The downstream parser is tied to SoftwareSpecForm's exact sidecar
+    # contract. Subclasses can override that contract, so isinstance() would
+    # claim compatibility that the reasoning backend does not actually have.
+    if (
+        config.enable_reasoning
+        and type(config.spec_form) is not SoftwareSpecForm
+    ):
+        raise ValueError(
+            "the current reasoning backend only supports the built-in "
+            "SoftwareSpecForm (.spec.json/.info.json); custom SpecForms "
+            "must set enable_reasoning=False"
         )

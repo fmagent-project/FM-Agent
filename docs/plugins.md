@@ -183,6 +183,14 @@ from a stage hook, or at any other time fails. Each `run_pipeline()` call starts
 with a new software-default configuration, and FM-Agent validates the final
 form, form identity, schema version, and reasoning flag after the hook returns.
 
+The current reasoning and bug-validation backend only supports the exact
+built-in `SoftwareSpecForm` type and its `.spec.json` / `.info.json` artifacts.
+Any form whose concrete type is not exactly `SoftwareSpecForm`, including a
+subclass or another plugin-owned implementation, must set
+`enable_reasoning=False`; otherwise configuration fails before Stage 1. This
+compatibility check also applies when the command uses `--only-spec`, which is
+a per-run execution override rather than a different plugin strategy.
+
 ## Resume, isolate, and incremental runs
 
 Modify hooks run whenever execution reaches their stage boundary. They still
