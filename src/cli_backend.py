@@ -164,12 +164,14 @@ def run_agent_for_messages(model, messages):
     )
     cwd = os.path.abspath(os.getcwd())
     command = build_agent_command(model=model, prompt=prompt, cwd=cwd)
+    # Agent CLIs write the final response to stdout and diagnostics/transcripts
+    # to stderr; keep them separate so echoed JSON never reaches the parser.
     result = subprocess.run(
         command.argv,
         input=command.stdin,
         cwd=cwd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -177,8 +179,12 @@ def run_agent_for_messages(model, messages):
         check=False,
     )
     if result.returncode != 0:
-        output = (result.stdout or "")[-4000:]
+        output = "\n".join(
+            part.strip()
+            for part in (result.stdout or "", result.stderr or "")
+            if part.strip()
+        )[-4000:]
         raise RuntimeError(
             f"{command.backend} exited with code {result.returncode}: {output}"
         )
-    return result.stdout.strip(), {}
+    return (result.stdout or "").strip(), {}
