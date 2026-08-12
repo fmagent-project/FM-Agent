@@ -174,6 +174,13 @@ def configure(proj_dir: str) -> None:
 `run_pipeline()` 都从新的软件默认配置开始；configure Hook 返回后，FM-Agent
 会验证最终 SpecForm、form identity、schema version 和 reasoning 开关。
 
+当前 reasoning 和 Bug Validation backend 只支持精确的内置
+`SoftwareSpecForm` 类型及其 `.spec.json` / `.info.json` 产物。具体类型不是
+`SoftwareSpecForm` 的 form（包括其子类或其他插件自有实现）必须设置
+`enable_reasoning=False`，否则配置会在 Stage 1 前失败。即使命令使用
+`--only-spec`，该兼容性校验仍然执行；`--only-spec` 是单次运行的执行覆盖，
+不是另一种插件策略。
+
 ## Resume、isolate 与 incremental
 
 执行到 Stage 边界时 Modify Hook 就会运行。即使内置 Stage 在 resume 中复用
