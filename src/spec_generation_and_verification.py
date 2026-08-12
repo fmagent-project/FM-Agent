@@ -22,6 +22,27 @@ from src.spec_forms import SpecForm, SpecGenerationConfig
 from src.verification import streaming_reasoner
 
 
+def stage_spec_generation_prompts(
+    *,
+    spec_form: SpecForm,
+    script_dir,
+    work_dir,
+    spec_prompts_dir,
+):
+    """Stage the active form's prompts before plugin stage hooks run."""
+    os.makedirs(spec_prompts_dir, exist_ok=True)
+    system_prompt_src = spec_form.system_prompt_path(Path(script_dir))
+    system_prompt_dst = os.path.join(spec_prompts_dir, "system_prompt.md")
+    shutil.copy2(system_prompt_src, system_prompt_dst)
+
+    workflow_prompt_src = spec_form.workflow_prompt_path(Path(script_dir))
+    workflow_prompt_dst = os.path.join(
+        work_dir,
+        "workflow_spec_step4_batch.md",
+    )
+    shutil.copy2(workflow_prompt_src, workflow_prompt_dst)
+
+
 def _get_pending_batches(
     batches,
     proj_dir,
@@ -121,15 +142,6 @@ def run_spec_generation_and_verification(
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
     spec_form = spec_generation_config.spec_form
     run_reasoning = spec_generation_config.should_run_reasoning(only_spec)
-
-    os.makedirs(spec_prompts_dir, exist_ok=True)
-    system_prompt_src = spec_form.system_prompt_path(Path(script_dir))
-    system_prompt_dst = os.path.join(spec_prompts_dir, "system_prompt.md")
-    shutil.copy2(system_prompt_src, system_prompt_dst)
-
-    batch_md_src = spec_form.workflow_prompt_path(Path(script_dir))
-    batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
-    shutil.copy2(batch_md_src, batch_md_dst)
 
     all_processed = set()
     num_phases = len(phases_data["phases"])
