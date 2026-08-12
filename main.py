@@ -12,7 +12,10 @@ from src.file_utils import (
 from src.verification import _generate_all_bugs_validation_summary
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
-from src.spec_generation_and_verification import run_spec_generation_and_verification
+from src.spec_generation_and_verification import (
+    run_spec_generation_and_verification,
+    stage_spec_generation_prompts,
+)
 from src.spec_forms import SOFTWARE_SPEC_FORM, SpecGenerationConfig
 from src.spec_forms.config import (
     _bind_spec_generation_config,
@@ -401,7 +404,13 @@ def run_pipeline(
             )
 
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
-    os.makedirs(spec_prompts_dir, exist_ok=True)
+
+    stage_spec_generation_prompts(
+        spec_form=spec_generation_config.spec_form,
+        script_dir=script_dir,
+        work_dir=work_dir,
+        spec_prompts_dir=spec_prompts_dir,
+    )
 
     phases_path = os.path.join(work_dir, "phases.json")
     with open(phases_path, "r") as f:
