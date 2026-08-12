@@ -216,8 +216,6 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--bug-validator FILE`       | Use a custom Markdown prompt for bug validation instead of the built-in `md/bug_validator.md`. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
-| `--entry-func FQN [FQN ...]` | Run the dedicated entry-point pipeline from one or more entry functions. |
-| `--end-func FQN [FQN ...]` | With `--entry-func`, retain paths that reach one or more end functions and stop analysis at those functions. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 | `--plugin NAME`             | Load a pipeline plugin from `plugins/NAME/`. |
@@ -235,6 +233,8 @@ def hook(proj_dir: str) -> None:
 
 See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
 configuration, execution modes, lifecycle, and trust boundary.
+
+`proj_dir` must be a git repository.
 
 To provide project-specific domain knowledge without editing FM-Agent's built-in prompts, pass one or more Markdown files:
 

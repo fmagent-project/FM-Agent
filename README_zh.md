@@ -165,8 +165,6 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--bug-validator FILE` | 使用自定义 Markdown 提示词执行 Bug 验证，替代内置的 `md/bug_validator.md`。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
-| `--entry-func FQN [FQN ...]` | 从一个或多个入口函数运行独立的入口函数 Pipeline。 |
-| `--end-func FQN [FQN ...]` | 与 `--entry-func` 一起使用时，只保留能够到达一个或多个终止函数的路径，并在这些函数处停止分析。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 | `--plugin NAME` | 加载 `plugins/NAME/` 下的 Pipeline 插件。 |
@@ -184,6 +182,8 @@ def hook(proj_dir: str) -> None:
 
 插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
 [Pipeline 插件](docs/plugins_zh.md)。
+
+`proj_dir` 必须是一个 git 仓库。
 
 如需在不修改 FM-Agent 内置提示词的情况下提供项目特定领域知识，可传入一个或多个 Markdown 文件：
 
