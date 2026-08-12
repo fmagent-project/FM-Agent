@@ -430,11 +430,15 @@ def _fingerprint_digest(fingerprint: tuple) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _diagnostic_output_path(proj_dir: str) -> str:
+    return os.path.join(os.path.abspath(proj_dir), "fm_agent", "erlang_callgraph.json")
+
+
 def _persist_analysis(proj_dir: str, fingerprint: tuple, analysis: ErlangAnalysis):
     """Persist successful ELP output for diagnostics and reproducible inspection."""
     root = os.path.abspath(proj_dir)
     output_dir = os.path.join(root, "fm_agent")
-    output_path = os.path.join(output_dir, "erlang_callgraph.json")
+    output_path = _diagnostic_output_path(root)
 
     functions = []
     caller_files = {}
@@ -487,6 +491,16 @@ def _persist_analysis(proj_dir: str, fingerprint: tuple, analysis: ErlangAnalysi
                 os.unlink(temp_path)
             except OSError:
                 pass
+
+
+def _remove_persisted_analysis(proj_dir: str):
+    """Remove a stale ELP diagnostic when the project has no Erlang sources."""
+    try:
+        os.unlink(_diagnostic_output_path(proj_dir))
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logging.warning("Unable to remove ELP Erlang call graph for %s: %s", proj_dir, exc)
 
 
 def _symbol_range(symbol: dict):
@@ -703,6 +717,8 @@ def _analyze_project(proj_dir: str) -> ErlangAnalysis:
             _persist_analysis(root, fingerprint, analysis)
         except OSError as exc:
             logging.warning("Unable to persist ELP Erlang call graph for %s: %s", root, exc)
+    else:
+        _remove_persisted_analysis(root)
     with _CACHE_LOCK:
         _CACHE[root] = (fingerprint, analysis)
     return analysis
