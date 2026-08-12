@@ -711,14 +711,13 @@ def _analyze_project(proj_dir: str) -> ErlangAnalysis:
         if cached and cached[0] == fingerprint:
             return cached[1]
 
+    _remove_persisted_analysis(root)
     analysis = _analyze_project_uncached(root)
     if files:
         try:
             _persist_analysis(root, fingerprint, analysis)
         except OSError as exc:
             logging.warning("Unable to persist ELP Erlang call graph for %s: %s", root, exc)
-    else:
-        _remove_persisted_analysis(root)
     with _CACHE_LOCK:
         _CACHE[root] = (fingerprint, analysis)
     return analysis
