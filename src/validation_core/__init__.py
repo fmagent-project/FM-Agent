@@ -22,6 +22,12 @@ from .registry import (
     PresetRegistryErrorCode,
 )
 from .contracts.base import ComponentKind, ComponentRef, ContractError
+from .contracts.component import (
+    ComponentDescriptor,
+    ImplementationRef,
+    SemanticClause,
+    SemanticContract,
+)
 from .contracts.preset import (
     PresetDependency,
     RegistrationOrigin,
@@ -46,6 +52,7 @@ __all__ = [
     "ArtifactFamily",
     "ComponentKind",
     "ComponentRef",
+    "ComponentDescriptor",
     "ContractError",
     "GenericAdapterKind",
     "PresetRef",
@@ -56,6 +63,7 @@ __all__ = [
     "RegistrationOrigin",
     "RegistrationRecord",
     "RegistrationTrustTier",
+    "ImplementationRef",
     "LegacyBindingCheck",
     "LegacyBindingState",
     "LegacyCompletionPolicy",
@@ -66,6 +74,8 @@ __all__ = [
     "RoutingDecision",
     "RoutingReasonCode",
     "RoutingRequest",
+    "SemanticClause",
+    "SemanticContract",
     "TrustClass",
     "ValidationEngine",
     "ValidationPreset",

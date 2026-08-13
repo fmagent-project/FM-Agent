@@ -9,6 +9,8 @@ uv run python -m unittest -v \
   tests.test_bug_validation_legacy_compatibility \
   tests.test_validator_legacy_golden \
   tests.test_validation_outcome_loader \
+  tests.test_validation_component_contracts \
+  tests.test_validation_ccc_preset_content \
   tests.test_validation_preset_registry \
   tests.test_validation_routing \
   tests.test_custom_bug_validator \

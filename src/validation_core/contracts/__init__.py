@@ -7,6 +7,12 @@ from .base import (
     canonical_json_bytes,
     canonical_sha256,
 )
+from .component import (
+    ComponentDescriptor,
+    ImplementationRef,
+    SemanticClause,
+    SemanticContract,
+)
 from .routing import (
     GenericAdapterKind,
     PresetRef,
@@ -28,16 +34,20 @@ from .preset import (
 __all__ = [
     "ComponentKind",
     "ComponentRef",
+    "ComponentDescriptor",
     "ContractError",
     "GenericAdapterKind",
     "PresetRef",
     "PresetDependency",
+    "ImplementationRef",
     "RegistrationOrigin",
     "RegistrationRecord",
     "RegistrationTrustTier",
     "RoutingDecision",
     "RoutingReasonCode",
     "RoutingRequest",
+    "SemanticClause",
+    "SemanticContract",
     "ValidationPreset",
     "ValidationEngine",
     "ValidationRoutingError",
