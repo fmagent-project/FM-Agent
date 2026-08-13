@@ -1,11 +1,11 @@
 {
   "mapping_schema_version": 1,
-  "corpus_sha256": "929304ae52fbb337b6504a0f4ea8bbf24f4194bc31f6c36955b4730d7decd8e2",
+  "corpus_sha256": "a6708bf3b5e9b0e6066cdd8c8f512c17bcf7897ff4eabfcaee2d0317ecae2131",
   "preset_id": "ccc.legacy_boundary_witness_v3",
-  "preset_version": "1.0.0",
+  "preset_version": "1.0.1",
   "component_sha256": {
     "ccc.legacy_boundary_adapter": "1d3523f2c8acd998efeba203f6c34c31f9c42003f9fcb2800b0c36f63feef75f",
-    "ccc.legacy_boundary_compatibility": "c6b7263cda2b58b184fc60501cf91738b611d12770ca3480ed504d09a422160b",
+    "ccc.legacy_boundary_compatibility": "0faca6efaf94630ea4251a5805fb49933200fdda0ffeb15be8056b1e39f3a039",
     "ccc.legacy_boundary_target_evidence": "165efefdc896c403a73a721ffa8e0c2daae0373787e66443d9953faa2c9fc4f9",
     "ccc.legacy_compiler_recipe_schema": "232a081b19a1ca06d9dd1f4e56e987bf5b90f934bfee0642cbcb2073b83b4eff",
     "ccc.legacy_differential_oracles": "8ec85dd7f9523aa7c21effb2e5385ff54c83bcb651eacbe9823075e0a6abafe0",
@@ -13,7 +13,7 @@
     "ccc.legacy_repair_sanity_policy": "8f74b9d7ecce0e252608ce494393edb37ddd2fe03a1cb5ab023fe6d054f3be8b",
     "ccc.legacy_source_bound_toolchain": "8d768f76ebfc37c56840e627e5cf1407c9147df3a4567435e7ccd9a01d39a961"
   },
-  "preset_sha256": "e94fd02f675df698ee2163b5c753b562407940dbf5b8e3fc33bbf15e1344df1a",
+  "preset_sha256": "80d00ff11db0775ee962083083adbe1607e45d4ef0a6ad7cc43cbdda8f71e225",
   "cases": {
     "gate.not_confirmed_fast_path": ["compatibility.policy"],
     "gate.schema_v2_pre_execution_reject": ["compatibility.policy"],

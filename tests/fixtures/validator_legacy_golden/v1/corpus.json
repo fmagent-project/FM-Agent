@@ -960,7 +960,7 @@
         "decision": {
           "kind": "no_phenomenon",
           "check": null,
-          "reason_contains": "no observable difference"
+          "reason_contains": "no observable accept/reject difference"
         },
         "external_calls": [
           "ccc",
@@ -1003,7 +1003,7 @@
         "decision": {
           "kind": "no_phenomenon",
           "check": null,
-          "reason_contains": "no observable difference"
+          "reason_contains": "no observable accept/reject difference"
         },
         "external_calls": [
           "ccc",
@@ -1248,7 +1248,7 @@
         "decision": {
           "kind": "reject",
           "check": "replay",
-          "reason_contains": "missing return"
+          "reason_contains": "no matching return event"
         },
         "external_calls": [
           "parse_records"

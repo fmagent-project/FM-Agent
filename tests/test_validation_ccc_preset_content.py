@@ -164,7 +164,7 @@ class CCCPresetContentTests(unittest.TestCase):
 
         self.assertEqual(
             hashlib.sha256(canonical_json_bytes(mapping)).hexdigest(),
-            "63b41730f1ffe9304364bdd56762040074db0489941c5578024d122e85912137",
+            "0fd9d5ae705e8b9813a2309086c2c019646766434c59eeb7e125fbe7c21c14d7",
         )
 
         compatibility = next(
@@ -178,6 +178,20 @@ class CCCPresetContentTests(unittest.TestCase):
             if clause.clause_id == "golden_corpus"
         )
         self.assertIn(corpus_sha256(corpus), " ".join(golden_values))
+        self.assertEqual(compatibility.component_version, "1.0.1")
+        self.assertEqual(
+            compatibility.semantic_contract.contract_version,
+            "1.0.1",
+        )
+        self.assertEqual(CCC_LEGACY_PRESET.preset_version, "1.0.1")
+        self.assertEqual(
+            {
+                descriptor.component_version
+                for descriptor in CCC_COMPONENTS
+                if descriptor is not compatibility
+            },
+            {"1.0.0"},
+        )
 
     def test_staged_preset_is_known_but_mechanically_unregistered(self):
         registry = PresetRegistry((CCC_LEGACY_PRESET,), ())

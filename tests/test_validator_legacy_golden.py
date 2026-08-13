@@ -10,7 +10,7 @@ from tests.validator_legacy_golden import (
 
 
 EXPECTED_CORPUS_SHA256 = (
-    "929304ae52fbb337b6504a0f4ea8bbf24f4194bc31f6c36955b4730d7decd8e2"
+    "a6708bf3b5e9b0e6066cdd8c8f512c17bcf7897ff4eabfcaee2d0317ecae2131"
 )
 
 

@@ -165,10 +165,14 @@ def _source(path: str) -> ImplementationRef:
     )
 
 
-def _contract(contract_id: str, clauses: dict[str, tuple[str, ...]]) -> SemanticContract:
+def _contract(
+    contract_id: str,
+    clauses: dict[str, tuple[str, ...]],
+    version: str = "1.0.0",
+) -> SemanticContract:
     return SemanticContract(
         contract_id=contract_id,
-        contract_version="1.0.0",
+        contract_version=version,
         clauses=tuple(
             SemanticClause(clause_id, values)
             for clause_id, values in clauses.items()
@@ -181,12 +185,13 @@ def _descriptor(
     component_id: str,
     clauses: dict[str, tuple[str, ...]],
     source_paths: tuple[str, ...],
+    version: str = "1.0.0",
 ) -> ComponentDescriptor:
     return ComponentDescriptor(
         kind=kind,
         component_id=component_id,
-        component_version="1.0.0",
-        semantic_contract=_contract(f"{component_id}.semantics", clauses),
+        component_version=version,
+        semantic_contract=_contract(f"{component_id}.semantics", clauses, version),
         implementation_refs=tuple(_source(path) for path in source_paths),
     )
 
@@ -438,7 +443,7 @@ CCC_COMPATIBILITY_POLICY = _descriptor(
             "direct scratch accepted-submission bypass must not survive the future Coordinator",
         ),
         "golden_corpus": (
-            "validator_legacy_golden/v1 canonical sha256 929304ae52fbb337b6504a0f4ea8bbf24f4194bc31f6c36955b4730d7decd8e2",
+            "validator_legacy_golden/v1 canonical sha256 a6708bf3b5e9b0e6066cdd8c8f512c17bcf7897ff4eabfcaee2d0317ecae2131",
             "30 must_match cells",
             "1 legacy_known_gap cell",
             "1 intentional_cutover_delta cell",
@@ -456,6 +461,7 @@ CCC_COMPATIBILITY_POLICY = _descriptor(
         "src/validator_sandbox.py",
         "src/verification.py",
     ),
+    version="1.0.1",
 )
 
 CCC_TOOLCHAIN_POLICY = _descriptor(

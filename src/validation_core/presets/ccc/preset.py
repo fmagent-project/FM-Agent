@@ -17,7 +17,7 @@ from .components import (
 
 CCC_LEGACY_PRESET = ValidationPreset(
     preset_id="ccc.legacy_boundary_witness_v3",
-    preset_version="1.0.0",
+    preset_version="1.0.1",
     system_id="ccc",
     dependencies=(
         PresetDependency("adapter.primary", CCC_ADAPTER.ref),
