@@ -22,6 +22,7 @@ class LanguageHandler:
     function_spans(proj_dir, filepath)  -> [(func_name, start_idx, end_idx)] | None
     incremental_source_extract(proj_dir, sources)
         -> {abs_filepath: [(func_name, body)]} | None
+    split_blocks(func, granularity)      -> [chunk, ...] | None
 
     Each function handles its own backend (e.g. codegraph) internally.
     batch_extract returns ``None`` when a semantic backend cannot safely
@@ -35,7 +36,7 @@ class LanguageHandler:
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
-         function_spans, and optionally incremental_source_extract
+         function_spans, and optionally incremental_source_extract / split_blocks
       2. Import it here and add one entry to REGISTRY
     No other files need to change.
     """
@@ -43,18 +44,19 @@ class LanguageHandler:
     call_edges: Callable
     function_spans: Callable
     incremental_source_extract: Callable | None = None
+    split_blocks: Callable | None = None
 
 BackendUnavailableError = _BackendUnavailableError
 
 REGISTRY: dict = {
     "python":     LanguageHandler(batch_extract=_python.batch_extract,     call_edges=_python.call_edges,     function_spans=_python.function_spans),
     "go":         LanguageHandler(batch_extract=_go.batch_extract,         call_edges=_go.call_edges,         function_spans=_go.function_spans),
-    "c":          LanguageHandler(batch_extract=_c.batch_extract,          call_edges=_c.call_edges,          function_spans=_c.function_spans),
-    "cpp":        LanguageHandler(batch_extract=_cpp.batch_extract,        call_edges=_cpp.call_edges,        function_spans=_cpp.function_spans),
-    "java":       LanguageHandler(batch_extract=_java.batch_extract,       call_edges=_java.call_edges,       function_spans=_java.function_spans),
-    "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans),
-    "javascript": LanguageHandler(batch_extract=_javascript.batch_extract, call_edges=_javascript.call_edges, function_spans=_javascript.function_spans),
-    "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans),
+    "c":          LanguageHandler(batch_extract=_c.batch_extract,          call_edges=_c.call_edges,          function_spans=_c.function_spans, split_blocks=_c.split_blocks),
+    "cpp":        LanguageHandler(batch_extract=_cpp.batch_extract,        call_edges=_cpp.call_edges,        function_spans=_cpp.function_spans, split_blocks=_cpp.split_blocks),
+    "java":       LanguageHandler(batch_extract=_java.batch_extract,       call_edges=_java.call_edges,       function_spans=_java.function_spans, split_blocks=_java.split_blocks),
+    "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans, split_blocks=_rust.split_blocks),
+    "javascript": LanguageHandler(batch_extract=_javascript.batch_extract, call_edges=_javascript.call_edges, function_spans=_javascript.function_spans, split_blocks=_javascript.split_blocks),
+    "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans, split_blocks=_typescript.split_blocks),
     "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
 }
 
@@ -98,6 +100,15 @@ def function_spans_for_file(proj_dir: str, filepath: str, lang_key: str):
     if handler is None:
         return None
     return handler.function_spans(proj_dir, filepath)
+
+
+def split_blocks_for_function(func: str, lang_key: str, granularity: int):
+    """Return syntax-aware blocks for ``lang_key``, or ``None`` for fallback."""
+    normalized_key = {"c++": "cpp"}.get(lang_key.lower(), lang_key.lower())
+    handler = REGISTRY.get(normalized_key)
+    if handler is None or handler.split_blocks is None:
+        return None
+    return handler.split_blocks(func, granularity)
 
 
 def supports_incremental_source_extraction(lang_key: str) -> bool:
