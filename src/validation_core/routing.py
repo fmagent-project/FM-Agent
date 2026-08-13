@@ -2,65 +2,42 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 from .contracts.routing import (
     GenericAdapterKind,
-    PresetRef,
     RoutingDecision,
     RoutingReasonCode,
     RoutingRequest,
-    TrustedPresetRecord,
     ValidationEngine,
     ValidationRoutingError,
     ValidationRoutingErrorCode,
 )
+from .registry import PresetRegistry, RegisteredPreset
 
 
 class AdapterResolver:
     """Resolve the generic harness to one trusted preset or its agent planner."""
 
-    def __init__(self, presets: Iterable[TrustedPresetRecord] = ()):
-        records = tuple(presets)
-        by_ref: dict[PresetRef, TrustedPresetRecord] = {}
-        by_id_version: dict[tuple[str, str], PresetRef] = {}
-        for record in records:
-            if type(record) is not TrustedPresetRecord:
-                raise ValidationRoutingError(
-                    ValidationRoutingErrorCode.INVALID_CONTRACT,
-                    "presets must contain only TrustedPresetRecord values",
-                )
-            if record.preset in by_ref:
-                raise ValidationRoutingError(
-                    ValidationRoutingErrorCode.DUPLICATE_PRESET_REF,
-                    f"duplicate trusted preset reference: {record.preset.preset_id} "
-                    f"{record.preset.preset_version}",
-                )
-            id_version = (record.preset.preset_id, record.preset.preset_version)
-            existing = by_id_version.get(id_version)
-            if existing is not None and existing != record.preset:
-                raise ValidationRoutingError(
-                    ValidationRoutingErrorCode.CONFLICTING_PRESET_HASH,
-                    f"trusted preset {record.preset.preset_id} version "
-                    f"{record.preset.preset_version} has conflicting hashes",
-                )
-            by_ref[record.preset] = record
-            by_id_version[id_version] = record.preset
-        self._records = records
-        self._by_ref = by_ref
-        self._by_id_version = by_id_version
+    def __init__(self, registry: PresetRegistry | None = None):
+        if registry is not None and type(registry) is not PresetRegistry:
+            raise ValidationRoutingError(
+                ValidationRoutingErrorCode.INVALID_CONTRACT,
+                "registry must be a PresetRegistry",
+            )
+        self._registry = registry or PresetRegistry()
 
     @staticmethod
     def _supports(
-        record: TrustedPresetRecord,
+        record: RegisteredPreset,
         required_capabilities: tuple[str, ...],
     ) -> bool:
-        return set(required_capabilities).issubset(record.capabilities)
+        return set(required_capabilities).issubset(
+            record.registration.effective_capabilities
+        )
 
     @staticmethod
     def _preset_decision(
         request: RoutingRequest,
-        record: TrustedPresetRecord,
+        record: RegisteredPreset,
         reason_code: RoutingReasonCode,
     ) -> RoutingDecision:
         return RoutingDecision(
@@ -68,7 +45,8 @@ class AdapterResolver:
             system_id=request.system_id,
             reason_code=reason_code,
             adapter_kind=GenericAdapterKind.TRUSTED_SYSTEM_PRESET,
-            preset=record.preset,
+            preset=record.preset.ref,
+            registration_sha256=record.registration.registration_sha256,
         )
 
     def resolve(self, request: RoutingRequest) -> RoutingDecision:
@@ -84,29 +62,34 @@ class AdapterResolver:
             )
 
         if request.requested_preset is not None:
-            record = self._by_ref.get(request.requested_preset)
+            record = self._registry.registered_preset(request.requested_preset)
             if record is None:
-                id_version = (
+                existing = self._registry.known_preset_ref(
                     request.requested_preset.preset_id,
                     request.requested_preset.preset_version,
                 )
-                existing = self._by_id_version.get(id_version)
-                if existing is not None:
+                if existing is not None and existing != request.requested_preset:
                     raise ValidationRoutingError(
                         ValidationRoutingErrorCode.CONFLICTING_PRESET_HASH,
                         f"trusted preset {existing.preset_id} version "
                         f"{existing.preset_version} is registered with another hash",
+                    )
+                if existing is not None:
+                    raise ValidationRoutingError(
+                        ValidationRoutingErrorCode.PRESET_NOT_REGISTERED,
+                        f"preset is not registered: {existing.preset_id} "
+                        f"{existing.preset_version}",
                     )
                 raise ValidationRoutingError(
                     ValidationRoutingErrorCode.PRESET_NOT_FOUND,
                     f"trusted preset not found: {request.requested_preset.preset_id} "
                     f"{request.requested_preset.preset_version}",
                 )
-            if record.system_id != request.system_id:
+            if record.preset.system_id != request.system_id:
                 raise ValidationRoutingError(
                     ValidationRoutingErrorCode.PRESET_SYSTEM_MISMATCH,
                     f"preset {record.preset.preset_id} is registered for "
-                    f"{record.system_id}, not {request.system_id}",
+                    f"{record.preset.system_id}, not {request.system_id}",
                 )
             if not self._supports(record, request.required_capabilities):
                 raise ValidationRoutingError(
@@ -120,10 +103,15 @@ class AdapterResolver:
                 RoutingReasonCode.EXPLICIT_TRUSTED_PRESET,
             )
 
-        system_records = tuple(
-            record for record in self._records if record.system_id == request.system_id
+        system_records = self._registry.registered_presets_for_system(
+            request.system_id
         )
         if not system_records:
+            if self._registry.has_system(request.system_id):
+                raise ValidationRoutingError(
+                    ValidationRoutingErrorCode.PRESET_NOT_REGISTERED,
+                    f"presets exist for {request.system_id}, but none are registered",
+                )
             return RoutingDecision(
                 engine=ValidationEngine.GENERIC_HARNESS,
                 system_id=request.system_id,

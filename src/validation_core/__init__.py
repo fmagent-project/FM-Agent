@@ -16,13 +16,25 @@ from .outcome_loader import (
     load_legacy_compatibility_outcome,
 )
 from .routing import AdapterResolver, ValidationRouter
+from .registry import (
+    PresetRegistry,
+    PresetRegistryError,
+    PresetRegistryErrorCode,
+)
+from .contracts.base import ComponentKind, ComponentRef, ContractError
+from .contracts.preset import (
+    PresetDependency,
+    RegistrationOrigin,
+    RegistrationRecord,
+    RegistrationTrustTier,
+    ValidationPreset,
+)
 from .contracts.routing import (
     GenericAdapterKind,
     PresetRef,
     RoutingDecision,
     RoutingReasonCode,
     RoutingRequest,
-    TrustedPresetRecord,
     ValidationEngine,
     ValidationRoutingError,
     ValidationRoutingErrorCode,
@@ -32,8 +44,18 @@ __all__ = [
     "ArchivedLegacyCCCCertificate",
     "AdapterResolver",
     "ArtifactFamily",
+    "ComponentKind",
+    "ComponentRef",
+    "ContractError",
     "GenericAdapterKind",
     "PresetRef",
+    "PresetDependency",
+    "PresetRegistry",
+    "PresetRegistryError",
+    "PresetRegistryErrorCode",
+    "RegistrationOrigin",
+    "RegistrationRecord",
+    "RegistrationTrustTier",
     "LegacyBindingCheck",
     "LegacyBindingState",
     "LegacyCompletionPolicy",
@@ -44,9 +66,9 @@ __all__ = [
     "RoutingDecision",
     "RoutingReasonCode",
     "RoutingRequest",
-    "TrustedPresetRecord",
     "TrustClass",
     "ValidationEngine",
+    "ValidationPreset",
     "ValidationRouter",
     "ValidationRoutingError",
     "ValidationRoutingErrorCode",

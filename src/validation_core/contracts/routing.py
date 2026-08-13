@@ -45,6 +45,7 @@ class ValidationRoutingErrorCode(str, Enum):
     DUPLICATE_PRESET_REF = "DUPLICATE_PRESET_REF"
     CONFLICTING_PRESET_HASH = "CONFLICTING_PRESET_HASH"
     PRESET_NOT_FOUND = "PRESET_NOT_FOUND"
+    PRESET_NOT_REGISTERED = "PRESET_NOT_REGISTERED"
     PRESET_SYSTEM_MISMATCH = "PRESET_SYSTEM_MISMATCH"
     PRESET_CAPABILITY_MISMATCH = "PRESET_CAPABILITY_MISMATCH"
     AMBIGUOUS_PRESET = "AMBIGUOUS_PRESET"
@@ -138,22 +139,6 @@ class RoutingRequest:
 
 
 @dataclass(frozen=True)
-class TrustedPresetRecord:
-    """Registry-granted trusted preset metadata used by the resolver."""
-
-    preset: PresetRef
-    system_id: str
-    capabilities: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        if type(self.preset) is not PresetRef:
-            raise _contract_error("preset must be a PresetRef")
-        _validate_identifier(self.system_id, "system_id")
-        capabilities = _normalize_capabilities(self.capabilities, "capabilities")
-        object.__setattr__(self, "capabilities", capabilities)
-
-
-@dataclass(frozen=True)
 class RoutingDecision:
     """Complete, immutable route selected before validation execution."""
 
@@ -162,6 +147,7 @@ class RoutingDecision:
     reason_code: RoutingReasonCode
     adapter_kind: GenericAdapterKind | None = None
     preset: PresetRef | None = None
+    registration_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.engine) is not ValidationEngine:
@@ -171,7 +157,11 @@ class RoutingDecision:
         _validate_identifier(self.system_id, "system_id")
 
         if self.engine is ValidationEngine.LEGACY_PROMPT:
-            if self.adapter_kind is not None or self.preset is not None:
+            if (
+                self.adapter_kind is not None
+                or self.preset is not None
+                or self.registration_sha256 is not None
+            ):
                 raise _contract_error(
                     "legacy_prompt decisions cannot contain adapter or preset fields"
                 )
@@ -186,7 +176,7 @@ class RoutingDecision:
                 "generic_harness decisions require a GenericAdapterKind"
             )
         if self.adapter_kind is GenericAdapterKind.GENERIC_AGENT:
-            if self.preset is not None:
+            if self.preset is not None or self.registration_sha256 is not None:
                 raise _contract_error(
                     "generic_agent decisions cannot contain preset fields"
                 )
@@ -199,6 +189,13 @@ class RoutingDecision:
         if type(self.preset) is not PresetRef:
             raise _contract_error(
                 "trusted_system_preset decisions require an exact PresetRef"
+            )
+        if (
+            type(self.registration_sha256) is not str
+            or not _SHA256_RE.fullmatch(self.registration_sha256)
+        ):
+            raise _contract_error(
+                "trusted_system_preset decisions require registration_sha256"
             )
         if self.reason_code not in (
             RoutingReasonCode.EXPLICIT_TRUSTED_PRESET,
