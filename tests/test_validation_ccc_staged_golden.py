@@ -6,13 +6,17 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from src.check_submission import Rejection
 from src.phenomenon_runner import NoPhenomenonError, PhenomenonObservation
+from src.validation_artifacts import publish_validation_artifact
 from src.validation_context import sha256_directory
 from src.validation_core.presets.ccc.staged_executor import (
+    StagedCCCArtifactContext,
     StagedCCCContext,
+    StagedCCCConsumerProviders,
     StagedCCCExecutor,
     StagedCCCL1Context,
     StagedCCCL1Providers,
@@ -22,7 +26,14 @@ from tests.validator_legacy_golden import load_corpus
 
 
 _ROOT = Path(__file__).resolve().parents[1]
-_EXECUTABLE_ENTRYPOINTS = {"gate", "phenomenon", "trace_parser", "l1"}
+_EXECUTABLE_ENTRYPOINTS = {
+    "gate",
+    "phenomenon",
+    "trace_parser",
+    "l1",
+    "artifact",
+    "consumer",
+}
 _EXECUTABLE_CASE_IDS = {
     "gate.not_confirmed_fast_path",
     "gate.schema_v2_pre_execution_reject",
@@ -48,6 +59,9 @@ _EXECUTABLE_CASE_IDS = {
     "l1.non_building_patch_hard_reject",
     "l1.patch_still_differs_downgrade_eligible",
     "l1.sanity_output_change_downgrade_eligible",
+    "artifact.bound_inputs_fail_closed_on_tamper",
+    "consumer.current_verified_artifact_skips",
+    "consumer.raw_or_tampered_artifact_reruns",
 }
 _EXECUTION_INPUT_KEYS = {
     "case_id",
@@ -68,6 +82,32 @@ impl Demo {
 }
 """
 _L1_PATCHED = _L1_ORIGINAL.replace("{ 1 }", "{ 3 }")
+_LEGACY_ARTIFACT_VERSIONS = {
+    "result": 3,
+    "sidecar": 5,
+    "gate": "boundary-witness-v6",
+}
+_EXPECTED_MULTI_VARIANTS = {
+    "artifact.bound_inputs_fail_closed_on_tamper": (
+        "result",
+        "sidecar",
+        "source",
+        "reasoning",
+        "manifest",
+        "toolchain.release",
+        "toolchain.reference",
+        "toolchain.audit",
+        "toolchain.coverage",
+        "probe",
+        "patch",
+        "sanity_corpus",
+    ),
+    "consumer.current_verified_artifact_skips": ("current_verified_v5",),
+    "consumer.raw_or_tampered_artifact_reruns": (
+        "raw_no_sidecar",
+        "tampered_result_pair",
+    ),
+}
 
 
 def _pointer_tokens(pointer: str) -> list[str]:
@@ -262,6 +302,305 @@ def _trace_result(execution: dict, fixtures: dict):
         raise AssertionError(f"unsupported trace driver: {drivers}")
     lines = [json.dumps(event, sort_keys=True) for event in raw_events]
     return StagedCCCExecutor().parse_trace(lines, "bug1")
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tree_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
+    entries = []
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        mode = path.lstat().st_mode & 0o7777
+        if path.is_symlink():
+            entries.append((relative, "symlink", mode, path.readlink().as_posix()))
+        elif path.is_file():
+            entries.append((relative, "file", mode, path.read_bytes()))
+        elif path.is_dir():
+            entries.append((relative, "directory", mode, None))
+        else:
+            entries.append((relative, "other", mode, None))
+    return tuple(entries)
+
+
+def _materialize_legacy_pair(
+    shadow_root: Path,
+    submission: dict,
+    versions: dict,
+):
+    shadow_root.mkdir()
+    shadow_root = shadow_root.resolve()
+    project = shadow_root / "project"
+    validation = project / "fm_agent" / "bug_validation"
+    validation.mkdir(parents=True)
+
+    paths = {
+        "logic_result": (
+            project / "fm_agent" / "logic_verification_results" / "bug1.json"
+        ),
+        "manifest": project / "tools" / "audit_manifest.json",
+        "source": project / "src" / "lib.rs",
+        "release_binary": project / "target" / "release" / "ccc",
+        "reference_binary": project / "toolchain" / "gcc",
+        "audit_binary": project / "target" / "audit" / "ccc",
+        "coverage_binary": project / "target" / "coverage" / "ccc",
+        "sanity_corpus": project / "tools" / "validation_sanity_corpus",
+        "probe": validation / "_probe_bug1.c",
+        "l1_patch": validation / "bug1.l1.patch",
+    }
+    file_payloads = {
+        "logic_result": b'{"verdict":"MISMATCH"}\n',
+        "manifest": (
+            b'{"functions":{"bug1":{"file":"src/lib.rs",'
+            b'"fn_name":"target","source_line":1,"opts":{}}}}\n'
+        ),
+        "source": b"fn target() -> i32 { 1 }\n",
+        "release_binary": b"release-ccc",
+        "reference_binary": b"reference-gcc",
+        "audit_binary": b"audit-ccc",
+        "coverage_binary": b"coverage-ccc",
+    }
+    for label, payload in file_payloads.items():
+        paths[label].parent.mkdir(parents=True, exist_ok=True)
+        paths[label].write_bytes(payload)
+    paths["sanity_corpus"].mkdir(parents=True)
+    (paths["sanity_corpus"] / "one.c").write_text(
+        "int main(void){return 0;}\n",
+        encoding="utf-8",
+    )
+
+    if submission["confirmation_status"] == "confirmed":
+        paths["probe"].write_text(
+            "int main(void){return 0;}\n",
+            encoding="utf-8",
+        )
+    if submission.get("grade") == "L1":
+        paths["l1_patch"].write_text(
+            "diff --git a/src/lib.rs b/src/lib.rs\n",
+            encoding="utf-8",
+        )
+
+    scratch = validation / ".attempts" / "attempt-1"
+    scratch.mkdir(parents=True)
+    context = SimpleNamespace(
+        bug_id="bug1",
+        function_id="bug1",
+        project_dir=project,
+        validation_dir=validation,
+        logic_result_path=paths["logic_result"],
+        logic_result_sha256=_sha256_file(paths["logic_result"]),
+        manifest_path=paths["manifest"],
+        manifest_sha256=_sha256_file(paths["manifest"]),
+        manifest_entry=SimpleNamespace(file="src/lib.rs"),
+        source_sha256=_sha256_file(paths["source"]),
+        release_ccc=paths["release_binary"],
+        release_binary_sha256=_sha256_file(paths["release_binary"]),
+        reference_cc=paths["reference_binary"],
+        reference_binary_sha256=_sha256_file(paths["reference_binary"]),
+        audit_ccc=paths["audit_binary"],
+        audit_binary_sha256=_sha256_file(paths["audit_binary"]),
+        coverage_ccc=paths["coverage_binary"],
+        coverage_binary_sha256=_sha256_file(paths["coverage_binary"]),
+        sanity_corpus_dir=paths["sanity_corpus"],
+        sanity_corpus_sha256=sha256_directory(paths["sanity_corpus"]),
+        scratch_dir=scratch,
+    )
+    result_path = validation / "bug1.result.json"
+    gate_path = publish_validation_artifact(
+        result_path,
+        copy.deepcopy(submission),
+        context,
+        state="accepted",
+        attempt=1,
+    )
+    published_result = json.loads(result_path.read_text(encoding="utf-8"))
+    published_sidecar = json.loads(gate_path.read_text(encoding="utf-8"))
+    if published_result["schema_version"] != versions["result"] \
+            or published_sidecar["schema_version"] != versions["sidecar"] \
+            or published_sidecar["gate_version"] != versions["gate"]:
+        raise AssertionError("legacy publisher did not honor pinned driver versions")
+    return SimpleNamespace(
+        shadow_root=shadow_root,
+        project_dir=project,
+        result_path=result_path,
+        gate_path=gate_path,
+        paths=paths,
+    )
+
+
+def _mutate_legacy_pair(fixture, variant: str) -> None:
+    if variant == "result":
+        result = json.loads(fixture.result_path.read_text(encoding="utf-8"))
+        result["notes"] = "tampered result"
+        fixture.result_path.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return
+    if variant == "sidecar":
+        sidecar = json.loads(fixture.gate_path.read_text(encoding="utf-8"))
+        sidecar["attempt"] = 2
+        fixture.gate_path.write_text(
+            json.dumps(sidecar, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return
+    if variant == "patch":
+        fixture.paths["l1_patch"].unlink()
+        return
+    if variant == "sanity_corpus":
+        (fixture.paths["sanity_corpus"] / "two.c").write_text(
+            "int changed(void){return 1;}\n",
+            encoding="utf-8",
+        )
+        return
+    path_label = {
+        "source": "source",
+        "reasoning": "logic_result",
+        "manifest": "manifest",
+        "toolchain.release": "release_binary",
+        "toolchain.reference": "reference_binary",
+        "toolchain.audit": "audit_binary",
+        "toolchain.coverage": "coverage_binary",
+        "probe": "probe",
+    }.get(variant)
+    if path_label is None:
+        raise AssertionError(f"unsupported artifact mutation: {variant}")
+    path = fixture.paths[path_label]
+    path.write_bytes(path.read_bytes() + b"\nchanged")
+
+
+def _artifact_variants(drivers: dict) -> tuple[str, ...]:
+    if set(drivers) != {"published_versions", "tampered_inputs"} \
+            or drivers["published_versions"] != _LEGACY_ARTIFACT_VERSIONS \
+            or drivers["tampered_inputs"] != [
+                "result",
+                "sidecar",
+                "source",
+                "reasoning",
+                "manifest",
+                "toolchain",
+                "probe",
+                "patch",
+                "sanity_corpus",
+            ]:
+        raise AssertionError(f"unsupported artifact driver: {drivers}")
+    expanded = []
+    for token in drivers["tampered_inputs"]:
+        if token == "toolchain":
+            expanded.extend(
+                (
+                    "toolchain.release",
+                    "toolchain.reference",
+                    "toolchain.audit",
+                    "toolchain.coverage",
+                )
+            )
+        else:
+            expanded.append(token)
+    return tuple(expanded)
+
+
+def _artifact_results(execution: dict, fixtures: dict, root: Path):
+    submission = _apply_mutations(
+        fixtures["submissions"][execution["submission_ref"]],
+        execution["input_mutations"],
+    )
+    submission_before = copy.deepcopy(submission)
+    results = []
+    for index, variant in enumerate(_artifact_variants(execution["drivers"])):
+        safe_variant = variant.replace(".", "-")
+        fixture = _materialize_legacy_pair(
+            root / f"artifact-{index:02d}-{safe_variant}",
+            submission,
+            execution["drivers"]["published_versions"],
+        )
+        _mutate_legacy_pair(fixture, variant)
+        before = _tree_snapshot(fixture.shadow_root)
+        result = StagedCCCExecutor().run_artifact_binding(
+            submission,
+            StagedCCCArtifactContext(
+                bug_id="bug1",
+                shadow_root=fixture.shadow_root,
+                project_dir=fixture.project_dir,
+                result_path=fixture.result_path,
+            ),
+        )
+        if _tree_snapshot(fixture.shadow_root) != before:
+            raise AssertionError("artifact observer mutated its shadow materialization")
+        if result.observer_ledger != (
+            "load_verified_artifact",
+            "load_archived_legacy_certificate",
+        ):
+            raise AssertionError("artifact observer ledger is incomplete")
+        results.append((variant, result, submission_before))
+    if submission != submission_before:
+        raise AssertionError("artifact execution mutated caller-owned submission")
+    return results
+
+
+def _consumer_results(execution: dict, fixtures: dict, root: Path):
+    submission = _apply_mutations(
+        fixtures["submissions"][execution["submission_ref"]],
+        execution["input_mutations"],
+    )
+    submission_before = copy.deepcopy(submission)
+    if set(execution["drivers"]) != {"artifact"}:
+        raise AssertionError(f"unsupported consumer driver: {execution['drivers']}")
+    artifact_driver = execution["drivers"]["artifact"]
+    if artifact_driver == "current_verified_v5":
+        variants = ("current_verified_v5",)
+    elif artifact_driver == "raw_or_tampered":
+        variants = ("raw_no_sidecar", "tampered_result_pair")
+    else:
+        raise AssertionError(f"unsupported consumer artifact: {artifact_driver}")
+
+    results = []
+    for index, variant in enumerate(variants):
+        fixture = _materialize_legacy_pair(
+            root / f"consumer-{index:02d}-{variant}",
+            submission,
+            _LEGACY_ARTIFACT_VERSIONS,
+        )
+        if variant == "raw_no_sidecar":
+            fixture.gate_path.unlink()
+        elif variant == "tampered_result_pair":
+            _mutate_legacy_pair(fixture, "result")
+
+        scheduled = []
+
+        def schedule_agent():
+            scheduled.append("agent")
+
+        if variant == "current_verified_v5":
+            def schedule_agent():
+                raise AssertionError("verified legacy pair scheduled an Agent")
+
+        before = _tree_snapshot(fixture.shadow_root)
+        result = StagedCCCExecutor().run_legacy_consumer_shadow(
+            submission,
+            StagedCCCArtifactContext(
+                bug_id="bug1",
+                shadow_root=fixture.shadow_root,
+                project_dir=fixture.project_dir,
+                result_path=fixture.result_path,
+            ),
+            StagedCCCConsumerProviders(agent_scheduler=schedule_agent),
+        )
+        if _tree_snapshot(fixture.shadow_root) != before:
+            raise AssertionError("resume observer mutated its shadow materialization")
+        if result.observer_ledger != (
+            "load_verified_artifact",
+            "load_archived_legacy_certificate",
+        ):
+            raise AssertionError("resume observer ledger is incomplete")
+        if variant != "current_verified_v5" and scheduled != ["agent"]:
+            raise AssertionError("invalid legacy pair did not schedule one attempt")
+        results.append((variant, result, submission_before))
+    if submission != submission_before:
+        raise AssertionError("consumer execution mutated caller-owned submission")
+    return results
 
 
 def _l1_context(root: Path) -> StagedCCCL1Context:
@@ -495,7 +834,7 @@ def _l1_result(execution: dict, fixtures: dict, root: Path):
     return result, submission_before
 
 
-def _execute_projected_case(
+def _execute_projected_variants(
     execution: dict,
     fixtures: dict,
     context: StagedCCCContext,
@@ -503,18 +842,36 @@ def _execute_projected_case(
     if set(execution) != _EXECUTION_INPUT_KEYS:
         raise AssertionError("executor projection contains unexpected fields")
     if execution["entrypoint"] == "gate":
-        return _gate_result(execution, fixtures, context)
+        result, submitted = _gate_result(execution, fixtures, context)
+        return (("gate", result, submitted),)
     if execution["entrypoint"] == "phenomenon":
-        return _phenomenon_result(execution, context), None
+        return (("phenomenon", _phenomenon_result(execution, context), None),)
     if execution["entrypoint"] == "trace_parser":
-        return _trace_result(execution, fixtures), None
+        return (("trace_parser", _trace_result(execution, fixtures), None),)
     if execution["entrypoint"] == "l1":
-        return _l1_result(execution, fixtures, context.project_dir)
+        result, submitted = _l1_result(
+            execution,
+            fixtures,
+            context.project_dir,
+        )
+        return (("l1", result, submitted),)
+    if execution["entrypoint"] == "artifact":
+        return _artifact_results(
+            execution,
+            fixtures,
+            context.project_dir,
+        )
+    if execution["entrypoint"] == "consumer":
+        return _consumer_results(
+            execution,
+            fixtures,
+            context.project_dir,
+        )
     raise AssertionError(f"unsupported staged entrypoint: {execution['entrypoint']}")
 
 
 class StagedCCCGoldenTests(unittest.TestCase):
-    def test_exactly_twenty_four_cells_are_executed_and_eight_are_deferred(self):
+    def test_exactly_twenty_seven_cells_are_executed_and_five_are_deferred(self):
         corpus = load_corpus()
         executable = [
             case for case in corpus["cases"]
@@ -524,14 +881,14 @@ class StagedCCCGoldenTests(unittest.TestCase):
             case for case in corpus["cases"]
             if case["entrypoint"] not in _EXECUTABLE_ENTRYPOINTS
         ]
-        self.assertEqual(len(executable), 24)
+        self.assertEqual(len(executable), 27)
         self.assertEqual(
             {case["case_id"] for case in executable},
             _EXECUTABLE_CASE_IDS,
         )
         self.assertEqual(
             {case["entrypoint"] for case in executable},
-            {"gate", "phenomenon", "trace_parser", "l1"},
+            {"gate", "phenomenon", "trace_parser", "l1", "artifact", "consumer"},
         )
         self.assertEqual(
             {case["parity_policy"] for case in executable},
@@ -539,7 +896,7 @@ class StagedCCCGoldenTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(case["parity_policy"] == "must_match" for case in executable),
-            23,
+            26,
         )
         self.assertEqual(
             {
@@ -550,9 +907,9 @@ class StagedCCCGoldenTests(unittest.TestCase):
         )
         self.assertEqual(
             {case["entrypoint"] for case in deferred},
-            {"flow", "artifact", "consumer"},
+            {"flow"},
         )
-        self.assertEqual(len(deferred), 8)
+        self.assertEqual(len(deferred), 5)
         self.assertEqual(
             sum(
                 case["parity_policy"] == "intentional_cutover_delta"
@@ -561,9 +918,10 @@ class StagedCCCGoldenTests(unittest.TestCase):
             1,
         )
 
-    def test_staged_executor_matches_all_twenty_four_executable_cells(self):
+    def test_staged_executor_matches_all_twenty_seven_executable_cells(self):
         corpus = load_corpus()
         fixtures = corpus["fixtures"]
+        concrete_execution_count = 0
         for case in corpus["cases"]:
             if case["entrypoint"] not in _EXECUTABLE_ENTRYPOINTS:
                 continue
@@ -579,51 +937,110 @@ class StagedCCCGoldenTests(unittest.TestCase):
                  mock.patch("os.system", side_effect=poison):
                 project = Path(temporary).resolve()
                 context = _context(project)
-                result, submitted = _execute_projected_case(
+                concrete_results = _execute_projected_variants(
                     execution,
                     fixtures,
                     context,
                 )
-                self.assertEqual(list(project.rglob("*.result.json")), [])
-                self.assertEqual(list(project.rglob("*.gate.json")), [])
-                expected = case["expected"]
-                self.assertEqual(result.decision.kind, expected["decision"]["kind"])
-                self.assertEqual(result.decision.check, expected["decision"]["check"])
-                reason = expected["decision"]["reason_contains"]
-                if reason is not None:
-                    self.assertIsNotNone(result.decision.raw_reason)
-                    self.assertIn(reason, result.decision.raw_reason)
-                self.assertEqual(
-                    list(result.call_ledger),
-                    expected["external_calls"],
+                concrete_variants = tuple(
+                    variant for variant, _result, _submitted in concrete_results
                 )
+                if case["case_id"] in _EXPECTED_MULTI_VARIANTS:
+                    self.assertEqual(
+                        concrete_variants,
+                        _EXPECTED_MULTI_VARIANTS[case["case_id"]],
+                    )
+                else:
+                    self.assertEqual(len(concrete_results), 1)
+                concrete_execution_count += len(concrete_results)
+                expected = case["expected"]
+                if case["entrypoint"] not in {"artifact", "consumer"}:
+                    self.assertEqual(list(project.rglob("*.result.json")), [])
+                    self.assertEqual(list(project.rglob("*.gate.json")), [])
+                for variant, result, submitted in concrete_results:
+                    with self.subTest(
+                        case_id=case["case_id"],
+                        variant=variant,
+                    ):
+                        self.assertEqual(
+                            result.decision.kind,
+                            expected["decision"]["kind"],
+                        )
+                        self.assertEqual(
+                            result.decision.check,
+                            expected["decision"]["check"],
+                        )
+                        reason = expected["decision"]["reason_contains"]
+                        if reason is not None:
+                            self.assertIsNotNone(result.decision.raw_reason)
+                            self.assertIn(reason, result.decision.raw_reason)
+                        self.assertEqual(
+                            list(result.call_ledger),
+                            expected["external_calls"],
+                        )
 
-                if case["entrypoint"] in {"gate", "l1"}:
-                    expected_final = _apply_mutations(
-                        submitted,
-                        expected["submission_mutations"],
-                    )
-                    self.assertEqual(result.original_submission, submitted)
-                    self.assertEqual(result.final_submission, expected_final)
-                    self.assertEqual(
-                        result.requested_grade,
-                        expected["flow"]["requested_grade"],
-                    )
-                    self.assertEqual(
-                        result.final_grade,
-                        expected["flow"]["inner_final_grade"],
-                    )
-                    if case["entrypoint"] == "gate":
-                        self.assertTrue(result.submitted_recipe_identity_preserved)
-                    self.assertEqual(expected["flow"]["outer_calls"], 0)
-                    self.assertFalse(expected["flow"]["published"])
+                        if case["entrypoint"] in {
+                            "gate",
+                            "l1",
+                            "artifact",
+                            "consumer",
+                        }:
+                            expected_final = _apply_mutations(
+                                submitted,
+                                expected["submission_mutations"],
+                            )
+                            self.assertEqual(result.original_submission, submitted)
+                            self.assertEqual(result.final_submission, expected_final)
+                            self.assertEqual(
+                                result.requested_grade,
+                                expected["flow"]["requested_grade"],
+                            )
+                            self.assertEqual(
+                                result.final_grade,
+                                expected["flow"]["inner_final_grade"],
+                            )
+                            if case["entrypoint"] == "gate":
+                                self.assertTrue(
+                                    result.submitted_recipe_identity_preserved
+                                )
+                            self.assertEqual(expected["flow"]["outer_calls"], 0)
 
-                if case["case_id"] == "trace.interleaved_span_pairing":
-                    self.assertEqual(
-                        [(record["input"]["self_flags"], record["return"])
-                         for record in result.records],
-                        [(0, "false"), (8, "true")],
-                    )
+                        if case["entrypoint"] in {"gate", "l1"}:
+                            self.assertFalse(expected["flow"]["published"])
+                        if case["entrypoint"] in {"artifact", "consumer"}:
+                            self.assertEqual(
+                                result.published,
+                                expected["flow"]["published"],
+                            )
+                            self.assertEqual(
+                                result.same_agent_retry,
+                                expected["flow"]["same_agent_retry"],
+                            )
+                            self.assertEqual(
+                                result.new_attempt_on_budget,
+                                expected["flow"]["new_attempt_on_budget"],
+                            )
+                            self.assertEqual(
+                                result.outer_candidate,
+                                expected["flow"]["outer_candidate"],
+                            )
+                            self.assertEqual(
+                                result.outer_calls,
+                                expected["flow"]["outer_calls"],
+                            )
+
+                        if case["case_id"] == "trace.interleaved_span_pairing":
+                            self.assertEqual(
+                                [
+                                    (
+                                        record["input"]["self_flags"],
+                                        record["return"],
+                                    )
+                                    for record in result.records
+                                ],
+                                [(0, "false"), (8, "true")],
+                            )
+        self.assertEqual(concrete_execution_count, 39)
 
 
 if __name__ == "__main__":

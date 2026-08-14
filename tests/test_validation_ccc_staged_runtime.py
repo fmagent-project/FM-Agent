@@ -5,14 +5,24 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import src.l1_verifier as l1_verifier_module
 import src.validation_core.presets.ccc.staged_executor as staged_executor_module
 from src.check_submission import Rejection
 from src.phenomenon_runner import PhenomenonObservation
+from src.validation_artifacts import publish_validation_artifact
+from src.validation_context import sha256_directory
+from src.validation_core.outcome_loader import (
+    OutcomeLoadError,
+    OutcomeLoadErrorCode,
+    load_current_validation_outcome,
+)
 from src.validation_core.presets.ccc.staged_executor import (
+    StagedCCCArtifactContext,
     StagedCCCContext,
+    StagedCCCConsumerProviders,
     StagedCCCExecutor,
     StagedCCCL1Context,
     StagedCCCL1Providers,
@@ -61,6 +71,11 @@ _LEGACY_SOURCES = {
         8096,
         "3d6eaa395c553337908a7a44d96f7aa90cdcb6ae669ec875fe307fa5144614ad",
         "a07c25b2d946fb7928aa0ce9b714fc9cf0c5b108",
+    ),
+    "src/validation_artifacts.py": (
+        16608,
+        "8d323d83af2f52a7cd8323413b566f8f60c4f5796d35fb70483c849df8a15ed2",
+        "753d2170e2612c8022eff2d1030c34c637dc947b",
     ),
 }
 _L1_SUPPORT_SOURCES = {
@@ -275,6 +290,96 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             sanity_corpus_sha256="1" * 64,
         )
 
+    def _make_artifact_fixture(self, name: str):
+        shadow_root = self.project / name
+        project = shadow_root / "project"
+        validation = project / "fm_agent" / "bug_validation"
+        validation.mkdir(parents=True)
+        files = {
+            "logic": project / "fm_agent" / "logic_verification_results" / "bug1.json",
+            "manifest": project / "tools" / "audit_manifest.json",
+            "source": project / "src" / "lib.rs",
+            "release": project / "target" / "release" / "ccc",
+            "reference": project / "toolchain" / "gcc",
+            "audit": project / "target" / "audit" / "ccc",
+            "coverage": project / "target" / "coverage" / "ccc",
+        }
+        for label, path in files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"{label}-bytes".encode("utf-8"))
+        corpus = project / "tools" / "validation_sanity_corpus"
+        corpus.mkdir(parents=True)
+        (corpus / "one.c").write_text("int x;\n", encoding="utf-8")
+        scratch = validation / ".attempts" / "attempt-1"
+        scratch.mkdir(parents=True)
+        submission = {
+            "schema_version": 3,
+            "id": "bug1",
+            "function_id": "bug1",
+            "confirmation_status": "not_confirmed",
+            "attempts": 1,
+            "notes": "cannot trigger",
+        }
+        legacy_context = SimpleNamespace(
+            bug_id="bug1",
+            function_id="bug1",
+            project_dir=project,
+            validation_dir=validation,
+            logic_result_path=files["logic"],
+            logic_result_sha256=hashlib.sha256(
+                files["logic"].read_bytes()
+            ).hexdigest(),
+            manifest_path=files["manifest"],
+            manifest_sha256=hashlib.sha256(
+                files["manifest"].read_bytes()
+            ).hexdigest(),
+            manifest_entry=SimpleNamespace(file="src/lib.rs"),
+            source_sha256=hashlib.sha256(
+                files["source"].read_bytes()
+            ).hexdigest(),
+            release_ccc=files["release"],
+            release_binary_sha256=hashlib.sha256(
+                files["release"].read_bytes()
+            ).hexdigest(),
+            reference_cc=files["reference"],
+            reference_binary_sha256=hashlib.sha256(
+                files["reference"].read_bytes()
+            ).hexdigest(),
+            audit_ccc=files["audit"],
+            audit_binary_sha256=hashlib.sha256(
+                files["audit"].read_bytes()
+            ).hexdigest(),
+            coverage_ccc=files["coverage"],
+            coverage_binary_sha256=hashlib.sha256(
+                files["coverage"].read_bytes()
+            ).hexdigest(),
+            sanity_corpus_dir=corpus,
+            sanity_corpus_sha256=sha256_directory(corpus),
+            scratch_dir=scratch,
+        )
+        result_path = validation / "bug1.result.json"
+        gate_path = publish_validation_artifact(
+            result_path,
+            submission,
+            legacy_context,
+            state="accepted",
+            attempt=1,
+        )
+        location = StagedCCCArtifactContext(
+            bug_id="bug1",
+            shadow_root=shadow_root,
+            project_dir=project,
+            result_path=result_path,
+        )
+        return SimpleNamespace(
+            submission=submission,
+            location=location,
+            result_path=result_path,
+            gate_path=gate_path,
+            project_dir=project,
+            source=files["source"],
+        )
+
     def test_legacy_source_identity_matches_pinned_multirun_blobs(self):
         self.assertEqual(set(_LEGACY_SOURCES), {
             "src/compiler_recipe.py",
@@ -285,6 +390,7 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             "src/l1_verifier.py",
             "src/validation_context.py",
             "src/validation_workspace.py",
+            "src/validation_artifacts.py",
         })
         self.assertEqual(set(_L1_SUPPORT_SOURCES), {
             "tools/l1_scope/Cargo.toml",
@@ -336,6 +442,212 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             values[field] = None
             with self.subTest(field=field), self.assertRaises(TypeError):
                 StagedCCCL1Providers(**values)
+
+        with self.assertRaises(TypeError):
+            StagedCCCConsumerProviders(agent_scheduler=None)
+
+    def test_valid_legacy_pair_is_only_an_archival_resume_shadow(self):
+        fixture = self._make_artifact_fixture("artifact-current")
+
+        def unexpected_agent():
+            raise AssertionError("valid legacy pair must not schedule an Agent")
+
+        result = StagedCCCExecutor().run_legacy_consumer_shadow(
+            fixture.submission,
+            fixture.location,
+            StagedCCCConsumerProviders(agent_scheduler=unexpected_agent),
+        )
+
+        self.assertEqual(result.decision.kind, "skip")
+        self.assertTrue(result.published)
+        self.assertFalse(result.new_attempt_on_budget)
+        self.assertEqual(result.observation.agreement, "both_resumable")
+        self.assertTrue(result.observation.legacy_resumable)
+        self.assertTrue(result.observation.archived_bindings_current)
+        self.assertTrue(result.observation.pair_token_matches)
+        self.assertTrue(result.observation.archival_only)
+        self.assertEqual(
+            result.observer_ledger,
+            (
+                "load_verified_artifact",
+                "load_archived_legacy_certificate",
+            ),
+        )
+        with self.assertRaises(OutcomeLoadError) as raised:
+            load_current_validation_outcome(fixture.result_path)
+        self.assertEqual(
+            raised.exception.code,
+            OutcomeLoadErrorCode.WRONG_ARTIFACT_FAMILY,
+        )
+
+    def test_stale_and_raw_legacy_pairs_schedule_one_fresh_attempt(self):
+        stale = self._make_artifact_fixture("artifact-stale")
+        stale.source.write_bytes(stale.source.read_bytes() + b"changed")
+        raw = self._make_artifact_fixture("artifact-raw")
+        raw.gate_path.unlink()
+        missing = self._make_artifact_fixture("artifact-missing")
+        missing.result_path.unlink()
+        missing.gate_path.unlink()
+
+        for name, fixture in (
+            ("stale", stale),
+            ("raw", raw),
+            ("missing", missing),
+        ):
+            with self.subTest(name=name):
+                scheduled = []
+                result = StagedCCCExecutor().run_legacy_consumer_shadow(
+                    fixture.submission,
+                    fixture.location,
+                    StagedCCCConsumerProviders(
+                        agent_scheduler=lambda: scheduled.append("agent")
+                    ),
+                )
+                self.assertEqual(result.decision.kind, "rerun")
+                self.assertEqual(result.decision.check, "binding")
+                self.assertEqual(
+                    result.call_ledger,
+                    ("load_verified_artifact", "agent"),
+                )
+                self.assertEqual(result.observation.agreement, "both_nonresumable")
+                self.assertEqual(
+                    result.observer_ledger,
+                    (
+                        "load_verified_artifact",
+                        "load_archived_legacy_certificate",
+                    ),
+                )
+                self.assertFalse(result.published)
+                self.assertTrue(result.new_attempt_on_budget)
+                self.assertEqual(result.outer_candidate, "none")
+                self.assertEqual(result.outer_calls, 0)
+                self.assertEqual(scheduled, ["agent"])
+
+    def test_observer_disagreement_is_explicit_and_does_not_schedule(self):
+        fixture = self._make_artifact_fixture("artifact-mismatch")
+        scheduled = []
+        mismatch = OutcomeLoadError(
+            OutcomeLoadErrorCode.INTEGRITY_MISMATCH,
+            "synthetic independent observer mismatch",
+        )
+
+        with mock.patch.object(
+            staged_executor_module,
+            "load_archived_legacy_certificate",
+            side_effect=mismatch,
+        ):
+            result = StagedCCCExecutor().run_legacy_consumer_shadow(
+                fixture.submission,
+                fixture.location,
+                StagedCCCConsumerProviders(
+                    agent_scheduler=lambda: scheduled.append("agent")
+                ),
+            )
+
+        self.assertEqual(result.decision.kind, "shadow_mismatch")
+        self.assertEqual(result.observation.agreement, "resumability_mismatch")
+        self.assertTrue(result.observation.legacy_resumable)
+        self.assertFalse(result.observation.archived_bindings_current)
+        self.assertEqual(scheduled, [])
+
+    def test_pair_replacement_between_observers_is_a_shadow_mismatch(self):
+        fixture = self._make_artifact_fixture("artifact-token-race")
+        archived = staged_executor_module.load_archived_legacy_certificate(
+            fixture.result_path,
+            project_dir=fixture.project_dir,
+        )
+        replaced_sidecar = dict(archived.sidecar)
+        replaced_sidecar["integrity_sha256"] = "0" * 64
+        replaced = type(archived)(
+            result_path=archived.result_path,
+            sidecar_path=archived.sidecar_path,
+            result=archived.result,
+            sidecar=replaced_sidecar,
+            binding_report=archived.binding_report,
+        )
+        scheduled = []
+
+        with mock.patch.object(
+            staged_executor_module,
+            "load_archived_legacy_certificate",
+            return_value=replaced,
+        ):
+            result = StagedCCCExecutor().run_legacy_consumer_shadow(
+                fixture.submission,
+                fixture.location,
+                StagedCCCConsumerProviders(
+                    agent_scheduler=lambda: scheduled.append("agent")
+                ),
+            )
+
+        self.assertEqual(result.decision.kind, "shadow_mismatch")
+        self.assertEqual(result.observation.agreement, "pair_token_mismatch")
+        self.assertFalse(result.observation.pair_token_matches)
+        self.assertEqual(scheduled, [])
+
+    def test_incomplete_archive_binding_report_fails_the_observer_protocol(self):
+        fixture = self._make_artifact_fixture("artifact-empty-report")
+        archived = staged_executor_module.load_archived_legacy_certificate(
+            fixture.result_path,
+            project_dir=fixture.project_dir,
+        )
+        incomplete = type(archived)(
+            result_path=archived.result_path,
+            sidecar_path=archived.sidecar_path,
+            result=archived.result,
+            sidecar=archived.sidecar,
+            binding_report=(),
+        )
+        scheduled = []
+
+        with mock.patch.object(
+            staged_executor_module,
+            "load_archived_legacy_certificate",
+            return_value=incomplete,
+        ):
+            result = StagedCCCExecutor().run_legacy_consumer_shadow(
+                fixture.submission,
+                fixture.location,
+                StagedCCCConsumerProviders(
+                    agent_scheduler=lambda: scheduled.append("agent")
+                ),
+            )
+
+        self.assertEqual(result.decision.kind, "shadow_mismatch")
+        self.assertEqual(result.observation.agreement, "observer_protocol_failure")
+        self.assertEqual(scheduled, [])
+
+    def test_agent_scheduler_failure_is_not_reported_as_a_rerun(self):
+        fixture = self._make_artifact_fixture("artifact-agent-failure")
+        fixture.gate_path.unlink()
+
+        def scheduler_failure():
+            raise RuntimeError("synthetic scheduling failure")
+
+        with self.assertRaisesRegex(RuntimeError, "scheduling failure"):
+            StagedCCCExecutor().run_legacy_consumer_shadow(
+                fixture.submission,
+                fixture.location,
+                StagedCCCConsumerProviders(agent_scheduler=scheduler_failure),
+            )
+
+    def test_artifact_context_and_runtime_reject_role_escape_and_symlink(self):
+        fixture = self._make_artifact_fixture("artifact-layout")
+        with self.assertRaisesRegex(ValueError, "canonical legacy result path"):
+            StagedCCCArtifactContext(
+                bug_id="bug1",
+                shadow_root=fixture.location.shadow_root,
+                project_dir=fixture.location.project_dir,
+                result_path=fixture.location.project_dir / "outside.result.json",
+            )
+
+        sidecar_target = fixture.location.shadow_root / "sidecar-target.json"
+        fixture.gate_path.replace(sidecar_target)
+        fixture.gate_path.symlink_to(sidecar_target)
+        with self.assertRaisesRegex(ValueError, "must not be a symlink"):
+            staged_executor_module._require_artifact_runtime_paths(
+                fixture.location
+            )
 
     def test_l1_copier_binding_is_call_local_and_fail_closed(self):
         original = l1_verifier_module.copy_validation_source
@@ -502,6 +814,10 @@ class StagedCCCRuntimeTests(unittest.TestCase):
         self.assertFalse(hasattr(ccc, "StagedCCCL1Context"))
         self.assertFalse(hasattr(root, "StagedCCCL1Providers"))
         self.assertFalse(hasattr(ccc, "StagedCCCL1Providers"))
+        self.assertFalse(hasattr(root, "StagedCCCArtifactContext"))
+        self.assertFalse(hasattr(ccc, "StagedCCCArtifactContext"))
+        self.assertFalse(hasattr(root, "StagedCCCConsumerProviders"))
+        self.assertFalse(hasattr(ccc, "StagedCCCConsumerProviders"))
 
     def test_production_modules_do_not_import_staged_or_legacy_runtime(self):
         production_files = (
@@ -532,6 +848,7 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             "submission_schema",
             "validation_context",
             "validation_workspace",
+            "validation_artifacts",
             "validation_core.presets.ccc.staged_executor",
             "src.check_submission",
             "src.compiler_recipe",
@@ -541,6 +858,7 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             "src.submission_schema",
             "src.validation_context",
             "src.validation_workspace",
+            "src.validation_artifacts",
             "src.validation_core.presets.ccc.staged_executor",
         }
         for relative_path in production_files:
@@ -563,6 +881,7 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             "src.l1_verifier",
             "src.validation_context",
             "src.validation_workspace",
+            "src.validation_artifacts",
         }
         samples = (
             ("import src.check_submission\n", "src/verification.py"),
@@ -580,6 +899,8 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             ("from .validation_context import ValidationContext\n", "src/verification.py"),
             ("import validation_workspace\n", "src/verification.py"),
             ("from .validation_workspace import copy_validation_source\n", "src/verification.py"),
+            ("import validation_artifacts\n", "src/verification.py"),
+            ("from .validation_artifacts import load_verified_artifact\n", "src/verification.py"),
         )
         for source, relative_path in samples:
             with self.subTest(source=source):
@@ -597,10 +918,12 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             "'src.coverage_witness','src.phenomenon_runner',"
             "'src.submission_schema','src.l1_verifier',"
             "'src.validation_context','src.validation_workspace',"
+            "'src.validation_artifacts',"
             "'src.validation_core.presets.ccc.staged_executor'}; "
             "flat_names={'check_submission','compiler_recipe',"
             "'coverage_witness','phenomenon_runner','submission_schema',"
             "'l1_verifier','validation_context','validation_workspace',"
+            "'validation_artifacts',"
             "'validation_core.presets.ccc.staged_executor'}; "
             "loaded=sorted((package_names | flat_names).intersection(sys.modules)); "
             "assert not loaded, loaded; "

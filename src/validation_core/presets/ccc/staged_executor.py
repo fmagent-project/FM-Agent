@@ -15,6 +15,16 @@ from types import FunctionType
 from typing import Callable, Iterable
 
 from ...contracts.routing import PresetRef
+from ...outcome_loader import (
+    LEGACY_CCC_SEMANTIC_NAMESPACE,
+    ArchivedLegacyCCCCertificate,
+    ArtifactFamily,
+    LegacyBindingCheck,
+    LegacyBindingState,
+    OutcomeLoadError,
+    TrustClass,
+    load_archived_legacy_certificate,
+)
 from ....check_submission import Gate, Rejection, ReplayError, parse_records
 from ....l1_verifier import verify_l1 as _legacy_verify_l1
 from ....phenomenon_runner import (
@@ -22,6 +32,11 @@ from ....phenomenon_runner import (
     PhenomenonError,
     PhenomenonObservation,
     run_phenomenon as run_legacy_phenomenon,
+)
+from ....validation_artifacts import (
+    ArtifactError,
+    VerifiedArtifact,
+    load_verified_artifact as _legacy_load_verified_artifact,
 )
 from .preset import CCC_LEGACY_PRESET
 
@@ -238,6 +253,74 @@ class StagedCCCL1Providers:
                 raise TypeError(f"{field} must be callable")
 
 
+@dataclass(frozen=True)
+class StagedCCCArtifactContext:
+    """One pre-materialized legacy pair below a disposable shadow root.
+
+    The result/sidecar may be invalid because validity is the subject of the
+    shadow check.  The trusted caller still owns allocation and publication;
+    this compatibility context is not a SnapshotStore capability or filesystem
+    sandbox.  In particular, the pinned sidecar format permits absolute binding
+    records, so only a trusted materializer may construct this context.
+    """
+
+    bug_id: str
+    shadow_root: Path
+    project_dir: Path
+    result_path: Path
+
+    def __post_init__(self) -> None:
+        if type(self.bug_id) is not str or not self.bug_id:
+            raise ValueError("bug_id must be a non-empty string")
+        if self.bug_id in {".", ".."} or any(
+            not (char.isalnum() or char in "._-") for char in self.bug_id
+        ):
+            raise ValueError("bug_id must be a safe path component")
+        for field in ("shadow_root", "project_dir", "result_path"):
+            path = getattr(self, field)
+            if not isinstance(path, Path) or not path.is_absolute():
+                raise TypeError(f"{field} must be an absolute pathlib.Path")
+
+        root = self.shadow_root.resolve()
+        project = self.project_dir.resolve()
+        if root != self.shadow_root or root.parent == root \
+                or root.is_symlink() or not root.is_dir():
+            raise ValueError("shadow_root must be a dedicated existing directory")
+        if project != self.project_dir or project.is_symlink() \
+                or not project.is_dir():
+            raise ValueError("project_dir must be a canonical existing directory")
+        try:
+            relative_project = project.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("project_dir must stay below shadow_root") from exc
+        if not relative_project.parts:
+            raise ValueError("project_dir must not equal shadow_root")
+
+        expected = (
+            project
+            / "fm_agent"
+            / "bug_validation"
+            / f"{self.bug_id}.result.json"
+        )
+        if self.result_path != expected:
+            raise ValueError("result_path must be the canonical legacy result path")
+
+    @property
+    def gate_path(self) -> Path:
+        return self.result_path.with_name(f"{self.bug_id}.gate.json")
+
+
+@dataclass(frozen=True)
+class StagedCCCConsumerProviders:
+    """The resume side effect is an injected scheduling seam, not an Agent."""
+
+    agent_scheduler: Callable
+
+    def __post_init__(self) -> None:
+        if not callable(self.agent_scheduler):
+            raise TypeError("agent_scheduler must be callable")
+
+
 def _require_l1_runtime_paths(context: StagedCCCL1Context) -> None:
     """Revalidate the disposable role layout immediately before legacy L1."""
 
@@ -325,6 +408,270 @@ def _require_l1_runtime_paths(context: StagedCCCL1Context) -> None:
             raise ValueError(f"{label} escaped its role root") from exc
 
 
+def _require_artifact_runtime_paths(
+    context: StagedCCCArtifactContext,
+    *,
+    allow_missing_result: bool = False,
+) -> None:
+    """Revalidate the disposable legacy-pair location before both observers."""
+
+    def require_directory(path: Path, label: str) -> Path:
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(f"{label} is missing or unsafe: {path}") from exc
+        if path.is_symlink() or resolved != path or not path.is_dir():
+            raise ValueError(f"{label} must be a canonical directory")
+        return resolved
+
+    root = require_directory(context.shadow_root, "shadow_root")
+    project = require_directory(context.project_dir, "project_dir")
+    validation = require_directory(
+        context.result_path.parent,
+        "legacy validation directory",
+    )
+    try:
+        project.relative_to(root)
+        validation.relative_to(project)
+    except ValueError as exc:
+        raise ValueError("legacy artifact roles escaped shadow_root") from exc
+
+    if context.result_path.is_symlink():
+        raise ValueError("legacy result must not be a symlink")
+    if context.result_path.exists():
+        try:
+            result = context.result_path.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError("legacy result is unsafe") from exc
+        if result != context.result_path or not context.result_path.is_file():
+            raise ValueError("legacy result must be a canonical regular file")
+    elif not allow_missing_result:
+        raise ValueError("legacy result is missing")
+
+    if context.gate_path.is_symlink():
+        raise ValueError("legacy sidecar must not be a symlink")
+    if context.gate_path.exists():
+        try:
+            gate = context.gate_path.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError("legacy sidecar is unsafe") from exc
+        if gate != context.gate_path or not context.gate_path.is_file():
+            raise ValueError("legacy sidecar must be a canonical regular file")
+
+
+def _artifact_pair_token(sidecar) -> tuple[object, ...] | None:
+    keys = (
+        "result_sha256",
+        "integrity_sha256",
+        "attempt",
+        "bug_id",
+        "function_id",
+    )
+    try:
+        return tuple(sidecar[key] for key in keys)
+    except (KeyError, TypeError):
+        return None
+
+
+def _valid_archive_binding_report(
+    archived: ArchivedLegacyCCCCertificate,
+) -> bool:
+    expected_labels = [
+        "logic_result",
+        "manifest",
+        "source",
+        "release_binary",
+        "reference_binary",
+        "audit_binary",
+        "coverage_binary",
+        "sanity_corpus",
+    ]
+    try:
+        probe = archived.sidecar["probe"]
+        l1_patch = archived.sidecar["l1_patch"]
+    except (KeyError, TypeError):
+        return False
+    if probe is not None:
+        expected_labels.append("probe")
+    if l1_patch is not None:
+        expected_labels.append("l1_patch")
+    if type(archived.binding_report) is not tuple or any(
+        type(check) is not LegacyBindingCheck
+        for check in archived.binding_report
+    ):
+        return False
+    if tuple(check.label for check in archived.binding_report) \
+            != tuple(expected_labels):
+        return False
+
+    def valid_digest(value) -> bool:
+        return type(value) is str and len(value) == 64 and all(
+            char in "0123456789abcdef" for char in value
+        )
+
+    for check in archived.binding_report:
+        if type(check.state) is not LegacyBindingState \
+                or type(check.path) is not str or not check.path \
+                or not valid_digest(check.expected_sha256) \
+                or (
+                    check.actual_sha256 is not None
+                    and not valid_digest(check.actual_sha256)
+                ) \
+                or (
+                    check.detail is not None
+                    and type(check.detail) is not str
+                ):
+            return False
+        if check.state is LegacyBindingState.CURRENT \
+                and check.actual_sha256 != check.expected_sha256:
+            return False
+        if check.state is LegacyBindingState.STALE \
+                and (
+                    check.actual_sha256 is None
+                    or check.actual_sha256 == check.expected_sha256
+                ):
+            return False
+        if check.state in {
+            LegacyBindingState.MISSING,
+            LegacyBindingState.UNSAFE,
+        } and check.actual_sha256 is not None:
+            return False
+    return True
+
+
+@dataclass(frozen=True)
+class StagedCCCArtifactObservation:
+    """Frozen summary from exact-legacy and archival read-only observers."""
+
+    agreement: str
+    legacy_resumable: bool
+    archived_bindings_current: bool
+    pair_token_matches: bool | None
+    legacy_error: str | None
+    archive_error: str | None
+    binding_states: tuple[tuple[str, str], ...]
+    observer_ledger: tuple[str, ...]
+    archival_only: bool | None
+
+
+def _observe_legacy_artifact(
+    context: StagedCCCArtifactContext,
+) -> StagedCCCArtifactObservation:
+    """Observe one pair twice without granting either observer current trust."""
+
+    observer_ledger: list[str] = []
+    legacy_artifact = None
+    archived = None
+    legacy_error = None
+    archive_error = None
+    observer_failure = False
+
+    observer_ledger.append("load_verified_artifact")
+    try:
+        candidate = _legacy_load_verified_artifact(
+            context.result_path,
+            allowed_states={"accepted"},
+            project_dir=context.project_dir,
+        )
+    except ArtifactError as exc:
+        legacy_error = str(exc)
+    except Exception as exc:  # pragma: no cover - defensive observer boundary
+        legacy_error = f"{type(exc).__name__}: {exc}"
+        observer_failure = True
+    else:
+        if type(candidate) is not VerifiedArtifact \
+                or candidate.state != "accepted" \
+                or type(candidate.result) is not dict \
+                or type(candidate.sidecar) is not dict \
+                or _artifact_pair_token(candidate.sidecar) is None:
+            legacy_error = "exact legacy observer returned an invalid result"
+            observer_failure = True
+        else:
+            legacy_artifact = candidate
+
+    observer_ledger.append("load_archived_legacy_certificate")
+    try:
+        # Deliberately omit expected identities here.  The pinned multirun
+        # resume consumer accepted an internally consistent pair without a
+        # caller-identity argument.  This private shadow records that legacy
+        # behavior; it never grants current-outcome trust.  Generic identity
+        # binding belongs to the later current certificate contract.
+        candidate = load_archived_legacy_certificate(
+            context.result_path,
+            project_dir=context.project_dir,
+        )
+    except OutcomeLoadError as exc:
+        archive_error = f"{exc.code.value}: {exc}"
+    except Exception as exc:  # pragma: no cover - defensive observer boundary
+        archive_error = f"{type(exc).__name__}: {exc}"
+        observer_failure = True
+    else:
+        if type(candidate) is not ArchivedLegacyCCCCertificate \
+                or candidate.artifact_family is not ArtifactFamily.CCC_LEGACY_V3_V5 \
+                or candidate.trust_class is not TrustClass.LEGACY_PAIR_INTEGRITY_VERIFIED \
+                or candidate.semantic_namespace != LEGACY_CCC_SEMANTIC_NAMESPACE \
+                or candidate.archival_only is not True \
+                or not _valid_archive_binding_report(candidate):
+            archive_error = "archival observer returned an invalid trust envelope"
+            observer_failure = True
+        else:
+            archived = candidate
+
+    legacy_resumable = legacy_artifact is not None
+    archived_bindings_current = bool(
+        archived is not None and archived.all_bindings_current
+    )
+    binding_states = (
+        tuple(
+            (check.label, check.state.value)
+            for check in archived.binding_report
+        )
+        if archived is not None
+        else ()
+    )
+
+    exact_token = (
+        _artifact_pair_token(legacy_artifact.sidecar)
+        if legacy_artifact is not None
+        else None
+    )
+    archive_token = (
+        _artifact_pair_token(archived.sidecar)
+        if archived is not None
+        else None
+    )
+    pair_token_matches = (
+        exact_token == archive_token
+        if exact_token is not None and archive_token is not None
+        else None
+    )
+
+    if observer_failure:
+        agreement = "observer_protocol_failure"
+    elif legacy_resumable and archived_bindings_current:
+        agreement = (
+            "both_resumable"
+            if pair_token_matches is True
+            else "pair_token_mismatch"
+        )
+    elif not legacy_resumable and not archived_bindings_current:
+        agreement = "both_nonresumable"
+    else:
+        agreement = "resumability_mismatch"
+
+    return StagedCCCArtifactObservation(
+        agreement=agreement,
+        legacy_resumable=legacy_resumable,
+        archived_bindings_current=archived_bindings_current,
+        pair_token_matches=pair_token_matches,
+        legacy_error=legacy_error,
+        archive_error=archive_error,
+        binding_states=binding_states,
+        observer_ledger=tuple(observer_ledger),
+        archival_only=(archived.archival_only if archived is not None else None),
+    )
+
+
 @dataclass(frozen=True)
 class StagedCCCDecision:
     kind: str
@@ -352,6 +699,26 @@ class StagedCCCL1Result:
     final_submission: dict
     requested_grade: str | None
     final_grade: str | None
+    preset_ref: PresetRef
+
+
+@dataclass(frozen=True)
+class StagedCCCArtifactResult:
+    """Legacy golden projection; ``published`` means pre-existing/reusable."""
+
+    decision: StagedCCCDecision
+    call_ledger: tuple[str, ...]
+    observer_ledger: tuple[str, ...]
+    observation: StagedCCCArtifactObservation
+    original_submission: dict
+    final_submission: dict
+    requested_grade: str | None
+    final_grade: str | None
+    published: bool
+    same_agent_retry: bool
+    new_attempt_on_budget: bool
+    outer_candidate: str
+    outer_calls: int
     preset_ref: PresetRef
 
 
@@ -514,6 +881,123 @@ class StagedCCCExecutor:
             final_grade=working.get("grade"),
             preset_ref=self._preset_ref,
         )
+
+    def run_artifact_binding(
+        self,
+        submission: dict,
+        context: StagedCCCArtifactContext,
+    ) -> StagedCCCArtifactResult:
+        """Classify one pre-materialized pair without publishing or upgrading it."""
+
+        original, working = self._artifact_inputs(submission, context)
+        observation = _observe_legacy_artifact(context)
+        if observation.agreement == "both_resumable":
+            decision = StagedCCCDecision("accept", None, None)
+            published = True
+        elif observation.agreement == "both_nonresumable":
+            decision = StagedCCCDecision(
+                "reject",
+                "binding",
+                "hash-bound legacy artifact is invalid",
+            )
+            published = False
+        else:
+            decision = StagedCCCDecision(
+                "shadow_mismatch",
+                "binding",
+                f"legacy artifact observers disagree: {observation.agreement}",
+            )
+            published = False
+        return StagedCCCArtifactResult(
+            decision=decision,
+            call_ledger=("load_verified_artifact",),
+            observer_ledger=observation.observer_ledger,
+            observation=observation,
+            original_submission=original,
+            final_submission=copy.deepcopy(working),
+            requested_grade=original.get("grade"),
+            final_grade=working.get("grade"),
+            published=published,
+            same_agent_retry=False,
+            new_attempt_on_budget=False,
+            outer_candidate="none",
+            outer_calls=0,
+            preset_ref=self._preset_ref,
+        )
+
+    def run_legacy_consumer_shadow(
+        self,
+        submission: dict,
+        context: StagedCCCArtifactContext,
+        providers: StagedCCCConsumerProviders,
+    ) -> StagedCCCArtifactResult:
+        """Project pinned resume semantics without starting a real Agent."""
+
+        if type(providers) is not StagedCCCConsumerProviders:
+            raise TypeError("providers must be StagedCCCConsumerProviders")
+        original, working = self._artifact_inputs(
+            submission,
+            context,
+            allow_missing_result=True,
+        )
+        observation = _observe_legacy_artifact(context)
+        call_ledger = ["load_verified_artifact"]
+        if observation.agreement == "both_resumable":
+            decision = StagedCCCDecision("skip", None, None)
+            published = True
+            new_attempt = False
+        elif observation.agreement == "both_nonresumable":
+            call_ledger.append("agent")
+            providers.agent_scheduler()
+            decision = StagedCCCDecision(
+                "rerun",
+                "binding",
+                "legacy artifact hash binding is absent or invalid",
+            )
+            published = False
+            new_attempt = True
+        else:
+            decision = StagedCCCDecision(
+                "shadow_mismatch",
+                "binding",
+                f"legacy artifact observers disagree: {observation.agreement}",
+            )
+            published = False
+            new_attempt = False
+        return StagedCCCArtifactResult(
+            decision=decision,
+            call_ledger=tuple(call_ledger),
+            observer_ledger=observation.observer_ledger,
+            observation=observation,
+            original_submission=original,
+            final_submission=copy.deepcopy(working),
+            requested_grade=original.get("grade"),
+            final_grade=working.get("grade"),
+            published=published,
+            same_agent_retry=False,
+            new_attempt_on_budget=new_attempt,
+            outer_candidate="none",
+            outer_calls=0,
+            preset_ref=self._preset_ref,
+        )
+
+    @staticmethod
+    def _artifact_inputs(
+        submission: dict,
+        context: StagedCCCArtifactContext,
+        *,
+        allow_missing_result: bool = False,
+    ) -> tuple[dict, dict]:
+        if type(submission) is not dict:
+            raise TypeError("submission must be a dict")
+        if type(context) is not StagedCCCArtifactContext:
+            raise TypeError("context must be a StagedCCCArtifactContext")
+        _require_artifact_runtime_paths(
+            context,
+            allow_missing_result=allow_missing_result,
+        )
+        original = copy.deepcopy(submission)
+        return original, copy.deepcopy(submission)
 
     def run_phenomenon(
         self,
