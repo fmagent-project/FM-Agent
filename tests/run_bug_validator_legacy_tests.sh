@@ -11,6 +11,13 @@ uv run python -m unittest -v \
   tests.test_validation_outcome_loader \
   tests.test_validation_component_contracts \
   tests.test_validation_ccc_preset_content \
+  tests.test_compiler_recipe \
+  tests.test_submission_schema \
+  tests.test_phenomenon_runner \
+  tests.test_coverage_witness \
+  tests.test_check_submission \
+  tests.test_validation_ccc_staged_runtime \
+  tests.test_validation_ccc_staged_golden \
   tests.test_validation_preset_registry \
   tests.test_validation_routing \
   tests.test_custom_bug_validator \
