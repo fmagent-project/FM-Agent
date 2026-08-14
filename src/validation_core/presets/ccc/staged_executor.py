@@ -1,14 +1,19 @@
-"""Private, in-memory executor for staged legacy CCC parity checks.
+"""Private executor for staged legacy CCC parity checks.
 
 This module is deliberately not exported by any package ``__init__`` and is
 not connected to the production validator.  It wraps the byte-identical
 legacy Gate with mandatory injected providers so tests can exercise decision
-semantics without launching compilers, agents, sandboxes, or publishers.
+semantics without launching compilers, agents, production sandboxes, or
+publishers.  Lifecycle checks use caller-materialized disposable directories,
+but do not claim the generic SnapshotStore or Coordinator trust boundary.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
+import shutil
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from types import FunctionType
@@ -319,6 +324,305 @@ class StagedCCCConsumerProviders:
     def __post_init__(self) -> None:
         if not callable(self.agent_scheduler):
             raise TypeError("agent_scheduler must be callable")
+
+
+_STAGED_FLOW_ROLES = frozenset({"A", "B1", "B2", "legacy_observer"})
+_STAGED_FLOW_EVENT_KINDS = frozenset(
+    {"submit", "direct_scratch", "session_exit"}
+)
+
+
+def _require_safe_flow_id(value: object, label: str) -> None:
+    if type(value) is not str or not value:
+        raise ValueError(f"{label} must be a non-empty string")
+    if value in {".", ".."} or any(
+        not (char.isalnum() or char in "._-") for char in value
+    ):
+        raise ValueError(f"{label} must be a safe identifier")
+
+
+def _require_sha256(value: object, label: str) -> None:
+    if type(value) is not str or len(value) != 64 or any(
+        char not in "0123456789abcdef" for char in value
+    ):
+        raise ValueError(f"{label} must be a lowercase SHA-256 digest")
+
+
+def _require_staged_tree(path: Path, label: str) -> str:
+    """Hash a canonical tree by entry type/path/mode/content.
+
+    Empty directories are bound.  Regular files must have one link so a role
+    cannot share writable inodes with the seed or another materialization.
+    """
+
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"{label} is missing or unsafe: {path}") from exc
+    if path.is_symlink() or resolved != path or not path.is_dir():
+        raise ValueError(f"{label} must be a canonical directory")
+    digest = hashlib.sha256()
+    try:
+        entries = (path, *sorted(path.rglob("*")))
+        for child in entries:
+            metadata = child.lstat()
+            relative = (
+                b"" if child == path
+                else child.relative_to(path).as_posix().encode("utf-8")
+            )
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError(f"{label} contains an unsafe symlink: {child}")
+            if stat.S_ISDIR(metadata.st_mode):
+                kind = b"directory"
+                data = b""
+            elif stat.S_ISREG(metadata.st_mode):
+                if metadata.st_nlink != 1:
+                    raise ValueError(f"{label} contains a hard-linked file: {child}")
+                kind = b"file"
+                data = child.read_bytes()
+            else:
+                raise ValueError(f"{label} contains a special entry: {child}")
+            mode = metadata.st_mode & 0o7777
+            for value in (kind, relative, mode.to_bytes(4, "big"), data):
+                digest.update(len(value).to_bytes(8, "big"))
+                digest.update(value)
+    except OSError as exc:
+        raise ValueError(f"{label} is unreadable: {path}: {exc}") from exc
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class StagedCCCFlowContext:
+    """Caller-owned frozen seed for one staged lifecycle projection.
+
+    The hash is rechecked throughout execution, and every role is materialized
+    independently from this seed.  This is a trusted test/shadow boundary, not
+    a SnapshotStore, CAS capability, or production filesystem sandbox.
+    """
+
+    bug_id: str
+    function_id: str
+    shadow_root: Path
+    snapshot_dir: Path
+    snapshot_sha256: str
+    attempt_id: str
+    session_id: str
+    attempt_budget_remaining: bool
+
+    def __post_init__(self) -> None:
+        for field in ("bug_id", "function_id", "attempt_id", "session_id"):
+            _require_safe_flow_id(getattr(self, field), field)
+        _require_sha256(self.snapshot_sha256, "snapshot_sha256")
+        if type(self.attempt_budget_remaining) is not bool:
+            raise TypeError("attempt_budget_remaining must be a bool")
+        for field in ("shadow_root", "snapshot_dir"):
+            path = getattr(self, field)
+            if not isinstance(path, Path) or not path.is_absolute():
+                raise TypeError(f"{field} must be an absolute pathlib.Path")
+
+        root = self.shadow_root.resolve()
+        snapshot = self.snapshot_dir.resolve()
+        if root != self.shadow_root or root.parent == root \
+                or root.is_symlink() or not root.is_dir():
+            raise ValueError("shadow_root must be a dedicated existing directory")
+        if snapshot != self.snapshot_dir or snapshot.is_symlink() \
+                or not snapshot.is_dir():
+            raise ValueError("snapshot_dir must be a canonical existing directory")
+        try:
+            relative = snapshot.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("snapshot_dir must stay below shadow_root") from exc
+        if not relative.parts:
+            raise ValueError("snapshot_dir must not equal shadow_root")
+        if _require_staged_tree(snapshot, "staged snapshot") \
+                != self.snapshot_sha256:
+            raise ValueError("staged snapshot hash does not match snapshot_sha256")
+
+
+@dataclass(frozen=True)
+class StagedCCCFlowMaterializeRequest:
+    """One host-side request for a disposable staged role view."""
+
+    role: str
+    snapshot_sha256: str
+    attempt_id: str
+    session_id: str
+    submission_ordinal: int
+
+    def __post_init__(self) -> None:
+        if self.role not in _STAGED_FLOW_ROLES:
+            raise ValueError(f"unsupported staged flow role: {self.role!r}")
+        _require_sha256(self.snapshot_sha256, "snapshot_sha256")
+        _require_safe_flow_id(self.attempt_id, "attempt_id")
+        _require_safe_flow_id(self.session_id, "session_id")
+        if type(self.submission_ordinal) is not int \
+                or self.submission_ordinal < 0:
+            raise ValueError("submission_ordinal must be a non-negative integer")
+        if self.role in {"A", "legacy_observer"} \
+                and self.submission_ordinal != 0:
+            raise ValueError(f"{self.role} submission_ordinal must be zero")
+        if self.role in {"B1", "B2"} and self.submission_ordinal < 1:
+            raise ValueError(f"{self.role} submission_ordinal must be positive")
+
+
+@dataclass(frozen=True)
+class StagedCCCFlowRetryRequest:
+    """Request a new attempt after every role from the predecessor is gone."""
+
+    previous_attempt_id: str
+    previous_session_id: str
+    snapshot_sha256: str
+
+    def __post_init__(self) -> None:
+        _require_safe_flow_id(self.previous_attempt_id, "previous_attempt_id")
+        _require_safe_flow_id(self.previous_session_id, "previous_session_id")
+        _require_sha256(self.snapshot_sha256, "snapshot_sha256")
+
+
+@dataclass(frozen=True)
+class StagedCCCFlowAttemptIdentity:
+    """Fresh staged identity acknowledged by the injected attempt scheduler."""
+
+    attempt_id: str
+    session_id: str
+
+    def __post_init__(self) -> None:
+        _require_safe_flow_id(self.attempt_id, "attempt_id")
+        _require_safe_flow_id(self.session_id, "session_id")
+
+
+@dataclass(frozen=True)
+class StagedCCCFlowMaterialization:
+    """One caller-created role directory below a disposable shadow root."""
+
+    role: str
+    root: Path
+    project_dir: Path
+    materialization_id: str
+    snapshot_sha256: str
+    attempt_id: str
+    session_id: str
+    submission_ordinal: int
+
+    def __post_init__(self) -> None:
+        StagedCCCFlowMaterializeRequest(
+            role=self.role,
+            snapshot_sha256=self.snapshot_sha256,
+            attempt_id=self.attempt_id,
+            session_id=self.session_id,
+            submission_ordinal=self.submission_ordinal,
+        )
+        _require_safe_flow_id(self.materialization_id, "materialization_id")
+        for field in ("root", "project_dir"):
+            path = getattr(self, field)
+            if not isinstance(path, Path) or not path.is_absolute():
+                raise TypeError(f"{field} must be an absolute pathlib.Path")
+        root = self.root.resolve()
+        project = self.project_dir.resolve()
+        if root != self.root or root.parent == root or root.is_symlink() \
+                or not root.is_dir():
+            raise ValueError("role root must be a canonical existing directory")
+        if project != self.project_dir or project.is_symlink() \
+                or not project.is_dir():
+            raise ValueError("role project_dir must be canonical and existing")
+        if project != root / "project":
+            raise ValueError("role project_dir must be the canonical project child")
+
+
+@dataclass(frozen=True)
+class StagedCCCFlowEvent:
+    """Trusted host projection of one session event, not a mailbox envelope."""
+
+    kind: str
+    submission: dict | None
+    submit_command_called: bool | None
+
+    def __post_init__(self) -> None:
+        if self.kind not in _STAGED_FLOW_EVENT_KINDS:
+            raise ValueError(f"unsupported staged flow event: {self.kind!r}")
+        if self.kind == "submit":
+            if type(self.submission) is not dict \
+                    or self.submit_command_called is not True:
+                raise ValueError("submit events require one formal submission")
+        elif self.kind == "direct_scratch":
+            if type(self.submission) is not dict \
+                    or self.submit_command_called is not False:
+                raise ValueError(
+                    "direct_scratch events must lack a formal submit call"
+                )
+        elif self.submission is not None \
+                or self.submit_command_called is not None:
+            raise ValueError("session_exit must not carry a submission")
+
+
+@dataclass(frozen=True)
+class StagedCCCFlowProviders:
+    """All staged role, Gate, scheduling, and publication-observer effects."""
+
+    materialize_role: Callable
+    destroy_role: Callable
+    inner_gate: Callable
+    outer_gate: Callable
+    legacy_outer_observer: Callable
+    schedule_new_attempt: Callable
+    observe_publishable: Callable
+
+    def __post_init__(self) -> None:
+        for field in (
+            "materialize_role",
+            "destroy_role",
+            "inner_gate",
+            "outer_gate",
+            "legacy_outer_observer",
+            "schedule_new_attempt",
+            "observe_publishable",
+        ):
+            if not callable(getattr(self, field)):
+                raise TypeError(f"{field} must be callable")
+
+
+def _require_staged_flow_gate_result(
+    result: object,
+    candidate: dict,
+    preset_ref: PresetRef,
+) -> StagedCCCGateResult:
+    """Validate the typed seam returned by an injected Inner/Outer Gate."""
+
+    if type(result) is not StagedCCCGateResult:
+        raise TypeError("flow Gate provider returned an invalid result")
+    if result.preset_ref != preset_ref:
+        raise ValueError("flow Gate result used the wrong preset")
+    if result.original_submission != candidate \
+            or result.requested_grade != candidate.get("grade"):
+        raise ValueError("flow Gate result lost its original candidate")
+    if type(result.final_submission) is not dict \
+            or result.final_grade != result.final_submission.get("grade"):
+        raise ValueError("flow Gate result has an invalid final candidate")
+    for field in ("id", "function_id"):
+        if type(result.final_submission.get(field)) is not str \
+                or result.final_submission[field] != candidate.get(field):
+            raise ValueError(
+                f"flow Gate final candidate changed its {field} identity"
+            )
+    if type(result.call_ledger) is not tuple or any(
+        type(label) is not str or not label for label in result.call_ledger
+    ):
+        raise ValueError("flow Gate result has an invalid call ledger")
+    if result.submitted_recipe_identity_preserved is not True:
+        raise ValueError("flow Gate result did not preserve recipe identity")
+    if result.decision.kind == "accept":
+        if result.decision.check is not None \
+                or result.decision.raw_reason is not None:
+            raise ValueError("accepted flow Gate result carried a rejection")
+    elif result.decision.kind == "reject":
+        if type(result.decision.check) is not str \
+                or not result.decision.check \
+                or type(result.decision.raw_reason) is not str \
+                or not result.decision.raw_reason:
+            raise ValueError("rejected flow Gate result lacks diagnostics")
+    else:
+        raise ValueError("flow Gate decision must accept or reject")
+    return result
 
 
 def _require_l1_runtime_paths(context: StagedCCCL1Context) -> None:
@@ -723,6 +1027,50 @@ class StagedCCCArtifactResult:
 
 
 @dataclass(frozen=True)
+class StagedCCCLegacyFlowObservation:
+    """Compatibility-only projection of the direct-scratch legacy loophole."""
+
+    decision: StagedCCCDecision
+    call_ledger: tuple[str, ...]
+    original_submission: dict
+    final_submission: dict
+    requested_grade: str | None
+    final_grade: str | None
+    published: bool
+    same_agent_retry: bool
+    new_attempt_on_budget: bool
+    outer_candidate: str
+    outer_calls: int
+    materialization_id: str
+
+
+@dataclass(frozen=True)
+class StagedCCCFlowResult:
+    """One isolated lifecycle projection with no current receipt or outcome.
+
+    ``published`` means the pinned flow would be publication-eligible after
+    the injected observer returned.  It does not represent a filesystem write
+    or grant current artifact trust.
+    """
+
+    decision: StagedCCCDecision
+    call_ledger: tuple[str, ...]
+    role_ledger: tuple[str, ...]
+    original_submission: dict
+    final_submission: dict
+    requested_grade: str | None
+    final_grade: str | None
+    published: bool
+    same_agent_retry: bool
+    new_attempt_on_budget: bool
+    outer_candidate: str
+    outer_calls: int
+    scheduled_attempt: StagedCCCFlowAttemptIdentity | None
+    legacy_observation: StagedCCCLegacyFlowObservation | None
+    preset_ref: PresetRef
+
+
+@dataclass(frozen=True)
 class StagedCCCPhenomenonResult:
     decision: StagedCCCDecision
     call_ledger: tuple[str, ...]
@@ -998,6 +1346,441 @@ class StagedCCCExecutor:
         )
         original = copy.deepcopy(submission)
         return original, copy.deepcopy(submission)
+
+    def run_isolated_flow(
+        self,
+        events: Iterable[StagedCCCFlowEvent],
+        context: StagedCCCFlowContext,
+        providers: StagedCCCFlowProviders,
+    ) -> StagedCCCFlowResult:
+        """Project one staged Agent/Inner/Outer lifecycle from a frozen seed.
+
+        ``submit`` events are already trusted host-side projections: each one
+        must run a new B1 and only a successful B1 creates the candidate handed
+        to B2.  A scratch file alone never creates that trusted transition.
+        """
+
+        if type(context) is not StagedCCCFlowContext:
+            raise TypeError("context must be a StagedCCCFlowContext")
+        if type(providers) is not StagedCCCFlowProviders:
+            raise TypeError("providers must be StagedCCCFlowProviders")
+        event_script = tuple(events)
+        if len(event_script) < 2 or any(
+            type(event) is not StagedCCCFlowEvent for event in event_script
+        ):
+            raise ValueError("flow requires typed candidate and exit events")
+        if event_script[-1].kind != "session_exit" or sum(
+            event.kind == "session_exit" for event in event_script
+        ) != 1:
+            raise ValueError("flow requires exactly one final session_exit")
+        candidate_events = event_script[:-1]
+        direct_events = [
+            event for event in candidate_events
+            if event.kind == "direct_scratch"
+        ]
+        submit_events = [
+            event for event in candidate_events if event.kind == "submit"
+        ]
+        if len(direct_events) == 1 and len(candidate_events) == 1:
+            direct_scratch = True
+        elif submit_events and len(submit_events) == len(candidate_events):
+            direct_scratch = False
+        else:
+            raise ValueError(
+                "direct scratch observation cannot mix with formal submissions"
+            )
+        candidate_documents = []
+        for event in candidate_events:
+            candidate = event.submission
+            if type(candidate.get("id")) is not str \
+                    or type(candidate.get("function_id")) is not str \
+                    or candidate["id"] != context.bug_id \
+                    or candidate["function_id"] != context.function_id:
+                raise ValueError(
+                    "flow candidate identity does not match bug/function context"
+                )
+            candidate_documents.append(copy.deepcopy(candidate))
+
+        used_roots: list[Path] = []
+        used_materialization_ids: set[str] = set()
+        live_materializations: dict[Path, StagedCCCFlowMaterialization] = {}
+        role_ledger: list[str] = []
+
+        def require_snapshot_current() -> None:
+            if _require_staged_tree(context.snapshot_dir, "staged snapshot") \
+                    != context.snapshot_sha256:
+                raise ValueError("staged snapshot changed during flow execution")
+
+        def paths_overlap(left: Path, right: Path) -> bool:
+            try:
+                left.relative_to(right)
+                return True
+            except ValueError:
+                try:
+                    right.relative_to(left)
+                    return True
+                except ValueError:
+                    return False
+
+        def materialize(role: str, ordinal: int) \
+                -> StagedCCCFlowMaterialization:
+            require_snapshot_current()
+            request = StagedCCCFlowMaterializeRequest(
+                role=role,
+                snapshot_sha256=context.snapshot_sha256,
+                attempt_id=context.attempt_id,
+                session_id=context.session_id,
+                submission_ordinal=ordinal,
+            )
+            workspace = providers.materialize_role(request)
+            if type(workspace) is not StagedCCCFlowMaterialization:
+                raise TypeError(
+                    "materialize_role must return a StagedCCCFlowMaterialization"
+                )
+            try:
+                try:
+                    relative = workspace.root.relative_to(context.shadow_root)
+                except ValueError as exc:
+                    raise ValueError("role root escaped shadow_root") from exc
+                if not relative.parts:
+                    raise ValueError("role root must not equal shadow_root")
+                if paths_overlap(workspace.root, context.snapshot_dir):
+                    raise ValueError(
+                        "role root must not overlap the staged snapshot"
+                    )
+                if any(
+                    paths_overlap(workspace.root, prior)
+                    for prior in used_roots
+                ):
+                    raise ValueError(
+                        "role roots must be globally unique and disjoint"
+                    )
+            except BaseException as exc:
+                cleanup_all_live(exc)
+                raise
+            live_materializations[workspace.root] = workspace
+            try:
+                returned_request = StagedCCCFlowMaterializeRequest(
+                    role=workspace.role,
+                    snapshot_sha256=workspace.snapshot_sha256,
+                    attempt_id=workspace.attempt_id,
+                    session_id=workspace.session_id,
+                    submission_ordinal=workspace.submission_ordinal,
+                )
+                if returned_request != request:
+                    raise ValueError(
+                        "role materialization does not match its request"
+                    )
+                if workspace.materialization_id in used_materialization_ids:
+                    raise ValueError("role materialization_id was reused")
+                try:
+                    root_entries = tuple(workspace.root.iterdir())
+                except OSError as exc:
+                    raise ValueError("role root is unreadable") from exc
+                if len(root_entries) != 1 \
+                        or root_entries[0] != workspace.project_dir:
+                    raise ValueError(
+                        "role root must contain only its canonical project"
+                    )
+                _require_staged_tree(workspace.root, f"staged {role} role")
+                if _require_staged_tree(
+                    workspace.project_dir,
+                    f"staged {role} project",
+                ) != context.snapshot_sha256:
+                    raise ValueError(
+                        f"staged {role} project does not match the frozen snapshot"
+                    )
+                require_snapshot_current()
+            except BaseException as exc:
+                cleanup_all_live(exc)
+                raise
+            used_roots.append(workspace.root)
+            used_materialization_ids.add(workspace.materialization_id)
+            role_ledger.append(f"materialize:{role}:{ordinal}")
+            return workspace
+
+        def forget_destroyed(workspace: StagedCCCFlowMaterialization) -> None:
+            if workspace.root not in live_materializations:
+                return
+            del live_materializations[workspace.root]
+            role_ledger.append(
+                f"destroy:{workspace.role}:{workspace.submission_ordinal}"
+            )
+
+        def cleanup_all_live(error: BaseException) -> None:
+            """Best-effort cleanup that never masks the triggering failure."""
+
+            for workspace in reversed(tuple(live_materializations.values())):
+                cleanup_error = None
+                if workspace.root.exists() or workspace.root.is_symlink():
+                    try:
+                        returned = providers.destroy_role(workspace)
+                        if returned is not None:
+                            raise ValueError(
+                                "destroy_role returned authority during cleanup"
+                            )
+                    except BaseException as exc:
+                        cleanup_error = exc
+                if workspace.root.exists() or workspace.root.is_symlink():
+                    try:
+                        if workspace.root.is_symlink() \
+                                or not workspace.root.is_dir():
+                            workspace.root.unlink()
+                        else:
+                            shutil.rmtree(workspace.root)
+                    except BaseException as exc:
+                        cleanup_error = cleanup_error or exc
+                if not workspace.root.exists() \
+                        and not workspace.root.is_symlink():
+                    forget_destroyed(workspace)
+                else:
+                    cleanup_error = cleanup_error or RuntimeError(
+                        f"staged {workspace.role} role could not be removed"
+                    )
+                if cleanup_error is not None and hasattr(error, "add_note"):
+                    error.add_note(
+                        f"staged role cleanup also failed: {cleanup_error}"
+                    )
+
+        def destroy(
+            workspace: StagedCCCFlowMaterialization,
+            *,
+            recheck_snapshot: bool = True,
+        ) -> None:
+            if workspace.root not in live_materializations:
+                return
+            try:
+                returned = providers.destroy_role(workspace)
+                if workspace.root.exists() or workspace.root.is_symlink():
+                    raise ValueError(
+                        f"destroy_role left staged {workspace.role} materialization"
+                    )
+                forget_destroyed(workspace)
+                if returned is not None:
+                    raise ValueError("destroy_role must not return authority")
+                if recheck_snapshot:
+                    require_snapshot_current()
+            except BaseException as exc:
+                cleanup_all_live(exc)
+                raise
+
+        def run_gate_provider(
+            runner: Callable,
+            candidate: dict,
+            workspace: StagedCCCFlowMaterialization,
+        ) -> StagedCCCGateResult:
+            gate_input = copy.deepcopy(candidate)
+            gate_input_before = copy.deepcopy(gate_input)
+            try:
+                result = runner(gate_input, workspace)
+                if gate_input != gate_input_before:
+                    raise ValueError(
+                        "flow Gate provider mutated its caller-owned input"
+                    )
+                checked = _require_staged_flow_gate_result(
+                    result,
+                    gate_input_before,
+                    self._preset_ref,
+                )
+                require_snapshot_current()
+                return checked
+            except BaseException as exc:
+                cleanup_all_live(exc)
+                raise
+
+        def flow_calls(role: str, result: StagedCCCGateResult) \
+                -> tuple[str, ...]:
+            if not result.call_ledger:
+                return (role,)
+            return tuple(f"{role}:{label}" for label in result.call_ledger)
+
+        def exit_and_destroy_agent(
+            agent_workspace: StagedCCCFlowMaterialization,
+        ) -> None:
+            role_ledger.append("session_exit")
+            destroy(agent_workspace)
+
+        def schedule_if_available(
+            call_ledger: list[str],
+            *,
+            record_external_call: bool,
+        ) -> StagedCCCFlowAttemptIdentity | None:
+            if not context.attempt_budget_remaining:
+                return None
+            request = StagedCCCFlowRetryRequest(
+                previous_attempt_id=context.attempt_id,
+                previous_session_id=context.session_id,
+                snapshot_sha256=context.snapshot_sha256,
+            )
+            returned = providers.schedule_new_attempt(request)
+            if type(returned) is not StagedCCCFlowAttemptIdentity:
+                raise TypeError(
+                    "schedule_new_attempt must return a fresh staged identity"
+                )
+            if returned.attempt_id == context.attempt_id \
+                    or returned.session_id == context.session_id:
+                raise ValueError(
+                    "scheduled attempt and session identities must both be fresh"
+                )
+            # The pinned corpus records an explicit scheduler call after an
+            # Outer rejection.  Inner exhaustion exposes the same transition
+            # only through ``new_attempt_on_budget`` and the role ledger.
+            if record_external_call:
+                call_ledger.append("new_agent_attempt")
+            role_ledger.append("schedule_new_attempt")
+            require_snapshot_current()
+            return returned
+
+        require_snapshot_current()
+        agent_workspace = materialize("A", 0)
+
+        if direct_scratch:
+            candidate = copy.deepcopy(candidate_documents[0])
+            exit_and_destroy_agent(agent_workspace)
+            legacy_workspace = materialize("legacy_observer", 0)
+            legacy_result = run_gate_provider(
+                providers.legacy_outer_observer,
+                candidate,
+                legacy_workspace,
+            )
+            destroy(legacy_workspace)
+            legacy_calls = flow_calls("outer", legacy_result)
+            legacy_published = legacy_result.decision.kind == "accept"
+            legacy_observation = StagedCCCLegacyFlowObservation(
+                decision=legacy_result.decision,
+                call_ledger=legacy_calls,
+                original_submission=copy.deepcopy(candidate),
+                final_submission=copy.deepcopy(legacy_result.final_submission),
+                requested_grade=candidate.get("grade"),
+                final_grade=legacy_result.final_submission.get("grade"),
+                published=legacy_published,
+                same_agent_retry=False,
+                new_attempt_on_budget=False,
+                outer_candidate="original_submission",
+                outer_calls=1,
+                materialization_id=legacy_workspace.materialization_id,
+            )
+            require_snapshot_current()
+            return StagedCCCFlowResult(
+                decision=StagedCCCDecision(
+                    "reject",
+                    "submission",
+                    "trusted Inner result is required; direct scratch candidates "
+                    "cannot bypass fm-submit-validation",
+                ),
+                call_ledger=(),
+                role_ledger=tuple(role_ledger),
+                original_submission=copy.deepcopy(candidate),
+                final_submission=copy.deepcopy(candidate),
+                requested_grade=candidate.get("grade"),
+                final_grade=candidate.get("grade"),
+                published=False,
+                same_agent_retry=False,
+                new_attempt_on_budget=False,
+                outer_candidate="none",
+                outer_calls=0,
+                scheduled_attempt=None,
+                legacy_observation=legacy_observation,
+                preset_ref=self._preset_ref,
+            )
+
+        call_ledger: list[str] = []
+        same_agent_retry = False
+        for index, candidate in enumerate(candidate_documents, start=1):
+            original = copy.deepcopy(candidate)
+            inner_workspace = materialize("B1", index)
+            inner_result = run_gate_provider(
+                providers.inner_gate,
+                original,
+                inner_workspace,
+            )
+            destroy(inner_workspace)
+            call_ledger.extend(flow_calls("inner", inner_result))
+            if inner_result.decision.kind == "reject":
+                if index < len(submit_events):
+                    same_agent_retry = True
+                    continue
+                exit_and_destroy_agent(agent_workspace)
+                scheduled_attempt = schedule_if_available(
+                    call_ledger,
+                    record_external_call=False,
+                )
+                return StagedCCCFlowResult(
+                    decision=inner_result.decision,
+                    call_ledger=tuple(call_ledger),
+                    role_ledger=tuple(role_ledger),
+                    original_submission=copy.deepcopy(original),
+                    final_submission=copy.deepcopy(inner_result.final_submission),
+                    requested_grade=original.get("grade"),
+                    final_grade=inner_result.final_submission.get("grade"),
+                    published=False,
+                    same_agent_retry=same_agent_retry,
+                    new_attempt_on_budget=scheduled_attempt is not None,
+                    outer_candidate="none",
+                    outer_calls=0,
+                    scheduled_attempt=scheduled_attempt,
+                    legacy_observation=None,
+                    preset_ref=self._preset_ref,
+                )
+
+            if index != len(submit_events):
+                error = ValueError(
+                    "formal submissions remained after Inner acceptance"
+                )
+                cleanup_all_live(error)
+                raise error
+
+            exit_and_destroy_agent(agent_workspace)
+            outer_workspace = materialize("B2", index)
+            outer_result = run_gate_provider(
+                providers.outer_gate,
+                original,
+                outer_workspace,
+            )
+            call_ledger.extend(flow_calls("outer", outer_result))
+            published = False
+            if outer_result.decision.kind == "accept":
+                try:
+                    returned = providers.observe_publishable(
+                        copy.deepcopy(outer_result.final_submission),
+                        outer_workspace,
+                    )
+                    if returned is not None:
+                        raise ValueError(
+                            "observe_publishable must not return authority"
+                        )
+                    require_snapshot_current()
+                    published = True
+                    role_ledger.append(f"observe_publishable:B2:{index}")
+                except BaseException as exc:
+                    cleanup_all_live(exc)
+                    raise
+            destroy(outer_workspace)
+            scheduled_attempt = None
+            if outer_result.decision.kind == "reject":
+                scheduled_attempt = schedule_if_available(
+                    call_ledger,
+                    record_external_call=True,
+                )
+            return StagedCCCFlowResult(
+                decision=outer_result.decision,
+                call_ledger=tuple(call_ledger),
+                role_ledger=tuple(role_ledger),
+                original_submission=copy.deepcopy(original),
+                final_submission=copy.deepcopy(outer_result.final_submission),
+                requested_grade=original.get("grade"),
+                final_grade=outer_result.final_submission.get("grade"),
+                published=published,
+                same_agent_retry=same_agent_retry,
+                new_attempt_on_budget=scheduled_attempt is not None,
+                outer_candidate="original_submission",
+                outer_calls=1,
+                scheduled_attempt=scheduled_attempt,
+                legacy_observation=None,
+                preset_ref=self._preset_ref,
+            )
+
+        raise AssertionError("validated staged flow did not produce a result")
 
     def run_phenomenon(
         self,

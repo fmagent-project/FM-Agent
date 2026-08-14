@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import src.validation_core.presets.ccc.staged_executor as staged_executor_module
 from src.check_submission import Rejection
 from src.phenomenon_runner import NoPhenomenonError, PhenomenonObservation
 from src.validation_artifacts import publish_validation_artifact
@@ -18,10 +19,18 @@ from src.validation_core.presets.ccc.staged_executor import (
     StagedCCCContext,
     StagedCCCConsumerProviders,
     StagedCCCExecutor,
+    StagedCCCFlowAttemptIdentity,
+    StagedCCCFlowContext,
+    StagedCCCFlowEvent,
+    StagedCCCFlowMaterialization,
+    StagedCCCFlowProviders,
     StagedCCCL1Context,
     StagedCCCL1Providers,
     StagedCCCProviders,
+    StagedCCCGateResult,
+    StagedCCCDecision,
 )
+from src.validation_core.presets.ccc.preset import CCC_LEGACY_PRESET
 from tests.validator_legacy_golden import load_corpus
 
 
@@ -33,6 +42,7 @@ _EXECUTABLE_ENTRYPOINTS = {
     "l1",
     "artifact",
     "consumer",
+    "flow",
 }
 _EXECUTABLE_CASE_IDS = {
     "gate.not_confirmed_fast_path",
@@ -62,6 +72,11 @@ _EXECUTABLE_CASE_IDS = {
     "artifact.bound_inputs_fail_closed_on_tamper",
     "consumer.current_verified_artifact_skips",
     "consumer.raw_or_tampered_artifact_reruns",
+    "flow.inner_reject_does_not_run_outer",
+    "flow.inner_reject_then_fix_same_session",
+    "flow.inner_downgrade_preserves_outer_l1",
+    "flow.outer_reject_starts_fresh_attempt_on_budget",
+    "flow.direct_scratch_candidate_bypasses_submit",
 }
 _EXECUTION_INPUT_KEYS = {
     "case_id",
@@ -107,6 +122,24 @@ _EXPECTED_MULTI_VARIANTS = {
         "raw_no_sidecar",
         "tampered_result_pair",
     ),
+}
+_INTENTIONAL_FLOW_DELTAS = {
+    "flow.direct_scratch_candidate_bypasses_submit": {
+        "decision": {
+            "kind": "reject",
+            "check": "submission",
+            "reason_contains": "trusted Inner result",
+        },
+        "call_ledger": (),
+        "published": False,
+        "same_agent_retry": False,
+        "new_attempt_on_budget": False,
+        "outer_candidate": "none",
+        "outer_calls": 0,
+        "requested_grade": None,
+        "final_grade": None,
+        "scheduled_attempt": None,
+    },
 }
 
 
@@ -834,6 +867,323 @@ def _l1_result(execution: dict, fixtures: dict, root: Path):
     return result, submission_before
 
 
+def _flow_gate_result(
+    candidate: dict,
+    *,
+    decision: StagedCCCDecision,
+    final_submission: dict | None = None,
+    call_ledger: tuple[str, ...] = (),
+) -> StagedCCCGateResult:
+    final = copy.deepcopy(
+        candidate if final_submission is None else final_submission
+    )
+    return StagedCCCGateResult(
+        decision=decision,
+        call_ledger=call_ledger,
+        original_submission=copy.deepcopy(candidate),
+        final_submission=final,
+        requested_grade=candidate.get("grade"),
+        final_grade=final.get("grade"),
+        submitted_recipe_identity_preserved=True,
+        preset_ref=CCC_LEGACY_PRESET.ref,
+    )
+
+
+def _flow_result(execution: dict, fixtures: dict, root: Path):
+    submitted = _apply_mutations(
+        fixtures["submissions"][execution["submission_ref"]],
+        execution["input_mutations"],
+    )
+    submitted_before = copy.deepcopy(submitted)
+    drivers = execution["drivers"]
+
+    shadow_root = (root / "flow-shadow").resolve()
+    snapshot = shadow_root / "snapshot"
+    snapshot.mkdir(parents=True)
+    (snapshot / "source.txt").write_text("frozen source\n", encoding="utf-8")
+    (snapshot / "nested").mkdir()
+    (snapshot / "nested" / "manifest.json").write_text(
+        '{"id":"bug1"}\n',
+        encoding="utf-8",
+    )
+    snapshot_sha256 = staged_executor_module._require_staged_tree(
+        snapshot,
+        "staged snapshot",
+    )
+    context = StagedCCCFlowContext(
+        bug_id="bug1",
+        function_id="bug1",
+        shadow_root=shadow_root,
+        snapshot_dir=snapshot,
+        snapshot_sha256=snapshot_sha256,
+        attempt_id="attempt-1",
+        session_id="session-1",
+        attempt_budget_remaining=drivers.get(
+            "attempt_budget_remaining",
+            True,
+        ),
+    )
+
+    if "submissions" in drivers:
+        if set(drivers) != {"submissions"}:
+            raise AssertionError(f"unsupported flow submission driver: {drivers}")
+        token_submissions = {
+            "schema_invalid": {
+                "schema_version": 3,
+                "id": "bug1",
+                "function_id": "bug1",
+                "confirmation_status": "confirmed",
+            },
+            "not_confirmed": fixtures["submissions"]["not_confirmed"],
+        }
+        try:
+            formal_submissions = [
+                copy.deepcopy(token_submissions[token])
+                for token in drivers["submissions"]
+            ]
+        except KeyError as exc:
+            raise AssertionError(
+                f"unsupported flow submission token: {exc.args[0]}"
+            ) from exc
+        events = tuple(
+            StagedCCCFlowEvent("submit", candidate, True)
+            for candidate in formal_submissions
+        ) + (StagedCCCFlowEvent("session_exit", None, None),)
+    elif drivers.get("agent_write") == "accepted-submission.json":
+        if drivers != {
+            "agent_write": "accepted-submission.json",
+            "submit_command_called": False,
+        }:
+            raise AssertionError(f"unsupported direct scratch driver: {drivers}")
+        events = (
+            StagedCCCFlowEvent("direct_scratch", submitted, False),
+            StagedCCCFlowEvent("session_exit", None, None),
+        )
+    else:
+        allowed = {
+            "inner",
+            "inner_l1",
+            "outer",
+            "outer_l1",
+            "attempt_budget_remaining",
+        }
+        if not set(drivers).issubset(allowed):
+            raise AssertionError(f"unsupported flow driver: {drivers}")
+        events = (
+            StagedCCCFlowEvent("submit", submitted, True),
+            StagedCCCFlowEvent("session_exit", None, None),
+        )
+
+    materializations = []
+    provider_events = []
+    published = []
+    scheduled = []
+    inner_final_submissions = []
+    materialization_counter = 0
+
+    def materialize(request):
+        nonlocal materialization_counter
+        materialization_counter += 1
+        safe_role = request.role.replace("_", "-").lower()
+        role_root = (
+            shadow_root
+            / "roles"
+            / f"{materialization_counter:02d}-{safe_role}-{request.submission_ordinal}"
+        )
+        role_root.mkdir(parents=True)
+        project = role_root / "project"
+        shutil.copytree(snapshot, project)
+        workspace = StagedCCCFlowMaterialization(
+            role=request.role,
+            root=role_root,
+            project_dir=project,
+            materialization_id=f"materialization-{materialization_counter}",
+            snapshot_sha256=request.snapshot_sha256,
+            attempt_id=request.attempt_id,
+            session_id=request.session_id,
+            submission_ordinal=request.submission_ordinal,
+        )
+        materializations.append(workspace)
+        provider_events.append(
+            f"materialize:{request.role}:{request.submission_ordinal}"
+        )
+        return workspace
+
+    def destroy(workspace):
+        provider_events.append(
+            f"destroy:{workspace.role}:{workspace.submission_ordinal}"
+        )
+        shutil.rmtree(workspace.root)
+
+    def inner_gate(candidate, workspace):
+        self_contained = copy.deepcopy(candidate)
+        if workspace.role != "B1":
+            raise AssertionError("Inner did not receive a B1 materialization")
+        if "submissions" in drivers:
+            if candidate["confirmation_status"] == "confirmed":
+                result = _flow_gate_result(
+                    candidate,
+                    decision=StagedCCCDecision(
+                        "reject",
+                        "schema",
+                        "witness is required for a confirmed submission",
+                    ),
+                )
+            else:
+                result = _flow_gate_result(
+                    candidate,
+                    decision=StagedCCCDecision("accept", None, None),
+                )
+        elif "inner_l1" in drivers:
+            if drivers["inner_l1"] != {"kind": "rejection", "check": "L1"}:
+                raise AssertionError(f"unsupported Inner L1 driver: {drivers}")
+            final = copy.deepcopy(candidate)
+            final["grade"] = "L0"
+            final["l1_patch"] = None
+            result = _flow_gate_result(
+                candidate,
+                decision=StagedCCCDecision("accept", None, None),
+                final_submission=final,
+                call_ledger=("replay", "coverage", "phenomenon", "l1"),
+            )
+        else:
+            inner_driver = drivers.get("inner", {"kind": "accept"})
+            if inner_driver == {"kind": "accept"}:
+                result = _flow_gate_result(
+                    candidate,
+                    decision=StagedCCCDecision("accept", None, None),
+                )
+            elif inner_driver == {"kind": "rejection", "check": "schema"}:
+                result = _flow_gate_result(
+                    candidate,
+                    decision=StagedCCCDecision(
+                        "reject",
+                        "schema",
+                        "witness is required for a confirmed submission",
+                    ),
+                )
+            else:
+                raise AssertionError(f"unsupported Inner driver: {inner_driver}")
+        inner_final_submissions.append(copy.deepcopy(result.final_submission))
+        if candidate != self_contained:
+            raise AssertionError("Inner helper mutated its caller-owned candidate")
+        return result
+
+    def outer_gate(candidate, workspace):
+        if workspace.role != "B2":
+            raise AssertionError("Outer did not receive a B2 materialization")
+        if not inner_final_submissions:
+            raise AssertionError("Outer ran before an accepted Inner result")
+        if "inner_l1" in drivers:
+            if candidate.get("grade") != "L1" \
+                    or not isinstance(candidate.get("l1_patch"), str):
+                raise AssertionError("Outer did not receive the original L1 candidate")
+            if inner_final_submissions[-1].get("grade") != "L0":
+                raise AssertionError("Inner L1 driver did not create a private L0")
+        outer_driver = drivers.get("outer", {"kind": "accept"})
+        if outer_driver == {"kind": "rejection", "check": "schema"}:
+            return _flow_gate_result(
+                candidate,
+                decision=StagedCCCDecision(
+                    "reject",
+                    "schema",
+                    "accepted candidate unreadable: malformed JSON",
+                ),
+            )
+        if outer_driver != {"kind": "accept"}:
+            raise AssertionError(f"unsupported Outer driver: {outer_driver}")
+        if "outer_l1" in drivers:
+            if drivers["outer_l1"] != {"kind": "rejection", "check": "L1"}:
+                raise AssertionError(f"unsupported Outer L1 driver: {drivers}")
+            final = copy.deepcopy(candidate)
+            final["grade"] = "L0"
+            final["l1_patch"] = None
+            return _flow_gate_result(
+                candidate,
+                decision=StagedCCCDecision("accept", None, None),
+                final_submission=final,
+                call_ledger=("replay", "coverage", "phenomenon", "l1"),
+            )
+        return _flow_gate_result(
+            candidate,
+            decision=StagedCCCDecision("accept", None, None),
+        )
+
+    def legacy_outer(candidate, workspace):
+        if workspace.role != "legacy_observer":
+            raise AssertionError("legacy observer received a trusted B2 role")
+        return _flow_gate_result(
+            candidate,
+            decision=StagedCCCDecision("accept", None, None),
+        )
+
+    def schedule(request):
+        if request.previous_attempt_id != context.attempt_id \
+                or request.previous_session_id != context.session_id \
+                or request.snapshot_sha256 != context.snapshot_sha256:
+            raise AssertionError("scheduler received the wrong predecessor")
+        provider_events.append("schedule_new_attempt")
+        scheduled.append(request)
+        return StagedCCCFlowAttemptIdentity("attempt-2", "session-2")
+
+    def publish(candidate, workspace):
+        if workspace.role != "B2":
+            raise AssertionError("shadow publication did not originate from B2")
+        published.append(copy.deepcopy(candidate))
+        provider_events.append("observe_publishable")
+
+    result = StagedCCCExecutor().run_isolated_flow(
+        events,
+        context,
+        StagedCCCFlowProviders(
+            materialize_role=materialize,
+            destroy_role=destroy,
+            inner_gate=inner_gate,
+            outer_gate=outer_gate,
+            legacy_outer_observer=legacy_outer,
+            schedule_new_attempt=schedule,
+            observe_publishable=publish,
+        ),
+    )
+    if submitted != submitted_before:
+        raise AssertionError("staged flow mutated its caller-owned submission")
+    if staged_executor_module._require_staged_tree(
+        snapshot,
+        "staged snapshot",
+    ) != snapshot_sha256:
+        raise AssertionError("staged flow mutated its frozen snapshot")
+    if any(workspace.root.exists() for workspace in materializations):
+        raise AssertionError("staged flow left a disposable role materialization")
+    if len({workspace.root for workspace in materializations}) \
+            != len(materializations):
+        raise AssertionError("staged flow reused a role root")
+    if len({workspace.materialization_id for workspace in materializations}) \
+            != len(materializations):
+        raise AssertionError("staged flow reused a materialization identity")
+    if any(
+        workspace.snapshot_sha256 != snapshot_sha256
+        or workspace.attempt_id != context.attempt_id
+        or workspace.session_id != context.session_id
+        for workspace in materializations
+    ):
+        raise AssertionError("staged flow role identity drifted")
+    if bool(published) != result.published:
+        raise AssertionError("shadow publication ledger disagrees with the result")
+    if len(scheduled) != int(result.new_attempt_on_budget):
+        raise AssertionError("attempt scheduler ledger disagrees with the result")
+    if result.new_attempt_on_budget:
+        if result.scheduled_attempt != StagedCCCFlowAttemptIdentity(
+            "attempt-2",
+            "session-2",
+        ):
+            raise AssertionError("attempt scheduler did not return a fresh identity")
+    elif result.scheduled_attempt is not None:
+        raise AssertionError("unscheduled flow carried an attempt identity")
+    if tuple(result.role_ledger).count("session_exit") != 1:
+        raise AssertionError("staged flow did not close exactly one Agent session")
+    return result, submitted_before
+
+
 def _execute_projected_variants(
     execution: dict,
     fixtures: dict,
@@ -867,11 +1217,18 @@ def _execute_projected_variants(
             fixtures,
             context.project_dir,
         )
+    if execution["entrypoint"] == "flow":
+        result, submitted = _flow_result(
+            execution,
+            fixtures,
+            context.project_dir,
+        )
+        return (("flow", result, submitted),)
     raise AssertionError(f"unsupported staged entrypoint: {execution['entrypoint']}")
 
 
 class StagedCCCGoldenTests(unittest.TestCase):
-    def test_exactly_twenty_seven_cells_are_executed_and_five_are_deferred(self):
+    def test_exactly_thirty_two_cells_are_executed_with_pinned_policies(self):
         corpus = load_corpus()
         executable = [
             case for case in corpus["cases"]
@@ -881,22 +1238,30 @@ class StagedCCCGoldenTests(unittest.TestCase):
             case for case in corpus["cases"]
             if case["entrypoint"] not in _EXECUTABLE_ENTRYPOINTS
         ]
-        self.assertEqual(len(executable), 27)
+        self.assertEqual(len(executable), 32)
         self.assertEqual(
             {case["case_id"] for case in executable},
             _EXECUTABLE_CASE_IDS,
         )
         self.assertEqual(
             {case["entrypoint"] for case in executable},
-            {"gate", "phenomenon", "trace_parser", "l1", "artifact", "consumer"},
+            {
+                "gate",
+                "phenomenon",
+                "trace_parser",
+                "l1",
+                "artifact",
+                "consumer",
+                "flow",
+            },
         )
         self.assertEqual(
             {case["parity_policy"] for case in executable},
-            {"must_match", "legacy_known_gap"},
+            {"must_match", "legacy_known_gap", "intentional_cutover_delta"},
         )
         self.assertEqual(
             sum(case["parity_policy"] == "must_match" for case in executable),
-            26,
+            30,
         )
         self.assertEqual(
             {
@@ -905,23 +1270,20 @@ class StagedCCCGoldenTests(unittest.TestCase):
             },
             {"gate.condition_a_not_mechanical"},
         )
+        self.assertEqual(deferred, [])
         self.assertEqual(
-            {case["entrypoint"] for case in deferred},
-            {"flow"},
-        )
-        self.assertEqual(len(deferred), 5)
-        self.assertEqual(
-            sum(
-                case["parity_policy"] == "intentional_cutover_delta"
-                for case in deferred
-            ),
-            1,
+            {
+                case["case_id"] for case in executable
+                if case["parity_policy"] == "intentional_cutover_delta"
+            },
+            set(_INTENTIONAL_FLOW_DELTAS),
         )
 
-    def test_staged_executor_matches_all_twenty_seven_executable_cells(self):
+    def test_staged_executor_accounts_for_all_thirty_two_cells(self):
         corpus = load_corpus()
         fixtures = corpus["fixtures"]
         concrete_execution_count = 0
+        observed_legacy_deltas = set()
         for case in corpus["cases"]:
             if case["entrypoint"] not in _EXECUTABLE_ENTRYPOINTS:
                 continue
@@ -954,6 +1316,7 @@ class StagedCCCGoldenTests(unittest.TestCase):
                     self.assertEqual(len(concrete_results), 1)
                 concrete_execution_count += len(concrete_results)
                 expected = case["expected"]
+                parity_policy = case["parity_policy"]
                 if case["entrypoint"] not in {"artifact", "consumer"}:
                     self.assertEqual(list(project.rglob("*.result.json")), [])
                     self.assertEqual(list(project.rglob("*.gate.json")), [])
@@ -962,20 +1325,90 @@ class StagedCCCGoldenTests(unittest.TestCase):
                         case_id=case["case_id"],
                         variant=variant,
                     ):
+                        compared_result = result
+                        if parity_policy == "intentional_cutover_delta":
+                            self.assertEqual(case["entrypoint"], "flow")
+                            self.assertIsNotNone(result.legacy_observation)
+                            compared_result = result.legacy_observation
+                            observed_legacy_deltas.add(case["case_id"])
+                            target = _INTENTIONAL_FLOW_DELTAS[case["case_id"]]
+                            self.assertEqual(
+                                result.decision.kind,
+                                target["decision"]["kind"],
+                            )
+                            self.assertEqual(
+                                result.decision.check,
+                                target["decision"]["check"],
+                            )
+                            self.assertIn(
+                                target["decision"]["reason_contains"],
+                                result.decision.raw_reason,
+                            )
+                            self.assertEqual(
+                                result.call_ledger,
+                                target["call_ledger"],
+                            )
+                            self.assertEqual(
+                                result.published,
+                                target["published"],
+                            )
+                            self.assertEqual(
+                                result.original_submission,
+                                submitted,
+                            )
+                            self.assertEqual(
+                                result.final_submission,
+                                submitted,
+                            )
+                            self.assertEqual(
+                                result.requested_grade,
+                                target["requested_grade"],
+                            )
+                            self.assertEqual(
+                                result.final_grade,
+                                target["final_grade"],
+                            )
+                            self.assertEqual(
+                                result.same_agent_retry,
+                                target["same_agent_retry"],
+                            )
+                            self.assertEqual(
+                                result.new_attempt_on_budget,
+                                target["new_attempt_on_budget"],
+                            )
+                            self.assertEqual(
+                                result.outer_candidate,
+                                target["outer_candidate"],
+                            )
+                            self.assertEqual(
+                                result.outer_calls,
+                                target["outer_calls"],
+                            )
+                            self.assertEqual(
+                                result.scheduled_attempt,
+                                target["scheduled_attempt"],
+                            )
+                        elif case["entrypoint"] == "flow":
+                            self.assertIsNone(result.legacy_observation)
                         self.assertEqual(
-                            result.decision.kind,
+                            compared_result.decision.kind,
                             expected["decision"]["kind"],
                         )
                         self.assertEqual(
-                            result.decision.check,
+                            compared_result.decision.check,
                             expected["decision"]["check"],
                         )
                         reason = expected["decision"]["reason_contains"]
                         if reason is not None:
-                            self.assertIsNotNone(result.decision.raw_reason)
-                            self.assertIn(reason, result.decision.raw_reason)
+                            self.assertIsNotNone(
+                                compared_result.decision.raw_reason
+                            )
+                            self.assertIn(
+                                reason,
+                                compared_result.decision.raw_reason,
+                            )
                         self.assertEqual(
-                            list(result.call_ledger),
+                            list(compared_result.call_ledger),
                             expected["external_calls"],
                         )
 
@@ -984,48 +1417,63 @@ class StagedCCCGoldenTests(unittest.TestCase):
                             "l1",
                             "artifact",
                             "consumer",
+                            "flow",
                         }:
                             expected_final = _apply_mutations(
                                 submitted,
                                 expected["submission_mutations"],
                             )
-                            self.assertEqual(result.original_submission, submitted)
-                            self.assertEqual(result.final_submission, expected_final)
                             self.assertEqual(
-                                result.requested_grade,
+                                compared_result.original_submission,
+                                submitted,
+                            )
+                            self.assertEqual(
+                                compared_result.final_submission,
+                                expected_final,
+                            )
+                            self.assertEqual(
+                                compared_result.requested_grade,
                                 expected["flow"]["requested_grade"],
                             )
                             self.assertEqual(
-                                result.final_grade,
+                                compared_result.final_grade,
                                 expected["flow"]["inner_final_grade"],
                             )
                             if case["entrypoint"] == "gate":
                                 self.assertTrue(
                                     result.submitted_recipe_identity_preserved
                                 )
-                            self.assertEqual(expected["flow"]["outer_calls"], 0)
+                            if case["entrypoint"] != "flow":
+                                self.assertEqual(
+                                    expected["flow"]["outer_calls"],
+                                    0,
+                                )
 
                         if case["entrypoint"] in {"gate", "l1"}:
                             self.assertFalse(expected["flow"]["published"])
-                        if case["entrypoint"] in {"artifact", "consumer"}:
+                        if case["entrypoint"] in {
+                            "artifact",
+                            "consumer",
+                            "flow",
+                        }:
                             self.assertEqual(
-                                result.published,
+                                compared_result.published,
                                 expected["flow"]["published"],
                             )
                             self.assertEqual(
-                                result.same_agent_retry,
+                                compared_result.same_agent_retry,
                                 expected["flow"]["same_agent_retry"],
                             )
                             self.assertEqual(
-                                result.new_attempt_on_budget,
+                                compared_result.new_attempt_on_budget,
                                 expected["flow"]["new_attempt_on_budget"],
                             )
                             self.assertEqual(
-                                result.outer_candidate,
+                                compared_result.outer_candidate,
                                 expected["flow"]["outer_candidate"],
                             )
                             self.assertEqual(
-                                result.outer_calls,
+                                compared_result.outer_calls,
                                 expected["flow"]["outer_calls"],
                             )
 
@@ -1040,7 +1488,8 @@ class StagedCCCGoldenTests(unittest.TestCase):
                                 ],
                                 [(0, "false"), (8, "true")],
                             )
-        self.assertEqual(concrete_execution_count, 39)
+        self.assertEqual(concrete_execution_count, 44)
+        self.assertEqual(observed_legacy_deltas, set(_INTENTIONAL_FLOW_DELTAS))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 import ast
+import copy
 import hashlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,10 +26,18 @@ from src.validation_core.presets.ccc.staged_executor import (
     StagedCCCContext,
     StagedCCCConsumerProviders,
     StagedCCCExecutor,
+    StagedCCCFlowAttemptIdentity,
+    StagedCCCFlowContext,
+    StagedCCCFlowEvent,
+    StagedCCCFlowMaterialization,
+    StagedCCCFlowProviders,
     StagedCCCL1Context,
     StagedCCCL1Providers,
     StagedCCCProviders,
+    StagedCCCGateResult,
+    StagedCCCDecision,
 )
+from src.validation_core.presets.ccc.preset import CCC_LEGACY_PRESET
 
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -380,6 +390,135 @@ class StagedCCCRuntimeTests(unittest.TestCase):
             source=files["source"],
         )
 
+    def _make_flow_fixture(self, name: str):
+        shadow_root = (self.project / name).resolve()
+        snapshot = shadow_root / "snapshot"
+        snapshot.mkdir(parents=True)
+        (snapshot / "source.txt").write_text(
+            "frozen source\n",
+            encoding="utf-8",
+        )
+        snapshot_sha256 = staged_executor_module._require_staged_tree(
+            snapshot,
+            "staged snapshot",
+        )
+        context = StagedCCCFlowContext(
+            bug_id="bug1",
+            function_id="bug1",
+            shadow_root=shadow_root,
+            snapshot_dir=snapshot,
+            snapshot_sha256=snapshot_sha256,
+            attempt_id="attempt-1",
+            session_id="session-1",
+            attempt_budget_remaining=True,
+        )
+        fixture = SimpleNamespace(
+            shadow_root=shadow_root,
+            snapshot=snapshot,
+            snapshot_sha256=snapshot_sha256,
+            context=context,
+            created=[],
+            destroyed=[],
+            provider_events=[],
+            published=[],
+            scheduled=[],
+        )
+
+        def materialize(request):
+            index = len(fixture.created) + 1
+            role_root = (
+                shadow_root
+                / "roles"
+                / f"{index:02d}-{request.role.lower()}-{request.submission_ordinal}"
+            )
+            role_root.mkdir(parents=True)
+            project = role_root / "project"
+            shutil.copytree(snapshot, project)
+            workspace = StagedCCCFlowMaterialization(
+                role=request.role,
+                root=role_root,
+                project_dir=project,
+                materialization_id=f"materialization-{index}",
+                snapshot_sha256=request.snapshot_sha256,
+                attempt_id=request.attempt_id,
+                session_id=request.session_id,
+                submission_ordinal=request.submission_ordinal,
+            )
+            fixture.created.append(workspace)
+            fixture.provider_events.append(
+                f"materialize:{request.role}:{request.submission_ordinal}"
+            )
+            return workspace
+
+        def destroy(workspace):
+            fixture.provider_events.append(
+                f"destroy:{workspace.role}:{workspace.submission_ordinal}"
+            )
+            fixture.destroyed.append(workspace)
+            shutil.rmtree(workspace.root)
+
+        fixture.materialize = materialize
+        fixture.destroy = destroy
+        return fixture
+
+    def _flow_gate_result(
+        self,
+        candidate: dict,
+        *,
+        kind: str = "accept",
+        check: str | None = None,
+        reason: str | None = None,
+        final_submission: dict | None = None,
+        call_ledger: tuple[str, ...] = (),
+    ) -> StagedCCCGateResult:
+        final = copy.deepcopy(
+            candidate if final_submission is None else final_submission
+        )
+        return StagedCCCGateResult(
+            decision=StagedCCCDecision(kind, check, reason),
+            call_ledger=call_ledger,
+            original_submission=copy.deepcopy(candidate),
+            final_submission=final,
+            requested_grade=candidate.get("grade"),
+            final_grade=final.get("grade"),
+            submitted_recipe_identity_preserved=True,
+            preset_ref=CCC_LEGACY_PRESET.ref,
+        )
+
+    def _flow_providers(
+        self,
+        fixture,
+        *,
+        inner_gate,
+        outer_gate,
+        legacy_outer=None,
+        materialize=None,
+    ) -> StagedCCCFlowProviders:
+        def schedule(request):
+            fixture.provider_events.append("schedule_new_attempt")
+            fixture.scheduled.append(request)
+            return StagedCCCFlowAttemptIdentity("attempt-2", "session-2")
+
+        def publish(candidate, workspace):
+            fixture.provider_events.append("observe_publishable")
+            fixture.published.append((copy.deepcopy(candidate), workspace))
+
+        return StagedCCCFlowProviders(
+            materialize_role=materialize or fixture.materialize,
+            destroy_role=fixture.destroy,
+            inner_gate=inner_gate,
+            outer_gate=outer_gate,
+            legacy_outer_observer=(
+                legacy_outer
+                if legacy_outer is not None
+                else lambda candidate, _workspace: self._flow_gate_result(
+                    candidate
+                )
+            ),
+            schedule_new_attempt=schedule,
+            observe_publishable=publish,
+        )
+
     def test_legacy_source_identity_matches_pinned_multirun_blobs(self):
         self.assertEqual(set(_LEGACY_SOURCES), {
             "src/compiler_recipe.py",
@@ -445,6 +584,645 @@ class StagedCCCRuntimeTests(unittest.TestCase):
 
         with self.assertRaises(TypeError):
             StagedCCCConsumerProviders(agent_scheduler=None)
+
+        flow_values = {
+            "materialize_role": valid,
+            "destroy_role": valid,
+            "inner_gate": valid,
+            "outer_gate": valid,
+            "legacy_outer_observer": valid,
+            "schedule_new_attempt": valid,
+            "observe_publishable": valid,
+        }
+        for field in flow_values:
+            values = dict(flow_values)
+            values[field] = None
+            with self.subTest(flow_field=field), self.assertRaises(TypeError):
+                StagedCCCFlowProviders(**values)
+
+    def test_flow_retry_uses_fresh_b1_and_outer_waits_for_session_exit(self):
+        fixture = self._make_flow_fixture("flow-retry")
+        bad = {
+            "schema_version": 3,
+            "id": "bug1",
+            "function_id": "bug1",
+            "confirmation_status": "confirmed",
+        }
+        good = {
+            "schema_version": 3,
+            "id": "bug1",
+            "function_id": "bug1",
+            "confirmation_status": "not_confirmed",
+            "attempts": 1,
+            "notes": "cannot trigger",
+        }
+        inner_calls = []
+
+        def inner(candidate, workspace):
+            inner_calls.append(workspace)
+            agent = fixture.created[0]
+            if len(inner_calls) == 1:
+                (agent.project_dir / "agent-pollution").write_text("dirty")
+                (workspace.project_dir / "b1-pollution").write_text("dirty")
+                return self._flow_gate_result(
+                    candidate,
+                    kind="reject",
+                    check="schema",
+                    reason="witness is required",
+                )
+            self.assertFalse((workspace.project_dir / "agent-pollution").exists())
+            self.assertFalse((workspace.project_dir / "b1-pollution").exists())
+            return self._flow_gate_result(candidate)
+
+        def outer(candidate, workspace):
+            self.assertEqual(candidate, good)
+            self.assertFalse(fixture.created[0].root.exists())
+            self.assertTrue(all(not item.root.exists() for item in inner_calls))
+            self.assertFalse((workspace.project_dir / "agent-pollution").exists())
+            self.assertFalse((workspace.project_dir / "b1-pollution").exists())
+            return self._flow_gate_result(candidate)
+
+        result = StagedCCCExecutor().run_isolated_flow(
+            (
+                StagedCCCFlowEvent("submit", bad, True),
+                StagedCCCFlowEvent("submit", good, True),
+                StagedCCCFlowEvent("session_exit", None, None),
+            ),
+            fixture.context,
+            self._flow_providers(
+                fixture,
+                inner_gate=inner,
+                outer_gate=outer,
+            ),
+        )
+
+        self.assertEqual(result.decision.kind, "accept")
+        self.assertEqual(result.call_ledger, ("inner", "inner", "outer"))
+        self.assertTrue(result.same_agent_retry)
+        self.assertTrue(result.published)
+        self.assertEqual(result.outer_candidate, "original_submission")
+        self.assertEqual(result.outer_calls, 1)
+        self.assertEqual(
+            result.role_ledger,
+            (
+                "materialize:A:0",
+                "materialize:B1:1",
+                "destroy:B1:1",
+                "materialize:B1:2",
+                "destroy:B1:2",
+                "session_exit",
+                "destroy:A:0",
+                "materialize:B2:2",
+                "observe_publishable:B2:2",
+                "destroy:B2:2",
+            ),
+        )
+        self.assertEqual(
+            [workspace.role for workspace in fixture.created],
+            ["A", "B1", "B1", "B2"],
+        )
+        self.assertEqual(
+            len({workspace.root for workspace in fixture.created}),
+            4,
+        )
+        self.assertEqual(fixture.scheduled, [])
+
+    def test_flow_outer_rechecks_original_l1_after_private_inner_downgrade(self):
+        fixture = self._make_flow_fixture("flow-l1")
+        candidate = _submission()
+
+        def downgrade(candidate, workspace):
+            self.assertEqual(workspace.role, "B1")
+            final = copy.deepcopy(candidate)
+            final["grade"] = "L0"
+            final["l1_patch"] = None
+            (workspace.project_dir / "inner-only").write_text("dirty")
+            return self._flow_gate_result(
+                candidate,
+                final_submission=final,
+                call_ledger=("replay", "coverage", "phenomenon", "l1"),
+            )
+
+        def outer(candidate, workspace):
+            self.assertEqual(candidate["grade"], "L1")
+            self.assertIsInstance(candidate["l1_patch"], str)
+            self.assertFalse((workspace.project_dir / "inner-only").exists())
+            final = copy.deepcopy(candidate)
+            final["grade"] = "L0"
+            final["l1_patch"] = None
+            return self._flow_gate_result(
+                candidate,
+                final_submission=final,
+                call_ledger=("replay", "coverage", "phenomenon", "l1"),
+            )
+
+        result = StagedCCCExecutor().run_isolated_flow(
+            (
+                StagedCCCFlowEvent("submit", candidate, True),
+                StagedCCCFlowEvent("session_exit", None, None),
+            ),
+            fixture.context,
+            self._flow_providers(
+                fixture,
+                inner_gate=downgrade,
+                outer_gate=outer,
+            ),
+        )
+
+        self.assertEqual(result.decision.kind, "accept")
+        self.assertEqual(result.requested_grade, "L1")
+        self.assertEqual(result.final_grade, "L0")
+        self.assertEqual(result.original_submission, candidate)
+        self.assertEqual(result.final_submission["l1_patch"], None)
+        self.assertEqual(
+            result.call_ledger,
+            (
+                "inner:replay",
+                "inner:coverage",
+                "inner:phenomenon",
+                "inner:l1",
+                "outer:replay",
+                "outer:coverage",
+                "outer:phenomenon",
+                "outer:l1",
+            ),
+        )
+
+    def test_flow_rejections_schedule_only_after_old_session_roles_are_gone(self):
+        candidate = {
+            "schema_version": 3,
+            "id": "bug1",
+            "function_id": "bug1",
+            "confirmation_status": "not_confirmed",
+            "attempts": 1,
+            "notes": "cannot trigger",
+        }
+        for rejection_role in ("inner", "outer"):
+            with self.subTest(rejection_role=rejection_role):
+                fixture = self._make_flow_fixture(
+                    f"flow-{rejection_role}-reject"
+                )
+
+                def reject(candidate, _workspace):
+                    return self._flow_gate_result(
+                        candidate,
+                        kind="reject",
+                        check="schema",
+                        reason=(
+                            "witness is required"
+                            if rejection_role == "inner"
+                            else "accepted candidate unreadable"
+                        ),
+                    )
+
+                def accept(candidate, _workspace):
+                    return self._flow_gate_result(candidate)
+
+                providers = self._flow_providers(
+                    fixture,
+                    inner_gate=(reject if rejection_role == "inner" else accept),
+                    outer_gate=(reject if rejection_role == "outer" else accept),
+                )
+                original_schedule = providers.schedule_new_attempt
+
+                def checked_schedule(request):
+                    self.assertTrue(
+                        all(not workspace.root.exists()
+                            for workspace in fixture.created)
+                    )
+                    return original_schedule(request)
+
+                providers = StagedCCCFlowProviders(
+                    materialize_role=providers.materialize_role,
+                    destroy_role=providers.destroy_role,
+                    inner_gate=providers.inner_gate,
+                    outer_gate=providers.outer_gate,
+                    legacy_outer_observer=providers.legacy_outer_observer,
+                    schedule_new_attempt=checked_schedule,
+                    observe_publishable=providers.observe_publishable,
+                )
+                result = StagedCCCExecutor().run_isolated_flow(
+                    (
+                        StagedCCCFlowEvent("submit", candidate, True),
+                        StagedCCCFlowEvent("session_exit", None, None),
+                    ),
+                    fixture.context,
+                    providers,
+                )
+
+                self.assertEqual(result.decision.kind, "reject")
+                self.assertFalse(result.published)
+                self.assertTrue(result.new_attempt_on_budget)
+                self.assertEqual(len(fixture.scheduled), 1)
+                self.assertEqual(
+                    fixture.scheduled[0].previous_attempt_id,
+                    "attempt-1",
+                )
+                self.assertEqual(
+                    result.scheduled_attempt,
+                    StagedCCCFlowAttemptIdentity("attempt-2", "session-2"),
+                )
+                self.assertLess(
+                    result.role_ledger.index("session_exit"),
+                    result.role_ledger.index("schedule_new_attempt"),
+                )
+                if rejection_role == "inner":
+                    self.assertEqual(result.call_ledger, ("inner",))
+                    self.assertNotIn("B2", {
+                        workspace.role for workspace in fixture.created
+                    })
+                else:
+                    self.assertEqual(
+                        result.call_ledger,
+                        ("inner", "outer", "new_agent_attempt"),
+                    )
+                    self.assertIn("B2", {
+                        workspace.role for workspace in fixture.created
+                    })
+
+    def test_direct_scratch_is_legacy_only_and_cannot_create_target_outer(self):
+        fixture = self._make_flow_fixture("flow-direct-scratch")
+        candidate = {
+            "schema_version": 3,
+            "id": "bug1",
+            "function_id": "bug1",
+            "confirmation_status": "not_confirmed",
+            "attempts": 1,
+            "notes": "bypassed command",
+        }
+
+        def unexpected(*_args):
+            raise AssertionError("direct scratch must not reach target Inner/Outer")
+
+        def legacy(candidate, workspace):
+            self.assertEqual(workspace.role, "legacy_observer")
+            return self._flow_gate_result(candidate)
+
+        providers = self._flow_providers(
+            fixture,
+            inner_gate=unexpected,
+            outer_gate=unexpected,
+            legacy_outer=legacy,
+        )
+        def unexpected_publish(*_args):
+            raise AssertionError("direct scratch published a target result")
+
+        providers = StagedCCCFlowProviders(
+            materialize_role=providers.materialize_role,
+            destroy_role=providers.destroy_role,
+            inner_gate=providers.inner_gate,
+            outer_gate=providers.outer_gate,
+            legacy_outer_observer=providers.legacy_outer_observer,
+            schedule_new_attempt=providers.schedule_new_attempt,
+            observe_publishable=unexpected_publish,
+        )
+
+        result = StagedCCCExecutor().run_isolated_flow(
+            (
+                StagedCCCFlowEvent("direct_scratch", candidate, False),
+                StagedCCCFlowEvent("session_exit", None, None),
+            ),
+            fixture.context,
+            providers,
+        )
+
+        self.assertEqual(result.decision.kind, "reject")
+        self.assertEqual(result.decision.check, "submission")
+        self.assertIn("trusted Inner result", result.decision.raw_reason)
+        self.assertEqual(result.call_ledger, ())
+        self.assertFalse(result.published)
+        self.assertEqual(result.original_submission, candidate)
+        self.assertEqual(result.final_submission, candidate)
+        self.assertIsNone(result.requested_grade)
+        self.assertIsNone(result.final_grade)
+        self.assertFalse(result.same_agent_retry)
+        self.assertFalse(result.new_attempt_on_budget)
+        self.assertIsNone(result.scheduled_attempt)
+        self.assertEqual(result.outer_calls, 0)
+        self.assertIsNotNone(result.legacy_observation)
+        self.assertEqual(result.legacy_observation.decision.kind, "accept")
+        self.assertEqual(result.legacy_observation.call_ledger, ("outer",))
+        self.assertTrue(result.legacy_observation.published)
+        self.assertEqual(
+            [workspace.role for workspace in fixture.created],
+            ["A", "legacy_observer"],
+        )
+        with self.assertRaisesRegex(ValueError, "lack a formal submit call"):
+            StagedCCCFlowEvent("direct_scratch", candidate, True)
+
+    def test_flow_materialization_identity_and_snapshot_drift_fail_closed(self):
+        candidate = {
+            "schema_version": 3,
+            "id": "bug1",
+            "function_id": "bug1",
+            "confirmation_status": "not_confirmed",
+            "attempts": 1,
+            "notes": "cannot trigger",
+        }
+
+        for variant in (
+            "reuse_root",
+            "wrong_hash",
+            "snapshot_drift",
+            "outer_snapshot_drift",
+            "root_extra",
+            "hardlink",
+        ):
+            with self.subTest(variant=variant):
+                fixture = self._make_flow_fixture(f"flow-invalid-{variant}")
+
+                def materialize(request):
+                    if variant == "reuse_root" and request.role == "B1":
+                        agent = fixture.created[0]
+                        return StagedCCCFlowMaterialization(
+                            role="B1",
+                            root=agent.root,
+                            project_dir=agent.project_dir,
+                            materialization_id="reused-root",
+                            snapshot_sha256=request.snapshot_sha256,
+                            attempt_id=request.attempt_id,
+                            session_id=request.session_id,
+                            submission_ordinal=request.submission_ordinal,
+                        )
+                    workspace = fixture.materialize(request)
+                    if variant == "wrong_hash" and request.role == "B1":
+                        return StagedCCCFlowMaterialization(
+                            role=workspace.role,
+                            root=workspace.root,
+                            project_dir=workspace.project_dir,
+                            materialization_id=workspace.materialization_id,
+                            snapshot_sha256="f" * 64,
+                            attempt_id=workspace.attempt_id,
+                            session_id=workspace.session_id,
+                            submission_ordinal=workspace.submission_ordinal,
+                        )
+                    if variant == "snapshot_drift" and request.role == "B2":
+                        (fixture.snapshot / "changed.txt").write_text("changed")
+                    if variant == "root_extra" and request.role == "B1":
+                        (workspace.root / "extra-state").write_text("unsafe")
+                    if variant == "hardlink" and request.role == "B1":
+                        source = workspace.project_dir / "source.txt"
+                        source.unlink()
+                        source.hardlink_to(fixture.snapshot / "source.txt")
+                    return workspace
+
+                outer_calls = []
+
+                def outer(candidate, _workspace):
+                    outer_calls.append(copy.deepcopy(candidate))
+                    if variant == "outer_snapshot_drift":
+                        (fixture.snapshot / "outer-changed.txt").write_text(
+                            "changed"
+                        )
+                    return self._flow_gate_result(candidate)
+
+                providers = self._flow_providers(
+                    fixture,
+                    materialize=materialize,
+                    inner_gate=lambda candidate, _workspace: (
+                        self._flow_gate_result(candidate)
+                    ),
+                    outer_gate=outer,
+                )
+                with self.assertRaises((TypeError, ValueError)):
+                    StagedCCCExecutor().run_isolated_flow(
+                        (
+                            StagedCCCFlowEvent("submit", candidate, True),
+                            StagedCCCFlowEvent("session_exit", None, None),
+                        ),
+                        fixture.context,
+                        providers,
+                    )
+                self.assertEqual(
+                    outer_calls,
+                    [candidate] if variant == "outer_snapshot_drift" else [],
+                )
+                self.assertEqual(fixture.published, [])
+                self.assertTrue(
+                    all(not workspace.root.exists()
+                        for workspace in fixture.created)
+                )
+
+    def test_flow_candidate_and_retry_identities_are_bound_fail_closed(self):
+        wrong_identity = {
+            "schema_version": 3,
+            "id": "other-bug",
+            "function_id": "other-function",
+            "confirmation_status": "not_confirmed",
+            "attempts": 1,
+            "notes": "wrong identity",
+        }
+        fixture = self._make_flow_fixture("flow-wrong-candidate-identity")
+        unexpected = lambda *_args: self.fail(
+            "identity mismatch reached a staged provider"
+        )
+        with self.assertRaisesRegex(ValueError, "candidate identity"):
+            StagedCCCExecutor().run_isolated_flow(
+                (
+                    StagedCCCFlowEvent("submit", wrong_identity, True),
+                    StagedCCCFlowEvent("session_exit", None, None),
+                ),
+                fixture.context,
+                self._flow_providers(
+                    fixture,
+                    inner_gate=unexpected,
+                    outer_gate=unexpected,
+                ),
+            )
+        self.assertEqual(fixture.created, [])
+        self.assertEqual(fixture.published, [])
+
+        candidate = dict(wrong_identity, id="bug1", function_id="bug1")
+        fixture = self._make_flow_fixture("flow-reused-attempt-identity")
+        providers = self._flow_providers(
+            fixture,
+            inner_gate=lambda candidate, _workspace: self._flow_gate_result(
+                candidate,
+                kind="reject",
+                check="schema",
+                reason="synthetic rejection",
+            ),
+            outer_gate=unexpected,
+        )
+        providers = StagedCCCFlowProviders(
+            materialize_role=providers.materialize_role,
+            destroy_role=providers.destroy_role,
+            inner_gate=providers.inner_gate,
+            outer_gate=providers.outer_gate,
+            legacy_outer_observer=providers.legacy_outer_observer,
+            schedule_new_attempt=lambda _request: StagedCCCFlowAttemptIdentity(
+                "attempt-1",
+                "session-2",
+            ),
+            observe_publishable=providers.observe_publishable,
+        )
+        with self.assertRaisesRegex(ValueError, "identities must both be fresh"):
+            StagedCCCExecutor().run_isolated_flow(
+                (
+                    StagedCCCFlowEvent("submit", candidate, True),
+                    StagedCCCFlowEvent("session_exit", None, None),
+                ),
+                fixture.context,
+                providers,
+            )
+        self.assertTrue(
+            all(not workspace.root.exists() for workspace in fixture.created)
+        )
+        self.assertEqual(fixture.published, [])
+
+    def test_flow_provider_failures_destroy_every_validated_role(self):
+        candidate = {
+            "schema_version": 3,
+            "id": "bug1",
+            "function_id": "bug1",
+            "confirmation_status": "not_confirmed",
+            "attempts": 1,
+            "notes": "cannot trigger",
+        }
+        for phase in ("inner", "outer", "publication_observer"):
+            with self.subTest(phase=phase):
+                fixture = self._make_flow_fixture(f"flow-{phase}-failure")
+
+                def fail(*_args):
+                    raise RuntimeError(f"synthetic {phase} failure")
+
+                def accept(candidate, _workspace):
+                    return self._flow_gate_result(candidate)
+
+                providers = self._flow_providers(
+                    fixture,
+                    inner_gate=(fail if phase == "inner" else accept),
+                    outer_gate=(fail if phase == "outer" else accept),
+                )
+                if phase == "publication_observer":
+                    providers = StagedCCCFlowProviders(
+                        materialize_role=providers.materialize_role,
+                        destroy_role=providers.destroy_role,
+                        inner_gate=providers.inner_gate,
+                        outer_gate=providers.outer_gate,
+                        legacy_outer_observer=providers.legacy_outer_observer,
+                        schedule_new_attempt=providers.schedule_new_attempt,
+                        observe_publishable=fail,
+                    )
+
+                with self.assertRaisesRegex(RuntimeError, f"{phase} failure"):
+                    StagedCCCExecutor().run_isolated_flow(
+                        (
+                            StagedCCCFlowEvent("submit", candidate, True),
+                            StagedCCCFlowEvent("session_exit", None, None),
+                        ),
+                        fixture.context,
+                        providers,
+                    )
+                self.assertTrue(
+                    all(not workspace.root.exists()
+                        for workspace in fixture.created)
+                )
+                self.assertEqual(fixture.published, [])
+
+        for phase in ("destroy_raise", "destroy_bad_ack", "destroy_snapshot"):
+            with self.subTest(phase=phase):
+                fixture = self._make_flow_fixture(f"flow-{phase}-failure")
+                base_destroy = fixture.destroy
+
+                def failing_destroy(workspace):
+                    if phase == "destroy_raise":
+                        raise RuntimeError("synthetic destroy failure")
+                    base_destroy(workspace)
+                    if phase == "destroy_bad_ack":
+                        return "unexpected authority"
+                    (fixture.snapshot / "destroy-changed.txt").write_text(
+                        "changed"
+                    )
+                    return None
+
+                providers = self._flow_providers(
+                    fixture,
+                    inner_gate=lambda candidate, _workspace: (
+                        self._flow_gate_result(candidate)
+                    ),
+                    outer_gate=lambda candidate, _workspace: (
+                        self._flow_gate_result(candidate)
+                    ),
+                )
+                providers = StagedCCCFlowProviders(
+                    materialize_role=providers.materialize_role,
+                    destroy_role=failing_destroy,
+                    inner_gate=providers.inner_gate,
+                    outer_gate=providers.outer_gate,
+                    legacy_outer_observer=providers.legacy_outer_observer,
+                    schedule_new_attempt=providers.schedule_new_attempt,
+                    observe_publishable=providers.observe_publishable,
+                )
+                with self.assertRaises((RuntimeError, ValueError)):
+                    StagedCCCExecutor().run_isolated_flow(
+                        (
+                            StagedCCCFlowEvent("submit", candidate, True),
+                            StagedCCCFlowEvent("session_exit", None, None),
+                        ),
+                        fixture.context,
+                        providers,
+                    )
+                self.assertTrue(
+                    all(not workspace.root.exists()
+                        for workspace in fixture.created)
+                )
+                self.assertEqual(fixture.published, [])
+
+    def test_flow_gate_final_identity_drift_never_reaches_observer(self):
+        candidate = {
+            "schema_version": 3,
+            "id": "bug1",
+            "function_id": "bug1",
+            "confirmation_status": "not_confirmed",
+            "attempts": 1,
+            "notes": "cannot trigger",
+        }
+        for role in ("inner", "outer"):
+            with self.subTest(role=role):
+                fixture = self._make_flow_fixture(f"flow-{role}-identity-drift")
+
+                def drift(candidate, _workspace):
+                    final = copy.deepcopy(candidate)
+                    final["id"] = "other-bug"
+                    final["function_id"] = "other-function"
+                    return self._flow_gate_result(
+                        candidate,
+                        final_submission=final,
+                    )
+
+                def accept(candidate, _workspace):
+                    return self._flow_gate_result(candidate)
+
+                providers = self._flow_providers(
+                    fixture,
+                    inner_gate=(drift if role == "inner" else accept),
+                    outer_gate=(drift if role == "outer" else accept),
+                )
+                with self.assertRaisesRegex(ValueError, "changed its id identity"):
+                    StagedCCCExecutor().run_isolated_flow(
+                        (
+                            StagedCCCFlowEvent("submit", candidate, True),
+                            StagedCCCFlowEvent("session_exit", None, None),
+                        ),
+                        fixture.context,
+                        providers,
+                    )
+                self.assertEqual(fixture.published, [])
+                self.assertTrue(
+                    all(not workspace.root.exists()
+                        for workspace in fixture.created)
+                )
+
+    def test_flow_snapshot_hash_binds_empty_directories(self):
+        fixture = self._make_flow_fixture("flow-empty-directory-hash")
+        before = fixture.snapshot_sha256
+        (fixture.snapshot / "empty").mkdir()
+        after = staged_executor_module._require_staged_tree(
+            fixture.snapshot,
+            "staged snapshot",
+        )
+        self.assertNotEqual(before, after)
 
     def test_valid_legacy_pair_is_only_an_archival_resume_shadow(self):
         fixture = self._make_artifact_fixture("artifact-current")
@@ -818,6 +1596,19 @@ class StagedCCCRuntimeTests(unittest.TestCase):
         self.assertFalse(hasattr(ccc, "StagedCCCArtifactContext"))
         self.assertFalse(hasattr(root, "StagedCCCConsumerProviders"))
         self.assertFalse(hasattr(ccc, "StagedCCCConsumerProviders"))
+        for name in (
+            "StagedCCCFlowContext",
+            "StagedCCCFlowEvent",
+            "StagedCCCFlowAttemptIdentity",
+            "StagedCCCFlowMaterializeRequest",
+            "StagedCCCFlowMaterialization",
+            "StagedCCCFlowProviders",
+            "StagedCCCFlowRetryRequest",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(root, name))
+                self.assertFalse(hasattr(ccc, name))
+                self.assertNotIn(name, getattr(ccc, "__all__", ()))
 
     def test_production_modules_do_not_import_staged_or_legacy_runtime(self):
         production_files = (
