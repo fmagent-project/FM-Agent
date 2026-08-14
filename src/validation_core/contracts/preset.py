@@ -47,8 +47,9 @@ class PresetDependency:
 class ValidationPreset:
     """A trust-free, hash-bound composition of validation components.
 
-    A preset names component schemas and policies.  A concrete CasePlan still
-    supplies the per-bug ExecutionRecipe, workload, inputs, and thresholds.
+    A preset names component schemas and policies.  A concrete CasePlan may
+    select an approved recipe and supply workload/input artifacts, but it never
+    supplies thresholds, comparators, commands, or permissions.
     """
 
     preset_id: str
