@@ -443,7 +443,7 @@ CCC_COMPATIBILITY_POLICY = _descriptor(
             "direct scratch accepted-submission bypass must not survive the future Coordinator",
         ),
         "golden_corpus": (
-            "validator_legacy_golden/v1 canonical sha256 a6708bf3b5e9b0e6066cdd8c8f512c17bcf7897ff4eabfcaee2d0317ecae2131",
+            "validator_legacy_golden/v1 canonical sha256 ee8852e47852dc2359d41b754f64163c60a679bc54daa6571fad7aafc9acc2a6",
             "30 must_match cells",
             "1 legacy_known_gap cell",
             "1 intentional_cutover_delta cell",
@@ -461,7 +461,7 @@ CCC_COMPATIBILITY_POLICY = _descriptor(
         "src/validator_sandbox.py",
         "src/verification.py",
     ),
-    version="1.0.1",
+    version="1.0.2",
 )
 
 CCC_TOOLCHAIN_POLICY = _descriptor(

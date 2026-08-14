@@ -10,7 +10,7 @@ from tests.validator_legacy_golden import (
 
 
 EXPECTED_CORPUS_SHA256 = (
-    "a6708bf3b5e9b0e6066cdd8c8f512c17bcf7897ff4eabfcaee2d0317ecae2131"
+    "ee8852e47852dc2359d41b754f64163c60a679bc54daa6571fad7aafc9acc2a6"
 )
 
 
@@ -118,6 +118,12 @@ class ValidatorLegacyGoldenTests(unittest.TestCase):
             "original_submission",
         )
         self.assertEqual(downgraded["expected"]["flow"]["outer_calls"], 1)
+
+        non_building = cases["l1.non_building_patch_hard_reject"]
+        self.assertEqual(
+            non_building["expected"]["decision"]["reason_contains"],
+            "build failed",
+        )
 
     def test_fixture_is_committed_at_the_documented_location(self):
         self.assertTrue(CORPUS_PATH.is_file())

@@ -164,7 +164,7 @@ class CCCPresetContentTests(unittest.TestCase):
 
         self.assertEqual(
             hashlib.sha256(canonical_json_bytes(mapping)).hexdigest(),
-            "0fd9d5ae705e8b9813a2309086c2c019646766434c59eeb7e125fbe7c21c14d7",
+            "42ee5a49708c310e87ea56d4fc81311651c405957b74ce483e501b1a14029d78",
         )
 
         compatibility = next(
@@ -178,12 +178,12 @@ class CCCPresetContentTests(unittest.TestCase):
             if clause.clause_id == "golden_corpus"
         )
         self.assertIn(corpus_sha256(corpus), " ".join(golden_values))
-        self.assertEqual(compatibility.component_version, "1.0.1")
+        self.assertEqual(compatibility.component_version, "1.0.2")
         self.assertEqual(
             compatibility.semantic_contract.contract_version,
-            "1.0.1",
+            "1.0.2",
         )
-        self.assertEqual(CCC_LEGACY_PRESET.preset_version, "1.0.1")
+        self.assertEqual(CCC_LEGACY_PRESET.preset_version, "1.0.2")
         self.assertEqual(
             {
                 descriptor.component_version

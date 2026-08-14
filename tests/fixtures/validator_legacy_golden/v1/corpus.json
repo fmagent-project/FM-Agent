@@ -1283,7 +1283,7 @@
         "decision": {
           "kind": "reject",
           "check": "L1-attempt",
-          "reason_contains": "does not build"
+          "reason_contains": "build failed"
         },
         "external_calls": [
           "apply_patch",
