@@ -1,0 +1,11 @@
+[package]
+name = "l1_scope"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# PIN: l1-patches-are-narrow-and-behaviorally-closed
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+syn = { version = "2", features = ["full", "visit"] }
