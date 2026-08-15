@@ -245,9 +245,32 @@ class CodeGraphExtractor:
     def __init__(self, db_path: str):
         self._db = db_path
 
+    @staticmethod
+    def _is_readable_index(db_path: str) -> bool:
+        """True when ``db_path`` is a database this extractor can actually query.
+
+        Existing on disk is not enough. ``codegraph index`` discards the old
+        database before it starts, so an interrupted or failed rebuild leaves a
+        file that is empty or has no schema at all. Reading it raises
+        ``no such table: nodes`` from every query — whereas returning no extractor
+        means "no index", which callers already handle by falling back to the
+        regex extractor. Opened read-only so probing never creates a file.
+        """
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes'"
+                ).fetchone()
+            finally:
+                conn.close()
+            return row is not None
+        except sqlite3.Error:
+            return False
+
     @classmethod
     def from_proj_dir(cls, proj_dir: str):
-        """Return an extractor if .codegraph/codegraph.db exists, else None.
+        """Return an extractor if a readable .codegraph/codegraph.db exists, else None.
 
         Checks both proj_dir itself and its parent directory, because
         generate_topdown_layers() receives work_dir (fm_agent/) as its
@@ -255,7 +278,7 @@ class CodeGraphExtractor:
         """
         for candidate in [proj_dir, os.path.dirname(os.path.abspath(proj_dir))]:
             db_path = os.path.join(candidate, ".codegraph", "codegraph.db")
-            if os.path.exists(db_path):
+            if os.path.exists(db_path) and cls._is_readable_index(db_path):
                 return cls(db_path)
         return None
 
@@ -543,6 +566,19 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     if result.returncode == 0:
         print("[Pipeline] codegraph index built.")
     else:
+        # A failed `index` has already discarded the database it was rebuilding,
+        # leaving an empty or schema-less file behind. Drop it so the fallback
+        # this message promises is the one that happens — an index nobody can read
+        # is worse than no index, because the pipeline would consume it as if it
+        # were complete. Remove the files, not `.codegraph/` itself: that
+        # directory is a symlink into oh-my-openagent's store on any project
+        # opened in an editor session.
+        if action == "index":
+            for path in (db_path, f"{db_path}-wal", f"{db_path}-shm"):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
         logging.warning(
             "codegraph %s failed (non-fatal, falling back to regex): %s",
             action,
