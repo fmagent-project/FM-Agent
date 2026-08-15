@@ -40,6 +40,10 @@ class SpecForm(ABC):
         """Return the specification artifacts adjacent to ``unit_file``."""
 
     @abstractmethod
+    def is_artifact_path(self, path: Path) -> bool:
+        """Return whether ``path`` is an artifact produced by this form."""
+
+    @abstractmethod
     def validate(
         self,
         unit_file: Path,
