@@ -430,10 +430,11 @@ class CodeGraphExtractor:
             # of the same callee within one function are all preserved; without
             # them, the 2nd and later calls would be dropped (breaking
             # order_index / arg_bindings).
-            key = (caller, callee, "call", file_path, start_line, start_col)
-            if key in seen:
-                continue
-            seen.add(key)
+            if start_line and start_line > 0:
+                key = (caller, callee, "call", file_path, start_line, start_col)
+                if key in seen:
+                    continue
+                seen.add(key)
             result.append({
                 "caller": caller,
                 "callee": callee,
@@ -456,7 +457,8 @@ class CodeGraphExtractor:
                 f"""
                 SELECT e.source, ctor.id, s.file_path,
                        COALESCE(e.line, s.start_line),
-                       COALESCE(e.col, s.start_column)
+                       COALESCE(e.col, s.start_column),
+                       e.line IS NULL AS coord_fallback
                 FROM edges e
                 JOIN nodes s   ON e.source = s.id
                 JOIN nodes cls ON e.target = cls.id AND cls.kind = 'class'
@@ -470,16 +472,28 @@ class CodeGraphExtractor:
                 """,
                 cg_langs,
             )
-            for src_id, ctor_id, file_path, start_line, start_col in cur.fetchall():
+            ctor_seq = 0
+            for src_id, ctor_id, file_path, start_line, start_col, coord_fallback \
+                    in cur.fetchall():
                 caller, callee = fqn_of.get(src_id), fqn_of.get(ctor_id)
                 if not caller or not callee:
                     continue
                 # Dedup key includes call-site coordinates so multiple
                 # constructor call sites within one function are preserved.
-                key = (caller, callee, "constructor", file_path, start_line, start_col)
-                if key in seen:
-                    continue
-                seen.add(key)
+                # When the edge has no real coordinates (coord_fallback=True),
+                # the COALESCE fallback gives every call site the same value;
+                # use a sequence so distinct no-coordinate call sites are NOT
+                # merged away (keeping all edges is safer than dropping calls).
+                if not coord_fallback:
+                    key = (caller, callee, "constructor", file_path,
+                           start_line, start_col)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                else:
+                    key = (caller, callee, "constructor", file_path,
+                           "no-coord", ctor_seq)
+                    ctor_seq += 1
                 result.append({
                     "caller": caller,
                     "callee": callee,
@@ -492,6 +506,17 @@ class CodeGraphExtractor:
                 })
 
         conn.close()
+
+        # Sort the merged result by source location so call sites of different
+        # kinds (call vs constructor) are interleaved in true source order.
+        # Query 1 and Query 2 each ORDER BY independently, but appending them
+        # in sequence would put all calls before all constructors regardless of
+        # line number, breaking consumers that align call sites with source.
+        result.sort(key=lambda e: (
+            e["span"].get("file", ""),
+            e["span"].get("start_line") or 0,
+            e["span"].get("start_column") or 0,
+        ))
         return result
 
 
