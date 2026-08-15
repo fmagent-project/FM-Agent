@@ -37,6 +37,10 @@ class SoftwareSpecForm(SpecForm):
             dependency_info=Path(f"{unit_file}.info.json"),
         )
 
+    def is_artifact_path(self, path: Path) -> bool:
+        """Return whether ``path`` is a software specification sidecar."""
+        return str(path).endswith((".spec.json", ".info.json"))
+
     @staticmethod
     def is_valid_spec_data(data: object) -> bool:
         """Return whether data matches the exact software self-spec schema."""

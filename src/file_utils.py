@@ -36,35 +36,13 @@ def _is_metadata_sidecar(file_path):
     return str(file_path).endswith(_METADATA_SIDECAR_SUFFIXES)
 
 
-def _normalized_file_path(file_path):
-    """Return a stable comparison key for a local file path."""
-    return os.path.normcase(
-        os.path.abspath(os.path.normpath(os.fspath(file_path)))
-    )
-
-
 def _exclude_spec_artifacts(file_paths, spec_form=SOFTWARE_SPEC_FORM):
-    """Exclude configured spec artifacts from a collection of analysis units.
-
-    ``SpecForm`` exposes a forward mapping from a unit to its artifacts, so the
-    full candidate collection is needed to identify custom artifact paths.  The
-    fixed software suffix check remains for compatibility with orphaned legacy
-    sidecars whose original unit is no longer present.
-    """
-    file_paths = list(file_paths)
-    configured_artifacts = set()
-    for file_path in file_paths:
-        artifacts = spec_form.artifact_paths(Path(file_path))
-        configured_artifacts.add(_normalized_file_path(artifacts.self_spec))
-        configured_artifacts.add(
-            _normalized_file_path(artifacts.dependency_info)
-        )
-
+    """Exclude artifacts owned by the configured specification form."""
     return [
         file_path
         for file_path in file_paths
         if not _is_metadata_sidecar(file_path)
-        and _normalized_file_path(file_path) not in configured_artifacts
+        and not spec_form.is_artifact_path(Path(file_path))
     ]
 
 
