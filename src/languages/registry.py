@@ -162,16 +162,41 @@ def _edge_dedup_key(d: dict) -> tuple:
 
     Includes language so edges from different backends (e.g. C and C++)
     with the same caller/callee/span are not merged away.
+
+    When call-site coordinates are absent (start_line missing or 0), the key
+    falls back to ``id(d)`` so distinct no-coordinate edges are all kept
+    instead of being collapsed (safety over false dedup). This mirrors the
+    coord_fallback handling in codegraph.get_call_edges().
     """
     span = d.get("span") if isinstance(d.get("span"), dict) else {}
+    file_path = span.get("file")
+    start_line = span.get("start_line")
+    # Compatible with both start_column and start_col aliases.
+    start_col = (
+        span.get("start_column")
+        if span.get("start_column") is not None
+        else span.get("start_col")
+    )
+
+    # Valid coordinates: dedup at call-site granularity.
+    if start_line and start_line > 0:
+        return (
+            d.get("language"),
+            d.get("caller"),
+            d.get("callee"),
+            d.get("kind", "call"),
+            file_path,
+            start_line,
+            start_col,
+        )
+
+    # No valid coordinates: keep every edge (id() guarantees uniqueness).
     return (
         d.get("language"),
         d.get("caller"),
         d.get("callee"),
         d.get("kind", "call"),
-        span.get("file"),
-        span.get("start_line"),
-        span.get("start_column"),
+        id(d),
     )
 
 
