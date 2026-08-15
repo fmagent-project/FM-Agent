@@ -247,24 +247,29 @@ class CodeGraphExtractor:
 
     @staticmethod
     def _is_readable_index(db_path: str) -> bool:
-        """True when ``db_path`` is a database this extractor can actually query.
+        """True when ``db_path`` holds an index that was built to completion.
 
-        Existing on disk is not enough. ``codegraph index`` discards the old
-        database before it starts, so an interrupted or failed rebuild leaves a
-        file that is empty or has no schema at all. Reading it raises
-        ``no such table: nodes`` from every query — whereas returning no extractor
-        means "no index", which callers already handle by falling back to the
-        regex extractor. Opened read-only so probing never creates a file.
+        Existing on disk is not enough: ``codegraph index`` discards the old
+        database before it starts, so a rebuild that fails or is killed leaves an
+        empty or half-written one behind, and reading that yields a truncated
+        graph presented as the whole thing. codegraph stamps its own verdict in
+        ``project_metadata.index_state`` for exactly this purpose, so that
+        decides. No marker means an index predating it — accept those when they
+        actually hold nodes.
         """
         try:
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             try:
                 row = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes'"
+                    "SELECT value FROM project_metadata WHERE key = 'index_state'"
                 ).fetchone()
+                if row is not None:
+                    return row[0] == "complete"
+                return (
+                    conn.execute("SELECT 1 FROM nodes LIMIT 1").fetchone() is not None
+                )
             finally:
                 conn.close()
-            return row is not None
         except sqlite3.Error:
             return False
 
@@ -573,14 +578,25 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
         # were complete. Remove the files, not `.codegraph/` itself: that
         # directory is a symlink into oh-my-openagent's store on any project
         # opened in an editor session.
+        outcome = "falling back to regex"
         if action == "index":
-            for path in (db_path, f"{db_path}-wal", f"{db_path}-shm"):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+            try:
+                os.remove(db_path)
+            except OSError as exc:
+                # The database survived, so it stays discoverable and the regex
+                # fallback is NOT what happens — say that rather than claiming it.
+                # Leave the sidecars too: dropping a live database's -wal corrupts
+                # it, and half-removed is worse than untouched.
+                outcome = f"existing index left in place, may be stale ({exc})"
+            else:
+                for path in (f"{db_path}-wal", f"{db_path}-shm"):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
         logging.warning(
-            "codegraph %s failed (non-fatal, falling back to regex): %s",
+            "codegraph %s failed (non-fatal, %s): %s",
             action,
+            outcome,
             result.stderr[:300],
         )
