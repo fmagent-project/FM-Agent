@@ -12,7 +12,6 @@ import hashlib
 import logging
 import os
 import re
-import shutil
 import sqlite3
 import subprocess
 from collections import defaultdict
@@ -246,9 +245,37 @@ class CodeGraphExtractor:
     def __init__(self, db_path: str):
         self._db = db_path
 
+    @staticmethod
+    def _is_readable_index(db_path: str) -> bool:
+        """True when ``db_path`` holds an index that was built to completion.
+
+        Existing on disk is not enough: ``codegraph index`` discards the old
+        database before it starts, so a rebuild that fails or is killed leaves an
+        empty or half-written one behind, and reading that yields a truncated
+        graph presented as the whole thing. codegraph stamps its own verdict in
+        ``project_metadata.index_state`` for exactly this purpose, so that
+        decides. No marker means an index predating it — accept those when they
+        actually hold nodes.
+        """
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT value FROM project_metadata WHERE key = 'index_state'"
+                ).fetchone()
+                if row is not None:
+                    return row[0] == "complete"
+                return (
+                    conn.execute("SELECT 1 FROM nodes LIMIT 1").fetchone() is not None
+                )
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return False
+
     @classmethod
     def from_proj_dir(cls, proj_dir: str):
-        """Return an extractor if .codegraph/codegraph.db exists, else None.
+        """Return an extractor if a readable .codegraph/codegraph.db exists, else None.
 
         Checks both proj_dir itself and its parent directory, because
         generate_topdown_layers() receives work_dir (fm_agent/) as its
@@ -256,7 +283,7 @@ class CodeGraphExtractor:
         """
         for candidate in [proj_dir, os.path.dirname(os.path.abspath(proj_dir))]:
             db_path = os.path.join(candidate, ".codegraph", "codegraph.db")
-            if os.path.exists(db_path):
+            if os.path.exists(db_path) and cls._is_readable_index(db_path):
                 return cls(db_path)
         return None
 
@@ -498,16 +525,14 @@ def _warn_on_codegraph_version_mismatch(cmd: str) -> None:
 
 
 def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
-    """Build the codegraph index for proj_dir with `codegraph init`.
+    """Build the codegraph index for proj_dir.
 
-    By default (``force=True``) any existing index is discarded and rebuilt, so
-    the index always reflects the current working tree rather than whatever code
-    was present when it was last built. This is the safe default: callers read
+    By default (``force=True``) an existing index is rebuilt from scratch, so the
+    index always reflects the current working tree rather than whatever code was
+    present when it was last built. This is the safe default: callers read
     function bodies and spans from the index, and a stale one (e.g. after an
     incremental run's tree changed or project sources were edited) would yield
-    boundaries for the wrong code. `codegraph init` on its
-    own no-ops when `.codegraph/` already exists, so a rebuild requires clearing
-    it first.
+    boundaries for the wrong code.
 
     Pass ``force=False`` to keep an existing index and only build when it is
     absent — an opt-in optimization for callers that know the tree is unchanged
@@ -521,24 +546,57 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     if os.path.exists(db_path):
         if not force:
             return
-        # Existing index may reflect stale sources; remove it so `codegraph init`
-        # rebuilds against the current tree instead of skipping.
-        shutil.rmtree(codegraph_dir, ignore_errors=True)
+        # `codegraph index` is the full rebuild — "same result as a fresh init",
+        # but it discards codegraph.db itself instead of the directory holding it.
+        # Clearing `.codegraph/` here is what used to make `init` rebuild rather
+        # than no-op, and it silently stopped working once that directory became a
+        # symlink into oh-my-openagent's store: shutil.rmtree refuses to remove a
+        # symlink and ignore_errors=True swallowed the error, so the run reported a
+        # rebuild that never happened.
+        action = "index"
         print("[Pipeline] Rebuilding codegraph index for current working tree...")
     else:
+        # `index` rebuilds an initialized project and errors out otherwise, so the
+        # first build still goes through `init`.
+        action = "init"
         print("[Pipeline] Building codegraph index...")
     cmd = _codegraph_cmd()
     _warn_on_codegraph_version_mismatch(cmd)
     try:
         result = subprocess.run(
-            [cmd, "init"], cwd=proj_dir, capture_output=True, text=True
+            [cmd, action], cwd=proj_dir, capture_output=True, text=True
         )
     except FileNotFoundError:
         return  # codegraph not installed
     if result.returncode == 0:
         print("[Pipeline] codegraph index built.")
     else:
+        # A failed `index` has already discarded the database it was rebuilding,
+        # leaving an empty or schema-less file behind. Drop it so the fallback
+        # this message promises is the one that happens — an index nobody can read
+        # is worse than no index, because the pipeline would consume it as if it
+        # were complete. Remove the files, not `.codegraph/` itself: that
+        # directory is a symlink into oh-my-openagent's store on any project
+        # opened in an editor session.
+        outcome = "falling back to regex"
+        if action == "index":
+            try:
+                os.remove(db_path)
+            except OSError as exc:
+                # The database survived, so it stays discoverable and the regex
+                # fallback is NOT what happens — say that rather than claiming it.
+                # Leave the sidecars too: dropping a live database's -wal corrupts
+                # it, and half-removed is worse than untouched.
+                outcome = f"existing index left in place, may be stale ({exc})"
+            else:
+                for path in (f"{db_path}-wal", f"{db_path}-shm"):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
         logging.warning(
-            "codegraph init failed (non-fatal, falling back to regex): %s",
+            "codegraph %s failed (non-fatal, %s): %s",
+            action,
+            outcome,
             result.stderr[:300],
         )
