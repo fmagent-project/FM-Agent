@@ -12,6 +12,7 @@ _FUNCTION_TYPES = {
     "arrow_function",
     "method_definition",
 }
+_COMMENT_TYPES = {"comment", "html_comment"}
 
 
 def _line_end(node) -> int:
@@ -91,6 +92,50 @@ def split_blocks(func: str, granularity: int) -> list[str] | None:
         start = split_at + 1
 
     return blocks
+
+
+def remove_comments(code: str) -> str | None:
+    """Remove JavaScript comments using Tree-sitter syntax nodes."""
+    try:
+        import tree_sitter_javascript as ts_javascript
+        from tree_sitter import Language, Parser
+    except (ImportError, OSError):
+        return None
+
+    try:
+        source = code.encode("utf-8")
+        parser = Parser(Language(ts_javascript.language()))
+        tree = parser.parse(source)
+    except (TypeError, UnicodeError, ValueError):
+        return None
+
+    source_start = 0
+    source_end = len(source)
+    if tree.root_node.has_error:
+        prefix = b"class __FM_AGENT_COMMENT_WRAPPER__ {\n"
+        suffix = b"\n}"
+        try:
+            source = prefix + source + suffix
+            tree = parser.parse(source)
+        except (TypeError, UnicodeError, ValueError):
+            return None
+        if tree.root_node.has_error:
+            return None
+        source_start = len(prefix)
+        source_end += source_start
+
+    cleaned = bytearray(source)
+    nodes = [tree.root_node]
+    while nodes:
+        node = nodes.pop()
+        if node.type in _COMMENT_TYPES:
+            for index in range(node.start_byte, node.end_byte):
+                if cleaned[index] not in (ord("\n"), ord("\r")):
+                    cleaned[index] = ord(" ")
+            continue
+        nodes.extend(node.children)
+
+    return cleaned[source_start:source_end].decode("utf-8")
 
 
 def batch_extract(proj_dir: str) -> dict:
