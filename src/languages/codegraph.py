@@ -426,16 +426,18 @@ class CodeGraphExtractor:
             caller, callee = fqn_of.get(src_id), fqn_of.get(tgt_id)
             if not caller or not callee:
                 continue
-            # key 包含调用点坐标，区分同一函数内对同一 callee 的多次不同调用点，
-            # 否则第 2 次及以后的调用会被误判为重复而丢弃（order_index/arg_bindings 失效）
-            key = (caller, callee, "calls", file_path, start_line, start_col)
+            # Dedup key includes call-site coordinates so multiple call sites
+            # of the same callee within one function are all preserved; without
+            # them, the 2nd and later calls would be dropped (breaking
+            # order_index / arg_bindings).
+            key = (caller, callee, "call", file_path, start_line, start_col)
             if key in seen:
                 continue
             seen.add(key)
             result.append({
                 "caller": caller,
                 "callee": callee,
-                "kind": "calls",
+                "kind": "call",
                 "span": {
                     "file": file_path,
                     "start_line": start_line,
@@ -472,7 +474,8 @@ class CodeGraphExtractor:
                 caller, callee = fqn_of.get(src_id), fqn_of.get(ctor_id)
                 if not caller or not callee:
                     continue
-                # key 含调用点坐标，区分同一函数内对同一构造器的多次调用点
+                # Dedup key includes call-site coordinates so multiple
+                # constructor call sites within one function are preserved.
                 key = (caller, callee, "constructor", file_path, start_line, start_col)
                 if key in seen:
                     continue

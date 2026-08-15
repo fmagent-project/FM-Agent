@@ -124,13 +124,15 @@ def extract_incremental_sources(proj_dir: str, lang_key: str, sources: dict):
 
 _logger = logging.getLogger(__name__)
 
-# 允许透传的 edge 字段（内部缓存字段如 _internal_cache 会被过滤）
+# Edge fields allowed to pass through (internal cache fields like
+# _internal_cache are filtered out).
 _ALLOWED_EDGE_FIELDS = {
     "caller", "callee", "kind", "language",
     "span", "arg_bindings", "order_index",
 }
 
-# span 内部的标准字段名（不同后端可能叫 file/path/source_file，统一到 file）
+# Standard field names inside a span (backends may use file/path/source_file;
+# all are unified to "file").
 _SPAN_FIELD_ALIASES = {
     "file": ("file", "path", "source_file", "filename"),
     "start_line": ("start_line", "line"),
@@ -148,7 +150,7 @@ def _normalize_span(span) -> dict:
             if a in span and span[a] is not None:
                 out[canonical] = span[a]
                 break
-    # 保留未识别字段（向后兼容）
+    # Keep unrecognized fields for backward compatibility.
     for k, v in span.items():
         if k not in {x for aliases in _SPAN_FIELD_ALIASES.values() for x in aliases}:
             out[k] = v
@@ -179,11 +181,15 @@ def normalize_call_edges(edges, language=None) -> list:
     Accepts:
       - dict form:      {caller: {callee, ...}} / {caller: "callee_str"}
       - list form:      [{"caller": ..., "callee": ..., "kind": ...}]
-      - custom objects: 可转换为 dict 的 edge object（保留额外字段）
+      - custom objects: edge objects convertible to a dict (extra fields kept)
 
     Returns a list of normalized edge dicts. Malformed edges are skipped with
     a warning (never silently dropped — this is shared infrastructure).
     Dedup is applied at call-site granularity so the function is idempotent.
+
+    ``kind`` is unified to the canonical values "call" / "constructor"
+    (see issue #204). Codegraph directly emits "call"; legacy edge objects
+    emitting "calls" are mapped here for backward compatibility.
     """
     if edges is None:
         return []
@@ -192,10 +198,14 @@ def normalize_call_edges(edges, language=None) -> list:
     seen = set()
 
     def _append(d: dict) -> None:
-        # span 字段名统一
+        # Unify span field names.
         if "span" in d and isinstance(d["span"], dict):
             d["span"] = _normalize_span(d["span"])
-        # language 空字符串规范化：非空 language 参数覆盖空值
+        # Unify kind: map deprecated "calls" to "call", default missing to "call".
+        kind = d.get("kind")
+        if kind == "calls" or not kind:
+            d["kind"] = "call"
+        # Overwrite an empty language with the caller-provided one.
         if not d.get("language") and language:
             d["language"] = language
         key = _edge_dedup_key(d)
@@ -208,17 +218,12 @@ def normalize_call_edges(edges, language=None) -> list:
     if isinstance(edges, dict):
         for caller, callees in edges.items():
             if isinstance(callees, str):
-                callees = [callees]          # 兼容 {caller: "callee_str"}
+                callees = [callees]          # support {caller: "callee_str"}
             elif not isinstance(callees, (list, set, tuple)):
                 _logger.warning("Skipping malformed call edge (unknown container): %r", callees)
                 continue
             for callee in callees:
-                _append({
-                    "caller": caller,
-                    "callee": callee,
-                    "kind": "call",
-                    "language": language,
-                })
+                _append({"caller": caller, "callee": callee})
         return out
 
     # list form: normalized dicts or edge objects
@@ -226,14 +231,14 @@ def normalize_call_edges(edges, language=None) -> list:
         for e in edges:
             if isinstance(e, dict):
                 d = dict(e)
-                # schema 校验：缺 caller/callee 跳过（不静默——基础设施层要留日志）
+                # Schema validation: skip edges missing caller/callee (with a log).
                 if "caller" not in d or "callee" not in d:
                     _logger.warning("Skipping malformed call edge: %s", d)
                     continue
-                d.setdefault("kind", "call")
                 _append(d)
             else:
-                # custom object: 统一走 getattr（兼容 __dict__ / __slots__ / @property）
+                # Custom object: extract via getattr (works with __dict__,
+                # __slots__, and @property).
                 d = {}
                 for key in _ALLOWED_EDGE_FIELDS:
                     if hasattr(e, key):
@@ -241,8 +246,9 @@ def normalize_call_edges(edges, language=None) -> list:
                         if val is not None:
                             d[key] = val
                 if "caller" in d and "callee" in d:
-                    d.setdefault("kind", "call")
                     _append(d)
+                else:
+                    _logger.warning("Skipping malformed call edge object: %r", e)
         return out
 
     return []
