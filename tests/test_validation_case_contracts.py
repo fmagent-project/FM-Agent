@@ -425,6 +425,9 @@ class ValidationCaseContractTests(unittest.TestCase):
                 )
                 self.assertEqual(rebuilt, submission)
                 self.assertEqual(rebuilt.content_sha256, submission.content_sha256)
+                self.assertEqual(rebuilt.ref.kind, ContractRefKind.CASE_SUBMISSION)
+                self.assertEqual(rebuilt.ref.contract_id, submission.content_sha256)
+                self.assertEqual(rebuilt.ref.contract_version, "4")
         self.assertIn("case_plan", candidate.to_document())
         self.assertNotIn("case_plan", not_confirmed.to_document())
 

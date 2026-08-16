@@ -603,6 +603,15 @@ class CaseSubmission:
     def content_sha256(self) -> str:
         return canonical_sha256(self.to_document())
 
+    @property
+    def ref(self) -> ContractRef:
+        return ContractRef(
+            kind=ContractRefKind.CASE_SUBMISSION,
+            contract_id=self.content_sha256,
+            contract_version=str(_CASE_SUBMISSION_SCHEMA_VERSION),
+            content_sha256=self.content_sha256,
+        )
+
 
 def _validate_identity_against_profile(
     identity: ValidationInstanceIdentity,

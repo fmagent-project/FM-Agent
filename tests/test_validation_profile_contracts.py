@@ -386,15 +386,63 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "validate_template_baseline_selections",
             "validate_template_determinism",
         }
+        stage_4c_exports = {
+            "B1TerminalOutcome",
+            "B2RecheckFailedOutcome",
+            "CandidateGateReceipt",
+            "CanonicalTypedValue",
+            "CanonicalValueKind",
+            "CapturedArtifact",
+            "CaseReasonCode",
+            "CaseStatus",
+            "CertificateV2",
+            "ConfirmedOutcome",
+            "CrossGateDecision",
+            "CrossGateFailedOutcome",
+            "CrossGateVerdict",
+            "DecisionQuorum",
+            "EarlyGateReceipt",
+            "EarlyGateStage",
+            "ExplicitNotConfirmedOutcome",
+            "FastPathCheck",
+            "FastPathGateReceipt",
+            "GateAttemptDisposition",
+            "GatePhaseResult",
+            "GatePhaseStatus",
+            "GateReceipt",
+            "GateReceiptKind",
+            "Observation",
+            "ObservationFactKind",
+            "OracleDecision",
+            "OracleVerdict",
+            "OutcomeKind",
+            "ValidationGrade",
+            "ValidationOutcome",
+            "gate_receipt_from_document",
+            "gate_receipt_from_json",
+            "validate_b1_b2_gate_receipts",
+            "validate_b1_b2_observation_independence",
+            "validate_candidate_gate_receipt_membership",
+            "validate_candidate_gate_receipt_phases",
+            "validate_certificate_publication",
+            "validate_cross_gate_decision",
+            "validate_early_gate_receipt_identity",
+            "validate_fast_path_gate_receipt_identity",
+            "validate_oracle_decision_evidence",
+            "validate_outcome_publication",
+            "validate_status_reason",
+            "validation_outcome_from_document",
+            "validation_outcome_from_json",
+        }
         exports = contracts_namespace.__all__
         self.assertEqual(len(exports), len(set(exports)))
         self.assertEqual(
             set(exports),
-            pre_stage_exports | stage_exports | stage_4b_exports,
+            pre_stage_exports | stage_exports | stage_4b_exports | stage_4c_exports,
         )
         for name in exports:
             self.assertTrue(hasattr(contracts_namespace, name), name)
-        for name in stage_exports | stage_4b_exports:
+        for name in stage_exports | stage_4b_exports | stage_4c_exports:
             self.assertFalse(hasattr(production_root, name), name)
 
     def test_profile_round_trip_hash_and_deep_immutability(self):
@@ -574,10 +622,27 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
         recipe = _recipe()
         guard = _golden_spec(recipe, oracle_id="example.guard")
         causal = _causal_spec(recipe, guard)
-        bundle = _bundle(
+        missing_guard_bundle = _bundle(
             (causal,),
             role=ControlEvidenceRole.DUAL_ROLE,
             control_oracle=causal.ref,
+        )
+        missing_guard_profile = _profile(
+            (guard, causal),
+            (missing_guard_bundle,),
+            (recipe,),
+        )
+        with self.assertRaisesRegex(ContractError, "required_guards"):
+            validate_frozen_profile_contracts(
+                missing_guard_profile,
+                oracle_specs=(guard, causal),
+                oracle_bundles=(missing_guard_bundle,),
+                execution_recipes=(recipe,),
+            )
+
+        bundle = dataclasses.replace(
+            missing_guard_bundle,
+            required_guards=(guard.ref,),
         )
         profile = _profile((guard, causal), (bundle,), (recipe,))
         validate_frozen_profile_contracts(
@@ -790,10 +855,14 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "base",
             "case",
             "execution",
+            "evidence",
             "oracle",
+            "outcome",
             "plan",
             "profile",
+            "receipt",
             "references",
+            "status",
         }
         for relative_path in (
             "src/validation_core/contracts/base.py",
@@ -803,6 +872,10 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "src/validation_core/contracts/profile.py",
             "src/validation_core/contracts/case.py",
             "src/validation_core/contracts/plan.py",
+            "src/validation_core/contracts/status.py",
+            "src/validation_core/contracts/evidence.py",
+            "src/validation_core/contracts/receipt.py",
+            "src/validation_core/contracts/outcome.py",
         ):
             with self.subTest(relative_path=relative_path):
                 tree = ast.parse(Path(relative_path).read_text(encoding="utf-8"))

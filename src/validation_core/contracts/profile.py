@@ -702,6 +702,16 @@ def validate_frozen_profile_contracts(
         member_specs = tuple(
             specs_by_ref[reference] for reference in bundle.oracle_spec_refs
         )
+        dependent_guards = {
+            dependency
+            for spec in member_specs
+            for dependency in spec.dependent_oracle_spec_refs
+        }
+        if not dependent_guards.issubset(set(bundle.required_guards)):
+            raise ContractError(
+                f"oracle bundle {bundle.bundle_id} must list every dependent "
+                "correctness guard in required_guards"
+            )
         causal_members = {
             spec.ref
             for spec in member_specs
