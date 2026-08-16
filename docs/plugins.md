@@ -159,6 +159,38 @@ The file is rewritten for every fresh, resume, or isolate pipeline call. The
 configure hook runs once per `run_pipeline()` call before Stage 1. FM-Agent
 still writes the context when no configure hook is declared.
 
+### Configuring the specification strategy
+
+A configure hook may select a plugin-owned specification form for the built-in
+Stage 6. Assuming `CUSTOM_SPEC_FORM` is a `SpecForm` instance defined or imported
+by the plugin:
+
+```python
+from src.spec_forms import configure_current_spec_generation
+
+
+def configure(proj_dir: str) -> None:
+    del proj_dir
+    configure_current_spec_generation(
+        spec_form=CUSTOM_SPEC_FORM,
+        enable_reasoning=False,
+    )
+```
+
+`configure_current_spec_generation()` is available only while FM-Agent is
+executing the declared configure hook. Calling it while importing `plugin.py`,
+from a stage hook, or at any other time fails. Each `run_pipeline()` call starts
+with a new software-default configuration, and FM-Agent validates the final
+form, form identity, schema version, and reasoning flag after the hook returns.
+
+The current reasoning and bug-validation backend only supports the exact
+built-in `SoftwareSpecForm` type and its `.spec.json` / `.info.json` artifacts.
+Any form whose concrete type is not exactly `SoftwareSpecForm`, including a
+subclass or another plugin-owned implementation, must set
+`enable_reasoning=False`; otherwise configuration fails before Stage 1. This
+compatibility check also applies when the command uses `--only-spec`, which is
+a per-run execution override rather than a different plugin strategy.
+
 ## Resume, isolate, and incremental runs
 
 Modify hooks run whenever execution reaches their stage boundary. They still
@@ -180,7 +212,10 @@ FM-Agent checks that:
 - stage names, modes, and field combinations are supported;
 - `plugin.py` exists and imports successfully;
 - declared objects exist, are callable, and have the exact hook signature;
-- hooks do not raise and their actual return values are `None`.
+- hooks do not raise and their actual return values are `None`;
+- a specification strategy configured by the configure hook has a valid
+  `SpecForm`, non-empty form identity and schema version, and a boolean reasoning
+  flag.
 
 FM-Agent does not check:
 

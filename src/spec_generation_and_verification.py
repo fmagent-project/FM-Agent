@@ -9,26 +9,72 @@ import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
-from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready
+from src.file_utils import _get_incomplete_verification_files, _get_phase_files
+from src.generate_batch_prompts import generate_batch_prompts
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
+from src.spec_forms import SpecForm, SpecGenerationConfig
 from src.verification import streaming_reasoner
 
 
-def _get_pending_batches(batches, proj_dir):
+def stage_spec_generation_prompts(
+    *,
+    spec_form: SpecForm,
+    script_dir,
+    work_dir,
+    spec_prompts_dir,
+):
+    """Stage the active form's prompts before plugin stage hooks run."""
+    os.makedirs(spec_prompts_dir, exist_ok=True)
+    system_prompt_src = spec_form.system_prompt_path(Path(script_dir))
+    system_prompt_dst = os.path.join(spec_prompts_dir, "system_prompt.md")
+    shutil.copy2(system_prompt_src, system_prompt_dst)
+
+    workflow_prompt_src = spec_form.workflow_prompt_path(Path(script_dir))
+    workflow_prompt_dst = os.path.join(
+        work_dir,
+        "workflow_spec_step4_batch.md",
+    )
+    shutil.copy2(workflow_prompt_src, workflow_prompt_dst)
+
+
+def _get_pending_batches(
+    batches,
+    proj_dir,
+    spec_form: SpecForm,
+    expected_dependencies_by_file,
+):
     """Return batches that still have at least one function without specs."""
     pending = []
     for batch in batches:
         for func_rel in batch.get("functions", []):
-            full_path = os.path.join(proj_dir, func_rel)
-            if not is_file_ready(full_path):
+            full_path = os.path.normpath(os.path.join(proj_dir, func_rel))
+            expected_dependencies = expected_dependencies_by_file.get(
+                full_path,
+                (),
+            )
+            if not spec_form.validate(
+                Path(full_path),
+                expected_dependencies=expected_dependencies,
+            ).ready:
                 pending.append(batch)
                 break
     return pending
+
+
+def _topdown_unit_path(proj_dir, work_dir, file_rel):
+    """Resolve a topdown unit path, including a tolerated fm_agent/ prefix."""
+    file_path = Path(file_rel)
+    if file_path.is_absolute():
+        return os.path.normpath(file_path)
+    if file_path.parts[:1] == (Path(work_dir).name,):
+        return os.path.normpath(Path(proj_dir) / file_path)
+    return os.path.normpath(Path(work_dir) / file_path)
 
 
 def _run_spec_generation_batch(
@@ -39,6 +85,7 @@ def _run_spec_generation_batch(
     layer_idx,
     batch_rel_dir,
     batch_info,
+    spec_form: SpecForm,
 ):
     # Run one batch end-to-end so the executor can refill slots as soon as a
     # batch finishes, instead of waiting for a whole chunk barrier.
@@ -49,27 +96,7 @@ def _run_spec_generation_batch(
         function_id_from_extracted_path(func_rel)
         for func_rel in function_files
     ]
-    fm_reminder = ("IMPORTANT: fm_agent/ is your output workspace, not project source. "
-                    "Do NOT modify any existing project files.")
-    if attempt == 1:
-        prompt = (
-            f"Process the batch prompt file at {batch_prompt_rel}. "
-            f"Read it and fm_agent/spec_prompts/system_prompt.md, "
-            f"generate behavioral specs for each function listed, "
-            f"and write the .spec.json and .info.json files for each function. "
-            f"Do not modify the function source files. {fm_reminder}"
-        )
-    else:
-        prompt = (
-            f"Continue processing the batch prompt file at {batch_prompt_rel}. "
-            f"Some functions may already have valid specs from a previous attempt. "
-            f"Check each function listed in the batch prompt. Skip it only when both "
-            f"its .spec.json and .info.json files contain valid JSON matching the "
-            f"schemas in fm_agent/spec_prompts/system_prompt.md. If either sidecar "
-            f"is missing, malformed, or schema-invalid, rewrite the complete "
-            f".spec.json and .info.json files for that function. "
-            f"Do not modify the function source files. {fm_reminder}"
-        )
+    prompt = spec_form.generation_instruction(batch_prompt_rel, attempt)
     prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
     command = build_llm_cli_command(
         model=OPENCODE_SPEC_MODEL,
@@ -90,13 +117,9 @@ def _run_spec_generation_batch(
                 "fm_agent/spec_prompts/system_prompt.md",
                 *list_staged_domain_knowledge_relpaths(work_dir),
             ],
-            output_files=[
-                f"{function_file}.spec.json"
-                for function_file in function_files
-            ] + [
-                f"{function_file}.info.json"
-                for function_file in function_files
-            ],
+            output_files=spec_form.trace_outputs(
+                [Path(function_file) for function_file in function_files]
+            ),
             summary=f"OpenCode spec generation for {batch_file}",
             metadata={
                 "attempt": attempt,
@@ -112,13 +135,13 @@ def _run_spec_generation_batch(
 
 def run_spec_generation_and_verification(
     proj_dir, work_dir, input_dir, output_dir, script_dir, spec_prompts_dir,
-    phases_data, resume=False, extra_call_edges=None, only_spec=False,
-    bug_validator_path=None, all_bugs=False,
+    phases_data, spec_generation_config: SpecGenerationConfig, resume=False,
+    extra_call_edges=None, only_spec=False, bug_validator_path=None,
+    all_bugs=False,
 ):
-    # --- Stage 4: Execute spec generation workflow (per phase, per layer) ---
-    batch_md_src = os.path.join(script_dir, "md", "workflow_spec_step4_batch.md")
-    batch_md_dst = os.path.join(work_dir, "workflow_spec_step4_batch.md")
-    shutil.copy2(batch_md_src, batch_md_dst)
+    # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
+    spec_form = spec_generation_config.spec_form
+    run_reasoning = spec_generation_config.should_run_reasoning(only_spec)
 
     all_processed = set()
     num_phases = len(phases_data["phases"])
@@ -127,7 +150,12 @@ def run_spec_generation_and_verification(
     for phase_info in sorted(phases_data["phases"], key=lambda p: p["phase"]):
         phase_num = phase_info["phase"]
         phase_name = phase_info["name"]
-        phase_files = _get_phase_files(phases_data, phase_num, input_dir)
+        phase_files = _get_phase_files(
+            phases_data,
+            phase_num,
+            input_dir,
+            spec_form=spec_form,
+        )
 
         if not phase_files:
             logging.info(f"Phase {phase_num} ({phase_name}): no extracted files, skipping.")
@@ -138,10 +166,22 @@ def run_spec_generation_and_verification(
             spec_prompts_dir, f"phase_{phase_num:02d}_topdown_layers.json"
         )
         if not os.path.exists(layers_json_path):
-            generate_topdown_layers(work_dir, [phase_num], extra_call_edges=extra_call_edges)
+            generate_topdown_layers(
+                work_dir,
+                [phase_num],
+                extra_call_edges=extra_call_edges,
+                spec_form=spec_form,
+            )
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
         total_layers = layers_data.get("total_layers", 1)
+        expected_dependencies_by_file = {
+            _topdown_unit_path(proj_dir, work_dir, fn["file"]): tuple(
+                fn.get("all_callees", ())
+            )
+            for layer in layers_data.get("layers", [])
+            for fn in layer.get("functions", [])
+        }
 
         batch_dir = os.path.join(
             spec_prompts_dir,
@@ -151,18 +191,14 @@ def run_spec_generation_and_verification(
         for layer_idx in range(total_layers):
             print(f"[Pipeline] Stage 6/6: Phase {phase_num}/{num_phases} — {phase_name}, Layer {layer_idx}/{total_layers - 1}")
 
-            # Generate batch prompts for this layer. On resume, skip functions
-            # that were already specced in a previous run.
-            batch_cmd = ["python3", "fm_agent/spec_prompts/generate_batch_prompts.py",
-                         "--phase", str(phase_num), "--layers", str(layer_idx)]
-            if resume:
-                batch_cmd.append("--resume")
-            subprocess.run(batch_cmd, cwd=proj_dir, check=True)
-
-            # Read manifest
-            manifest_path = os.path.join(batch_dir, "manifest.json")
-            with open(manifest_path, "r") as f:
-                manifest = json.load(f)
+            manifest = generate_batch_prompts(
+                work_dir=Path(work_dir),
+                phase=phase_num,
+                layers_spec=str(layer_idx),
+                spec_form=spec_form,
+                output_dir=Path(batch_dir),
+                resume=resume,
+            )
             all_batches = manifest.get("batches", [])
 
             if not all_batches:
@@ -182,11 +218,16 @@ def run_spec_generation_and_verification(
 
             for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
                 # Find batches with unspecced functions
-                pending_batches = _get_pending_batches(all_batches, proj_dir)
+                pending_batches = _get_pending_batches(
+                    all_batches,
+                    proj_dir,
+                    spec_form,
+                    expected_dependencies_by_file,
+                )
                 if not pending_batches:
-                    # All functions in this layer are specced. In only-spec mode
-                    # we stop here without running the reasoner/bug validation.
-                    if not only_spec:
+                    # All functions in this layer are specced. When downstream
+                    # reasoning is disabled, there is no further layer work.
+                    if run_reasoning:
                         incomplete_verification = _get_incomplete_verification_files(
                             layer_files,
                             input_dir,
@@ -238,6 +279,7 @@ def run_spec_generation_and_verification(
                                 layer_idx,
                                 batch_rel_dir,
                                 batch_info,
+                                spec_form,
                             )
                         )
 
@@ -246,7 +288,7 @@ def run_spec_generation_and_verification(
                         f"submitted {len(spec_futures)} spec-generation batch tasks "
                         f"(max_workers={MAX_WORKERS}, total_pending_batches={len(pending_batches)})"
                     )
-                    if spec_futures and not only_spec:
+                    if spec_futures and run_reasoning:
                         newly_processed = streaming_reasoner(
                             input_dir, output_dir, file_list=layer_files,
                             proj_dir=proj_dir, work_dir=work_dir,
@@ -267,9 +309,20 @@ def run_spec_generation_and_verification(
                 # Check if any files in this layer received specs
                 specs_generated = sum(
                     1 for rel in layer_files
-                    if is_file_ready(os.path.join(input_dir, rel))
+                    if spec_form.validate(
+                        Path(os.path.normpath(os.path.join(input_dir, rel))),
+                        expected_dependencies=expected_dependencies_by_file.get(
+                            os.path.normpath(os.path.join(input_dir, rel)),
+                            (),
+                        ),
+                    ).ready
                 )
-                if specs_generated > 0 and not _get_pending_batches(all_batches, proj_dir):
+                if specs_generated > 0 and not _get_pending_batches(
+                    all_batches,
+                    proj_dir,
+                    spec_form,
+                    expected_dependencies_by_file,
+                ):
                     break
 
                 if specs_generated > 0:

@@ -1,22 +1,12 @@
 import json
 import os
 import re
+from pathlib import Path
+
+from .spec_forms import SOFTWARE_SPEC_FORM
 
 
 _METADATA_SIDECAR_SUFFIXES = (".spec.json", ".info.json")
-
-_SPEC_FIELDS = {
-    "signature",
-    "pre_condition",
-    "post_condition",
-}
-
-_CALLEE_FIELDS = {
-    "name",
-    "signature",
-    "pre_condition",
-    "post_condition",
-}
 
 _ALL_BUGS_GAP_FIELDS = {
     "spec_claim",
@@ -46,6 +36,16 @@ def _is_metadata_sidecar(file_path):
     return str(file_path).endswith(_METADATA_SIDECAR_SUFFIXES)
 
 
+def _exclude_spec_artifacts(file_paths, spec_form=SOFTWARE_SPEC_FORM):
+    """Exclude artifacts owned by the configured specification form."""
+    return [
+        file_path
+        for file_path in file_paths
+        if not _is_metadata_sidecar(file_path)
+        and not spec_form.is_artifact_path(Path(file_path))
+    ]
+
+
 def _write_file_names(file_names, output_path):
     """Write sorted, de-duplicated file names to output_path."""
     file_names = sorted(dict.fromkeys(file_names))
@@ -56,66 +56,41 @@ def _write_file_names(file_names, output_path):
     return file_names
 
 
-def collect_file_names(input_dir, output_path="file_list.json"):
+def collect_file_names(
+    input_dir,
+    output_path="file_list.json",
+    *,
+    spec_form=SOFTWARE_SPEC_FORM,
+):
     """Collect all file names under input_dir and write them to a JSON file.
 
     Each entry contains the relative path starting from input_dir.
     """
-    file_names = []
+    file_paths = []
     for root, _, files in os.walk(input_dir):
         for fname in files:
-            if _is_metadata_sidecar(fname):
-                continue
             full_path = os.path.join(root, fname)
-            rel_path = os.path.relpath(full_path, input_dir)
-            file_names.append(rel_path)
+            file_paths.append(full_path)
+    file_names = [
+        os.path.relpath(file_path, input_dir)
+        for file_path in _exclude_spec_artifacts(file_paths, spec_form)
+    ]
     return _write_file_names(file_names, output_path)
 
 
 def _is_valid_spec_json(data):
     """Check that .spec.json contains exactly the supported fields."""
-    if not isinstance(data, dict):
-        return False
-    if set(data) != _SPEC_FIELDS:
-        return False
-    return all(isinstance(data[field], str) for field in _SPEC_FIELDS)
+    return SOFTWARE_SPEC_FORM.is_valid_spec_data(data)
 
 
 def _is_valid_info_json(data):
     """Check that .info.json contains exactly the supported fields."""
-    if not isinstance(data, dict) or set(data) != {"callees"}:
-        return False
-
-    callees = data["callees"]
-    if not isinstance(callees, list):
-        return False
-
-    for callee in callees:
-        if not isinstance(callee, dict) or set(callee) != _CALLEE_FIELDS:
-            return False
-        if not all(isinstance(callee[field], str) for field in _CALLEE_FIELDS):
-            return False
-
-    return True
+    return SOFTWARE_SPEC_FORM.is_valid_info_data(data)
 
 
 def is_file_ready(file_path):
     """Return whether both metadata sidecars contain valid new-format JSON."""
-    spec_path = f"{file_path}.spec.json"
-    info_path = f"{file_path}.info.json"
-
-    if not os.path.isfile(spec_path) or not os.path.isfile(info_path):
-        return False
-
-    try:
-        with open(spec_path, "r", encoding="utf-8") as file:
-            spec = json.load(file)
-        with open(info_path, "r", encoding="utf-8") as file:
-            info = json.load(file)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-
-    return _is_valid_spec_json(spec) and _is_valid_info_json(info)
+    return SOFTWARE_SPEC_FORM.validate(file_path).ready
 
 
 # Directories that typically contain test code
@@ -384,7 +359,13 @@ def _json_file_is_valid(path):
         return False
 
 
-def _get_phase_files(phases_data, phase_num, input_dir):
+def _get_phase_files(
+    phases_data,
+    phase_num,
+    input_dir,
+    *,
+    spec_form=SOFTWARE_SPEC_FORM,
+):
     """Return relative paths of extracted function files for a given phase."""
     phase = next(p for p in phases_data["phases"] if p["phase"] == phase_num)
     phase_files = []
@@ -406,12 +387,20 @@ def _get_phase_files(phases_data, phase_num, input_dir):
                 for root, _dirs, fnames in os.walk(extracted_dir):
                     for fname in sorted(fnames):
                         fpath = os.path.join(root, fname)
-                        if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
-                            phase_files.append(os.path.relpath(fpath, input_dir))
-    return phase_files
+                        if os.path.isfile(fpath):
+                            phase_files.append(fpath)
+    return [
+        os.path.relpath(file_path, input_dir)
+        for file_path in _exclude_spec_artifacts(phase_files, spec_form)
+    ]
 
 
-def _get_all_phase_files(phases_data, input_dir):
+def _get_all_phase_files(
+    phases_data,
+    input_dir,
+    *,
+    spec_form=SOFTWARE_SPEC_FORM,
+):
     """Return extracted function files reachable from all phases in phases.json."""
     phase_files = []
     seen = set()
@@ -419,7 +408,12 @@ def _get_all_phase_files(phases_data, input_dir):
         phase_num = phase_info.get("phase")
         if phase_num is None:
             continue
-        for rel in _get_phase_files(phases_data, phase_num, input_dir):
+        for rel in _get_phase_files(
+            phases_data,
+            phase_num,
+            input_dir,
+            spec_form=spec_form,
+        ):
             if rel not in seen:
                 seen.add(rel)
                 phase_files.append(rel)

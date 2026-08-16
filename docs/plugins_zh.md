@@ -152,6 +152,35 @@ fresh、resume 和 isolate 的每次 Pipeline 调用都会重写上下文。conf
 Stage 1 前、每次 `run_pipeline()` 调用中执行一次。未声明 configure Hook 时仍会
 写入上下文文件。
 
+### 配置规约生成策略
+
+configure Hook 可以为内置 Stage 6 选择插件自有的 SpecForm。假设 `CUSTOM_SPEC_FORM`
+是插件定义或导入的 `SpecForm` 实例：
+
+```python
+from src.spec_forms import configure_current_spec_generation
+
+
+def configure(proj_dir: str) -> None:
+    del proj_dir
+    configure_current_spec_generation(
+        spec_form=CUSTOM_SPEC_FORM,
+        enable_reasoning=False,
+    )
+```
+
+`configure_current_spec_generation()` 只在 FM-Agent 执行已声明的 configure Hook
+期间可用。在导入 `plugin.py` 时、Stage Hook 中或其他时机调用都会失败。每次
+`run_pipeline()` 都从新的软件默认配置开始；configure Hook 返回后，FM-Agent
+会验证最终 SpecForm、form identity、schema version 和 reasoning 开关。
+
+当前 reasoning 和 Bug Validation backend 只支持精确的内置
+`SoftwareSpecForm` 类型及其 `.spec.json` / `.info.json` 产物。具体类型不是
+`SoftwareSpecForm` 的 form（包括其子类或其他插件自有实现）必须设置
+`enable_reasoning=False`，否则配置会在 Stage 1 前失败。即使命令使用
+`--only-spec`，该兼容性校验仍然执行；`--only-spec` 是单次运行的执行覆盖，
+不是另一种插件策略。
+
 ## Resume、isolate 与 incremental
 
 执行到 Stage 边界时 Modify Hook 就会运行。即使内置 Stage 在 resume 中复用
@@ -171,7 +200,9 @@ FM-Agent 检查：
 - Stage 名称、模式和字段组合合法；
 - `plugin.py` 存在且可以导入；
 - 声明的对象存在、可调用并具有精确 Hook 签名；
-- Hook 不抛出异常且实际返回值为 `None`。
+- Hook 不抛出异常且实际返回值为 `None`；
+- configure Hook 配置的规约策略具有合法的 `SpecForm`、非空 form identity 和
+  schema version，以及布尔类型的 reasoning 开关。
 
 FM-Agent 不检查：
 

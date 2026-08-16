@@ -2,19 +2,17 @@
 
 import argparse
 import json
-import re
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-# file_utils.py sits beside this script after being copied into fm_agent/spec_prompts/.
-try:
-    # When imported as part of the src package (e.g. incremental_reasoner).
-    from .file_utils import is_file_ready
+# Keep the source-tree CLI usable without making the pipeline copy this module
+# into each target project. Package imports use the canonical domain helper and
+# specification contract; direct execution retains the small path-only helper.
+if __package__:
     from .domain_knowledge import list_staged_domain_knowledge_relpaths
-except ImportError:
-    # When run standalone after being copied into fm_agent/spec_prompts/,
-    # where file_utils.py sits beside this script.
-    from file_utils import is_file_ready
+    from .spec_forms import SOFTWARE_SPEC_FORM, SpecForm
+else:
+    from spec_forms import SOFTWARE_SPEC_FORM, SpecForm
 
     def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
         knowledge_dir = Path(work_dir) / "spec_prompts" / "domain_context" / "user_knowledge"
@@ -66,7 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip functions already specced (file_utils.is_file_ready) when building batches",
+        help="Skip functions whose software specification artifacts are already valid",
     )
     return parser.parse_args()
 
@@ -84,47 +82,14 @@ def parse_layers_spec(layers_spec: str) -> Tuple[int, int]:
     return start, end
 
 
-def _spec_json_path(filepath: Path) -> Path:
-    """Return the spec sidecar next to one extracted function file."""
-    return Path(str(filepath) + ".spec.json")
-
-
-def _info_json_path(filepath: Path) -> Path:
-    """Return the info sidecar next to one extracted function file."""
-    return Path(str(filepath) + ".info.json")
-
-
 def extract_spec_block(filepath: Path) -> Optional[str]:
-    """Read .spec.json and rebuild reasoner-facing spec text."""
-    spec_path = _spec_json_path(filepath)
-
-    try:
-        with spec_path.open("r", encoding="utf-8") as file:
-            spec = json.load(file)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-
-    if not isinstance(spec, dict):
-        return None
-
-    return (
-        f"{spec.get('signature', '')}\n\n"
-        f"Pre-condition:\n{spec.get('pre_condition', '')}\n\n"
-        f"Post-condition:\n{spec.get('post_condition', '')}"
-    )
+    """Compatibility adapter for incremental software reasoning."""
+    return SOFTWARE_SPEC_FORM.read_self_spec(filepath)
 
 
 def extract_info_block(filepath: Path) -> Optional[dict]:
-    """Read the adjacent .info.json object when it is usable."""
-    info_path = _info_json_path(filepath)
-
-    try:
-        with info_path.open("r", encoding="utf-8") as file:
-            info = json.load(file)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-
-    return info if isinstance(info, dict) else None
+    """Compatibility adapter for incremental software reasoning."""
+    return SOFTWARE_SPEC_FORM.read_info_data(filepath)
 
 
 def extract_callee_spec_from_info(
@@ -132,40 +97,12 @@ def extract_callee_spec_from_info(
     callee_fqn: str,
     aliases: Optional[Sequence[str]] = None,
 ) -> Optional[dict]:
-    """Return the callee object matching the requested FQN or edge aliases."""
-    names = _callee_match_names(callee_fqn, aliases or ())
-    callees = info_dict.get("callees", [])
-    if not isinstance(callees, list):
-        return None
-
-    for callee in callees:
-        if not isinstance(callee, dict):
-            continue
-        name = callee.get("name", "")
-        if not isinstance(name, str):
-            continue
-        if any(_info_line_mentions_name(name, candidate) for candidate in names):
-            return callee
-    return None
-
-
-def _callee_match_names(callee_fqn: str, aliases: Sequence[str]) -> List[str]:
-    names = [callee_fqn, callee_fqn.split("::")[-1]]
-    for alias in aliases:
-        if not alias:
-            continue
-        names.append(alias)
-        if "::" in alias:
-            names.append(alias.rsplit("::", 1)[-1])
-    return list(dict.fromkeys(names))
-
-
-def _info_line_mentions_name(first_line: str, name: str) -> bool:
-    if not name:
-        return False
-    if "::" in name:
-        return name in first_line
-    return bool(re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?:\s*\(|\b)", first_line))
+    """Compatibility adapter for incremental software reasoning."""
+    return SOFTWARE_SPEC_FORM.find_dependency_entry(
+        info_dict,
+        callee_fqn,
+        aliases or (),
+    )
 
 
 def chunked(items: List[dict], size: int) -> List[List[dict]]:
@@ -215,6 +152,7 @@ def build_prompt(
     work_dir: Path,
     fm_agent_prefix: str,
     ext_to_lang: Dict[str, str],
+    spec_form: SpecForm,
 ) -> str:
     lines: List[str] = []
     sample_lang = "unknown"
@@ -223,10 +161,7 @@ def build_prompt(
 
     lines.append(f"You are generating behavioral specifications for Phase {phase}, Layer {layer_idx}.")
     lines.append("")
-    lines.append(
-        f"Language: {sample_lang}. "
-        "Write specifications to adjacent .spec.json and .info.json files."
-    )
+    lines.append(spec_form.batch_intro(sample_lang))
     lines.append("")
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
     lines.append(f"Read: {fm_agent_prefix}spec_prompts/domain_context/engine_overview.txt")
@@ -263,21 +198,15 @@ def build_prompt(
             if not caller_meta:
                 continue
             caller_file = work_dir / caller_meta["file"]
-            spec_block = extract_spec_block(caller_file)
+            spec_block = spec_form.read_self_spec(caller_file)
             if spec_block and (caller_name, spec_block) not in caller_specs:
                 caller_specs.append((caller_name, spec_block))
-            info_dict = extract_info_block(caller_file)
-            if not info_dict:
-                continue
-            entry = extract_callee_spec_from_info(
-                info_dict, fn_name, info_names_by_caller.get(caller_name, [])
+            entry_text = spec_form.read_dependency_expectation(
+                caller_file,
+                fn_name,
+                info_names_by_caller.get(caller_name, []),
             )
-            if entry:
-                entry_text = (
-                    f"{entry.get('signature', '')}\n"
-                    f"  Pre-condition: {entry.get('pre_condition', '')}\n"
-                    f"  Post-condition: {entry.get('post_condition', '')}"
-                )
+            if entry_text:
                 caller_expectations.setdefault(fn_name, []).append(
                     (caller_name, entry_text)
                 )
@@ -330,55 +259,26 @@ def build_prompt(
             lines.append("  Earlier-layer callers: (none)")
 
     lines.append("")
-    lines.append("## SPEC FORMAT (write JSON files; do NOT modify source files)")
-    lines.append("")
-    lines.append(
-        "For each function file `<function-file>`, "
-        "write TWO JSON files in the SAME directory. "
-        "`<function-file>` includes its original extension "
-        "(for example, `foo.py` must produce `foo.py.spec.json` "
-        "and `foo.py.info.json`):"
-    )
-    lines.append("")
-    lines.append("`<function-file>.spec.json`:")
-    lines.append("```json")
-    lines.append(
-        '{"signature": "<FunctionName>(<params>) -> <ReturnType>", '
-        '"pre_condition": "...", "post_condition": "..."}'
-    )
-    lines.append("```")
-    lines.append("")
-    lines.append("`<function-file>.info.json`:")
-    lines.append("```json")
-    lines.append(
-        '{"callees": [{"name": "<callee_name>", "signature": "...", '
-        '"pre_condition": "...", "post_condition": "..."}]}'
-    )
-    lines.append("```")
-    lines.append("")
-    lines.append('If the function has no callees: write `{"callees": []}` to the .info.json file.')
-    lines.append("")
-    lines.append("## PROCESS")
-    lines.append("For each function:")
-    lines.append("1. Read the extracted file")
-    lines.append("2. Read caller expectations above - what do callers NEED from this function?")
-    lines.append("3. Write a behavioral spec describing WHAT it guarantees (not HOW)")
-    lines.append(
-        "4. Write the COMPLETE .spec.json and .info.json objects next to the "
-        "UNCHANGED source file"
-    )
-    lines.append("5. Use the Write tool to save both JSON files")
+    lines.extend(spec_form.output_contract_prompt().splitlines())
     return "\n".join(lines).rstrip() + "\n"
 
 
-def main() -> int:
-    args = parse_args()
-    if args.batch_size <= 0:
+def generate_batch_prompts(
+    work_dir: Path,
+    phase: int,
+    layers_spec: str,
+    *,
+    spec_form: SpecForm,
+    batch_size: int = 2,
+    output_dir: Optional[Path] = None,
+    resume: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Build, persist, and return the batch manifest for a layer range."""
+    if batch_size <= 0:
         raise ValueError("--batch-size must be > 0")
 
-    # work_dir is the fm_agent/ directory (parent of spec_prompts/ where this script lives)
-    work_dir = Path(__file__).resolve().parent.parent
-    # fm_agent_prefix is the relative path from the project root to work_dir
+    work_dir = Path(work_dir)
     repo_root = work_dir.parent
     fm_agent_prefix = str(work_dir.relative_to(repo_root)) + "/"
 
@@ -388,16 +288,22 @@ def main() -> int:
     exts = phases_json.get("file_extensions", [])
     ext_to_lang = {ext.lower().lstrip("."): lang for ext, lang in zip(exts, languages)}
 
-    topdown_path = work_dir / "spec_prompts" / f"phase_{args.phase:02d}_topdown_layers.json"
+    topdown_path = (
+        work_dir
+        / "spec_prompts"
+        / f"phase_{phase:02d}_topdown_layers.json"
+    )
     topdown = read_json(topdown_path)
     layers = topdown.get("layers", [])
     total_layers = len(layers)
-    start_layer, end_layer = parse_layers_spec(args.layers)
+    start_layer, end_layer = parse_layers_spec(layers_spec)
     if start_layer < 0 or end_layer >= total_layers:
-        raise ValueError(f"layer range {args.layers} out of bounds [0, {total_layers - 1}]")
+        raise ValueError(
+            f"layer range {layers_spec} out of bounds [0, {total_layers - 1}]"
+        )
 
-    output_dir = Path(args.output_dir) if args.output_dir else (
-        work_dir / "spec_prompts" / f"batch_prompts_{project}_phase{args.phase:02d}"
+    output_dir = Path(output_dir) if output_dir is not None else (
+        work_dir / "spec_prompts" / f"batch_prompts_{project}_phase{phase:02d}"
     )
 
     func_to_layer: Dict[str, int] = {}
@@ -424,7 +330,7 @@ def main() -> int:
         layer_functions = layer.get("functions", [])
         is_cycle = bool(layer.get("cycle_resolution", False))
         tag = "cycle" if is_cycle else "extracted"
-        chunks = chunked(layer_functions, args.batch_size)
+        chunks = chunked(layer_functions, batch_size)
         total_functions += len(layer_functions)
 
         for local_idx, fn_batch in enumerate(chunks):
@@ -432,8 +338,15 @@ def main() -> int:
             # On resume, don't ask the LLM to re-spec functions that are already
             # done — but the manifest below still records the full batch.
             prompt_funcs = fn_batch
-            if args.resume:
-                prompt_funcs = [fn for fn in fn_batch if not is_file_ready(work_dir / fn["file"])]
+            if resume:
+                prompt_funcs = [
+                    fn
+                    for fn in fn_batch
+                    if not spec_form.validate(
+                        work_dir / fn["file"],
+                        expected_dependencies=fn.get("all_callees", ()),
+                    ).ready
+                ]
                 skipped_functions += len(fn_batch) - len(prompt_funcs)
             out_path = output_dir / filename
             # On resume, a batch whose functions are all already specced has no
@@ -443,7 +356,7 @@ def main() -> int:
             # unspecced functions (see _get_pending_batches).
             if prompt_funcs:
                 content = build_prompt(
-                    args.phase,
+                    phase,
                     layer_idx,
                     is_cycle,
                     prompt_funcs,
@@ -452,6 +365,7 @@ def main() -> int:
                     work_dir,
                     fm_agent_prefix,
                     ext_to_lang,
+                    spec_form,
                 )
                 write_targets.append((out_path, content))
             else:
@@ -472,25 +386,25 @@ def main() -> int:
             batch_index += 1
 
     manifest = {
-        "phase": args.phase,
-        "layers": args.layers,
+        "phase": phase,
+        "layers": layers_spec,
         "total_functions": total_functions,
         "total_batches": len(manifest_batches),
         "batches": manifest_batches,
     }
 
-    if args.dry_run:
+    if dry_run:
         print(
-            f"[dry-run] phase={args.phase} layers={args.layers} "
+            f"[dry-run] phase={phase} layers={layers_spec} "
             f"functions={total_functions} batches={len(manifest_batches)}"
-            + (f" skipped={skipped_functions} (already specced)" if args.resume else "")
+            + (f" skipped={skipped_functions} (already specced)" if resume else "")
         )
         for batch in manifest_batches:
             print(
                 f"- {batch['file']}: layer={batch['layer']} "
                 f"count={batch['num_functions']} cycle={batch['is_cycle']}"
             )
-        return 0
+        return manifest
 
     output_dir.mkdir(parents=True, exist_ok=True)
     current_batch_paths = {out_path for out_path, _ in write_targets}
@@ -504,9 +418,25 @@ def main() -> int:
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
     print(
-        f"Generated {len(manifest_batches)} batch prompt(s) for phase {args.phase} "
-        f"layers {args.layers} in {output_dir}"
-        + (f" (skipped {skipped_functions} already-specced function(s))" if args.resume else "")
+        f"Generated {len(manifest_batches)} batch prompt(s) for phase {phase} "
+        f"layers {layers_spec} in {output_dir}"
+        + (f" (skipped {skipped_functions} already-specced function(s))" if resume else "")
+    )
+    return manifest
+
+
+def main() -> int:
+    """Run the software-only source-tree CLI adapter."""
+    args = parse_args()
+    generate_batch_prompts(
+        work_dir=Path.cwd() / "fm_agent",
+        phase=args.phase,
+        layers_spec=args.layers,
+        spec_form=SOFTWARE_SPEC_FORM,
+        batch_size=args.batch_size,
+        output_dir=Path(args.output_dir) if args.output_dir else None,
+        resume=args.resume,
+        dry_run=args.dry_run,
     )
     return 0
 

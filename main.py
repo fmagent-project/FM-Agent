@@ -12,7 +12,15 @@ from src.file_utils import (
 from src.verification import _generate_all_bugs_validation_summary
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
-from src.spec_generation_and_verification import run_spec_generation_and_verification
+from src.spec_generation_and_verification import (
+    run_spec_generation_and_verification,
+    stage_spec_generation_prompts,
+)
+from src.spec_forms import SOFTWARE_SPEC_FORM, SpecGenerationConfig
+from src.spec_forms.config import (
+    _bind_spec_generation_config,
+    _validate_spec_generation_config,
+)
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -190,6 +198,10 @@ def run_pipeline(
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     extra_call_edges = load_call_edges(extra_call_edges_path)
+    spec_generation_config = SpecGenerationConfig(
+        spec_form=SOFTWARE_SPEC_FORM,
+        enable_reasoning=True,
+    )
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -205,8 +217,6 @@ def run_pipeline(
         if initial_history is None:
             preserved_history = preserve_history_before_clean(work_dir)
         _clean_previous_run(work_dir)
-    if resume and not only_spec:
-        _ensure_resume_mode_compatible(output_dir, all_bugs)
     os.makedirs(work_dir, exist_ok=True)
     if preserved_history:
         write_history(work_dir, preserved_history)
@@ -222,13 +232,30 @@ def run_pipeline(
         with open(plugin_context_path, "w", encoding="utf-8") as file:
             json.dump(plugin_context or {}, file, indent=2)
         if plugin_config.configure_hook is not None:
-            run_plugin_hook(
-                plugin_config.name,
-                "configure",
-                plugin_config.configure_function,
-                plugin_config.configure_hook,
-                proj_dir,
-            )
+            with _bind_spec_generation_config(spec_generation_config):
+                run_plugin_hook(
+                    plugin_config.name,
+                    "configure",
+                    plugin_config.configure_function,
+                    plugin_config.configure_hook,
+                    proj_dir,
+                )
+    try:
+        _validate_spec_generation_config(spec_generation_config)
+    except ValueError as exc:
+        if (
+            plugin_config is not None
+            and plugin_config.configure_hook is not None
+        ):
+            raise RuntimeError(
+                f"Plugin '{plugin_config.name}' configured an invalid "
+                f"specification strategy: {exc}"
+            ) from exc
+        raise RuntimeError(
+            f"Invalid built-in specification strategy: {exc}"
+        ) from exc
+    if resume and spec_generation_config.should_run_reasoning(only_spec):
+        _ensure_resume_mode_compatible(output_dir, all_bugs)
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
     )
@@ -360,7 +387,13 @@ def run_pipeline(
                 extraction_stage.input_hook,
                 proj_dir,
             )
-        run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
+        run_extraction(
+            proj_dir,
+            work_dir=work_dir,
+            force=not resume,
+            verbose=True,
+            spec_form=spec_generation_config.spec_form,
+        )
         if extraction_stage is not None and extraction_stage.output_hook is not None:
             run_plugin_hook(
                 plugin_config.name,
@@ -370,21 +403,13 @@ def run_pipeline(
                 proj_dir,
             )
 
-    # Copy system_prompt.md to spec_prompts/system_prompt.md
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
-    os.makedirs(spec_prompts_dir, exist_ok=True)
-    shutil.copy2(
-        os.path.join(script_dir, "md", "system_prompt.md"),
-        os.path.join(spec_prompts_dir, "system_prompt.md"),
-    )
-    shutil.copy2(
-        os.path.join(script_dir, "src", "generate_batch_prompts.py"),
-        os.path.join(spec_prompts_dir, "generate_batch_prompts.py"),
-    )
-    # generate_batch_prompts.py imports is_file_ready from this module at runtime.
-    shutil.copy2(
-        os.path.join(script_dir, "src", "file_utils.py"),
-        os.path.join(spec_prompts_dir, "file_utils.py"),
+
+    stage_spec_generation_prompts(
+        spec_form=spec_generation_config.spec_form,
+        script_dir=script_dir,
+        work_dir=work_dir,
+        spec_prompts_dir=spec_prompts_dir,
     )
 
     phases_path = os.path.join(work_dir, "phases.json")
@@ -419,10 +444,19 @@ def run_pipeline(
                 file_list_stage.input_hook,
                 proj_dir,
             )
-        file_list = collect_file_names(input_dir, file_list_path)
+        file_list = collect_file_names(
+            input_dir,
+            file_list_path,
+            spec_form=spec_generation_config.spec_form,
+        )
         if submodules:
             file_list = _write_file_names(
-                _get_all_phase_files(phases_data, input_dir), file_list_path
+                _get_all_phase_files(
+                    phases_data,
+                    input_dir,
+                    spec_form=spec_generation_config.spec_form,
+                ),
+                file_list_path,
             )
         if file_list_stage is not None and file_list_stage.output_hook is not None:
             run_plugin_hook(
@@ -463,7 +497,11 @@ def run_pipeline(
                 topdown_stage.input_hook,
                 proj_dir,
             )
-        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+        generate_topdown_layers(
+            work_dir,
+            extra_call_edges=extra_call_edges,
+            spec_form=spec_generation_config.spec_form,
+        )
         if topdown_stage is not None and topdown_stage.output_hook is not None:
             run_plugin_hook(
                 plugin_config.name,
@@ -474,7 +512,8 @@ def run_pipeline(
             )
 
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
-    if only_spec:
+    run_reasoning = spec_generation_config.should_run_reasoning(only_spec)
+    if not run_reasoning:
         print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
     else:
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
@@ -508,6 +547,7 @@ def run_pipeline(
             script_dir,
             spec_prompts_dir,
             phases_data,
+            spec_generation_config,
             resume=resume,
             extra_call_edges=extra_call_edges,
             only_spec=only_spec,
@@ -523,9 +563,8 @@ def run_pipeline(
                 proj_dir,
             )
 
-    # Print confirmed bug count (skipped in only-spec mode, which runs no
-    # reasoning or bug validation).
-    if not only_spec:
+    # Print confirmed bug count only when downstream reasoning is enabled.
+    if run_reasoning:
         if all_bugs:
             # A resumed run may find every function and candidate validation
             # already complete, so no watcher runs to refresh the persistent
@@ -538,7 +577,7 @@ def run_pipeline(
             confirmed = summary.get("total_confirmed", 0)
             print(f"[Pipeline] Confirmed bugs: {confirmed}")
 
-    if only_spec:
+    if not run_reasoning:
         print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
     else:
         print("[Pipeline] Done.")
