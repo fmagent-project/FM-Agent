@@ -29,6 +29,10 @@ class ContractRefKind(str, Enum):
     """Closed reference roles; unknown projects cannot invent executable kinds."""
 
     FROZEN_PROFILE = "frozen_profile"
+    CASE_PLAN = "case_plan"
+    EXPERIMENT_PLAN_TEMPLATE = "experiment_plan_template"
+    EXECUTION_BINDING = "execution_binding"
+    BASELINE_SELECTION_RECEIPT = "baseline_selection_receipt"
     ORACLE_SPEC = "oracle_spec"
     ORACLE_BUNDLE = "oracle_bundle"
     EXECUTION_RECIPE = "execution_recipe"
@@ -58,6 +62,7 @@ class ContractRefKind(str, Enum):
     CONTROL_POLICY = "control_policy"
     REPAIR_POLICY = "repair_policy"
     RESET_POLICY = "reset_policy"
+    EXECUTION_EQUIVALENCE_POLICY = "execution_equivalence_policy"
 
 
 @dataclass(frozen=True)

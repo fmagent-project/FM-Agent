@@ -64,6 +64,7 @@ _PROFILE_COMPONENT_KINDS = frozenset(
         ContractRefKind.CONTROL_POLICY,
         ContractRefKind.REPAIR_POLICY,
         ContractRefKind.RESET_POLICY,
+        ContractRefKind.EXECUTION_EQUIVALENCE_POLICY,
     }
 )
 

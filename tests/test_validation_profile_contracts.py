@@ -356,12 +356,45 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "load_strict_json_object",
             "validate_frozen_profile_contracts",
         }
+        stage_4b_exports = {
+            "BaselineCandidate",
+            "BaselineEligibility",
+            "BaselineSelectionReceipt",
+            "BaselineSourceKind",
+            "CasePlan",
+            "CaseSubmission",
+            "CaseSubmissionKind",
+            "DynamicBindingRequest",
+            "DynamicResourceBinding",
+            "DynamicResourceKind",
+            "ExecutionBinding",
+            "ExperimentPhase",
+            "ExperimentPlanTemplate",
+            "ExperimentStep",
+            "GateRole",
+            "PlannedOracleExecution",
+            "RepairSelection",
+            "TargetEvidenceSelection",
+            "ValidationInstanceIdentity",
+            "WorkloadSelection",
+            "compute_validation_instance_id",
+            "validate_b1_b2_binding_equivalence",
+            "validate_case_plan_membership",
+            "validate_case_submission_membership",
+            "validate_execution_binding",
+            "validate_experiment_plan_membership",
+            "validate_template_baseline_selections",
+            "validate_template_determinism",
+        }
         exports = contracts_namespace.__all__
         self.assertEqual(len(exports), len(set(exports)))
-        self.assertEqual(set(exports), pre_stage_exports | stage_exports)
+        self.assertEqual(
+            set(exports),
+            pre_stage_exports | stage_exports | stage_4b_exports,
+        )
         for name in exports:
             self.assertTrue(hasattr(contracts_namespace, name), name)
-        for name in stage_exports:
+        for name in stage_exports | stage_4b_exports:
             self.assertFalse(hasattr(production_root, name), name)
 
     def test_profile_round_trip_hash_and_deep_immutability(self):
@@ -755,8 +788,10 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
         }
         allowed_contract_siblings = {
             "base",
+            "case",
             "execution",
             "oracle",
+            "plan",
             "profile",
             "references",
         }
@@ -766,6 +801,8 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "src/validation_core/contracts/execution.py",
             "src/validation_core/contracts/oracle.py",
             "src/validation_core/contracts/profile.py",
+            "src/validation_core/contracts/case.py",
+            "src/validation_core/contracts/plan.py",
         ):
             with self.subTest(relative_path=relative_path):
                 tree = ast.parse(Path(relative_path).read_text(encoding="utf-8"))

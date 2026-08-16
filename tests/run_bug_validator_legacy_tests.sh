@@ -14,6 +14,8 @@ uv run python -m unittest -v \
   tests.test_validation_execution_contracts \
   tests.test_validation_oracle_contracts \
   tests.test_validation_profile_contracts \
+  tests.test_validation_case_contracts \
+  tests.test_validation_plan_contracts \
   tests.test_validation_ccc_preset_content \
   tests.test_compiler_recipe \
   tests.test_submission_schema \
