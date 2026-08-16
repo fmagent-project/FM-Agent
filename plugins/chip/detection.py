@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from src.languages.hardware import (
+    CHISEL_EXTENSIONS,
+    SOURCE_SCAN_EXCLUDED_DIRECTORY_NAMES,
+    VERILOG_EXTENSIONS,
+    is_excluded_source_directory,
+)
+
 
 Dialect = Literal["chisel", "verilog"]
 
@@ -16,25 +23,8 @@ SCHEMA_VERSION = 1
 CONTEXT_RELATIVE_PATH = Path("fm_agent") / "chip_context.json"
 SAMPLE_LIMIT = 5
 
-CHISEL_EXTENSIONS = frozenset({".scala", ".sc"})
-VERILOG_EXTENSIONS = frozenset({".v", ".sv", ".svh"})
-
-# This list is shared by dialect detection now and is intended to be reused by
-# the Stage 1/2 strategies and language handlers as they are added.
-EXCLUDED_DIRECTORY_NAMES = frozenset({
-    ".git",
-    ".hg",
-    ".svn",
-    ".idea",
-    ".vscode",
-    ".venv",
-    "node_modules",
-    "fm_agent",
-    "target",
-    "build",
-    "out",
-    "dist",
-})
+# Public compatibility name used by C0 tests and future dialect strategies.
+EXCLUDED_DIRECTORY_NAMES = SOURCE_SCAN_EXCLUDED_DIRECTORY_NAMES
 
 
 class ChipContextError(ValueError):
@@ -43,7 +33,7 @@ class ChipContextError(ValueError):
 
 def is_excluded_directory(name: str) -> bool:
     """Return whether a nested directory is outside chip source discovery."""
-    return name.startswith(".") or name in EXCLUDED_DIRECTORY_NAMES
+    return is_excluded_source_directory(name)
 
 
 @dataclass(frozen=True)

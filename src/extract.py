@@ -119,6 +119,21 @@ LANG_CONFIG = {
         },
         "body": "external",
     },
+    "chisel": {
+        "comment_prefix": "//",
+        "skip_prefixes": ("//", "/*", "*", "package", "import"),
+        "skip_keywords_line": (),
+        "keywords": {
+            "abstract", "case", "catch", "class", "def", "do", "else",
+            "extends", "final", "finally", "for", "if", "implicit",
+            "import", "lazy", "match", "new", "object", "override",
+            "package", "private", "protected", "return", "sealed",
+            "super", "this", "throw", "trait", "try", "type", "val",
+            "var", "while", "with", "yield",
+        },
+        # Chisel extraction is owned exclusively by its registered handler.
+        "body": "external",
+    },
     "cuda": {
         "comment_prefix": "//",
         "skip_prefixes": ("//", "#", "using", "typedef"),
@@ -160,6 +175,7 @@ EXT_TO_LANG = {
     "js": "javascript", "jsx": "javascript",
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
+    "scala": "chisel", "sc": "chisel",
 }
 
 # ---------------------------------------------------------------------------
@@ -724,6 +740,7 @@ def run_extraction(
     output_base = os.path.join(work_dir, "extracted_functions")
     written = 0
     skipped = 0
+    handled_empty = 0
     errors = []
 
     for src_rel in source_files:
@@ -739,7 +756,7 @@ def run_extraction(
             continue
 
         # Detect language from file extension
-        ext = src_rel.rsplit('.', 1)[-1] if '.' in src_rel else ''
+        ext = src_rel.rsplit('.', 1)[-1].lower() if '.' in src_rel else ''
         lang_key = EXT_TO_LANG.get(ext)
         if not lang_key:
             logging.warning(f"Unsupported file extension '.{ext}' for {src_rel}, skipping.")
@@ -756,12 +773,20 @@ def run_extraction(
         out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
 
         registry_key = os.path.normcase(os.path.normpath(src_path))
-        if registry_key in registry_funcs:
+        handled_by_registry = registry_key in registry_funcs
+        if handled_by_registry:
             funcs = registry_funcs[registry_key]
         else:
             funcs = extract_functions_from_file(src_path, lang_key)
         if not funcs:
-            logging.warning(f"No functions extracted from {src_rel}")
+            if handled_by_registry:
+                handled_empty += 1
+                logging.info(
+                    "No analysis units in handled source file %s",
+                    src_rel,
+                )
+            else:
+                logging.warning(f"No functions extracted from {src_rel}")
             continue
 
         os.makedirs(out_dir, exist_ok=True)
@@ -800,7 +825,16 @@ def run_extraction(
     print(f"Extraction complete: {written} written, {skipped} skipped.")
 
     if written == 0 and skipped == 0:
-        logging.error("Nothing was extracted — check phases.json source_files paths.")
+        if handled_empty:
+            logging.info(
+                "Extraction completed with %d handled source file(s) containing "
+                "no analysis units.",
+                handled_empty,
+            )
+        else:
+            logging.error(
+                "Nothing was extracted — check phases.json source_files paths."
+            )
         return (
             (written, skipped, unavailable_backends)
             if return_unavailable_backends else (written, skipped)
@@ -842,7 +876,7 @@ def _validate_extraction(extracted_dir, registry_langs=None):
     failures = []
     for root, _, files in os.walk(extracted_dir):
         for fname in files:
-            ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
+            ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
             lang_key = EXT_TO_LANG.get(ext)
             if not lang_key:
                 continue

@@ -13,6 +13,7 @@ from src.languages import javascript as _javascript
 from src.languages import typescript as _typescript
 from src.languages import arkts as _arkts
 from src.languages import erlang as _erlang
+from src.languages import chisel as _chisel
 
 from src.languages.base import BackendUnavailableError as _BackendUnavailableError
 
@@ -30,7 +31,9 @@ class LanguageHandler:
 
     Each function handles its own backend (e.g. codegraph) internally.
     batch_extract returns ``None`` when a semantic backend cannot safely
-    extract its sources, distinct from a successful empty dict. call_edges
+    extract its sources, distinct from a successful empty dict. A handler may
+    retain ``filepath: []`` entries to mark supported files with no analysis
+    units as handled and prevent a generic fallback. call_edges
     returns an empty dict when its backend is unavailable; function_spans
     returns None so the caller can fall back to the regex extractor for that
     file, or raises BackendUnavailableError for languages where a regex
@@ -65,6 +68,7 @@ REGISTRY: dict = {
     "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans, split_blocks=_typescript.split_blocks, remove_comments=_typescript.remove_comments),
     "arkts":      LanguageHandler(batch_extract=_arkts.batch_extract,      call_edges=_arkts.call_edges,      function_spans=_arkts.function_spans, remove_comments=_arkts.remove_comments),
     "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
+    "chisel":     LanguageHandler(batch_extract=_chisel.batch_extract,     call_edges=_chisel.call_edges,     function_spans=_chisel.function_spans),
 }
 
 
