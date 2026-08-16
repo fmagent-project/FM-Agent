@@ -1,0 +1,6 @@
+{
+  "name": "chip",
+  "version": "V0.1",
+  "configure_function": "configure",
+  "stages": {}
+}

@@ -54,6 +54,32 @@ COMMENT_PREFIX_BY_LANG = {
 }
 
 
+def extension_language_map(
+    languages: Sequence[str],
+    file_extensions: Sequence[str],
+) -> dict[str, str]:
+    """Map phase-plan extensions to languages without truncating silently.
+
+    A single configured language may own any number of extensions (for
+    example, Chisel owns ``scala`` and ``sc``). Multi-language plans retain the
+    positional mapping and must provide exactly one language per extension.
+    """
+    normalized_extensions = [
+        extension.lower().lstrip(".") for extension in file_extensions
+    ]
+    if len(languages) == 1:
+        return {
+            extension: languages[0]
+            for extension in normalized_extensions
+        }
+    if len(languages) > 1 and len(languages) != len(normalized_extensions):
+        raise ValueError(
+            "phases.json languages and file_extensions must have equal lengths "
+            "when more than one language is configured"
+        )
+    return dict(zip(normalized_extensions, languages))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate spec batch prompts for one phase/layer range.")
     parser.add_argument("--phase", type=int, required=True, help="Phase number, e.g. 3")
@@ -286,7 +312,7 @@ def generate_batch_prompts(
     project = phases_json["project"]
     languages = phases_json.get("languages", [])
     exts = phases_json.get("file_extensions", [])
-    ext_to_lang = {ext.lower().lstrip("."): lang for ext, lang in zip(exts, languages)}
+    ext_to_lang = extension_language_map(languages, exts)
 
     topdown_path = (
         work_dir
