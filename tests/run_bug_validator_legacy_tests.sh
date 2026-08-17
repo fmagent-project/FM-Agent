@@ -13,6 +13,7 @@ uv run python -m unittest -v \
   tests.test_validation_contract_primitives \
   tests.test_validation_execution_contracts \
   tests.test_validation_oracle_contracts \
+  tests.test_validation_oracle_runtime \
   tests.test_validation_profile_contracts \
   tests.test_validation_case_contracts \
   tests.test_validation_plan_contracts \
