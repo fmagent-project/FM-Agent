@@ -25,5 +25,10 @@ dependencies = [
 [project.scripts]
 fm-agent = "main:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
 [tool.uv]
 package = false
