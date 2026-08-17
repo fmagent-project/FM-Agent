@@ -41,6 +41,7 @@ uv run python -m unittest -v \
   tests.test_validation_ccc_staged_golden \
   tests.test_validation_preset_registry \
   tests.test_validation_routing \
+  tests.test_validation_vertical_demo \
   tests.test_custom_bug_validator \
   tests.test_pipeline_plugin_orchestration
 
