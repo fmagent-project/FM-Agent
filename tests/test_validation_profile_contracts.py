@@ -443,6 +443,11 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "SymlinkPolicy",
             "generic_source_snapshot_policy_v1",
         }
+        coordinator_exports = {
+            "CoordinatorRequestEnvelope",
+            "CoordinatorResponseEnvelope",
+            "StagedArtifactBinding",
+        }
         exports = contracts_namespace.__all__
         self.assertEqual(len(exports), len(set(exports)))
         self.assertEqual(
@@ -451,12 +456,17 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             | stage_exports
             | stage_4b_exports
             | stage_4c_exports
-            | snapshot_exports,
+            | snapshot_exports
+            | coordinator_exports,
         )
         for name in exports:
             self.assertTrue(hasattr(contracts_namespace, name), name)
         for name in (
-            stage_exports | stage_4b_exports | stage_4c_exports | snapshot_exports
+            stage_exports
+            | stage_4b_exports
+            | stage_4c_exports
+            | snapshot_exports
+            | coordinator_exports
         ):
             self.assertFalse(hasattr(production_root, name), name)
 

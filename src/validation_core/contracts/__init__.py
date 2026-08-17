@@ -91,6 +91,11 @@ from .case import (
     validate_case_plan_membership,
     validate_case_submission_membership,
 )
+from .coordinator import (
+    CoordinatorRequestEnvelope,
+    CoordinatorResponseEnvelope,
+    StagedArtifactBinding,
+)
 from .plan import (
     BaselineCandidate,
     BaselineEligibility,
@@ -194,6 +199,8 @@ __all__ = [
     "ContractRefKind",
     "ContractError",
     "ControlEvidenceRole",
+    "CoordinatorRequestEnvelope",
+    "CoordinatorResponseEnvelope",
     "CrossGateDecision",
     "CrossGateFailedOutcome",
     "CrossGateReproducibility",
@@ -258,6 +265,7 @@ __all__ = [
     "SemanticClause",
     "SemanticContract",
     "StatisticalBaselineMethod",
+    "StagedArtifactBinding",
     "SnapshotEntryKind",
     "SnapshotManifest",
     "SnapshotManifestEntry",

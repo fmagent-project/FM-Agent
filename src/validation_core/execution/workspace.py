@@ -20,6 +20,7 @@ from pathlib import Path
 
 from ..contracts.base import (
     ContractError,
+    canonical_json_bytes,
     canonical_sha256,
     load_strict_json_object,
     require_exact_keys,
@@ -33,6 +34,7 @@ from ..contracts.references import ContractRef, ContractRefKind
 from ..contracts.snapshot import SnapshotRef
 from ..storage.snapshot import (
     MaterializedSnapshot,
+    SnapshotMaterializationProof,
     SnapshotStore,
     SnapshotStoreError,
     _mount_id,
@@ -44,6 +46,8 @@ from .role_policy import RolePolicy, WorkspaceNamespace, WorkspaceRole
 
 _LEASE_CONTRACT_KIND = "workspace_lease"
 _LEASE_SCHEMA_VERSION = 1
+_LINEAGE_CONTRACT_KIND = "workspace_lineage_record"
+_LINEAGE_SCHEMA_VERSION = 1
 _BROKER_VERSION = "snapshot-workspace-broker-v1"
 
 
@@ -623,6 +627,152 @@ class WorkspaceAllocation:
         return canonical_path
 
 
+@dataclass(frozen=True)
+class WorkspaceLineageRecord:
+    """Path-free evidence for one workspace materialization.
+
+    The record retains only strict, content-bound contracts needed to compare
+    an A/B1/B2 lifecycle after its physical workspaces have been released.  It
+    deliberately contains no host path and grants no authority to reopen a
+    released allocation.
+    """
+
+    lease: WorkspaceLease
+    role_policy: RolePolicy
+    materialization_proof: SnapshotMaterializationProof
+
+    def __post_init__(self) -> None:
+        if type(self.lease) is not WorkspaceLease:
+            raise ContractError("lineage lease must be a WorkspaceLease")
+        if type(self.role_policy) is not RolePolicy:
+            raise ContractError("lineage role_policy must be a RolePolicy")
+        if type(self.materialization_proof) is not SnapshotMaterializationProof:
+            raise ContractError(
+                "lineage materialization_proof must be a "
+                "SnapshotMaterializationProof"
+            )
+
+        # Reconstruct every nested contract so even a corrupted in-process
+        # dataclass cannot bypass its own content-binding invariants.
+        try:
+            parsed_lease = WorkspaceLease.from_document(self.lease.to_document())
+            parsed_policy = RolePolicy.from_document(
+                self.role_policy.to_document()
+            )
+            parsed_proof = SnapshotMaterializationProof.from_document(
+                self.materialization_proof.to_document()
+            )
+        except (AttributeError, ContractError, TypeError, ValueError) as exc:
+            raise ContractError(
+                f"workspace lineage contains an invalid nested contract: {exc}"
+            ) from exc
+        if (
+            parsed_lease != self.lease
+            or parsed_policy != self.role_policy
+            or parsed_proof != self.materialization_proof
+        ):
+            raise ContractError(
+                "workspace lineage nested contracts are not canonical"
+            )
+
+        if self.lease.role is not self.role_policy.role:
+            raise ContractError("lineage lease and role_policy roles differ")
+        if self.lease.role_policy_sha256 != self.role_policy.content_sha256:
+            raise ContractError("lineage lease does not bind its role_policy")
+        proof = self.materialization_proof
+        if self.lease.materialization_proof_sha256 != proof.content_sha256:
+            raise ContractError(
+                "lineage lease does not bind its materialization proof"
+            )
+        if self.lease.snapshot.snapshot_sha256 != proof.snapshot_sha256:
+            raise ContractError(
+                "lineage proof does not bind the lease snapshot"
+            )
+        if self.lease.snapshot.policy.content_sha256 != proof.policy_sha256:
+            raise ContractError(
+                "lineage proof does not bind the lease snapshot policy"
+            )
+        if self.lease.snapshot.manifest.content_sha256 != proof.manifest_sha256:
+            raise ContractError(
+                "lineage proof does not bind the lease snapshot manifest"
+            )
+
+    @classmethod
+    def from_allocation(
+        cls,
+        allocation: WorkspaceAllocation,
+    ) -> WorkspaceLineageRecord:
+        """Freeze path-free lineage while an allocation handle is available."""
+
+        if type(allocation) is not WorkspaceAllocation:
+            raise TypeError("allocation must be a WorkspaceAllocation")
+        return cls(
+            lease=allocation.lease,
+            role_policy=allocation.role_policy,
+            materialization_proof=allocation.materialization.proof,
+        )
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "contract_kind": _LINEAGE_CONTRACT_KIND,
+            "schema_version": _LINEAGE_SCHEMA_VERSION,
+            "lease": self.lease.to_document(),
+            "role_policy": self.role_policy.to_document(),
+            "materialization_proof": self.materialization_proof.to_document(),
+        }
+
+    @classmethod
+    def from_document(cls, value: object) -> WorkspaceLineageRecord:
+        document = require_exact_keys(
+            value,
+            required=(
+                "contract_kind",
+                "schema_version",
+                "lease",
+                "role_policy",
+                "materialization_proof",
+            ),
+            where="workspace lineage record",
+        )
+        if document["contract_kind"] != _LINEAGE_CONTRACT_KIND:
+            raise ContractError(
+                "workspace lineage record contract_kind must be "
+                f"{_LINEAGE_CONTRACT_KIND!r}"
+            )
+        if (
+            type(document["schema_version"]) is not int
+            or document["schema_version"] != _LINEAGE_SCHEMA_VERSION
+        ):
+            raise ContractError(
+                "workspace lineage record schema_version must be integer 1"
+            )
+        try:
+            return cls(
+                lease=WorkspaceLease.from_document(document["lease"]),
+                role_policy=RolePolicy.from_document(document["role_policy"]),
+                materialization_proof=(
+                    SnapshotMaterializationProof.from_document(
+                        document["materialization_proof"]
+                    )
+                ),
+            )
+        except ContractError as exc:
+            raise ContractError(
+                f"invalid workspace lineage record: {exc}"
+            ) from exc
+
+    @classmethod
+    def from_json(cls, payload: object) -> WorkspaceLineageRecord:
+        return cls.from_document(load_strict_json_object(payload))
+
+    def to_json(self) -> bytes:
+        return canonical_json_bytes(self.to_document())
+
+    @property
+    def content_sha256(self) -> str:
+        return canonical_sha256(self.to_document())
+
+
 def _paths_overlap(left: Path, right: Path) -> bool:
     try:
         left.relative_to(right)
@@ -697,6 +847,113 @@ def _regular_inodes(root: Path) -> set[tuple[int, int]]:
     return inodes
 
 
+def validate_workspace_lineage(
+    a: WorkspaceLineageRecord,
+    b1: WorkspaceLineageRecord,
+    b2: WorkspaceLineageRecord,
+) -> None:
+    """Validate path-free A/B1/B2 provenance, including after release."""
+
+    records = (a, b1, b2)
+    if any(type(item) is not WorkspaceLineageRecord for item in records):
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "lineage validation requires WorkspaceLineageRecord values",
+        )
+    try:
+        reparsed = tuple(
+            WorkspaceLineageRecord.from_document(item.to_document())
+            for item in records
+        )
+    except (AttributeError, ContractError, TypeError, ValueError) as exc:
+        _raise(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            f"workspace lineage contains invalid bound metadata: {exc}",
+            exc,
+        )
+    if reparsed != records:
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "workspace lineage metadata is not canonical",
+        )
+
+    if tuple(item.lease.role for item in records) != (
+        WorkspaceRole.A,
+        WorkspaceRole.B1,
+        WorkspaceRole.B2,
+    ):
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "lineage validation requires ordered A, B1, and B2 records",
+        )
+    if len({item.lease.validation_instance_id for item in records}) != 1:
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "workspace lineages belong to different validation instances",
+        )
+    if any(item.lease.snapshot != a.lease.snapshot for item in records[1:]):
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "workspace lineages do not share one exact frozen snapshot",
+        )
+    if len({item.role_policy.profile for item in records}) != 1:
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "workspace lineages bind different Frozen Profiles",
+        )
+    if len({item.role_policy.resource_policy for item in records}) != 1:
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "workspace lineages bind different resource policies",
+        )
+    if b1.lease.attempt_id != b2.lease.attempt_id:
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "B1 and B2 workspace lineages belong to different attempts",
+        )
+    if len({item.lease.workspace_equivalence_policy for item in records}) != 1:
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "workspace lineages use different equivalence policies",
+        )
+    if len({item.lease.equivalence_fingerprint_sha256 for item in records}) != 1:
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+            "workspace lineages have different equivalence fingerprints",
+        )
+
+    unique_values = (
+        ("lease_id", tuple(item.lease.lease_id for item in records)),
+        (
+            "write_layer_sha256",
+            tuple(item.lease.write_layer_sha256 for item in records),
+        ),
+        (
+            "materialization_proof_sha256",
+            tuple(
+                item.lease.materialization_proof_sha256 for item in records
+            ),
+        ),
+        (
+            "resource_fingerprint_sha256",
+            tuple(item.lease.resource_fingerprint_sha256 for item in records),
+        ),
+        (
+            "materialization_id",
+            tuple(
+                item.materialization_proof.materialization_id
+                for item in records
+            ),
+        ),
+    )
+    for field, values in unique_values:
+        if len(set(values)) != len(records):
+            raise WorkspaceError(
+                WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+                f"workspace lineages reuse {field}",
+            )
+
+
 def validate_workspace_independence(
     a: WorkspaceAllocation,
     b1: WorkspaceAllocation,
@@ -710,61 +967,19 @@ def validate_workspace_independence(
             WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
             "independence requires WorkspaceAllocation values",
         )
-    if tuple(item.lease.role for item in allocations) != (
-        WorkspaceRole.A,
-        WorkspaceRole.B1,
-        WorkspaceRole.B2,
-    ):
-        raise WorkspaceError(
-            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-            "independence requires ordered A, B1, and B2 allocations",
+    try:
+        lineage = tuple(
+            WorkspaceLineageRecord.from_allocation(item)
+            for item in allocations
         )
-    if len({item.lease.validation_instance_id for item in allocations}) != 1:
-        raise WorkspaceError(
+    except (AttributeError, ContractError, TypeError, ValueError) as exc:
+        _raise(
             WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-            "role workspaces belong to different validation instances",
+            f"workspace allocation lineage is invalid: {exc}",
+            exc,
         )
-    if len({item.role_policy.profile for item in allocations}) != 1:
-        raise WorkspaceError(
-            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-            "role workspaces bind different Frozen Profiles",
-        )
-    if len({item.role_policy.resource_policy for item in allocations}) != 1:
-        raise WorkspaceError(
-            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-            "role workspaces bind different resource policies",
-        )
-    if b1.lease.attempt_id != b2.lease.attempt_id:
-        raise WorkspaceError(
-            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-            "B1 and B2 workspaces belong to different attempts",
-        )
-    if len({item.lease.snapshot.snapshot_sha256 for item in allocations}) != 1:
-        raise WorkspaceError(
-            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-            "role workspaces do not share one frozen snapshot",
-        )
-    if len({item.lease.workspace_equivalence_policy for item in allocations}) != 1:
-        raise WorkspaceError(
-            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-            "role workspaces use different equivalence policies",
-        )
-    if len({item.lease.equivalence_fingerprint_sha256 for item in allocations}) != 1:
-        raise WorkspaceError(
-            WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-            "role workspaces have different equivalence fingerprints",
-        )
-    for field in (
-        "lease_id",
-        "write_layer_sha256",
-        "materialization_proof_sha256",
-        "resource_fingerprint_sha256",
-    ):
-        if len({getattr(item.lease, field) for item in allocations}) != 3:
-            raise WorkspaceError(
-                WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
-                f"role workspaces reuse {field}",
-            )
+    validate_workspace_lineage(*lineage)
+
     roots = tuple(item.paths.root.resolve(strict=True) for item in allocations)
     for index, left in enumerate(roots):
         for right in roots[index + 1:]:
@@ -1200,8 +1415,10 @@ __all__ = [
     "WorkspaceError",
     "WorkspaceErrorCode",
     "WorkspaceLease",
+    "WorkspaceLineageRecord",
     "WorkspaceManager",
     "WorkspacePaths",
     "validate_workspace_lease_context",
     "validate_workspace_independence",
+    "validate_workspace_lineage",
 ]

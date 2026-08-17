@@ -79,9 +79,11 @@ from src.validation_core.execution.workspace import (
     WorkspaceError,
     WorkspaceErrorCode,
     WorkspaceLease,
+    WorkspaceLineageRecord,
     WorkspaceManager,
     validate_workspace_lease_context,
     validate_workspace_independence,
+    validate_workspace_lineage,
 )
 from src.validation_core.storage import snapshot as snapshot_runtime
 from src.validation_core.storage.snapshot import (
@@ -288,21 +290,52 @@ class SnapshotPublicBoundaryTests(unittest.TestCase):
             "StoredSnapshot",
         }
         expected_execution = {
+            "AgentExitProof",
+            "AgentMailboxClient",
+            "AgentResponseCommitProof",
+            "AgentResponseCommitRequest",
+            "AgentStartRequest",
+            "AgentStartResult",
+            "AgentStopReason",
+            "CoordinatorAttemptRecord",
+            "CoordinatorCompletionKind",
+            "CoordinatorError",
+            "CoordinatorFailureCode",
+            "CoordinatorLifecycleRecord",
+            "CoordinatorLimits",
+            "CoordinatorMailbox",
+            "CoordinatorProviders",
+            "CoordinatorRunResult",
+            "CoordinatorState",
             "CredentialPolicy",
+            "CrossGateComparisonRequest",
+            "FrozenCoordinatorRequest",
+            "FrozenStagedArtifact",
+            "GateExecutionRequest",
+            "GateExecutionResult",
+            "GateEvidencePersistenceProof",
+            "GatePreflightState",
+            "MailboxError",
+            "MailboxErrorCode",
+            "MailboxLimits",
             "NetworkPolicy",
             "RoleCapability",
             "RolePolicy",
+            "ValidationCoordinator",
             "WorkspaceAllocation",
             "WorkspaceError",
             "WorkspaceErrorCode",
             "WorkspaceLease",
+            "WorkspaceLineageRecord",
             "WorkspaceManager",
             "WorkspaceNamespace",
             "WorkspacePaths",
             "WorkspaceRole",
             "build_role_policy",
+            "create_filesystem_mailbox",
             "validate_workspace_independence",
             "validate_workspace_lease_context",
+            "validate_workspace_lineage",
         }
         for namespace, expected in (
             (storage_namespace, expected_storage),
@@ -1762,6 +1795,158 @@ class WorkspaceRuntimeTests(unittest.TestCase):
         b1 = self._allocate(WorkspaceRole.B1, attempt_id="attempt-gate-2")
         b2 = self._allocate(WorkspaceRole.B2, attempt_id="attempt-gate-2")
         validate_workspace_independence(a, b1, b2)
+
+    def test_workspace_lineage_remains_verifiable_after_every_role_is_released(self):
+        a = self._allocate(WorkspaceRole.A, attempt_id="attempt-agent")
+        b1 = self._allocate(WorkspaceRole.B1, attempt_id="attempt-gate")
+        a_lineage = WorkspaceLineageRecord.from_allocation(a)
+        b1_lineage = WorkspaceLineageRecord.from_allocation(b1)
+        a_root = a.paths.root
+        b1_root = b1.paths.root
+
+        self.manager.release(b1)
+        self.manager.release(a)
+        self.assertFalse(a_root.exists())
+        self.assertFalse(b1_root.exists())
+
+        b2 = self._allocate(WorkspaceRole.B2, attempt_id="attempt-gate")
+        b2_lineage = WorkspaceLineageRecord.from_allocation(b2)
+        b2_root = b2.paths.root
+        self.manager.release(b2)
+        self.assertFalse(b2_root.exists())
+
+        with mock.patch.object(
+            workspace_runtime,
+            "_regular_inodes",
+            side_effect=AssertionError("path-free lineage read a released tree"),
+        ):
+            validate_workspace_lineage(a_lineage, b1_lineage, b2_lineage)
+
+        for lineage in (a_lineage, b1_lineage, b2_lineage):
+            payload = lineage.to_json()
+            self.assertEqual(WorkspaceLineageRecord.from_json(payload), lineage)
+            self.assertNotIn(os.fspath(self.base).encode("utf-8"), payload)
+
+    def test_workspace_lineage_rejects_forged_and_reused_identities(self):
+        a = self._allocate(WorkspaceRole.A, attempt_id="attempt-agent")
+        b1 = self._allocate(WorkspaceRole.B1, attempt_id="attempt-gate")
+        b2 = self._allocate(WorkspaceRole.B2, attempt_id="attempt-gate")
+        a_lineage = WorkspaceLineageRecord.from_allocation(a)
+        b1_lineage = WorkspaceLineageRecord.from_allocation(b1)
+        b2_lineage = WorkspaceLineageRecord.from_allocation(b2)
+
+        def rebuild_b2(
+            *,
+            lease_id=None,
+            write_layer_sha256=None,
+            proof=None,
+        ):
+            selected_proof = proof or b2_lineage.materialization_proof
+            lease = WorkspaceLease.create(
+                lease_id=lease_id or b2_lineage.lease.lease_id,
+                broker_id=b2_lineage.lease.broker_id,
+                identity=self.identity,
+                profile=self.profile,
+                attempt_id=b2_lineage.lease.attempt_id,
+                agent_session_id=None,
+                role=WorkspaceRole.B2,
+                snapshot=self.snapshot.ref,
+                role_policy=self.policies[WorkspaceRole.B2],
+                workspace_equivalence_policy=self.equivalence_policy,
+                write_layer_sha256=(
+                    write_layer_sha256
+                    or b2_lineage.lease.write_layer_sha256
+                ),
+                materialization_proof_sha256=selected_proof.content_sha256,
+            )
+            return WorkspaceLineageRecord(
+                lease=lease,
+                role_policy=self.policies[WorkspaceRole.B2],
+                materialization_proof=selected_proof,
+            )
+
+        repeated_proof = rebuild_b2(
+            proof=b1_lineage.materialization_proof,
+        )
+        repeated_materialization_id = rebuild_b2(
+            proof=dataclasses.replace(
+                b2_lineage.materialization_proof,
+                materialization_id=(
+                    b1_lineage.materialization_proof.materialization_id
+                ),
+                entry_count=(
+                    b2_lineage.materialization_proof.entry_count + 1
+                ),
+            ),
+        )
+        repeated = (
+            rebuild_b2(lease_id=b1_lineage.lease.lease_id),
+            rebuild_b2(
+                write_layer_sha256=b1_lineage.lease.write_layer_sha256,
+            ),
+            repeated_proof,
+            repeated_materialization_id,
+        )
+        for forged in repeated:
+            with self.subTest(forged=forged.content_sha256):
+                with self.assertRaises(WorkspaceError) as caught:
+                    validate_workspace_lineage(
+                        a_lineage,
+                        b1_lineage,
+                        forged,
+                    )
+                self.assertEqual(
+                    caught.exception.code,
+                    WorkspaceErrorCode.WORKSPACE_INTEGRITY_FAILURE,
+                )
+
+        corrupted = dataclasses.replace(b2_lineage)
+        corrupted_lease = dataclasses.replace(b2_lineage.lease)
+        object.__setattr__(
+            corrupted_lease,
+            "resource_fingerprint_sha256",
+            b1_lineage.lease.resource_fingerprint_sha256,
+        )
+        object.__setattr__(corrupted, "lease", corrupted_lease)
+        with self.assertRaises(WorkspaceError):
+            validate_workspace_lineage(a_lineage, b1_lineage, corrupted)
+
+    def test_workspace_lineage_parser_is_strict_and_rebinds_nested_contracts(self):
+        b1 = self._allocate(WorkspaceRole.B1)
+        b2 = self._allocate(WorkspaceRole.B2)
+        lineage = WorkspaceLineageRecord.from_allocation(b1)
+        self.assertEqual(
+            WorkspaceLineageRecord.from_json(lineage.to_json()),
+            lineage,
+        )
+
+        with self.assertRaises(ContractError):
+            WorkspaceLineageRecord.from_json(
+                b'{"contract_kind":"workspace_lineage_record",'
+                b'"contract_kind":"workspace_lineage_record"}'
+            )
+        valid = lineage.to_document()
+        for name, document in (
+            ("unknown-version", {**valid, "schema_version": 2}),
+            ("boolean-version", {**valid, "schema_version": True}),
+            ("host-path", {**valid, "root": os.fspath(b1.paths.root)}),
+        ):
+            with self.subTest(mutation=name):
+                with self.assertRaises(ContractError):
+                    WorkspaceLineageRecord.from_document(document)
+
+        for nested in ("lease", "role_policy", "materialization_proof"):
+            document = lineage.to_document()
+            document[nested]["host_path"] = os.fspath(b1.paths.root)
+            with self.subTest(nested=nested), self.assertRaises(ContractError):
+                WorkspaceLineageRecord.from_document(document)
+
+        mismatched = lineage.to_document()
+        mismatched["materialization_proof"] = (
+            b2.materialization.proof.to_document()
+        )
+        with self.assertRaises(ContractError):
+            WorkspaceLineageRecord.from_document(mismatched)
 
     def test_b1_b2_from_different_attempts_are_not_one_independent_set(self):
         a = self._allocate(WorkspaceRole.A, attempt_id="attempt-agent")

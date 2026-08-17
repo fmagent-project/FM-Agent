@@ -17,6 +17,9 @@ uv run python -m unittest -v \
   tests.test_validation_snapshot_runtime \
   tests.test_validation_profile_contracts \
   tests.test_validation_case_contracts \
+  tests.test_validation_coordinator_contracts \
+  tests.test_validation_coordinator_mailbox \
+  tests.test_validation_coordinator_runtime \
   tests.test_validation_plan_contracts \
   tests.test_validation_status_contracts \
   tests.test_validation_evidence_contracts \
