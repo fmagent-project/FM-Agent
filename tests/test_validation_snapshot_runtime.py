@@ -282,12 +282,21 @@ def _execution_template(identity, profile, equivalence_policy):
 class SnapshotPublicBoundaryTests(unittest.TestCase):
     def test_runtime_packages_export_only_the_exact_supported_api(self):
         expected_storage = {
+            "ApprovalReuseRecord",
             "MaterializedSnapshot",
+            "ProfileAdmissionPublishReceipt",
+            "ProfileRefRecord",
+            "ProfileStore",
+            "ProfileStoreError",
+            "ProfileStoreErrorCode",
+            "ResolvedProfileAdmission",
+            "RevocationLedgerEntry",
             "SnapshotErrorCode",
             "SnapshotMaterializationProof",
             "SnapshotStore",
             "SnapshotStoreError",
             "StoredSnapshot",
+            "StoredProfileObject",
         }
         expected_execution = {
             "AgentExitProof",

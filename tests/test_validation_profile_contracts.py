@@ -448,6 +448,56 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "CoordinatorResponseEnvelope",
             "StagedArtifactBinding",
         }
+        stage_6_exports = {
+            "ApprovalAuthorityKind",
+            "ApprovalDecision",
+            "CalibrationReport",
+            "DependencyBinding",
+            "DependencyInvalidationManifest",
+            "DependencyKind",
+            "FixtureVisibility",
+            "InvalidationAction",
+            "ProfileAdmissionRecord",
+            "ProfileGraph",
+            "ProfileSetupCandidate",
+            "QualificationMode",
+            "QualificationPartition",
+            "QualificationPartitionKind",
+            "QualificationPlan",
+            "QualificationPolicy",
+            "QualificationReport",
+            "QualificationTrial",
+            "QualificationUnit",
+            "QualificationVerdict",
+            "ResultBlindReviewBundle",
+            "ReviewRecord",
+            "ReviewSubject",
+            "ReviewVerdict",
+            "RevocationEntry",
+            "RevocationLedger",
+            "RevocationReason",
+            "RevocationTarget",
+            "RevocationTargetKind",
+            "SemanticApprovalRecord",
+            "SetupActorRole",
+            "SetupLifecycleRecord",
+            "SetupState",
+            "SetupStateTransition",
+            "StatisticalBoundMethod",
+            "TrustEvaluation",
+            "TrustReasonCode",
+            "evaluate_profile_trust",
+            "freeze_profile",
+            "make_review_subject",
+            "validate_approval_basis",
+            "validate_approval_graph",
+            "validate_frozen_profile_graph",
+            "validate_invalidation_manifest_graph",
+            "validate_profile_admission_graph",
+            "validate_qualification_graph",
+            "validate_revocation_ledger_extension",
+            "validate_review_graph",
+        }
         exports = contracts_namespace.__all__
         self.assertEqual(len(exports), len(set(exports)))
         self.assertEqual(
@@ -457,7 +507,8 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             | stage_4b_exports
             | stage_4c_exports
             | snapshot_exports
-            | coordinator_exports,
+            | coordinator_exports
+            | stage_6_exports,
         )
         for name in exports:
             self.assertTrue(hasattr(contracts_namespace, name), name)
@@ -467,6 +518,7 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             | stage_4c_exports
             | snapshot_exports
             | coordinator_exports
+            | stage_6_exports
         ):
             self.assertFalse(hasattr(production_root, name), name)
 

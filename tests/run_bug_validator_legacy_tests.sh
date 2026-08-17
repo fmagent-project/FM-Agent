@@ -16,6 +16,11 @@ uv run python -m unittest -v \
   tests.test_validation_oracle_runtime \
   tests.test_validation_snapshot_runtime \
   tests.test_validation_profile_contracts \
+  tests.test_validation_profile_setup_contracts \
+  tests.test_validation_profile_setup_policy \
+  tests.test_validation_profile_qualification \
+  tests.test_validation_profile_invalidation \
+  tests.test_validation_profile_store \
   tests.test_validation_case_contracts \
   tests.test_validation_coordinator_contracts \
   tests.test_validation_coordinator_mailbox \
