@@ -1,0 +1,4 @@
+interface:
+  display_name: "FM-Agent Progress PPT"
+  short_description: "Build verified FM-Agent progress report decks"
+  default_prompt: "Use $fm-agent-progress-ppt to build a progress PPT from FM-Agent PRs, issues, local memories, branches, and the meeting template."

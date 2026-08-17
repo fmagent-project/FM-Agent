@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="2800" viewBox="0 0 1800 2800">
+  <rect width="1800" height="2800" fill="#F7F9FC"/>
+  <style>
+    text { font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; fill: #172033; }
+    .title { font-size: 54px; font-weight: 700; }
+    .subtitle { font-size: 24px; fill: #526078; }
+    .zone-title { font-size: 34px; font-weight: 700; }
+    .box-title { font-size: 29px; font-weight: 700; }
+    .step { font-size: 25px; font-weight: 600; }
+    .body { font-size: 22px; }
+    .small { font-size: 19px; fill: #526078; }
+    .badge { font-size: 20px; font-weight: 700; }
+    .arrow { fill: none; stroke: #53627A; stroke-width: 5; marker-end: url(#arrow); }
+    .loop { fill: none; stroke: #C57417; stroke-width: 5; stroke-dasharray: 13 10; marker-end: url(#arrowOrange); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#53627A"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#C57417"/>
+    </marker>
+  </defs>
+
+  <text x="900" y="78" text-anchor="middle" class="title">通用 Validator Agent：完整生命周期</text>
+  <text x="900" y="122" text-anchor="middle" class="subtitle">一次 Profile Setup · 每个候选一次 Agent 会话 · 双 Gate · 两次独立干净重放</text>
+
+  <rect x="100" y="170" width="1600" height="110" rx="24" fill="#FFFFFF" stroke="#BBC5D5" stroke-width="3"/>
+  <text x="150" y="216" class="box-title">不可变输入</text>
+  <text x="150" y="254" class="body">源码快照 + reasoning/spec claim + 通用 consequence 目录 + 已固定的依赖、模型、工具链与硬件描述</text>
+
+  <!-- SETUP -->
+  <rect x="100" y="330" width="1600" height="530" rx="34" fill="#EEE9FF" stroke="#7658C8" stroke-width="5"/>
+  <text x="145" y="385" class="zone-title">0　Project Profile Setup（同一系统快照只做一次）</text>
+  <rect x="150" y="425" width="575" height="350" rx="26" fill="#FFFFFF" stroke="#9A83DA" stroke-width="4"/>
+  <text x="185" y="475" class="box-title">Setup Agent Sandbox S</text>
+  <text x="185" y="525" class="step">识别系统怎么被真实运行</text>
+  <text x="205" y="565" class="body">入口 / build / test / 服务 / 设备</text>
+  <text x="185" y="615" class="step">选择 adapter 与 oracle</text>
+  <text x="205" y="655" class="body">语言插桩、比较对象、阈值、资源预算</text>
+  <text x="185" y="705" class="step">跑健康基线</text>
+  <text x="205" y="745" class="body">证明“正常系统在本预算内稳定可跑”</text>
+
+  <path d="M725 600 L810 600" class="arrow"/>
+  <rect x="825" y="425" width="355" height="350" rx="26" fill="#FFF9E9" stroke="#D6982F" stroke-width="4"/>
+  <text x="875" y="475" class="box-title">Profile Gate</text>
+  <text x="870" y="535" class="body">• 命令可重放</text>
+  <text x="870" y="580" class="body">• 基线稳定</text>
+  <text x="870" y="625" class="body">• 阈值有依据</text>
+  <text x="870" y="670" class="body">• 权限最小化</text>
+  <text x="870" y="725" class="small">Agent 新写规则才需一次人工批准</text>
+
+  <path d="M1180 600 L1260 600" class="arrow"/>
+  <rect x="1275" y="425" width="375" height="350" rx="26" fill="#E7F8EF" stroke="#299D62" stroke-width="4"/>
+  <text x="1325" y="475" class="box-title">Profile（已冻结）</text>
+  <text x="1320" y="535" class="body">允许的真实入口</text>
+  <text x="1320" y="580" class="body">oracle / 阈值 / 重复次数</text>
+  <text x="1320" y="625" class="body">adapter / 工具链 / 资源预算</text>
+  <text x="1320" y="670" class="body">网络 / GPU / 设备 / 修复范围</text>
+  <text x="1320" y="725" class="badge">全部内容绑定 hash</text>
+  <text x="145" y="825" class="small">生命周期：创建 S → 生成并校准 Profile → Gate 通过后冻结 → 销毁 S。快照变化时 Profile 失效并重做 Setup。</text>
+
+  <!-- PER BUG -->
+  <rect x="100" y="915" width="1600" height="1200" rx="34" fill="#FFFFFF" stroke="#7B879A" stroke-width="4"/>
+  <text x="145" y="970" class="zone-title">1　每个 bug 候选：Agent 探索 + Inner Gate 反馈</text>
+
+  <!-- COPY A -->
+  <rect x="145" y="1010" width="650" height="950" rx="30" fill="#E7F1FF" stroke="#3E7CC4" stroke-width="5"/>
+  <text x="180" y="1065" class="box-title">副本 A · Validator Agent Sandbox</text>
+  <text x="180" y="1110" class="small">一次 Agent 会话中持续存在；Agent 可写</text>
+
+  <rect x="185" y="1150" width="570" height="125" rx="20" fill="#FFFFFF" stroke="#80A9DA" stroke-width="3"/>
+  <text x="220" y="1200" class="step">① 读取 claim + Frozen Profile</text>
+  <text x="220" y="1240" class="body">只选择已批准能力，不得临时发明阈值</text>
+
+  <path d="M470 1275 L470 1320" class="arrow"/>
+  <rect x="185" y="1330" width="570" height="190" rx="20" fill="#FFFFFF" stroke="#80A9DA" stroke-width="3"/>
+  <text x="220" y="1380" class="step">② 构造 Case Plan</text>
+  <text x="220" y="1425" class="body">真实 workload / probe / target selector</text>
+  <text x="220" y="1465" class="body">oracle ID / causal control / 可选 repair</text>
+
+  <path d="M470 1520 L470 1565" class="arrow"/>
+  <rect x="185" y="1575" width="570" height="240" rx="20" fill="#FFFFFF" stroke="#80A9DA" stroke-width="3"/>
+  <text x="220" y="1625" class="step">③ 在 A 中探索与调试</text>
+  <text x="220" y="1670" class="body">可生成 probe、测试、patch 与候选清单</text>
+  <text x="220" y="1710" class="body">可调用受控 GPU / Device / Service Broker</text>
+  <text x="220" y="1750" class="body">输出只能是结构化 recipe + artifact</text>
+
+  <rect x="185" y="1850" width="570" height="70" rx="18" fill="#CFE2FA" stroke="#3E7CC4" stroke-width="3"/>
+  <text x="470" y="1896" text-anchor="middle" class="badge">Agent 仍然存活，可接收 Gate 拒绝理由并迭代</text>
+
+  <!-- COPY B1 -->
+  <rect x="855" y="1010" width="800" height="950" rx="30" fill="#FFF0D8" stroke="#D98520" stroke-width="5"/>
+  <text x="895" y="1065" class="box-title">副本 B1 · Inner Gate Sandbox</text>
+  <text x="895" y="1110" class="small">每次提交都从不可变源码新建；Gate 可写，Agent 不可写</text>
+
+  <rect x="895" y="1150" width="720" height="145" rx="20" fill="#FFFFFF" stroke="#E5A75C" stroke-width="3"/>
+  <text x="935" y="1200" class="step">④ Schema + Hash + Profile Gate</text>
+  <text x="935" y="1243" class="body">拒绝任意 shell、越权路径、未知 oracle 与过期 Profile</text>
+
+  <path d="M1255 1295 L1255 1335" class="arrow"/>
+  <rect x="895" y="1345" width="720" height="270" rx="20" fill="#FFFFFF" stroke="#E5A75C" stroke-width="3"/>
+  <text x="935" y="1395" class="step">⑤ 在干净 B1 中真实重放</text>
+  <text x="935" y="1440" class="body">系统公开入口 / 项目自带 test / 合法 e2e</text>
+  <text x="935" y="1480" class="body">harness 产生 observation ID，不信 Agent 口述</text>
+  <text x="935" y="1520" class="body">两类 Target Evidence + consequence oracle</text>
+  <text x="935" y="1560" class="body">因果 control：关闭目标机制后 consequence 消失</text>
+
+  <path d="M1255 1615 L1255 1655" class="arrow"/>
+  <rect x="895" y="1665" width="720" height="175" rx="20" fill="#FFFFFF" stroke="#E5A75C" stroke-width="3"/>
+  <text x="935" y="1715" class="step">⑥ 分级</text>
+  <text x="935" y="1760" class="body">L0：真实 consequence + 目标因果成立</text>
+  <text x="935" y="1800" class="body">L1：clean repair 消除 consequence + sanity 通过</text>
+
+  <rect x="895" y="1870" width="720" height="50" rx="16" fill="#F8D7A8" stroke="#D98520" stroke-width="3"/>
+  <text x="1255" y="1904" text-anchor="middle" class="badge">销毁 B1；失败只返回结构化拒绝理由</text>
+
+  <path d="M855 1835 L815 1835 L815 1420 L770 1420" class="loop"/>
+  <path d="M755 1550 L825 1550" class="arrow"/>
+
+  <rect x="145" y="1990" width="1510" height="80" rx="20" fill="#EEF1F5" stroke="#8A96A8" stroke-width="3"/>
+  <text x="900" y="2023" text-anchor="middle" class="step">⑦ Inner Gate 接受后：冻结 candidate + context/profile/artifact hashes，终止 Agent，销毁副本 A</text>
+  <text x="900" y="2055" text-anchor="middle" class="small">从这一刻开始，不再允许模型修改证据、命令、patch 或判断标准</text>
+
+  <!-- OUTER -->
+  <rect x="100" y="2180" width="1600" height="485" rx="34" fill="#E6F7ED" stroke="#258B57" stroke-width="5"/>
+  <text x="145" y="2235" class="zone-title">2　副本 B2 · Outer Gate Sandbox（独立最终重放）</text>
+  <text x="145" y="2275" class="small">全新干净副本；无 Agent、无模型、无公网；只允许冻结 Profile 中的本地服务、GPU 或 Device Broker</text>
+
+  <rect x="150" y="2310" width="400" height="250" rx="24" fill="#FFFFFF" stroke="#63B889" stroke-width="3"/>
+  <text x="200" y="2360" class="step">⑧ 创建 B2</text>
+  <text x="200" y="2410" class="body">重新复制源码</text>
+  <text x="200" y="2450" class="body">重新校验全部 hash</text>
+  <text x="200" y="2490" class="body">挂载冻结工具链 / 模型</text>
+
+  <path d="M550 2435 L650 2435" class="arrow"/>
+  <rect x="665" y="2310" width="470" height="250" rx="24" fill="#FFFFFF" stroke="#63B889" stroke-width="3"/>
+  <text x="715" y="2360" class="step">⑨ 重跑同一个 Gate</text>
+  <text x="715" y="2410" class="body">真实入口 + observation</text>
+  <text x="715" y="2450" class="body">Target Evidence + causal control</text>
+  <text x="715" y="2490" class="body">可选 repair + sanity / regression</text>
+
+  <path d="M1135 2435 L1235 2435" class="arrow"/>
+  <rect x="1250" y="2310" width="400" height="250" rx="24" fill="#FFFFFF" stroke="#63B889" stroke-width="3"/>
+  <text x="1300" y="2360" class="step">⑩ 发布或拒绝</text>
+  <text x="1300" y="2410" class="body">L0 certificate</text>
+  <text x="1300" y="2450" class="body">L1 certificate</text>
+  <text x="1300" y="2490" class="body">或 not-confirmed / inconclusive</text>
+  <text x="145" y="2625" class="small">生命周期：创建 B2 → 独立重放 → 发布 hash-bound certificate → 销毁 B2。Inner 结果本身不能对外宣称 confirmed。</text>
+
+  <rect x="100" y="2705" width="1600" height="62" rx="20" fill="#172033"/>
+  <text x="900" y="2746" text-anchor="middle" style="font-family:'Microsoft YaHei','PingFang SC',Arial,sans-serif;font-size:23px;font-weight:700;fill:#FFFFFF">核心原则：Agent 负责提出可验证方案；Harness 负责运行、观察、归因和最终裁决。</text>
+</svg>

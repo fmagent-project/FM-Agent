@@ -1,0 +1,36 @@
+{
+  "name": "manual_v1_all_stage_modify",
+  "version": "V1.0",
+  "stages": {
+    "generate_phase_plan": {
+      "type": "modify",
+      "input_function": "before_generate_phase_plan",
+      "output_function": "after_generate_phase_plan"
+    },
+    "generate_domain_context": {
+      "type": "modify",
+      "input_function": "before_generate_domain_context",
+      "output_function": "after_generate_domain_context"
+    },
+    "extract_functions": {
+      "type": "modify",
+      "input_function": "before_extract_functions",
+      "output_function": "after_extract_functions"
+    },
+    "collect_file_list": {
+      "type": "modify",
+      "input_function": "before_collect_file_list",
+      "output_function": "after_collect_file_list"
+    },
+    "generate_topdown_layers": {
+      "type": "modify",
+      "input_function": "before_generate_topdown_layers",
+      "output_function": "after_generate_topdown_layers"
+    },
+    "generate_specs_and_verification": {
+      "type": "modify",
+      "input_function": "before_generate_specs_and_verification",
+      "output_function": "after_generate_specs_and_verification"
+    }
+  }
+}

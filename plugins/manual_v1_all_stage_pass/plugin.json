@@ -1,0 +1,12 @@
+{
+  "name": "manual_v1_all_stage_pass",
+  "version": "V1.0",
+  "stages": {
+    "generate_phase_plan": {"type": "pass"},
+    "generate_domain_context": {"type": "pass"},
+    "extract_functions": {"type": "pass"},
+    "collect_file_list": {"type": "pass"},
+    "generate_topdown_layers": {"type": "pass"},
+    "generate_specs_and_verification": {"type": "pass"}
+  }
+}

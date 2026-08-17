@@ -1,0 +1,30 @@
+{
+  "name": "manual_v1_all_stage_replace",
+  "version": "V1.0",
+  "stages": {
+    "generate_phase_plan": {
+      "type": "replace",
+      "replace_function": "replace_generate_phase_plan"
+    },
+    "generate_domain_context": {
+      "type": "replace",
+      "replace_function": "replace_generate_domain_context"
+    },
+    "extract_functions": {
+      "type": "replace",
+      "replace_function": "replace_extract_functions"
+    },
+    "collect_file_list": {
+      "type": "replace",
+      "replace_function": "replace_collect_file_list"
+    },
+    "generate_topdown_layers": {
+      "type": "replace",
+      "replace_function": "replace_generate_topdown_layers"
+    },
+    "generate_specs_and_verification": {
+      "type": "replace",
+      "replace_function": "replace_generate_specs_and_verification"
+    }
+  }
+}
