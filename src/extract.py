@@ -134,6 +134,22 @@ LANG_CONFIG = {
         # Chisel extraction is owned exclusively by its registered handler.
         "body": "external",
     },
+    "verilog": {
+        "comment_prefix": "//",
+        "skip_prefixes": ("//", "/*", "*", "`"),
+        "skip_keywords_line": (),
+        "keywords": {
+            "always", "always_comb", "always_ff", "always_latch", "and",
+            "assign", "begin", "buf", "case", "do", "else", "end",
+            "endcase", "endfunction", "endgenerate", "endmodule",
+            "endpackage", "endtask", "for", "forever", "function",
+            "generate", "if", "initial", "module", "nand", "nor", "not",
+            "or", "package", "parameter", "primitive", "repeat", "task",
+            "wait", "while", "xnor", "xor",
+        },
+        # Verilog module extraction is owned by its registered handler.
+        "body": "external",
+    },
     "cuda": {
         "comment_prefix": "//",
         "skip_prefixes": ("//", "#", "using", "typedef"),
@@ -176,6 +192,7 @@ EXT_TO_LANG = {
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
     "scala": "chisel", "sc": "chisel",
+    "v": "verilog", "sv": "verilog", "svh": "verilog",
 }
 
 # ---------------------------------------------------------------------------

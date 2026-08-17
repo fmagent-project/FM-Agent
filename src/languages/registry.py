@@ -14,6 +14,7 @@ from src.languages import typescript as _typescript
 from src.languages import arkts as _arkts
 from src.languages import erlang as _erlang
 from src.languages import chisel as _chisel
+from src.languages import verilog as _verilog
 
 from src.languages.base import BackendUnavailableError as _BackendUnavailableError
 
@@ -69,6 +70,7 @@ REGISTRY: dict = {
     "arkts":      LanguageHandler(batch_extract=_arkts.batch_extract,      call_edges=_arkts.call_edges,      function_spans=_arkts.function_spans, remove_comments=_arkts.remove_comments),
     "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
     "chisel":     LanguageHandler(batch_extract=_chisel.batch_extract,     call_edges=_chisel.call_edges,     function_spans=_chisel.function_spans),
+    "verilog":    LanguageHandler(batch_extract=_verilog.batch_extract,    call_edges=_verilog.call_edges,    function_spans=_verilog.function_spans),
 }
 
 

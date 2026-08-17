@@ -118,6 +118,12 @@ _TEST_FILE_PATTERNS = [
 _CHISEL_TEST_FILE_PATTERN = re.compile(
     r"^.*(?:Spec|Test|Tester)\.(?:scala|sc)$"
 )
+_VERILOG_TEST_FILE_PATTERN = re.compile(
+    r"^(?:tb_.+|testbench(?:_.+)?|.+_(?:tb|test|testbench))"
+    r"\.(?:v|sv|svh)$",
+    re.IGNORECASE,
+)
+_VERILOG_TEST_DIR_NAMES = frozenset({"tb", "sim", "testbench"})
 
 
 # Project-relative paths that must never be treated as test files, even when
@@ -494,6 +500,13 @@ def _is_test_file(rel_path):
         if in_main_source_tree:
             return False
         return bool(_CHISEL_TEST_FILE_PATTERN.match(parts[-1]))
+    if extension in {".v", ".sv", ".svh"}:
+        if any(
+            part.lower() in _VERILOG_TEST_DIR_NAMES
+            for part in parts[:-1]
+        ):
+            return True
+        return bool(_VERILOG_TEST_FILE_PATTERN.match(parts[-1]))
     # Check filename against test patterns
     basename = parts[-1]
     for pat in _TEST_FILE_PATTERNS:
