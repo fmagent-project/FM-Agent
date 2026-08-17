@@ -434,15 +434,30 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "validation_outcome_from_document",
             "validation_outcome_from_json",
         }
+        snapshot_exports = {
+            "SnapshotEntryKind",
+            "SnapshotManifest",
+            "SnapshotManifestEntry",
+            "SnapshotPolicy",
+            "SnapshotRef",
+            "SymlinkPolicy",
+            "generic_source_snapshot_policy_v1",
+        }
         exports = contracts_namespace.__all__
         self.assertEqual(len(exports), len(set(exports)))
         self.assertEqual(
             set(exports),
-            pre_stage_exports | stage_exports | stage_4b_exports | stage_4c_exports,
+            pre_stage_exports
+            | stage_exports
+            | stage_4b_exports
+            | stage_4c_exports
+            | snapshot_exports,
         )
         for name in exports:
             self.assertTrue(hasattr(contracts_namespace, name), name)
-        for name in stage_exports | stage_4b_exports | stage_4c_exports:
+        for name in (
+            stage_exports | stage_4b_exports | stage_4c_exports | snapshot_exports
+        ):
             self.assertFalse(hasattr(production_root, name), name)
 
     def test_profile_round_trip_hash_and_deep_immutability(self):
@@ -850,6 +865,7 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "json",
             "re",
             "typing",
+            "unicodedata",
         }
         allowed_contract_siblings = {
             "base",
@@ -863,6 +879,7 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "receipt",
             "references",
             "status",
+            "snapshot",
         }
         for relative_path in (
             "src/validation_core/contracts/base.py",
@@ -876,6 +893,7 @@ class FrozenSystemProfileContractTests(unittest.TestCase):
             "src/validation_core/contracts/evidence.py",
             "src/validation_core/contracts/receipt.py",
             "src/validation_core/contracts/outcome.py",
+            "src/validation_core/contracts/snapshot.py",
         ):
             with self.subTest(relative_path=relative_path):
                 tree = ast.parse(Path(relative_path).read_text(encoding="utf-8"))

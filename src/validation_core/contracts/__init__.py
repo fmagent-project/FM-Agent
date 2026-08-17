@@ -33,6 +33,15 @@ from .preset import (
     ValidationPreset,
 )
 from .references import ArtifactRef, ContractRef, ContractRefKind
+from .snapshot import (
+    SnapshotEntryKind,
+    SnapshotManifest,
+    SnapshotManifestEntry,
+    SnapshotPolicy,
+    SnapshotRef,
+    SymlinkPolicy,
+    generic_source_snapshot_policy_v1,
+)
 from .execution import (
     ExecutionInputBinding,
     ExecutionRecipe,
@@ -249,6 +258,12 @@ __all__ = [
     "SemanticClause",
     "SemanticContract",
     "StatisticalBaselineMethod",
+    "SnapshotEntryKind",
+    "SnapshotManifest",
+    "SnapshotManifestEntry",
+    "SnapshotPolicy",
+    "SnapshotRef",
+    "SymlinkPolicy",
     "TargetEvidenceSelection",
     "B1TerminalOutcome",
     "B2RecheckFailedOutcome",
@@ -266,6 +281,7 @@ __all__ = [
     "compute_validation_instance_id",
     "gate_receipt_from_document",
     "gate_receipt_from_json",
+    "generic_source_snapshot_policy_v1",
     "load_strict_json_object",
     "validate_case_plan_membership",
     "validate_case_submission_membership",

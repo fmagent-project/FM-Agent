@@ -70,6 +70,7 @@ class ContractRefKind(str, Enum):
     REPAIR_POLICY = "repair_policy"
     RESET_POLICY = "reset_policy"
     EXECUTION_EQUIVALENCE_POLICY = "execution_equivalence_policy"
+    SNAPSHOT_POLICY = "snapshot_policy"
 
 
 @dataclass(frozen=True)
