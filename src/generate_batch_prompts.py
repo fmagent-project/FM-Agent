@@ -202,11 +202,13 @@ def build_prompt(
             lines.append(f"- {path}")
     lines.append("")
     lines.append("## KEY RULES")
-    lines.append("- Describe WHAT the function guarantees, NOT HOW it implements it")
-    lines.append("- Do NOT name internal helper calls, loop structure, or data layout decisions")
-    lines.append("- Do NOT enumerate members of sets - describe the GOVERNING RULE")
-    lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
-    lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each one")
+    for rule in spec_form.batch_rules(sample_lang):
+        lines.append(f"- {rule}")
+    unit_noun = spec_form.unit_noun
+    lines.append(
+        f"- ALL {unit_noun} files below exist in "
+        f"{fm_agent_prefix}extracted_functions/ - read and process each one"
+    )
 
     caller_specs: List[Tuple[str, str]] = []
     caller_expectations: Dict[str, List[Tuple[str, str]]] = {}
@@ -261,18 +263,36 @@ def build_prompt(
 
     if is_cycle:
         lines.append("## CYCLE LAYER GUIDANCE")
-        lines.append("These functions call each other (mutual recursion / circular dependencies).")
-        lines.append(
-            'Ask: "What is true after this function returns, regardless of which caller invoked it and which code path executed?" '
-            "That invariant is your post-condition."
-        )
-        lines.append("")
-        lines.append("DISPATCH FUNCTION TEST: If your spec has N bullets where N equals the number")
-        lines.append("of switch arms / dispatch cases, you are transcribing the implementation.")
-        lines.append("A dispatch function's contract is the invariant that holds ACROSS ALL cases.")
+        if unit_noun == "function":
+            lines.append(
+                "These functions call each other (mutual recursion / circular dependencies)."
+            )
+            lines.append(
+                'Ask: "What is true after this function returns, regardless of which caller invoked it and which code path executed?" '
+                "That invariant is your post-condition."
+            )
+            lines.append("")
+            lines.append("DISPATCH FUNCTION TEST: If your spec has N bullets where N equals the number")
+            lines.append("of switch arms / dispatch cases, you are transcribing the implementation.")
+            lines.append("A dispatch function's contract is the invariant that holds ACROSS ALL cases.")
+        else:
+            lines.append(
+                f"These {unit_noun}s have circular dependencies within this layer."
+            )
+            lines.append(
+                f'Ask: "What observable contract must this {unit_noun} satisfy, '
+                'regardless of which dependency path is active?"'
+            )
+            lines.append("")
+            lines.append(
+                "Describe the stable contract across the cycle, not a transcript "
+                "of individual dependency paths."
+            )
         lines.append("")
 
-    lines.append(f"## FUNCTIONS ({len(functions)} total - process ALL)")
+    lines.append(
+        f"## {unit_noun.upper()}S ({len(functions)} total - process ALL)"
+    )
     for idx, fn in enumerate(functions, start=1):
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)

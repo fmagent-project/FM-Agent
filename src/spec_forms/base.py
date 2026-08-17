@@ -22,6 +22,7 @@ class SpecValidationResult:
 
     ready: bool
     errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 class SpecForm(ABC):
@@ -34,6 +35,21 @@ class SpecForm(ABC):
 
     id: str
     schema_version: str
+
+    @property
+    def unit_noun(self) -> str:
+        """Return the singular analysis-unit term used in batch prompts."""
+        return "function"
+
+    def batch_rules(self, language: str) -> Sequence[str]:
+        """Return form-specific behavioral rules for a batch prompt."""
+        del language
+        return (
+            "Describe WHAT the function guarantees, NOT HOW it implements it",
+            "Do NOT name internal helper calls, loop structure, or data layout decisions",
+            "Do NOT enumerate members of sets - describe the GOVERNING RULE",
+            "Specs describe INTENDED CORRECT behavior per the domain (see domain files)",
+        )
 
     @abstractmethod
     def artifact_paths(self, unit_file: Path) -> SpecArtifactPaths:

@@ -1,8 +1,8 @@
-"""Chisel specification-form identity for run-scoped configuration."""
+"""Chisel hardware specification form."""
 
-from .base import BootstrapHardwareSpecForm
+from .base import HardwareSpecForm
 
 
-class ChiselSpecForm(BootstrapHardwareSpecForm):
+class ChiselSpecForm(HardwareSpecForm):
     id = "chip-chisel"
     dialect = "chisel"

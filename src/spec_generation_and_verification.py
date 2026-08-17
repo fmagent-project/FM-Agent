@@ -48,23 +48,58 @@ def _get_pending_batches(
     proj_dir,
     spec_form: SpecForm,
     expected_dependencies_by_file,
+    *,
+    report_warnings=False,
 ):
-    """Return batches that still have at least one function without specs."""
+    """Return pending batches annotated with fresh per-unit validation errors."""
     pending = []
+    warning_lines = []
     for batch in batches:
+        validation_errors = {}
+        batch_is_pending = False
         for func_rel in batch.get("functions", []):
             full_path = os.path.normpath(os.path.join(proj_dir, func_rel))
             expected_dependencies = expected_dependencies_by_file.get(
                 full_path,
                 (),
             )
-            if not spec_form.validate(
+            result = spec_form.validate(
                 Path(full_path),
                 expected_dependencies=expected_dependencies,
-            ).ready:
-                pending.append(batch)
-                break
+            )
+            if result.warnings:
+                warning_lines.extend(
+                    f"{func_rel}: {warning}"
+                    for warning in result.warnings
+                )
+            if not result.ready:
+                batch_is_pending = True
+                validation_errors[func_rel] = list(result.errors)
+        if batch_is_pending:
+            pending_batch = dict(batch)
+            pending_batch["validation_errors"] = validation_errors
+            pending.append(pending_batch)
+    if report_warnings and warning_lines:
+        logging.warning(
+            "Specification validation advisories for this scan:\n- %s",
+            "\n- ".join(dict.fromkeys(warning_lines)),
+        )
     return pending
+
+
+def _format_validation_feedback(validation_errors):
+    """Render exact per-unit validation failures for the next batch attempt."""
+    if not validation_errors:
+        return ""
+    lines = [
+        "",
+        "The previous attempt produced artifacts that failed validation. Repair "
+        "every issue below; do not merely rename or delete the artifact:",
+    ]
+    for unit_file, errors in validation_errors.items():
+        lines.append(f"- {unit_file}")
+        lines.extend(f"  - {error}" for error in errors)
+    return "\n".join(lines)
 
 
 def _topdown_unit_path(proj_dir, work_dir, file_rel):
@@ -97,6 +132,10 @@ def _run_spec_generation_batch(
         for func_rel in function_files
     ]
     prompt = spec_form.generation_instruction(batch_prompt_rel, attempt)
+    if attempt > 1:
+        prompt += _format_validation_feedback(
+            batch_info.get("validation_errors", {})
+        )
     prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_spec_step4_batch.md")
     command = build_llm_cli_command(
         model=OPENCODE_SPEC_MODEL,
@@ -223,6 +262,7 @@ def run_spec_generation_and_verification(
                     proj_dir,
                     spec_form,
                     expected_dependencies_by_file,
+                    report_warnings=True,
                 )
                 if not pending_batches:
                     # All functions in this layer are specced. When downstream
@@ -317,15 +357,16 @@ def run_spec_generation_and_verification(
                         ),
                     ).ready
                 )
-                if specs_generated > 0 and not _get_pending_batches(
+                remaining_batches = _get_pending_batches(
                     all_batches,
                     proj_dir,
                     spec_form,
                     expected_dependencies_by_file,
-                ):
+                )
+                if specs_generated > 0 and not remaining_batches:
                     break
 
-                if specs_generated > 0:
+                if specs_generated > 0 and attempt < OPENCODE_MAX_RETRIES:
                     # Partial progress — retry remaining batches without delay
                     logging.info(
                         f"Phase {phase_num} Layer {layer_idx} attempt {attempt}: "
@@ -346,10 +387,15 @@ def run_spec_generation_and_verification(
                     )
                     time.sleep(delay)
                 else:
+                    remaining_units = sum(
+                        len(batch.get("validation_errors", {}))
+                        for batch in remaining_batches
+                    )
                     print(
                         f"[Pipeline] ERROR: Stage 6 Phase {phase_num} Layer {layer_idx} failed "
                         f"after {OPENCODE_MAX_RETRIES} attempts. "
-                        f"No specs were generated. "
+                        f"{remaining_units} {spec_form.unit_noun}(s) still have "
+                        "invalid or missing specs. "
                         f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
                     )
                     sys.exit(1)
