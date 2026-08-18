@@ -370,3 +370,119 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             }
         ]
     raise ValueError("Could not parse a valid structured JSON verdict from spec-check response.")
+
+
+def _check_block_preserves_invariants(block, pre_condition, invariants, knowledge, language,
+                                      trace_dir=None, trace_meta=None):
+    info_str = f"\nAdditional context:\n{knowledge}" if knowledge else ""
+    lang_expertise = _LANGUAGE_EXPERTISE.get(language.lower(), f"You are an expert in logic, formal verification, and {language} programming. ")
+    messages = [
+        {"role": "system", "content": (
+            lang_expertise +
+            "Given a code block, its entry condition (which includes the fact that the specification invariants hold just before the block runs), "
+            "and a set of specification invariants, determine whether there exists a concrete execution in which the block, at ANY moment while it runs "
+            "(not only at its exit point), violates any of the invariants. "
+            "The invariants are the primary contract for continuously running or non-terminating behavior (event loops, server accept loops, "
+            "stream processing, retry loops): they must hold throughout every loop iteration or event-handling cycle. "
+            "Focus on finding CONCRETE COUNTEREXAMPLES: a specific state and execution path where the block momentarily or permanently breaks an invariant "
+            "(e.g. a shared structure left inconsistent between two updates, a counter exceeding its bound mid-iteration, a resource leaked on one path). "
+            "For each potential violation, construct a specific scenario, trace what the block does step by step, and check whether every invariant still holds at every step.\n"
+            "Return only a valid JSON object. Do not include markdown, tags, or prose. "
+            "Use exactly this schema: "
+            "{\"verdict\": \"MATCH|MISMATCH\", \"counterexample\": string|null, "
+            "\"offending_statements\": string|null, \"reason\": string}. "
+            "For MISMATCH, counterexample, offending_statements, and reason must be non-empty strings; "
+            "offending_statements must preserve any 'Line N:' prefixes from the code block. "
+            "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+        )},
+        {"role": "user", "content": (
+            f"Programming language: {language}\n\n"
+            f"Code block:\n```{language.lower()}\n{block}\n```\n\n"
+            f"Entry condition (holds when the block starts; the invariants hold just before entry):\n{pre_condition}\n\n"
+            f"Specification invariants (must hold at all times while the block runs):\n{invariants}\n"
+            f"{info_str}\n"
+            "Is there a concrete execution in which the block violates any invariant at any moment while it runs, "
+            "including in the middle of a loop iteration or event-handling cycle? "
+            "Check each invariant against each statement and each execution path. "
+            "Provide a specific counterexample if any invariant can be broken. Return only the JSON object."
+        )}
+    ]
+    trace_meta = trace_meta or {}
+    for attempt in range(1, MAX_SPC_ITER + 1):
+        event_id = new_event_id("llm")
+        started = utc_now_iso()
+        response = None
+        usage = {}
+        try:
+            response, usage = _retry_create(_llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages)
+        except Exception as exc:
+            event = {
+                "event_id": event_id,
+                "type": "llm_call",
+                "stage": "verification",
+                "status": "error",
+                "start_time": started,
+                "end_time": utc_now_iso(),
+                "summary": f"LLM invariant-preservation check failed: {exc}",
+                "metadata": {
+                    **trace_meta,
+                    "purpose": "check_block_preserves_invariants",
+                    "model": REASONER_SPEC_CHECK_MODEL,
+                    "attempt": attempt,
+                    "error": str(exc),
+                },
+            }
+            record_llm_exchange(trace_dir, event_id, event, messages)
+            raise
+        parsed_result = None
+        parse_error = None
+        try:
+            has_violation, stmts, reason, parsed_result = _parse_spec_check_json(response)
+            status = "mismatch" if has_violation else "success"
+        except ValueError as exc:
+            has_violation = None
+            stmts = reason = None
+            parse_error = str(exc)
+            status = "format_error"
+        event = {
+            "event_id": event_id,
+            "type": "llm_call",
+            "stage": "verification",
+            "status": status,
+            "start_time": started,
+            "end_time": utc_now_iso(),
+            "summary": "Checked whether the block preserves the spec invariants",
+            "metadata": {
+                **trace_meta,
+                "purpose": "check_block_preserves_invariants",
+                "model": REASONER_SPEC_CHECK_MODEL,
+                "attempt": attempt,
+                "usage": usage,
+                "parsed_json": parsed_result,
+                "parse_error": parse_error,
+            },
+        }
+        record_llm_exchange(trace_dir, event_id, event, messages, response)
+        if has_violation is not None:
+            if has_violation:
+                stmts = stmts or "(unable to extract)"
+                reason = reason or "(unable to extract)"
+                return False, stmts, reason
+            else:
+                return True, None, None
+        messages = messages + [
+            {"role": "assistant", "content": response or ""},
+            {
+                "role": "user",
+                "content": (
+                    "Return only valid JSON with schema: "
+                    "{\"verdict\": \"MATCH|MISMATCH\", "
+                    "\"counterexample\": string|null, "
+                    "\"offending_statements\": string|null, "
+                    "\"reason\": string}. "
+                    "For MISMATCH, all evidence fields must be non-empty strings. "
+                    "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+                ),
+            }
+        ]
+    raise ValueError("Could not parse a valid structured JSON verdict from invariant-check response.")

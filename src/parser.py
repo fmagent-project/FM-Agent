@@ -26,11 +26,15 @@ class FunctionSpecMap(dict):
 
 def format_spec_for_reasoner(spec):
     """Rebuild reasoner-facing spec text from one .spec.json object."""
-    return (
+    text = (
         f"{spec.get('signature', '')}\n\n"
         f"Pre-condition:\n{spec.get('pre_condition', '')}\n\n"
         f"Post-condition:\n{spec.get('post_condition', '')}"
     )
+    invariants = spec.get('invariants')
+    if invariants:
+        text += f"\n\nInvariants:\n{invariants}"
+    return text
 
 
 def _load_sidecar_json(file_path, suffix):

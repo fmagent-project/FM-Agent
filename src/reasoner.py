@@ -1,7 +1,11 @@
 import re
 from config import *
 from .languages.registry import split_blocks_for_function
-from .prompts import _generate_block_post_condition, _check_post_implies_spec
+from .prompts import (
+    _generate_block_post_condition,
+    _check_post_implies_spec,
+    _check_block_preserves_invariants,
+)
 
 
 def _split_into_blocks(func):
@@ -188,17 +192,19 @@ def _has_terminating_statement(block, language):
 
 def _parse_spec_conditions(spec):
     pre_match = re.search(r'Pre-condition:\s*\n(.*?)(?=\nPost-condition:|\Z)', spec, re.DOTALL)
-    post_match = re.search(r'Post-condition:\s*\n(.*)', spec, re.DOTALL)
+    post_match = re.search(r'Post-condition:\s*\n(.*?)(?=\nInvariants:|\Z)', spec, re.DOTALL)
+    inv_match = re.search(r'\nInvariants:\s*\n(.*)\Z', spec, re.DOTALL)
     pre = pre_match.group(1).strip() if pre_match else None
     post = post_match.group(1).strip() if post_match else None
-    return pre, post
+    invariants = inv_match.group(1).strip() if inv_match else None
+    return pre, post, invariants
 
 
 def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
     trace_context = trace_context or {}
     trace_dir = trace_context.get("trace_dir")
-    # Step 1: Parse pre-condition and post-condition directly from spec
-    pre_condition, spec_post_condition = _parse_spec_conditions(spec)
+    # Step 1: Parse pre-condition, post-condition, and optional invariants from spec
+    pre_condition, spec_post_condition, invariants = _parse_spec_conditions(spec)
     if not pre_condition or not spec_post_condition:
         error = "Failed to parse pre/post conditions from the spec."
         if all_bugs:
@@ -302,6 +308,7 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
             if not passed:
                 if all_bugs:
                     violations.append({
+                        "kind": "post_condition",
                         "statements": stmts,
                         "post_condition": post_cond,
                         "reason": reason,
@@ -312,6 +319,56 @@ def reasoner(func, spec, info, language, trace_context=None, all_bugs=False):
                         f"Statements triggering the violation:\n{stmts}\n\n"
                         f"Post-condition:\n{post_cond}\n\n"
                         f"Reason for violation:\n{reason}"
+                    )
+
+        # When the spec declares invariants, every block must preserve them at
+        # all times while running (not just at its exit point).
+        if invariants:
+            if all_bugs:
+                try:
+                    inv_passed, inv_stmts, inv_reason = _check_block_preserves_invariants(
+                        block,
+                        current_pre,
+                        invariants,
+                        info,
+                        language,
+                        trace_dir=trace_dir,
+                        trace_meta=trace_meta,
+                    )
+                except Exception as exc:
+                    return {
+                        "status": "ERROR",
+                        "violations": violations,
+                        "error": (
+                            "Failed to check invariants against the "
+                            f"specification for block {i+1}: {exc}"
+                        ),
+                        "reasoning_complete": False,
+                    }
+            else:
+                inv_passed, inv_stmts, inv_reason = _check_block_preserves_invariants(
+                    block,
+                    current_pre,
+                    invariants,
+                    info,
+                    language,
+                    trace_dir=trace_dir,
+                    trace_meta=trace_meta,
+                )
+            if not inv_passed:
+                if all_bugs:
+                    violations.append({
+                        "kind": "invariant",
+                        "statements": inv_stmts,
+                        "post_condition": None,
+                        "reason": inv_reason,
+                    })
+                else:
+                    return (
+                        f"Verification FAILED.\n"
+                        f"Statements triggering the invariant violation:\n{inv_stmts}\n\n"
+                        f"Invariants:\n{invariants}\n\n"
+                        f"Reason for violation:\n{inv_reason}"
                     )
 
         # Use current block's post-condition as next block's pre-condition

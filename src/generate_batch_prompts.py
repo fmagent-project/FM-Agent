@@ -348,6 +348,13 @@ def build_prompt(
     )
     lines.append("```")
     lines.append("")
+    lines.append(
+        "Optional field: `\"invariants\": \"...\"` — properties that must hold "
+        "continuously while the function runs. Add it only for non-terminating/"
+        "long-running functions (event loops, server accept loops, stream "
+        "processing, retry loops); ordinary terminating functions omit it."
+    )
+    lines.append("")
     lines.append("`<function-file>.info.json`:")
     lines.append("```json")
     lines.append(

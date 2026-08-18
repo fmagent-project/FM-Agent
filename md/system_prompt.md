@@ -71,9 +71,17 @@ source file.
 {
   "signature": "<FunctionName>(<params>) -> <ReturnType>",
   "pre_condition": "<what must hold before the call>",
-  "post_condition": "<what the function guarantees after return>"
+  "post_condition": "<what the function guarantees after return>",
+  "invariants": "<optional: properties that must hold continuously while the function runs>"
 }
 ```
+
+`invariants` is optional. For functions that do not return or run continuously
+(event loops, server accept loops, stream processing, retry loops), the
+invariants are the primary contract: properties that must hold on every loop
+iteration or event-handling cycle, and `post_condition` only describes the
+return paths that actually exist. Ordinary terminating functions do not need
+`invariants`.
 
 **`<function-file>.info.json`** — the expected specs of the function's callees:
 

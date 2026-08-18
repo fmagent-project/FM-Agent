@@ -437,6 +437,7 @@ manually with the same command.
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
 2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For project-specific bug-validation procedures, use `--bug-validator` instead of editing the built-in prompt; for example, a compiler-specific validator can instruct the agent to compare outputs against a reference implementation such as GCC.
 3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
+4. `.spec.json` supports an optional `invariants` field: properties that must hold on every loop iteration or event-handling cycle of non-terminating/long-running functions (event loops, server loops, stream processing). When present, the reasoner additionally verifies that every code block preserves the invariants at all times while running.
 
 ## Citation
 

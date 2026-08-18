@@ -1,9 +1,18 @@
-"""Tests for src.file_utils._terminal_validation_record_is_valid."""
+"""Tests for src.file_utils._terminal_validation_record_is_valid and _is_valid_spec_json."""
 
 from src.file_utils import (
     _TERMINAL_VALIDATION_STRING_FIELDS,
+    _is_valid_spec_json,
     _terminal_validation_record_is_valid,
 )
+
+
+def _valid_spec():
+    return {
+        "signature": "f(x)",
+        "pre_condition": "x > 0",
+        "post_condition": "returns x",
+    }
 
 
 def _valid_record():
@@ -72,3 +81,42 @@ class TestTerminalValidationRecordIsValid:
         record = _valid_record()
         record["attempts"] = 3
         assert _terminal_validation_record_is_valid(record, "bug-001") is True
+
+
+class TestIsValidSpecJson:
+    def test_required_fields_only_accepted(self):
+        assert _is_valid_spec_json(_valid_spec()) is True
+
+    def test_optional_invariants_accepted(self):
+        spec = _valid_spec()
+        spec["invariants"] = "queue size <= capacity"
+        assert _is_valid_spec_json(spec) is True
+
+    def test_empty_invariants_accepted(self):
+        spec = _valid_spec()
+        spec["invariants"] = ""
+        assert _is_valid_spec_json(spec) is True
+
+    def test_non_string_invariants_rejected(self):
+        spec = _valid_spec()
+        spec["invariants"] = ["queue size <= capacity"]
+        assert _is_valid_spec_json(spec) is False
+
+    def test_unknown_field_still_rejected(self):
+        spec = _valid_spec()
+        spec["extra"] = "nope"
+        assert _is_valid_spec_json(spec) is False
+
+    def test_missing_required_field_rejected(self):
+        spec = _valid_spec()
+        del spec["post_condition"]
+        assert _is_valid_spec_json(spec) is False
+
+    def test_non_string_required_field_rejected(self):
+        spec = _valid_spec()
+        spec["pre_condition"] = 42
+        assert _is_valid_spec_json(spec) is False
+
+    def test_non_dict_rejected(self):
+        assert _is_valid_spec_json("nope") is False
+        assert _is_valid_spec_json(None) is False

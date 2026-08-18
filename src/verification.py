@@ -508,7 +508,7 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
         if not spec:
             return file_path, "SKIPPED"
 
-        _, spec_post = _parse_spec_conditions(spec)
+        _, spec_post, _ = _parse_spec_conditions(spec)
         trace_context = None
         if work_dir:
             rel_function = os.path.relpath(file_path, input_dir)
