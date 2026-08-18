@@ -12,7 +12,12 @@ import time
 
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
-from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready
+from src.file_utils import (
+    _get_incomplete_verification_files,
+    _get_phase_files,
+    is_file_ready,
+    normalize_spec_filenames,
+)
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
@@ -31,6 +36,56 @@ def _get_pending_batches(batches, proj_dir):
     return pending
 
 
+def _invalidate_verification_artifacts(file_list, output_dir, work_dir):
+    """Remove cached results made from sidecars that have just changed."""
+    for rel in file_list:
+        result_stem = os.path.splitext(rel)[0]
+        bug_id = result_stem.replace(os.sep, "--").replace("/", "--")
+        stale_paths = (
+            os.path.join(output_dir, result_stem + ".json"),
+            os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json"),
+            os.path.join(work_dir, "bug_validation", f"{bug_id}.md"),
+        )
+        for stale_path in stale_paths:
+            try:
+                os.remove(stale_path)
+                logging.info("Removed stale verification artifact: %s", stale_path)
+            except FileNotFoundError:
+                pass
+
+    if file_list:
+        try:
+            os.remove(os.path.join(work_dir, "bug_validation", "summary.json"))
+            logging.info("Removed stale bug-validation summary.")
+        except FileNotFoundError:
+            pass
+
+
+def _clear_stale_sidecars_before_attempt(function_paths):
+    """Remove incomplete canonical and bare sidecars before an attempt.
+
+    A valid bare spec and info file can otherwise come from different retry
+    attempts. A valid canonical half can likewise be read by streaming_reasoner
+    while the producer publishes its replacement half. This function runs
+    before both producers and their watcher start, so clearing all four paths
+    makes any subsequently ready pair belong to the new attempt.
+    """
+    stale_paths = set()
+    for function_path in function_paths:
+        base = os.path.splitext(function_path)[0]
+        stale_paths.add(f"{function_path}.spec.json")
+        stale_paths.add(f"{function_path}.info.json")
+        stale_paths.add(f"{base}.spec.json")
+        stale_paths.add(f"{base}.info.json")
+
+    for stale_path in sorted(stale_paths):
+        try:
+            os.remove(stale_path)
+            logging.info("Removed stale sidecar before generation attempt: %s", stale_path)
+        except FileNotFoundError:
+            pass
+
+
 def _run_spec_generation_batch(
     proj_dir,
     work_dir,
@@ -39,6 +94,7 @@ def _run_spec_generation_batch(
     layer_idx,
     batch_rel_dir,
     batch_info,
+    normalization_candidates=None,
 ):
     # Run one batch end-to-end so the executor can refill slots as soon as a
     # batch finishes, instead of waiting for a whole chunk barrier.
@@ -108,6 +164,14 @@ def _run_spec_generation_batch(
         return result.returncode
     except subprocess.CalledProcessError as exc:
         return exc.returncode
+    finally:
+        # Publish valid extension-dropped sidecars before this Future becomes
+        # done. The existing streaming_reasoner can then verify this batch while
+        # other spec-generation batches are still running.
+        normalize_spec_filenames(
+            [os.path.join(proj_dir, func_rel) for func_rel in function_files],
+            all_function_files=normalization_candidates,
+        )
 
 
 def run_spec_generation_and_verification(
@@ -179,6 +243,9 @@ def run_spec_generation_and_verification(
                     layer_files.append(rel)
 
             layer_processed = set()
+            layer_function_paths = [
+                os.path.join(input_dir, rel) for rel in layer_files
+            ]
 
             for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
                 # Find batches with unspecced functions
@@ -214,6 +281,34 @@ def run_spec_generation_and_verification(
                             layer_processed.update(newly_processed)
                     break
 
+                # Any function entering spec generation has invalid or missing
+                # sidecars, so verification artifacts made from its previous
+                # sidecars are stale. Invalidate them before producers start so
+                # the running watcher cannot resume an old verdict when either
+                # canonical or normalized sidecars become ready.
+                pending_rel_paths = []
+                pending_rel_seen = set()
+                pending_abs_paths = set()
+                for batch_info in pending_batches:
+                    for func_rel in batch_info.get("functions", []):
+                        func_path = os.path.join(proj_dir, func_rel)
+                        if is_file_ready(func_path):
+                            continue
+                        rel = os.path.relpath(func_path, input_dir)
+                        if rel in pending_rel_seen:
+                            continue
+                        pending_rel_seen.add(rel)
+                        pending_rel_paths.append(rel)
+                        pending_abs_paths.add(func_path)
+
+                _clear_stale_sidecars_before_attempt(pending_abs_paths)
+                _invalidate_verification_artifacts(
+                    pending_rel_paths,
+                    output_dir,
+                    work_dir,
+                )
+                layer_processed.difference_update(pending_abs_paths)
+
                 # Submit all pending spec batches through a bounded executor so
                 # finished slots can immediately pick up the next batch.
                 spec_futures = []
@@ -238,6 +333,7 @@ def run_spec_generation_and_verification(
                                 layer_idx,
                                 batch_rel_dir,
                                 batch_info,
+                                layer_function_paths,
                             )
                         )
 
@@ -251,7 +347,7 @@ def run_spec_generation_and_verification(
                             input_dir, output_dir, file_list=layer_files,
                             proj_dir=proj_dir, work_dir=work_dir,
                             spec_procs=spec_futures,
-                            already_processed=all_processed | layer_processed,
+                            already_processed=(all_processed | layer_processed) - pending_abs_paths,
                             resume=resume,
                             bug_validator_path=bug_validator_path,
                             all_bugs=all_bugs,

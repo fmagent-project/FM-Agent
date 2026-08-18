@@ -1,3 +1,4 @@
+import logging
 import json
 import os
 import re
@@ -116,6 +117,163 @@ def is_file_ready(file_path):
         return False
 
     return _is_valid_spec_json(spec) and _is_valid_info_json(info)
+
+
+def _is_valid_sidecar_file(path):
+    """Return True if *path* is a sidecar JSON file with valid FM-Agent schema."""
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if path.endswith(".spec.json"):
+        return _is_valid_spec_json(data)
+    if path.endswith(".info.json"):
+        return _is_valid_info_json(data)
+    return False
+
+
+def normalize_spec_filenames(function_files, all_function_files=None):
+    """Fix sidecar filenames where the LLM dropped the source extension.
+
+    For each function file ``foo.rs`` the pipeline expects sidecars
+    ``foo.rs.spec.json`` and ``foo.rs.info.json``. Some LLMs instead
+    produce ``foo.spec.json`` and ``foo.info.json``.
+
+    When the mapping is unambiguous and both bare sidecars form a valid
+    pair, this function replaces both expected sidecars together. Treating
+    the pair as one unit avoids combining a sidecar from an earlier attempt
+    with one from the latest attempt. If a bare name has multiple possible
+    owners, both bare sidecars are removed and the canonical pairs remain
+    unready for the caller's bounded retry loop. An incomplete canonical pair
+    is never completed from bare sidecars in the same watcher invocation: all
+    four files are cleared so a reader that already loaded the old canonical
+    half cannot combine it with a newly published half.
+
+    Args:
+        function_files: Function paths whose sidecars may be normalized.
+        all_function_files: Optional complete scope used to detect ambiguous bare
+            names. This lets one completed batch normalize its own outputs while
+            still checking collisions against the rest of the layer.
+
+    Returns:
+        list[str]: Function paths whose complete sidecar pair was replaced.
+    """
+    if not function_files:
+        return []
+
+    function_files = list(dict.fromkeys(function_files))
+    if all_function_files is None:
+        all_function_files = function_files
+    else:
+        all_function_files = list(dict.fromkeys(
+            [*all_function_files, *function_files]
+        ))
+    normalized = []
+
+    base_map = {}
+    for func_path in all_function_files:
+        base = os.path.splitext(func_path)[0]
+        base_map.setdefault(base, []).append(func_path)
+
+    ambiguous_bases = {
+        base for base, candidates in base_map.items() if len(candidates) > 1
+    }
+    for base in sorted({os.path.splitext(path)[0] for path in function_files}):
+        if base not in ambiguous_bases:
+            continue
+
+        removed = []
+        for suffix in (".spec.json", ".info.json"):
+            alternate_path = f"{base}{suffix}"
+            try:
+                os.remove(alternate_path)
+                removed.append(alternate_path)
+            except FileNotFoundError:
+                pass
+
+        if removed:
+            logging.warning(
+                "Removed ambiguous extension-dropped sidecar file(s) %s; "
+                "they could belong to multiple source files: %s. Canonical "
+                "sidecars remain pending for retry.",
+                removed,
+                base_map[base],
+            )
+
+    for func_path in function_files:
+        base = os.path.splitext(func_path)[0]
+        if base in ambiguous_bases:
+            # A bare sidecar can never be safely assigned to one of these
+            # functions. Leave every incomplete canonical pair unready so the
+            # existing bounded retry loop asks the producer to regenerate it.
+            continue
+
+        expected_spec = f"{func_path}.spec.json"
+        expected_info = f"{func_path}.info.json"
+
+        expected_spec_exists = os.path.isfile(expected_spec)
+        expected_info_exists = os.path.isfile(expected_info)
+        expected_spec_valid = _is_valid_sidecar_file(expected_spec)
+        expected_info_valid = _is_valid_sidecar_file(expected_info)
+        if expected_spec_valid and expected_info_valid:
+            continue
+
+        alt_spec = f"{base}.spec.json"
+        alt_info = f"{base}.info.json"
+        if not (_is_valid_sidecar_file(alt_spec)
+                and _is_valid_sidecar_file(alt_info)):
+            if os.path.isfile(alt_spec) or os.path.isfile(alt_info):
+                logging.warning(
+                    "Not normalizing incomplete or invalid sidecar pair for %s; "
+                    "it will be retried.",
+                    func_path,
+                )
+            continue
+
+        if expected_spec_exists or expected_info_exists:
+            # A concurrent readiness check may already have loaded the valid
+            # half of this incomplete canonical pair. Publishing the missing
+            # half now could make that reader accept an old/new pair. Remove
+            # both canonical and bare pairs, then let the next attempt generate
+            # a complete pair from a clean state before its watcher starts.
+            removed = []
+            for path in (expected_spec, expected_info, alt_spec, alt_info):
+                try:
+                    os.remove(path)
+                    removed.append(path)
+                except FileNotFoundError:
+                    pass
+            logging.warning(
+                "Removed conflicting canonical and extension-dropped sidecars "
+                "%s for %s; the complete pair remains pending for retry.",
+                removed,
+                func_path,
+            )
+            continue
+
+        # The retry coordinator removes incomplete canonical pairs before it
+        # starts producers and the streaming watcher. Publish info first and
+        # spec last so the canonical spec path acts as the readiness gate: once
+        # it becomes readable, both sidecars come from this attempt.
+        for alt, expected in (
+            (alt_info, expected_info),
+            (alt_spec, expected_spec),
+        ):
+            os.replace(alt, expected)
+
+        normalized.append(func_path)
+        logging.info(
+            "Normalized sidecar pair: (%s, %s) -> (%s, %s)",
+            alt_spec,
+            alt_info,
+            expected_spec,
+            expected_info,
+        )
+
+    return normalized
 
 
 # Directories that typically contain test code
