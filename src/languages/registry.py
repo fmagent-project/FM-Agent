@@ -11,6 +11,7 @@ from src.languages import java as _java
 from src.languages import rust as _rust
 from src.languages import javascript as _javascript
 from src.languages import typescript as _typescript
+from src.languages import arkts as _arkts
 from src.languages import erlang as _erlang
 
 from src.languages.base import BackendUnavailableError as _BackendUnavailableError
@@ -62,6 +63,7 @@ REGISTRY: dict = {
     "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans, split_blocks=_rust.split_blocks, remove_comments=_rust.remove_comments),
     "javascript": LanguageHandler(batch_extract=_javascript.batch_extract, call_edges=_javascript.call_edges, function_spans=_javascript.function_spans, split_blocks=_javascript.split_blocks, remove_comments=_javascript.remove_comments),
     "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans, split_blocks=_typescript.split_blocks, remove_comments=_typescript.remove_comments),
+    "arkts":      LanguageHandler(batch_extract=_arkts.batch_extract,      call_edges=_arkts.call_edges,      function_spans=_arkts.function_spans),
     "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
 }
 
