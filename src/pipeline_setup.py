@@ -863,13 +863,23 @@ def _ensure_source_files_in_phases(phases_json, required_source_files):
     }
 
 
-def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
+def _prepare_workflow_file(
+    proj_dir,
+    work_dir,
+    script_dir,
+    workflow_filename,
+    workflow_source=None,
+):
     """Copy a workflow markdown into ``work_dir`` and rewrite the
     ``source_files`` instruction so it points at the concrete project root,
     telling the agent to record paths relative to it (and not prefixed with the
     project directory name).
     """
-    workflow_src = os.path.join(script_dir, "md", workflow_filename)
+    workflow_src = (
+        os.fspath(workflow_source)
+        if workflow_source is not None
+        else os.path.join(script_dir, "md", workflow_filename)
+    )
     workflow_dst = os.path.join(work_dir, workflow_filename)
     shutil.copy2(workflow_src, workflow_dst)
     proj_dir_abs = os.path.abspath(proj_dir)
@@ -900,22 +910,44 @@ def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
         _f.write(md)
 
 
-def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
-                         resume=False, submodules=None):
+def _run_generate_phases(
+    proj_dir,
+    work_dir,
+    script_dir,
+    is_incremental=False,
+    resume=False,
+    submodules=None,
+    workflow_source=None,
+    phase_plan_validator=None,
+):
     """Stage 1: generate phase.json — input target code, output phases.json."""
     phases_json = os.path.join(work_dir, "phases.json")
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
 
-    phase_plan_errors = (
-        _phase_plan_schema_errors(phases_json)
-        if os.path.exists(phases_json)
-        else []
+    def _validation_errors():
+        if not os.path.exists(phases_json):
+            return ["phases.json is missing"]
+        errors = _phase_plan_schema_errors(phases_json)
+        if not errors and phase_plan_validator is not None:
+            errors.extend(phase_plan_validator(phases_json))
+        return errors
+
+    phase_plan_errors = _validation_errors() if os.path.exists(phases_json) else []
+    _resume_skip = (
+        resume
+        and _phase_plan_complete(work_dir)
+        and not phase_plan_errors
     )
-    _resume_skip = resume and _phase_plan_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
-    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
+    _prepare_workflow_file(
+        proj_dir,
+        work_dir,
+        script_dir,
+        "workflow_generate_phases.md",
+        workflow_source=workflow_source,
+    )
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -988,11 +1020,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         except subprocess.CalledProcessError as e:
             logging.warning(f"Stage 1 attempt {attempt}: opencode exited with code {e.returncode}")
 
-        phase_plan_errors = (
-            _phase_plan_schema_errors(phases_json)
-            if os.path.exists(phases_json)
-            else ["phases.json is missing"]
-        )
+        phase_plan_errors = _validation_errors()
 
         phase_plan_ready = False
         if not phase_plan_errors:
@@ -1087,7 +1115,13 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
     return phases_modified
 
 
-def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
+def _run_generate_domain_context(
+    proj_dir,
+    work_dir,
+    script_dir,
+    resume=False,
+    workflow_source=None,
+):
     """Stage 2: generate domain context — input phases.json, output domain context
     files for each phase.
     """
@@ -1095,7 +1129,13 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
     if _resume_skip:
         print("[Pipeline] Stage 2/6: RESUME — domain context files found, skipping domain context generation.")
 
-    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
+    _prepare_workflow_file(
+        proj_dir,
+        work_dir,
+        script_dir,
+        "workflow_generate_domain_context.md",
+        workflow_source=workflow_source,
+    )
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "

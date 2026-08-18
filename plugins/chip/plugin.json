@@ -2,5 +2,14 @@
   "name": "chip",
   "version": "V0.1",
   "configure_function": "configure",
-  "stages": {}
+  "stages": {
+    "generate_phase_plan": {
+      "type": "replace",
+      "replace_function": "generate_phase_plan"
+    },
+    "generate_domain_context": {
+      "type": "replace",
+      "replace_function": "generate_domain_context"
+    }
+  }
 }
