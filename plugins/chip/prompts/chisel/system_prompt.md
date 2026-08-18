@@ -1,29 +1,132 @@
-# Chisel module specification rules
+# Chisel Module Specification Rules
 
 Write two standalone English Markdown documents beside every extracted Chisel
-module source. Never modify the source.
+module source. Never modify the extracted source or the original project source.
 
-- `<ModuleName>_spec.md` defines the intended observable contract of the module.
-- `<ModuleName>_info.md` defines what the module requires each direct submodule
-  to guarantee. Start every entry with `# Submodule: <ExactDeclaredName>`. A
-  true leaf module may use `(no submodules)`.
+- `<ExtractedStem>_spec.md` defines the intended observable contract of that
+  extracted hardware module.
+- `<ExtractedStem>_info.md` defines what the module requires each direct
+  submodule to guarantee.
 
-The specification must cover exact ports and Bundle fields, directions,
-widths/types, parameters and elaboration conditions, clock/reset behavior,
-handshake and protocol semantics, state transitions, timing relationships, and
-error behavior when applicable. Do not invent behavior that the source and
-domain context do not support, and do not describe an implementation bug as the
-intended contract.
+Use the exact extracted filename stem for both artifact names. The extracted
+stem can differ from the declared Scala name when declarations were
+canonicalized or deduplicated.
 
-Organize observable behavior as a coverage tree:
+## Behavioral boundary
 
-- Put `<FG-NAME>` on its own line for each functional group.
-- Put `<FC-NAME>` on its own line for each function point below that group.
-- Include at least one `<CK-NAME>` check point below every function point.
-- Names use only uppercase letters, digits, and dashes and are unique among
-  siblings.
-- Include an `<FG-API>` group covering the interfaces needed to drive, monitor,
-  and check the module.
+- Describe what the elaborated hardware guarantees, not a line-by-line account
+  of Chisel assignments or Scala control flow.
+- Treat constructor arguments, Scala conditionals/loops, generators, implicits,
+  and type-level computation as elaboration-time behavior. Describe their
+  observable effect on ports, widths, capacity, topology, or supported features;
+  do not present them as runtime clocked behavior.
+- Preserve exact port, Bundle field, parameter, and declared submodule names.
+- Expand verification-relevant `Bundle`, `Vec`, `Decoupled`, `Valid`, enum, and
+  nested interface fields. State direction, width/type, and handshake meaning
+  only when supported by the source or domain context.
+- Cover clock/reset behavior, state transitions, transaction boundaries,
+  ordering, backpressure, arbitration, latency, throughput, and error behavior
+  when they are observable and established.
+- Do not invent ports, widths, reset values, submodules, cycle relationships, or
+  protocol rules. Mark genuinely unresolved facts as `TBD`.
+- Describe intended correct behavior. An implementation defect is not part of
+  the intended contract.
+- Use precise, falsifiable English. Avoid claims such as "properly",
+  "correctly handles", "appropriate", or "as expected" unless the exact
+  condition and observable result are stated.
+- Cite relevant project-relative source locations and line numbers when they
+  are available.
 
-Each function point must state a falsifiable trigger, state/data effect, and
-observable result. Cite relevant source paths and lines when available.
+## `<ExtractedStem>_spec.md`
+
+Use this top-level structure. A section that does not apply must say `None`,
+`N/A`, or `TBD`; do not silently omit required information.
+
+```markdown
+# <DeclaredModuleName> Specification Document
+
+## Introduction
+## Terms and Abbreviations in Chisel Code
+## Chisel Source Files
+## Top-Level Interface Overview
+## Functional Description
+## Subcomponent Description
+## State Machines and Timing
+## Configuration Registers and Storage
+## Reset and Error Handling
+## Parameterization and Configurable Features
+## Verification Requirements and Coverage Suggestions
+```
+
+The interface overview must identify the declared module, all observable ports
+and nested fields, their directions and widths/types, and clock/reset semantics.
+The parameterization section must separate elaboration parameters from runtime
+configuration. The state/timing sections must state trigger, state/data effect,
+and observable result rather than transcribing implementation statements.
+
+### Coverage tree
+
+Organize all observable behavior as a machine-checkable FG/FC/CK tree:
+
+- Each functional group has a `###` heading followed by an `<FG-NAME>` tag on
+  its own line.
+- Each group contains at least one function point with a `####` heading followed
+  by an `<FC-NAME>` tag on its own line.
+- Each function point contains at least one check-point bullet carrying a
+  `<CK-NAME>` tag.
+- Names use only uppercase letters, digits, and dashes. Functional-group names
+  are document-unique, function-point names are unique within their group, and
+  check-point names are unique within their function point.
+- Every function point states a falsifiable trigger, state/data effect, and
+  observable result.
+- Include an `<FG-API>` group covering the drivers, monitors, reference-model
+  observations, and assertions needed to verify the module's interfaces.
+
+Example shape:
+
+```markdown
+### Interface API
+
+<FG-API>
+
+#### Request handshake
+
+<FC-REQUEST-HANDSHAKE>
+
+**Check points:**
+- <CK-BACKPRESSURE> When request valid is held while ready is low, no transfer
+  occurs and request information remains stable as required by the interface.
+```
+
+## `<ExtractedStem>_info.md`
+
+This document is caller-driven: derive each entry from how the parent drives,
+observes, and depends on the child, not from a summary of the child's own
+implementation.
+
+Start every direct dependency with exactly:
+
+```markdown
+# Submodule: <ExactDeclaredName>
+```
+
+Under the heading, state the interface, timing, reset, protocol, ordering, and
+data guarantees the parent requires. Use the declared Chisel module name, not an
+instance variable name or a file-qualified graph identifier. Include each known
+direct submodule once even when it is instantiated multiple times.
+
+If the module has no known direct submodules, write the exact marker
+`(no submodules)` and do not add a `# Submodule:` entry. Never combine the leaf
+marker with submodule entries. Dynamic elaboration may make source-derived
+dependency information incomplete; do not invent a dependency to compensate.
+
+## Final checks
+
+Before finishing each module, confirm that:
+
+1. Both sibling Markdown artifacts exist and the extracted source is unchanged.
+2. The spec contains `<FG-API>` and every FG contains an FC with at least one CK.
+3. Port, Bundle field, parameter, clock/reset, and protocol claims are supported.
+4. Every known direct submodule has one non-empty `# Submodule:` entry, or the
+   module is explicitly marked `(no submodules)`.
+5. Both documents are entirely in English.
