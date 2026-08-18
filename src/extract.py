@@ -632,7 +632,7 @@ def _function_spans(filepath, lang_key, proj_dir=None):
     (duplicate names get ``_1``, ``_2``, ... suffixes). ``raw_lines`` are the
     file's original lines (newline characters preserved) so callers can rewrite
     the file by line index. ``backend_available`` is False when a semantic-only
-    backend (e.g. ELP for Erlang) could not be consulted, so callers about to
+    backend could not be consulted, so callers about to
     delete extracted-function artifacts must skip the file instead of trusting
     the empty spans.
     Function boundaries come from the language registry when ``proj_dir`` is
@@ -661,7 +661,7 @@ def _function_spans(filepath, lang_key, proj_dir=None):
         elif lang_cfg["body"] == "indent":
             raw_funcs = _extract_functions_indent(norm_lines, lang_cfg)
         else:
-            # Semantic-only language (e.g. Erlang) with no backend result.
+            # Semantic-only language with no backend result.
             # Do not fall back to regex; an empty list means no functions.
             raw_funcs = []
     name_counts = {}

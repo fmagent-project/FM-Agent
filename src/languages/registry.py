@@ -22,24 +22,22 @@ class LanguageHandler:
     batch_extract(proj_dir)             -> {abs_filepath: [(func_name, body)]} | None
     call_edges(proj_dir)                -> {caller_fqn: {callee_fqns}}
     function_spans(proj_dir, filepath)  -> [(func_name, start_idx, end_idx)] | None
-    incremental_source_extract(proj_dir, sources)
-        -> {abs_filepath: [(func_name, body)]} | None
     split_blocks(func, granularity)      -> [chunk, ...] | None
     remove_comments(code)               -> str | None
 
     Each function handles its own backend (e.g. codegraph) internally.
     batch_extract returns ``None`` when a semantic backend cannot safely
     extract its sources, distinct from a successful empty dict. call_edges
-    returns an empty dict when its backend is unavailable; function_spans
+    returns ``None`` when its backend is unavailable; function_spans
     returns None so the caller can fall back to the regex extractor for that
     file, or raises BackendUnavailableError for languages where a regex
-    fallback is unsafe (e.g. Erlang/ELP) — callers that are about to delete
+    fallback is unsafe — callers that are about to delete
     extracted-function artifacts should catch it and skip the file instead of
     trusting an empty regex result.
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
-         function_spans, and optionally incremental_source_extract / split_blocks /
+         function_spans, and optionally split_blocks /
          remove_comments
       2. Import it here and add one entry to REGISTRY
     No other files need to change.
@@ -47,7 +45,6 @@ class LanguageHandler:
     batch_extract: Callable
     call_edges: Callable
     function_spans: Callable
-    incremental_source_extract: Callable | None = None
     split_blocks: Callable | None = None
     remove_comments: Callable | None = None
 
@@ -62,7 +59,7 @@ REGISTRY: dict = {
     "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans, split_blocks=_rust.split_blocks, remove_comments=_rust.remove_comments),
     "javascript": LanguageHandler(batch_extract=_javascript.batch_extract, call_edges=_javascript.call_edges, function_spans=_javascript.function_spans, split_blocks=_javascript.split_blocks, remove_comments=_javascript.remove_comments),
     "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans, split_blocks=_typescript.split_blocks, remove_comments=_typescript.remove_comments),
-    "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
+    "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans),
 }
 
 
@@ -109,8 +106,8 @@ def function_spans_for_file(proj_dir: str, filepath: str, lang_key: str):
     codegraph indexes the file, or None when the language is unregistered,
     codegraph does not support it, or the file is not in the index — in every
     such case the caller should fall back to the regex extractor. May raise
-    BackendUnavailableError for languages where the backend is required
-    and cannot be consulted (e.g. Erlang/ELP).
+    BackendUnavailableError for languages where the semantic backend is
+    required and cannot be consulted.
     """
     handler = REGISTRY.get(lang_key)
     if handler is None:
@@ -125,26 +122,6 @@ def split_blocks_for_function(func: str, lang_key: str, granularity: int):
     if handler is None or handler.split_blocks is None:
         return None
     return handler.split_blocks(func, granularity)
-
-
-def supports_incremental_source_extraction(lang_key: str) -> bool:
-    """Return whether a language supplies semantic extraction for source snapshots."""
-    handler = REGISTRY.get(lang_key)
-    return handler is not None and handler.incremental_source_extract is not None
-
-
-def extract_incremental_sources(proj_dir: str, lang_key: str, sources: dict):
-    """Dispatch source-snapshot extraction to a language's registered backend.
-
-    The backend returns ``None`` when it is unavailable or fails, distinct from
-    a successful extraction whose individual source files contain no functions.
-    """
-    handler = REGISTRY.get(lang_key)
-    if handler is None or handler.incremental_source_extract is None:
-        raise ValueError(
-            f"Language {lang_key!r} has no incremental source extraction backend"
-        )
-    return handler.incremental_source_extract(proj_dir, sources)
 
 
 _logger = logging.getLogger(__name__)

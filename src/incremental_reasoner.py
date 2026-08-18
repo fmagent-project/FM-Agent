@@ -54,10 +54,6 @@ from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import CodeGraphExtractor, try_codegraph_init
-from .languages.registry import (
-    extract_incremental_sources,
-    supports_incremental_source_extraction,
-)
 from .verification import (
     EXT_TO_LANG as _VERIFY_EXT_TO_LANG,
     _generate_all_bugs_validation_summary,
@@ -357,52 +353,6 @@ def _codegraph_functions_at_revision(proj_dir, revision, file_languages):
         shutil.rmtree(parent_dir, ignore_errors=True)
 
 
-class _ChangedFunctionResults(dict):
-    """Changed-function mapping plus semantic backends that could not compare."""
-
-    def __init__(
-        self,
-        *args,
-        source_backend_languages=(),
-        unavailable_source_backend_languages=(),
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        self.source_backend_languages = frozenset(source_backend_languages)
-        self.unavailable_source_backend_languages = frozenset(
-            unavailable_source_backend_languages
-        )
-
-
-def _raise_if_incremental_source_backends_unavailable(
-    changed_functions, stage4_unavailable_backends=(),
-):
-    """Stop before downstream stages can consume stale semantic extraction."""
-    stale_extraction_backends = (
-        changed_functions.source_backend_languages
-        & frozenset(stage4_unavailable_backends)
-    )
-    unavailable_backends = (
-        changed_functions.unavailable_source_backend_languages
-        | stale_extraction_backends
-    )
-    if not unavailable_backends:
-        return
-
-    languages = ", ".join(sorted(unavailable_backends))
-    if stale_extraction_backends:
-        raise RuntimeError(
-            "Cannot safely complete incremental analysis because Stage 4 did "
-            f"not refresh extracted source files for: {languages}. Install or "
-            "repair the required language backend, then retry."
-        )
-    raise RuntimeError(
-        "Cannot safely complete incremental analysis because semantic source "
-        f"extraction is unavailable for: {languages}. Install or repair the "
-        "required language backend, then retry."
-    )
-
-
 def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     """
     Determine which functions changed between commit old_commit_id and the current working
@@ -415,17 +365,11 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
     version, then compared by source text.
 
     Returns a dict mapping each changed file's absolute path to a dict with keys "added",
-    "removed", and "modified", each a sorted list of function names. Languages
-    with a registered semantic source backend use it for both revisions; other
-    languages use CodeGraph when available, then the regex fallback. Files with
-    no detectable function-level change are omitted. If a registered semantic
-    source backend is unavailable, that language is omitted rather than passed
-    to a less-capable extractor; its key is recorded on the returned mapping's
-    ``unavailable_source_backend_languages`` attribute so the pipeline can
-    stop before silently skipping its changed functions. Raises
-    subprocess.CalledProcessError if proj_dir is not a git repository or
-    old_commit_id is not a valid commit, and RuntimeError if a registered source
-    backend cannot extract a changed revision.
+    "removed", and "modified", each a sorted list of function names. CodeGraph
+    is used for both revisions when coverage is complete; otherwise the existing
+    regex fallback is used. Files with no detectable function-level change are
+    omitted. Raises subprocess.CalledProcessError if proj_dir is not a git
+    repository or old_commit_id is not a valid commit.
     """
     # Pathspecs limiting git to recognized source-file extensions (e.g. "*.py", "*.cpp").
     pathspecs = [f"*.{ext}" for ext in EXT_TO_LANG]
@@ -462,15 +406,7 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         if "." in rel_path
         and rel_path.rsplit(".", 1)[-1] in EXT_TO_LANG
     }
-    source_backend_languages = {
-        lang_key for lang_key in set(file_languages.values())
-        if supports_incremental_source_extraction(lang_key)
-    }
-    codegraph_file_languages = {
-        rel_path: lang_key
-        for rel_path, lang_key in file_languages.items()
-        if lang_key not in source_backend_languages
-    }
+    codegraph_file_languages = file_languages
     codegraph_langs = set(codegraph_file_languages.values())
     current_codegraph = (
         _codegraph_functions_by_file(proj_dir, codegraph_langs)
@@ -511,74 +447,22 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
         finally:
             os.unlink(tmp_path)
 
-    current_source_batches = defaultdict(dict)
-    baseline_source_batches = defaultdict(dict)
-    for rel_path, lang_key in file_languages.items():
-        if lang_key not in source_backend_languages:
-            continue
-        abs_path = os.path.abspath(os.path.join(proj_dir, rel_path))
-        if os.path.exists(abs_path):
-            with open(abs_path, "r", errors="replace") as f:
-                current_source_batches[lang_key][abs_path] = f.read()
-        if _path_exists_in_commit(rel_path):
-            baseline_source_batches[lang_key][abs_path] = _git(
-                "show", f"{old_commit_id}:{rel_path}"
-            )
-
-    current_source_functions = {}
-    baseline_source_functions = {}
-    available_source_backend_languages = set()
-    unavailable_source_backend_languages = set()
-    for lang_key in sorted(source_backend_languages):
-        current_result = (
-            extract_incremental_sources(
-                proj_dir, lang_key, current_source_batches[lang_key]
-            ) if current_source_batches[lang_key] else {}
-        )
-        baseline_result = (
-            extract_incremental_sources(
-                proj_dir, lang_key, baseline_source_batches[lang_key]
-            ) if baseline_source_batches[lang_key] else {}
-        )
-        if current_result is None or baseline_result is None:
-            logging.warning(
-                "Incremental source extraction is unavailable for %s; "
-                "function-level comparison for that language is unsafe.",
-                lang_key,
-            )
-            unavailable_source_backend_languages.add(lang_key)
-            continue
-        current_source_functions[lang_key] = current_result
-        baseline_source_functions[lang_key] = baseline_result
-        available_source_backend_languages.add(lang_key)
-
-    result = _ChangedFunctionResults(
-        source_backend_languages=source_backend_languages,
-        unavailable_source_backend_languages=unavailable_source_backend_languages
-    )
+    result = {}
     for rel_path in files:
         ext = rel_path.rsplit(".", 1)[-1] if "." in rel_path else ""
         lang_key = EXT_TO_LANG.get(ext)
         if not lang_key:
             continue
 
-        # Use CodeGraph for both revisions whenever this language does not supply
-        # a semantic source backend and CodeGraph can index the file. This keeps
+        # Use CodeGraph for both revisions when it can index the file. This keeps
         # comparison identifiers aligned with extracted filenames (for example,
         # ``LocalStorage::Flush``) and avoids bare-name collisions.
         abs_path = os.path.abspath(os.path.join(proj_dir, rel_path))
         current_exists = os.path.exists(abs_path)
         old_exists = _path_exists_in_commit(rel_path)
         rel_key = _normalized_relative_path(proj_dir, rel_path)
-        if lang_key in unavailable_source_backend_languages:
-            # Semantic-only languages cannot safely fall back to a local regex
-            # extractor. The caller will abort the incremental pipeline after
-            # retaining other languages' comparison results.
-            continue
-        uses_source_backend = lang_key in available_source_backend_languages
         use_codegraph = (
-            not uses_source_backend
-            and current_codegraph is not None
+            current_codegraph is not None
             and baseline_codegraph is not None
             and (not current_exists or current_coverage.get(rel_key, False))
             and (not old_exists or baseline_coverage.get(rel_key, False))
@@ -588,26 +472,18 @@ def _collect_changed_functions(proj_dir, old_commit_id, submodules=None):
             new_funcs = current_codegraph.get(rel_key, {})
             old_funcs = baseline_codegraph.get(rel_key, {})
         else:
-            if not uses_source_backend and codegraph_langs:
+            if codegraph_langs:
                 logging.warning(
                     "CodeGraph could not provide both revisions for %s; using "
                     "legacy regex comparison.", rel_path,
                 )
-            if uses_source_backend:
-                new_funcs = dict(
-                    current_source_functions[lang_key].get(abs_path, ())
-                )
-                old_funcs = dict(
-                    baseline_source_functions[lang_key].get(abs_path, ())
-                )
-            else:
-                new_funcs = (
-                    dict(extract_functions_from_file(abs_path, lang_key))
-                    if current_exists else {}
-                )
-                old_funcs = (
-                    _funcs_from_commit(rel_path, lang_key, ext) if old_exists else {}
-                )
+            new_funcs = (
+                dict(extract_functions_from_file(abs_path, lang_key))
+                if current_exists else {}
+            )
+            old_funcs = (
+                _funcs_from_commit(rel_path, lang_key, ext) if old_exists else {}
+            )
 
         added = sorted(n for n in new_funcs if n not in old_funcs)
         removed = sorted(n for n in old_funcs if n not in new_funcs)
@@ -726,7 +602,7 @@ def _reconcile_extracted_dir(proj_dir, abs_src):
     set, so all of its extracted files are removed.
 
     Returns True if reconciliation was performed, or False if the semantic backend
-    (e.g. ELP for Erlang) could not be consulted. In the latter case the file is
+    could not be consulted. In the latter case the file is
     left untouched so that transient backend failures do not delete existing specs.
     """
     func_dir, ext = _src_rel_to_func_dir(proj_dir, abs_src)
@@ -739,7 +615,7 @@ def _reconcile_extracted_dir(proj_dir, abs_src):
         spans, _raw, backend_available = _function_spans(abs_src, lang_key, proj_dir)
         if not backend_available:
             logging.warning(
-                "ELP backend unavailable for %s; skipping reconciliation for this file "
+                "Semantic backend unavailable for %s; skipping reconciliation for this file "
                 "to avoid deleting existing specs.",
                 abs_src,
             )
@@ -961,7 +837,7 @@ def run_incremental_pipeline(
     # stale index would yield boundaries for the old code. try_codegraph_init rebuilds by
     # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
     try_codegraph_init(proj_dir)
-    _written, _skipped, stage4_unavailable_backends = run_extraction(
+    _written, _skipped, _unavailable_backends = run_extraction(
         proj_dir,
         work_dir=work_dir,
         force=True,
@@ -982,10 +858,6 @@ def run_incremental_pipeline(
         "  -> %d changed file(s): %d added, %d modified, %d removed function(s).",
         len(changed_functions), n_added, n_modified, n_removed,
     )
-    _raise_if_incremental_source_backends_unavailable(
-        changed_functions, stage4_unavailable_backends
-    )
-
     # 5b. Delete extracted-function files for functions (or whole source files) that were
     #     removed since old_commit_id. Re-extraction never rewrites these, so without this
     #     they linger as stale specs and would pollute the file list and call graph below.

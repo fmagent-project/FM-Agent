@@ -60,10 +60,6 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 - [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) 插件（通过 `bunx` 安装）
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) 插件 —— 采集 OpenCode 原始 LLM 请求/响应 trace
 - 你所用 provider 的 LLM API 密钥（示例使用 [OpenRouter](https://openrouter.ai/)）
-- [Erlang Language Platform（ELP）](https://whatsapp.github.io/erlang-language-platform/docs/get-started/)——可选，仅分析 Erlang 项目时需要
-  - 本 Erlang 集成已在 Ubuntu 的 Erlang/OTP 26 或更高版本上验证；请选择基于兼容 OTP 版本构建的 ELP 发布包。
-  - ELP 自动识别包含 `rebar.config` 的项目时，要求 rebar3 3.24.0 或更高版本。
-  - 本集成尚未测试 macOS Erlang 工具链；`./install.sh --with-erlang` 会安装 Homebrew 当前提供的公式版本。
 
 #### 已测试macOS环境
 
@@ -119,14 +115,6 @@ uv run python src/configure_llm.py set --backend codex-cli
 ```bash
 ./install.sh
 ```
-
-Erlang 工具链不影响其他语言，因此默认不安装。如需自动安装或检查 Erlang/OTP 26+、rebar3 3.24.0+ 和兼容的 ELP 发布包，请运行：
-
-```bash
-./install.sh --with-erlang
-```
-
-该选项在 macOS 上使用 Homebrew；在 Ubuntu 上，当系统 OTP 缺失或版本过低时使用 RabbitMQ Team Erlang PPA。Ubuntu 配置已使用 Erlang/OTP 26+ 验证；macOS Erlang 配置尚未测试，将使用 Homebrew 选择的当前公式版本。Linux 下的 rebar3 和 ELP 会安装到 `~/.local/bin`，请确保新终端的 `PATH` 包含该目录。你也可以手动安装这些工具，确认 `rebar3 version` 和 `elp version` 可执行，并在需要时将 `ELP_COMMAND` 设置为 ELP 的绝对路径。
 
 FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无需手动编辑 `~/.config/opencode/opencode.json` 来设置模型或密钥。上面的配置向导仍然可以把该文件同步好，并把 API 密钥写入用户状态/配置目录下按 provider 区分的私有本地文件，方便独立使用 OpenCode（见 [docs/config_llm.md](docs/config_llm.md)）。
 如果你已经设置了 `OPENCODE_CONFIG`，向导会优先更新那个文件，而不是默认的全局路径。若未设置该变量但设置了 `OPENCODE_CONFIG_DIR`，向导会更新该目录中的 `opencode.jsonc`（存在时）或 `opencode.json`。
@@ -344,7 +332,7 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 
 1. FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，请确保不存在命名冲突。
 2. `md/` 目录下的 Markdown 文件提供了引导 Agent 推理过程的通用说明。针对项目特定的上下文（如不变量、协议、编码规则、领域术语），优先使用 `--domain-knowledge`。对于项目特定的 Bug 验证流程，请使用 `--bug-validator`，无需直接修改内置提示词；例如，编译器项目的自定义 validator 可以要求 Agent 将输出与 GCC 等参考实现进行对比。
-3. **支持的编程语言**：Rust、C、C++、Python、Java、Go、CUDA、JavaScript、TypeScript、ArkTS、Erlang。Erlang 的函数抽取与调用图需要 ELP；ELP 不可用时会给出警告并跳过 Erlang 文件。
+3. **支持的编程语言**：Rust、C、C++、Python、Java、Go、CUDA、JavaScript、TypeScript、ArkTS、Erlang。Erlang 的函数抽取与调用图使用项目锁定的 CodeGraph 后端。
 
 ## 论文引用
 

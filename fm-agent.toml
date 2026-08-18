@@ -27,10 +27,6 @@ llm_trigger_funcs        = 5    # SCOPE_LLM_TRIGGER_FUNCS
 llm_top_k                = 5    # SCOPE_LLM_TOP_K
 llm_confidence_threshold = 8.0  # SCOPE_LLM_CONFIDENCE_THRESHOLD
 
-[erlang]
-command   = "elp"   # ELP_COMMAND
-timeout_s = 180     # ELP_TIMEOUT_SECONDS
-
 [codegraph]
 # The pinned codegraph build. install.sh reads these to install it, and the
 # runtime invokes that pinned binary — so this is the single place that decides

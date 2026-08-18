@@ -74,9 +74,6 @@ _ENV_MAP: dict[str, tuple[str, str]] = {
     "SCOPE_LLM_TRIGGER_FUNCS": ("scope", "llm_trigger_funcs"),
     "SCOPE_LLM_TOP_K": ("scope", "llm_top_k"),
     "SCOPE_LLM_CONFIDENCE_THRESHOLD": ("scope", "llm_confidence_threshold"),
-    # [erlang]
-    "ELP_COMMAND": ("erlang", "command"),
-    "ELP_TIMEOUT_SECONDS": ("erlang", "timeout_s"),
     # [inject]
     "INJECT_ID": ("inject", "id"),
     "INJECT_HOST": ("inject", "hosts"),
@@ -138,11 +135,6 @@ class ScopeCfg(_Section):
     llm_confidence_threshold: float = Field(default=8.0, ge=0)
 
 
-class ErlangCfg(_Section):
-    command: str = "elp"
-    timeout_s: int = Field(default=180, gt=0)
-
-
 class InjectCfg(_Section):
     # Request metadata injected for prompt-cache affinity; internal, so no
     # committed toml default (empty means "use the built-in fallback id").
@@ -200,7 +192,6 @@ class Settings(BaseSettings):
     llm: LLMCfg = LLMCfg()
     runtime: RuntimeCfg = RuntimeCfg()
     scope: ScopeCfg = ScopeCfg()
-    erlang: ErlangCfg = ErlangCfg()
     inject: InjectCfg = InjectCfg()
     codegraph: CodegraphCfg = CodegraphCfg()
 

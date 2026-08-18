@@ -169,6 +169,7 @@ _CG_LANG = {
     "java":       ["java"],
     "javascript": ["javascript", "jsx"],  # codegraph stores .jsx files as language='jsx'
     "typescript": ["typescript", "tsx"],  # codegraph stores .tsx files as language='tsx'
+    "erlang":     ["erlang"],
 }
 
 # SQL fragment used to match the constructor method node when resolving

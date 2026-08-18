@@ -132,8 +132,8 @@ def _count_functions(proj_dir: str, files: Iterable[str]) -> tuple[int, list[str
             uncounted.append(rel_path)
             continue
         if language == "erlang" and not functions:
-            # Erlang extraction is semantic/ELP-only. The fast preflight does not
-            # start ELP, so make the incomplete count explicit in the manifest.
+            # Erlang extraction is CodeGraph-only. The fast preflight does not
+            # query the index, so make the incomplete count explicit in the manifest.
             uncounted.append(rel_path)
             continue
         total += len(functions)
