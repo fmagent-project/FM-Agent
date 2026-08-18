@@ -406,29 +406,19 @@ class CodeGraphExtractor:
             for name, qualified_name, start, end in rows
         ]
 
-    def get_call_edges(self, lang_key: str) -> dict:
-        """Return {caller_fqn: {callee_fqn, ...}} for the given language.
+    def get_call_edges(self, lang_key: str) -> list:
+        """Return precisely resolved call edges for the given language.
 
-        Each FQN matches generate_topdown_layers._file_to_fqn for the
-        corresponding extracted function (``dir::file-ext::dedup_name``). Edges
-        are resolved by codegraph NODE ID (not by bare name), so the precise
-        caller/callee identity codegraph computed — which file, which same-named
-        sibling — is preserved end-to-end. This lets the call-graph builder use
-        the edges directly instead of re-resolving bare names against every
-        same-named function (which collapsed siblings and over-approximated
-        across files).
+        Each edge preserves exact codegraph node identity through the extracted-
+        function FQN. No bare-name resolution is performed here.
 
-        Constructor calls are synthesised from `instantiates` edges: when a
-        function instantiates a class, the corresponding constructor method is
-        added as a callee.  See _CONSTRUCTOR_FILTER for per-language details.
-
-        NOTE: codegraph itself collapses calls to same-named classes in different
-        files onto the first definition (a codegraph resolver limitation for C++,
-        not addressable here — see issues/codegraph-samename-class-resolution).
+        Returns a list of ``{"caller": fqn, "callee": fqn, "kind": str,
+        "span": {...}}`` dicts, ordered by source location so call-site order
+        aligns with the source appearance order.
         """
         cg_langs = _CG_LANG.get(lang_key)
         if not cg_langs:
-            return {}
+            return []
 
         conn = sqlite3.connect(self._db)
         cur = conn.cursor()
@@ -438,32 +428,64 @@ class CodeGraphExtractor:
         # dedup as get_functions_by_file, then resolve edges by node id.
         fqn_of = _node_fqn_map(cur, cg_langs)
 
-        result = defaultdict(set)
+        result = []
+        seen = set()
 
         # Query 1: regular function/method calls, kept as (source_id, target_id)
         # so each endpoint resolves to its exact node's FQN.
+        # Call-site coordinates come from the EDGE (e.line/e.col), not the caller
+        # function node (s.start_line is the function DEFINITION location). The
+        # caller node provides the source FILE identity (the call site is always
+        # inside the caller's file), while the edge provides the precise
+        # call-site line/column. ORDER BY the edge coordinates so multiple call
+        # sites of the same callee are returned in true source order.
         cur.execute(
             f"""
-            SELECT e.source, e.target
+            SELECT e.source, e.target, s.file_path, e.line, e.col
             FROM edges e
             JOIN nodes s ON e.source = s.id
             WHERE e.kind = 'calls' AND s.language IN ({placeholders})
+            ORDER BY s.file_path, e.line, e.col
             """,
             cg_langs,
         )
-        for src_id, tgt_id in cur.fetchall():
+        for src_id, tgt_id, file_path, start_line, start_col in cur.fetchall():
             caller, callee = fqn_of.get(src_id), fqn_of.get(tgt_id)
-            if caller and callee:
-                result[caller].add(callee)
+            if not caller or not callee:
+                continue
+            # Dedup key includes call-site coordinates so multiple call sites
+            # of the same callee within one function are all preserved; without
+            # them, the 2nd and later calls would be dropped (breaking
+            # order_index / arg_bindings).
+            if start_line and start_line > 0:
+                key = (caller, callee, "call", file_path, start_line, start_col)
+                if key in seen:
+                    continue
+                seen.add(key)
+            result.append({
+                "caller": caller,
+                "callee": callee,
+                "kind": "call",
+                "span": {
+                    "file": file_path,
+                    "start_line": start_line,
+                    "start_column": start_col,
+                },
+            })
 
         # Query 2: constructor calls synthesised from instantiates edges.
         # For each `caller instantiates ClassName` edge, find the constructor
         # method inside that class and add it as a synthetic callee.
+        # instantiates edges may lack call-site coordinates, so fall back to the
+        # caller node's definition location when the edge coordinates are NULL.
         ctor_filter = _CONSTRUCTOR_FILTER.get(lang_key)
         if ctor_filter:
             cur.execute(
                 f"""
-                SELECT e.source, ctor.id
+                SELECT e.source, ctor.id, s.file_path,
+                       COALESCE(e.line, s.start_line),
+                       COALESCE(e.col, s.start_column),
+                       e.line IS NULL AS coord_fallback
                 FROM edges e
                 JOIN nodes s   ON e.source = s.id
                 JOIN nodes cls ON e.target = cls.id AND cls.kind = 'class'
@@ -472,16 +494,57 @@ class CodeGraphExtractor:
                                AND ctor.kind IN ('method', 'function')
                 WHERE e.kind = 'instantiates' AND s.language IN ({placeholders})
                 AND {ctor_filter}
+                ORDER BY s.file_path, COALESCE(e.line, s.start_line),
+                          COALESCE(e.col, s.start_column)
                 """,
                 cg_langs,
             )
-            for src_id, ctor_id in cur.fetchall():
+            ctor_seq = 0
+            for src_id, ctor_id, file_path, start_line, start_col, coord_fallback \
+                    in cur.fetchall():
                 caller, callee = fqn_of.get(src_id), fqn_of.get(ctor_id)
-                if caller and callee:
-                    result[caller].add(callee)
+                if not caller or not callee:
+                    continue
+                # Dedup key includes call-site coordinates so multiple
+                # constructor call sites within one function are preserved.
+                # When the edge has no real coordinates (coord_fallback=True),
+                # the COALESCE fallback gives every call site the same value;
+                # use a sequence so distinct no-coordinate call sites are NOT
+                # merged away (keeping all edges is safer than dropping calls).
+                if not coord_fallback:
+                    key = (caller, callee, "constructor", file_path,
+                           start_line, start_col)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                else:
+                    key = (caller, callee, "constructor", file_path,
+                           "no-coord", ctor_seq)
+                    ctor_seq += 1
+                result.append({
+                    "caller": caller,
+                    "callee": callee,
+                    "kind": "constructor",
+                    "span": {
+                        "file": file_path,
+                        "start_line": start_line,
+                        "start_column": start_col,
+                    },
+                })
 
         conn.close()
-        return dict(result)
+
+        # Sort the merged result by source location so call sites of different
+        # kinds (call vs constructor) are interleaved in true source order.
+        # Query 1 and Query 2 each ORDER BY independently, but appending them
+        # in sequence would put all calls before all constructors regardless of
+        # line number, breaking consumers that align call sites with source.
+        result.sort(key=lambda e: (
+            e["span"].get("file", ""),
+            e["span"].get("start_line") or 0,
+            e["span"].get("start_column") or 0,
+        ))
+        return result
 
 
 def _codegraph_cmd() -> str:

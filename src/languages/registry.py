@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Callable
 
+import logging
+
 from src.languages import python as _python
 from src.languages import go as _go
 from src.languages import c as _c
@@ -145,27 +147,184 @@ def extract_incremental_sources(proj_dir: str, lang_key: str, sources: dict):
     return handler.incremental_source_extract(proj_dir, sources)
 
 
+_logger = logging.getLogger(__name__)
+
+# Edge fields allowed to pass through (internal cache fields like
+# _internal_cache are filtered out).
+_ALLOWED_EDGE_FIELDS = {
+    "caller", "callee", "kind", "language",
+    "span", "arg_bindings", "order_index",
+}
+
+# Standard field names inside a span (backends may use file/path/source_file;
+# all are unified to "file").
+_SPAN_FIELD_ALIASES = {
+    "file": ("file", "path", "source_file", "filename"),
+    "start_line": ("start_line", "line"),
+    "start_column": ("start_column", "col", "column"),
+}
+
+
+def _normalize_span(span) -> dict:
+    """Unify span field names: {file, start_line, start_column}."""
+    if not isinstance(span, dict):
+        return span
+    out = {}
+    for canonical, aliases in _SPAN_FIELD_ALIASES.items():
+        for a in aliases:
+            if a in span and span[a] is not None:
+                out[canonical] = span[a]
+                break
+    # Keep unrecognized fields for backward compatibility.
+    for k, v in span.items():
+        if k not in {x for aliases in _SPAN_FIELD_ALIASES.values() for x in aliases}:
+            out[k] = v
+    return out
+
+
+def _edge_dedup_key(d: dict) -> tuple:
+    """Dedup key at call-site granularity (mirrors codegraph.py).
+
+    Includes language so edges from different backends (e.g. C and C++)
+    with the same caller/callee/span are not merged away.
+
+    When call-site coordinates are absent (start_line missing or 0), the key
+    falls back to ``id(d)`` so distinct no-coordinate edges are all kept
+    instead of being collapsed (safety over false dedup). This mirrors the
+    coord_fallback handling in codegraph.get_call_edges().
+    """
+    span = d.get("span") if isinstance(d.get("span"), dict) else {}
+    file_path = span.get("file")
+    start_line = span.get("start_line")
+    # Compatible with both start_column and start_col aliases.
+    start_col = (
+        span.get("start_column")
+        if span.get("start_column") is not None
+        else span.get("start_col")
+    )
+
+    # Valid coordinates: dedup at call-site granularity.
+    if start_line and start_line > 0:
+        return (
+            d.get("language"),
+            d.get("caller"),
+            d.get("callee"),
+            d.get("kind", "call"),
+            file_path,
+            start_line,
+            start_col,
+        )
+
+    # No valid coordinates: keep every edge (id() guarantees uniqueness).
+    return (
+        d.get("language"),
+        d.get("caller"),
+        d.get("callee"),
+        d.get("kind", "call"),
+        id(d),
+    )
+
+
+def normalize_call_edges(edges, language=None) -> list:
+    """Normalize language-backend call edges into FM-Agent standard format.
+
+    Accepts:
+      - dict form:      {caller: {callee, ...}} / {caller: "callee_str"}
+      - list form:      [{"caller": ..., "callee": ..., "kind": ...}]
+      - custom objects: edge objects convertible to a dict (extra fields kept)
+
+    Returns a list of normalized edge dicts. Malformed edges are skipped with
+    a warning (never silently dropped — this is shared infrastructure).
+    Dedup is applied at call-site granularity so the function is idempotent.
+
+    ``kind`` is unified to the canonical values "call" / "constructor"
+    (see issue #204). Codegraph directly emits "call"; legacy edge objects
+    emitting "calls" are mapped here for backward compatibility.
+    """
+    if edges is None:
+        return []
+
+    out = []
+    seen = set()
+
+    def _append(d: dict) -> None:
+        # Unify span field names.
+        if "span" in d and isinstance(d["span"], dict):
+            d["span"] = _normalize_span(d["span"])
+        # Unify kind: map deprecated "calls" to "call", default missing to "call".
+        kind = d.get("kind")
+        if kind == "calls" or not kind:
+            d["kind"] = "call"
+        # Overwrite an empty language with the caller-provided one.
+        if not d.get("language") and language:
+            d["language"] = language
+        key = _edge_dedup_key(d)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(d)
+
+    # dict form: {caller: {callee, ...}} / {caller: "callee_str"}
+    if isinstance(edges, dict):
+        for caller, callees in edges.items():
+            if isinstance(callees, str):
+                callees = [callees]          # support {caller: "callee_str"}
+            elif not isinstance(callees, (list, set, tuple)):
+                _logger.warning("Skipping malformed call edge (unknown container): %r", callees)
+                continue
+            for callee in callees:
+                _append({"caller": caller, "callee": callee})
+        return out
+
+    # list form: normalized dicts or edge objects
+    if isinstance(edges, list):
+        for e in edges:
+            if isinstance(e, dict):
+                d = dict(e)
+                # Schema validation: skip edges missing caller/callee (with a log).
+                if "caller" not in d or "callee" not in d:
+                    _logger.warning("Skipping malformed call edge: %s", d)
+                    continue
+                _append(d)
+            else:
+                # Custom object: extract via getattr (works with __dict__,
+                # __slots__, and @property).
+                d = {}
+                for key in _ALLOWED_EDGE_FIELDS:
+                    if hasattr(e, key):
+                        val = getattr(e, key, None)
+                        if val is not None:
+                            d[key] = val
+                if "caller" in d and "callee" in d:
+                    _append(d)
+                else:
+                    _logger.warning("Skipping malformed call edge object: %r", e)
+        return out
+
+    return []
+
+
 def call_edges_all(proj_dir: str, lang_keys) -> tuple:
     """Call call_edges for each language in lang_keys and merge results.
 
-    Returns (edges, langs) where edges is {caller_fqn: {callee_fqns}} and langs is
-    the set of language keys codegraph handled (it returned a dict, even if empty
-    — None means the backend was unavailable and the caller should use regex).
+    Returns (edges, langs) where edges is a list of normalized edge dicts and
+    langs is the set of language keys codegraph handled. Edges are deduped
+    across language backends at call-site granularity.
     """
-    edges = {}
+    edges = []
     langs = set()
+    seen = set()
     for lang in lang_keys:
         if lang not in REGISTRY:
             continue
         result = REGISTRY[lang].call_edges(proj_dir)
-        # A handler returns None when its backend (codegraph) is unavailable, and
-        # a dict (possibly empty) when it handled the language. Treat "handled but
-        # no edges" as codegraph-authoritative — add the language to `langs` so the
-        # caller uses the codegraph path — instead of falling back to regex, which
-        # would otherwise invent edges (e.g. match a function's own signature) for
-        # a genuinely call-free project.
-        if result is not None:
-            langs.add(lang)
-            for key, callees in result.items():
-                edges.setdefault(key, set()).update(callees)
+        if result is None:
+            continue
+        langs.add(lang)
+        for edge in normalize_call_edges(result, language=lang):
+            key = _edge_dedup_key(edge)
+            if key in seen:
+                continue
+            seen.add(key)
+            edges.append(edge)
     return edges, langs
