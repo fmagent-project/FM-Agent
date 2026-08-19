@@ -2227,6 +2227,11 @@ def _update_specs_for_intent(
                         f.flush()
                         os.fsync(f.fileno())
                     os.replace(restore_path, info_path)
+                else:
+                    try:
+                        os.remove(info_path)
+                    except FileNotFoundError:
+                        pass
                 try:
                     os.remove(f"{info_path}.tmp")
                 except FileNotFoundError:
