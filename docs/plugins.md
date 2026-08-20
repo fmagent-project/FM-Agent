@@ -195,7 +195,7 @@ The plugin configures two modify hooks:
 generate_phase_plan input hook
 → extract all functions in a temporary selection copy
 → build the call graph
-→ select functions reachable from entry_func
+→ select the union reachable from entry_funcs
 → optionally restrict paths to end_funcs
 → delete unrelated files and functions from the entry run copy
 → run the built-in Stages 1–6 on the trimmed copy
@@ -210,12 +210,20 @@ The entry plugin context contains:
 {
   "original_proj_dir": "/path/to/demo",
   "entry_run_dir": "/path/to/demo.fm-entry-run",
-  "entry_func": "src::main-c::main",
+  "entry_funcs": ["src::main-c::main", "api::server-c::serve"],
   "end_funcs": [],
   "extra_edge": null,
   "all_bugs": false
 }
 ```
+
+`--entry-func` accepts one or more space-separated function FQNs. Without
+`--end-func`, entry reasoning analyzes the union reachable from every requested
+entry. With end functions, it retains only functions on a valid requested
+entry-to-end chain and treats each end function as terminal. Every requested
+entry is validated; missing FQNs are reported together. All entry source files
+are exempt from test-file filtering, while only entry source files that survive
+end pruning are forced into `phases.json`.
 
 Entry runs generate specifications and reasoning results but intentionally skip
 bug validation. The Stage 6 output hook publishes successful results. If a

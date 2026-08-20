@@ -216,6 +216,8 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--bug-validator FILE`       | Use a custom Markdown prompt for bug validation instead of the built-in `md/bug_validator.md`. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
+| `--entry-func PATH [PATH ...]` | Start entry-scoped reasoning from one or more function FQNs. This automatically enables the bundled entry plugin. |
+| `--end-func PATH [PATH ...]` | Optionally stop entry-scoped reasoning at one or more function FQNs. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 | `--estimate`                | Scan scope and print a history-based time, LLM-call, token, and cost estimate without making LLM calls. |
@@ -235,7 +237,29 @@ def hook(proj_dir: str) -> None:
 See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
 configuration, execution modes, lifecycle, and trust boundary.
 
-`proj_dir` must be a git repository.
+Full and incremental runs require `proj_dir` to be a git repository. Entry-scoped
+runs use their own isolated copy and do not require a Git checkout.
+
+### Entry-scoped reasoning
+
+Analyze the union reachable from one or more entry functions:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b
+```
+
+Add end functions to retain only valid requested entry-to-end chains. Each end
+function is terminal in the selected scope:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b \
+  --end-func services-py::end_a services-py::end_b
+```
+
+Every requested entry must exist. The option cannot be combined with
+`--plugin` or `--submodule`.
 
 ### Pre-run estimate
 
