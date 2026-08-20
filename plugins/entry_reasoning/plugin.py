@@ -23,7 +23,7 @@ from src.file_utils import (
 
 _original_proj_dir: str | None = None
 _entry_run_dir: str | None = None
-_entry_func: str | None = None
+_entry_funcs: list[str] = []
 _end_funcs: list[str] = []
 _extra_edge: str | None = None
 _all_bugs = False
@@ -32,7 +32,7 @@ _READY_MARKER = ".entry_scope_ready"
 
 def configure(proj_dir: str) -> None:
     """Load and validate the entry run context created by ``main.py``."""
-    global _original_proj_dir, _entry_run_dir, _entry_func
+    global _original_proj_dir, _entry_run_dir, _entry_funcs
     global _end_funcs, _extra_edge, _all_bugs
 
     context_path = os.path.join(proj_dir, "fm_agent", "plugin_context.json")
@@ -43,7 +43,7 @@ def configure(proj_dir: str) -> None:
 
     original_proj_dir = context.get("original_proj_dir")
     entry_run_dir = context.get("entry_run_dir")
-    entry_func = context.get("entry_func")
+    entry_funcs = _normalize_entry_funcs(context.get("entry_funcs"))
     end_funcs = context.get("end_funcs", [])
     extra_edge = context.get("extra_edge")
     all_bugs = context.get("all_bugs", False)
@@ -52,8 +52,6 @@ def configure(proj_dir: str) -> None:
         raise ValueError("original_proj_dir must be a non-empty string")
     if not isinstance(entry_run_dir, str) or not entry_run_dir:
         raise ValueError("entry_run_dir must be a non-empty string")
-    if not isinstance(entry_func, str) or not entry_func:
-        raise ValueError("entry_func must be a non-empty string")
     if not isinstance(end_funcs, list) or any(
         not isinstance(value, str) or not value for value in end_funcs
     ):
@@ -77,16 +75,19 @@ def configure(proj_dir: str) -> None:
 
     _original_proj_dir = original_proj_dir
     _entry_run_dir = entry_run_dir
-    _entry_func = entry_func
+    _entry_funcs = entry_funcs
     _end_funcs = list(end_funcs)
     _extra_edge = extra_edge
     _all_bugs = all_bugs
-    add_test_file_exemption(_entry_func_source_rel(_entry_func))
+    for source_file in dict.fromkeys(
+        _entry_func_source_rel(entry) for entry in _entry_funcs
+    ):
+        add_test_file_exemption(source_file)
 
 
 def _require_configured(proj_dir: str) -> None:
     """Require hooks to operate only on the configured isolated run copy."""
-    if _entry_run_dir is None or _original_proj_dir is None or _entry_func is None:
+    if _entry_run_dir is None or _original_proj_dir is None or not _entry_funcs:
         raise RuntimeError("entry_reasoning plugin has not been configured")
     if os.path.abspath(proj_dir) != _entry_run_dir:
         raise RuntimeError("entry_reasoning received an unexpected project directory")
@@ -100,7 +101,7 @@ def prepare_entry_scope(proj_dir: str) -> None:
     extra_call_edges = load_call_edges(_extra_edge)
     all_by_source, keep_by_source = _select_functions_by_source(
         proj_dir,
-        _entry_func,
+        _entry_funcs,
         _end_funcs,
         extra_call_edges=extra_call_edges,
     )
@@ -142,18 +143,32 @@ def publish_entry_results(proj_dir: str) -> None:
         clear_test_file_exemptions()
 
 
-def _restrict_to_chains(call_graph, entry_func, end_funcs):
-    """Keep only functions lying on a call chain from entry_func to an end_func.
+def _normalize_entry_funcs(entry_func):
+    """Return unique entry FQNs in first-seen order from a string or list."""
+    if isinstance(entry_func, str):
+        entry_funcs = [entry_func]
+    elif isinstance(entry_func, (list, tuple)):
+        entry_funcs = list(entry_func)
+    else:
+        raise ValueError("entry_funcs must be a non-empty string or list of strings")
 
-    A function is retained iff it is reachable from ``entry_func`` (already
-    guaranteed by ``call_graph``) *and* it can reach one of ``end_funcs`` — i.e.
-    it sits on some path ``entry_func -> ... -> end_func``. The ``end_funcs`` are
-    treated as terminal: their outgoing edges are dropped so chains stop there.
+    if not entry_funcs or any(
+        not isinstance(value, str) or not value for value in entry_funcs
+    ):
+        raise ValueError("entry_funcs must be a non-empty string or list of strings")
+    return list(dict.fromkeys(entry_funcs))
+
+
+def _restrict_to_chains(call_graph, end_funcs):
+    """Keep only functions lying on a call chain from an entry to an end_func.
+
+    A function is retained iff it is reachable from a requested entry (already
+    guaranteed by ``call_graph``) and can reach one of ``end_funcs``. End
+    functions are terminal: their outgoing edges are dropped so chains stop there.
 
     Args:
-        call_graph: dict mapping FQN -> sorted list of callee FQNs, rooted at
-            entry_func (as built in _select_functions_by_source).
-        entry_func: FQN of the entry point.
+        call_graph: dict mapping FQN -> sorted list of callees reachable from
+            the requested entries.
         end_funcs: list of FQNs at which to stop. If falsy, call_graph is
             returned unchanged.
 
@@ -386,13 +401,39 @@ def _enumerate_source_files(proj_dir):
     return sorted(source_files)
 
 
-def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edges=None):
-    """Select the functions reachable from entry_func, grouped by source file.
+def _reachable_call_graph(callees_map, entry_funcs):
+    """Build the deterministic union reachable from one or more entry FQNs."""
+    call_graph = {}
+    queue = deque(entry_funcs)
+    while queue:
+        fqn = queue.popleft()
+        if fqn in call_graph:
+            continue
+        callees = sorted(callees_map.get(fqn, set()))
+        call_graph[fqn] = callees
+        for callee in callees:
+            if callee not in call_graph:
+                queue.append(callee)
+    return call_graph
+
+
+def _validate_entry_funcs(entry_funcs, all_fqns):
+    """Raise one error containing every requested entry absent from extraction."""
+    missing_entries = [entry for entry in entry_funcs if entry not in all_fqns]
+    if missing_entries:
+        raise ValueError(
+            f"entry_func(s) {missing_entries!r} not found among extracted "
+            "functions under proj_dir"
+        )
+
+
+def _select_functions_by_source(proj_dir, entry_funcs, end_funcs, extra_call_edges=None):
+    """Select the functions reachable from all entries, grouped by source file.
 
     Extracts a throwaway copy of proj_dir with the very machinery the main
     pipeline uses — ``run_extraction`` plus ``_build_call_graph`` from
     generate_topdown_layers, both codegraph-backed whenever a codegraph index
-    can be built — then builds the call graph rooted at ``entry_func``
+    can be built — then builds the union rooted at ``entry_funcs``
     (optionally restricted to chains reaching ``end_funcs``) and returns two
     source-file-keyed groupings:
 
@@ -447,23 +488,9 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
         )
         all_fqns = {_file_to_fqn(fp, work_dir) for fp, _mod in phase_files}
 
-        if entry_func not in all_fqns:
-            raise ValueError(
-                f"entry_func {entry_func!r} not found among extracted functions under proj_dir"
-            )
-
-        # BFS the call graph reachable from the entry point.
-        call_graph = {}
-        queue = deque([entry_func])
-        while queue:
-            fqn = queue.popleft()
-            if fqn in call_graph:
-                continue
-            callees = callees_map.get(fqn, set())
-            call_graph[fqn] = sorted(callees)
-            for callee in callees:
-                if callee not in call_graph:
-                    queue.append(callee)
+        entry_funcs = _normalize_entry_funcs(entry_funcs)
+        _validate_entry_funcs(entry_funcs, all_fqns)
+        call_graph = _reachable_call_graph(callees_map, entry_funcs)
 
         # Every extractable function, grouped by source file.
         all_by_source = defaultdict(set)
@@ -472,23 +499,25 @@ def _select_functions_by_source(proj_dir, entry_func, end_funcs, extra_call_edge
     finally:
         shutil.rmtree(sel_dir, ignore_errors=True)
 
-    # Keep only functions on a call chain from entry_func to one of end_funcs.
+    # Keep only functions on a call chain from an entry to one of end_funcs.
     if end_funcs:
         unreachable = sorted(set(end_funcs) - set(call_graph))
-        call_graph = _restrict_to_chains(call_graph, entry_func, end_funcs)
+        call_graph = _restrict_to_chains(call_graph, end_funcs)
         if unreachable:
             logging.warning(
-                "[EntryPipeline] %d end function(s) are not reachable from %s: %s",
-                len(unreachable), entry_func, ", ".join(unreachable[:5]),
+                "[EntryPipeline] %d end function(s) are not reachable from any "
+                "requested entry: %s",
+                len(unreachable), ", ".join(unreachable[:5]),
             )
         if not call_graph:
             raise ValueError(
-                f"none of the requested end_funcs are reachable from entry_func {entry_func!r}"
+                "none of the requested end_funcs are reachable from any "
+                "requested entry_func"
             )
 
     print(
         f"[EntryPipeline] Selected {len(call_graph)} of {len(all_fqns)} function(s) "
-        f"from entry {entry_func}."
+        f"from {len(entry_funcs)} entry function(s)."
     )
 
     # Map the selected FQNs back to their (source file, function identifier).

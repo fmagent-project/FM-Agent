@@ -815,12 +815,14 @@ if __name__ == "__main__":
     if is_entry:
         entry_run_dir = original_proj_dir + ".fm-entry-run"
         _make_run_copy(original_proj_dir, entry_run_dir)
-        required_source_files = [_entry_func_source_rel(args.entry_func)]
+        required_source_files = list(dict.fromkeys(
+            _entry_func_source_rel(entry) for entry in args.entry_func
+        ))
         validate_bugs = False
         plugin_context.update({
             "original_proj_dir": original_proj_dir,
             "entry_run_dir": entry_run_dir,
-            "entry_func": args.entry_func,
+            "entry_funcs": args.entry_func,
             "end_funcs": args.end_func or [],
             "all_bugs": args.all_bugs,
         })
