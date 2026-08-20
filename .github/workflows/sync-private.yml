@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   sync:
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'fmagent-project/FM-Agent' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
