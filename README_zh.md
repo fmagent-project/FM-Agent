@@ -160,11 +160,13 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `proj_dir` | 待检测代码库的目录路径 |
 | `--resume` | 续跑上一次中断的运行，而非从头开始 |
 | `--incremental INTENT_FILE` | 以增量模式运行，参数值为描述本次修改目标的意图文件路径。 |
-| `--all-bugs` | 在发现不匹配后继续推理并报告每个候选 Bug。完整和增量模式会逐个验证；入口函数模式不执行 Bug Validation。 |
+| `--all-bugs` | 在发现不匹配后继续推理并报告每个候选 Bug。完整和增量模式会逐个验证。 |
 | `--domain-knowledge FILE [FILE ...]` | 将额外的 Markdown 领域知识文件复制到本次运行中，并提供给 setup、规约生成和 Bug 验证 Agent。别名：`--knowledge`；可重复传入。 |
 | `--bug-validator FILE` | 使用自定义 Markdown 提示词执行 Bug 验证，替代内置的 `md/bug_validator.md`。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
+| `--entry-func PATH [PATH ...]` | 从一个或多个函数 FQN 开始进行入口范围推理，并自动启用内置入口插件。 |
+| `--end-func PATH [PATH ...]` | 可选：在一个或多个函数 FQN 处停止入口范围推理。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 | `--estimate` | 不调用 LLM，仅扫描范围并输出基于历史数据的时间、LLM 调用次数、Token 与费用预估。 |
@@ -184,7 +186,28 @@ def hook(proj_dir: str) -> None:
 插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
 [Pipeline 插件](docs/plugins_zh.md)。
 
-`proj_dir` 必须是一个 git 仓库。
+完整和增量运行要求 `proj_dir` 是 Git 仓库。入口范围运行会使用自己的隔离副本，
+因此不要求 Git checkout。
+
+### 入口范围推理
+
+从一个或多个入口函数分析其可达函数的并集：
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b
+```
+
+指定 end function 后，只保留请求入口到任一 end function 的有效调用链；每个
+end function 都是选定范围内的终点：
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b \
+  --end-func services-py::end_a services-py::end_b
+```
+
+所有请求入口都必须存在。该选项不能与 `--plugin` 或 `--submodule` 一起使用。
 
 ### 运行前预估
 
@@ -222,17 +245,16 @@ uv run python main.py <proj_dir> --submodule src/core src/runtime
 uv run python main.py <proj_dir> --incremental intent.md --submodule src/core src/runtime
 ```
 
-`--submodule` 路径必须是 `proj_dir` 内部目录。该参数可与 `--resume`、`--isolate` 和 `--incremental` 一起使用，但不能与 `--entry-func` 一起使用。
+`--submodule` 路径必须是 `proj_dir` 内部目录。该参数可与 `--resume`、`--isolate` 和 `--incremental` 一起使用。
 
-`--all-bugs` 可用于完整、增量或入口函数分析：
+`--all-bugs` 可用于完整或增量分析：
 
 ```bash
 uv run python main.py <proj_dir> --all-bugs
 uv run python main.py <proj_dir> --incremental intent.md --all-bugs
-uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 ```
 
-该选项默认关闭。启用后，FM-Agent 会继续检查后续推理检查点，并为每个候选写出一个标准 mismatch 结果。完整和增量模式会分别验证每个候选；入口函数模式只报告候选及其数量，按设计不执行 Bug Validation。
+该选项默认关闭。启用后，FM-Agent 会继续检查后续推理检查点，并为每个候选写出一个标准 mismatch 结果。完整和增量模式会分别验证每个候选。
 
 若主结果为 `path/to/function.json`，all-bugs 候选会写在同一目录下，依次命名为 `path/to/function.bug-001.json`、`bug-002.json` 等。主结果通过 `bug_count` 和 `reasoning_complete` 记录候选数量及推理是否完整。续跑时，完整的主结果就是 reasoning 阶段的检查点，只补跑尚未产生终态结果的候选验证；若 reasoning 中途停止，则只清理并重跑该函数的中间候选和验证，不影响其他已完成函数。
 
@@ -244,7 +266,7 @@ uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 uv run python main.py <proj_dir> --only-spec
 ```
 
-当静态解析无法看到关键调用关系时（例如间接 syscall 分发），可使用 `--extra-edge FILE`。补充边会同时作用于完整运行、入口函数范围运行和增量运行。JSON 格式如下：
+当静态解析无法看到关键调用关系时（例如间接 syscall 分发），可使用 `--extra-edge FILE`。补充边会同时作用于完整运行和增量运行。JSON 格式如下：
 
 ```json
 {
