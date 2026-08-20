@@ -105,6 +105,17 @@ def _format_estimate_duration(seconds):
     return f"{seconds}s"
 
 
+def _existing_required_source_files(proj_dir, required_source_files):
+    """Keep required files that still exist after a Stage 1 scope hook."""
+    if required_source_files is None:
+        return None
+    return [
+        source_file
+        for source_file in required_source_files
+        if os.path.isfile(os.path.join(proj_dir, source_file))
+    ]
+
+
 def _finalize_failed_entry_run(original_proj_dir, entry_run_dir):
     """Preserve partial entry results after failure and remove the run copy."""
     if not entry_run_dir or not os.path.isdir(entry_run_dir):
@@ -304,9 +315,12 @@ def run_pipeline(
                 proj_dir,
             )
 
+    surviving_required_source_files = _existing_required_source_files(
+        proj_dir, required_source_files
+    )
     phases_modified = _post_process_phases(
         proj_dir, work_dir,
-        required_source_files=required_source_files,
+        required_source_files=surviving_required_source_files,
         submodules=submodules,
         one_phase=one_phase,
     )
