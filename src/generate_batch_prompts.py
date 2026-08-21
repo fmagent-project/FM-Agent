@@ -138,13 +138,27 @@ def extract_callee_spec_from_info(
     if not isinstance(callees, list):
         return None
 
+    named_callees = []
     for callee in callees:
         if not isinstance(callee, dict):
             continue
         name = callee.get("name", "")
         if not isinstance(name, str):
             continue
-        if any(_info_line_mentions_name(name, candidate) for candidate in names):
+        named_callees.append((callee, name))
+
+    for callee, name in named_callees:
+        if _info_name_matches_fqn(name, callee_fqn):
+            return callee
+
+    alias_names = {alias for alias in aliases or () if alias}
+    for callee, name in named_callees:
+        if name in alias_names:
+            return callee
+
+    bare_names = [name for name in names if "::" not in name]
+    for callee, name in named_callees:
+        if any(_info_line_mentions_name(name, candidate) for candidate in bare_names):
             return callee
     return None
 
@@ -158,6 +172,13 @@ def _callee_match_names(callee_fqn: str, aliases: Sequence[str]) -> List[str]:
         if "::" in alias:
             names.append(alias.rsplit("::", 1)[-1])
     return list(dict.fromkeys(names))
+
+
+def _info_name_matches_fqn(info_name: str, callee_fqn: str) -> bool:
+    """Match a complete FQN or a ``::``-qualified suffix of it."""
+    if info_name == callee_fqn:
+        return True
+    return "::" in info_name and callee_fqn.endswith(f"::{info_name}")
 
 
 def _info_line_mentions_name(first_line: str, name: str) -> bool:
