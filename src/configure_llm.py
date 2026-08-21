@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import hashlib
+import ipaddress
 import os
 import re
 import shutil
@@ -87,11 +88,41 @@ def adapter_for_api_style(api_style: ApiStyle) -> str:
     raise ConfigWizardError(f"Unsupported API style: {api_style}")
 
 
+_HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+
+
+def _valid_hostname(hostname: str) -> bool:
+    try:
+        ipaddress.ip_address(hostname)
+        return True
+    except ValueError:
+        pass
+
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii").rstrip(".")
+    except UnicodeError:
+        return False
+    if not ascii_hostname or len(ascii_hostname) > 253:
+        return False
+    return all(_HOST_LABEL_RE.fullmatch(label) for label in ascii_hostname.split("."))
+
+
 def validate_base_url(url: str) -> None:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        parsed.port  # Accessing .port validates non-numeric and out-of-range ports.
+    except ValueError as exc:
         raise ConfigWizardError(
-            f"Base URL must be an absolute http(s) URL, got: {url!r}"
+            f"Base URL must be an absolute http(s) URL with a valid hostname and port, got: {url!r}"
+        ) from exc
+    if (
+        parsed.scheme not in ("http", "https")
+        or not hostname
+        or not _valid_hostname(hostname)
+    ):
+        raise ConfigWizardError(
+            f"Base URL must be an absolute http(s) URL with a valid hostname and port, got: {url!r}"
         )
 
 
@@ -362,12 +393,19 @@ def merge_opencode_config(
 
 
 _SECTION_RE = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
-_KV_RE = re.compile(r"^(\s*)([A-Za-z0-9_]+)(\s*=\s*)(.*?)(\s*(#.*)?)$")
+_KV_RE = re.compile(
+    r'''^(\s*)([A-Za-z0-9_-]+|"(?:\\.|[^"\\])*"|'[^']*')(\s*=\s*)(.*?)(\s*(#.*)?)$'''
+)
 _ENV_EXPORT_PREFIX_RE = re.compile(r"^export[^\S\r\n]+")
 
 
 def _quote_toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _toml_key_name(key_token: str) -> str:
+    """Decode one valid TOML bare or quoted key to its semantic name."""
+    return next(iter(tomllib.loads(f"{key_token} = 0").keys()))
 
 
 def update_llm_settings_toml_text(text: str, updates: dict[str, str]) -> str:
@@ -413,11 +451,15 @@ def update_llm_settings_toml_text(text: str, updates: dict[str, str]) -> str:
 
         if in_llm:
             kv_match = _KV_RE.match(line)
-            if kv_match and kv_match.group(2) in target:
+            if kv_match:
                 indent, key, sep, _old_value, trailer, _comment = kv_match.groups()
-                new_lines.append(f"{indent}{key}{sep}{target[key]}{trailer}\n")
-                seen_keys.add(key)
-                continue
+                semantic_key = _toml_key_name(key)
+                if semantic_key in target:
+                    new_lines.append(
+                        f"{indent}{key}{sep}{target[semantic_key]}{trailer}\n"
+                    )
+                    seen_keys.add(semantic_key)
+                    continue
         new_lines.append(line)
 
     if in_llm:
@@ -744,11 +786,11 @@ def apply_configuration(
     validate_input(config)
 
     env_text = _read_text_if_exists(paths.env_path)
-    toml_text = _read_text_if_exists(paths.toml_path)
-    if not toml_text:
+    if not paths.toml_path.is_file():
         raise ConfigWizardError(
             f"fm-agent.toml not found at {paths.toml_path}; refusing to guess a new project config."
         )
+    toml_text = _read_text_if_exists(paths.toml_path)
     opencode_text = _read_text_if_exists(paths.opencode_config_path)
     opencode_secret_path = secret_path_for_provider(config)
 
@@ -955,11 +997,11 @@ def apply_local_backend_configuration(
     backend: str,
     paths: WizardPaths,
 ) -> tuple[list[tuple[Path, Path | None]], tuple[str, ...]]:
-    toml_text = _read_text_if_exists(paths.toml_path)
-    if not toml_text:
+    if not paths.toml_path.is_file():
         raise ConfigWizardError(
             f"fm-agent.toml not found at {paths.toml_path}; refusing to guess a new project config."
         )
+    toml_text = _read_text_if_exists(paths.toml_path)
     toml_updates = local_backend_toml_updates(paths.env_path, backend)
     updated_toml = update_llm_settings_toml_text(toml_text, toml_updates)
     try:
@@ -1040,11 +1082,11 @@ def apply_llm_settings_update(
     updates: dict[str, str],
     toml_path: Path,
 ) -> Path | None:
-    toml_text = _read_text_if_exists(toml_path)
-    if not toml_text:
+    if not toml_path.is_file():
         raise ConfigWizardError(
             f"fm-agent.toml not found at {toml_path}; refusing to guess a new project config."
         )
+    toml_text = _read_text_if_exists(toml_path)
     updated_toml = update_llm_settings_toml_text(toml_text, updates)
     try:
         tomllib.loads(updated_toml)
