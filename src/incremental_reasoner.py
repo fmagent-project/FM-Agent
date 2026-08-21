@@ -75,6 +75,27 @@ from .domain_knowledge import (
 )
 
 
+class IncrementalMetadataError(RuntimeError):
+    """Raised when required incremental metadata could not be made ready."""
+
+    def __init__(self, outcomes):
+        self.outcomes = outcomes
+        failed = ", ".join(
+            f"{fqn}: {status}" for fqn, status in sorted(outcomes.items())
+            if status in {"generation_failed", "unsupported", "verification_failed"}
+        )
+        super().__init__(f"incremental metadata incomplete ({failed})")
+
+
+class IncrementalMetadataResult(list):
+    """List-compatible update result carrying per-function outcomes."""
+
+    def __init__(self, updated_files, outcomes):
+        super().__init__(updated_files)
+        self.outcomes = outcomes
+
+
+
 class _StdoutTee:
     """
     A write-through stdout replacement that mirrors everything printed to the console into
@@ -1036,7 +1057,21 @@ def run_incremental_pipeline(
     )
     record_path = os.path.join(work_dir, "incremental_updated_specs.json")
     with open(record_path, "w") as f:
-        json.dump({"updated_specs": updated_spec_files}, f, indent=2)
+        json.dump(
+            {
+                "updated_specs": list(updated_spec_files),
+                "outcomes": getattr(updated_spec_files, "outcomes", {}),
+            },
+            f,
+            indent=2,
+        )
+    metadata_failures = {
+        fqn: status
+        for fqn, status in getattr(updated_spec_files, "outcomes", {}).items()
+        if status == "generation_failed"
+    }
+    if metadata_failures:
+        raise IncrementalMetadataError(metadata_failures)
     logging.info(
         "  -> %d spec(s) updated; record written to %s.",
         len(updated_spec_files), record_path,
@@ -1213,6 +1248,75 @@ def _normalize_info_dict(info):
             if isinstance(callee, dict)
         ]
     }
+
+
+def _write_metadata_pair(file_path, spec_dict, info_dict):
+    """Replace both metadata sidecars, restoring the previous ready pair on failure."""
+    spec_path = f"{file_path}.spec.json"
+    info_path = f"{file_path}.info.json"
+    old_contents = {}
+    for path in (spec_path, info_path):
+        try:
+            with open(path, "rb") as f:
+                old_contents[path] = f.read()
+        except OSError:
+            old_contents[path] = None
+
+    temp_paths = []
+    try:
+        for path, value in ((spec_path, spec_dict), (info_path, info_dict)):
+            temp_path = f"{path}.tmp"
+            temp_paths.append(temp_path)
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(value, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, path)
+        if not is_file_ready(file_path):
+            raise ValueError("metadata sidecars failed readiness validation after write")
+    except Exception:
+        for path, contents in old_contents.items():
+            if contents is None:
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
+            else:
+                restore_path = f"{path}.restore.tmp"
+                with open(restore_path, "wb") as f:
+                    f.write(contents)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(restore_path, path)
+        raise
+    finally:
+        for temp_path in temp_paths:
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                pass
+
+
+def _merge_callee_info(existing_info, replacement_info, callee_name):
+    """Merge only callee_name from an LLM replacement, preserving every other entry."""
+    existing = _normalize_info_dict(existing_info)
+    replacement = _normalize_info_dict(replacement_info)
+    target = callee_name.strip().lower()
+    candidates = [entry for entry in replacement["callees"]
+                  if entry["name"].strip().lower() == target]
+    if len(candidates) != 1:
+        raise ValueError(f"replacement omitted or duplicated target callee {callee_name!r}")
+
+    merged = list(existing["callees"])
+    matches = [i for i, entry in enumerate(merged)
+               if entry["name"].strip().lower() == target]
+    if len(matches) > 1:
+        raise ValueError(f"caller metadata has duplicate target callee {callee_name!r}")
+    if matches:
+        merged[matches[0]] = candidates[0]
+    else:
+        merged.append(candidates[0])
+    return {"callees": merged}
 
 
 def _validate_spec_update(data):
@@ -1933,8 +2037,8 @@ def _update_specs_for_intent(
         callees) is reconciled with the function's new .spec.json so the two do not conflict
         (they need not be identical).
 
-    Returns the sorted list of extracted-function files (paths relative to the
-    extracted_functions dir) whose metadata sidecar was changed.
+    Returns a list-compatible result whose ``outcomes`` map records ``updated``,
+    ``unchanged``, ``unsupported``, or ``generation_failed`` for every planned function.
     """
     extracted_dir = os.path.join(work_dir, "extracted_functions")
 
@@ -1955,7 +2059,7 @@ def _update_specs_for_intent(
 
     if not seed:
         logging.info("    [specs] no changed or relevant functions to update; skipping.")
-        return []
+        return IncrementalMetadataResult([], {})
     logging.info(
         "    [specs] seeded %d function(s) for spec re-generation (%d changed, %d relevant).",
         len(seed), len(changed_targets), len(relevant_rel_files),
@@ -1981,11 +2085,11 @@ def _update_specs_for_intent(
         """
         fpath = file_map.get(fqn)
         if not fpath or not os.path.isfile(fpath):
-            return None
+            return None, "unsupported"
         ext = fpath.rsplit(".", 1)[-1] if "." in os.path.basename(fpath) else ""
         lang_key = EXT_TO_LANG.get(ext)
         if not lang_key:
-            return None
+            return None, "unsupported"
         with open(fpath, "r", errors="replace") as f:
             source = f.read()
         callee_names = sorted({c.split("::")[-1] for c in callees_map.get(fqn, ())})
@@ -1996,6 +2100,8 @@ def _update_specs_for_intent(
             with open(f"{fpath}.info.json", "r", encoding="utf-8") as f:
                 old_info = json.load(f)
         except (OSError, json.JSONDecodeError):
+            old_spec, old_info = None, None
+        if not is_file_ready(fpath):
             old_spec, old_info = None, None
 
         if old_spec is None or old_info is None:
@@ -2014,19 +2120,21 @@ def _update_specs_for_intent(
                 developer_intent, old_spec, old_info, callee_names, source,
             )
 
-        if not result or not result.get("spec_updated"):
-            return None
+        if result is None:
+            return None, "generation_failed"
+        if not result.get("spec_updated"):
+            return None, "unchanged"
         new_spec = result.get("new_spec")
         if not isinstance(new_spec, dict):
-            return None
+            return None, "generation_failed"
 
         if old_info is None:
             # Freshly generated: take the .info.json object the CLI backend
             # produced. Treat it as "updated" so its recorded callee expectations
             # propagate downward below.
             new_info = result.get("new_info")
-            if not isinstance(new_info, dict):
-                new_info = {"callees": []}
+            if not isinstance(new_info, dict) or not result.get("info_updated"):
+                return None, "generation_failed"
             info_updated = True
         else:
             # Keep the existing .info.json unless the CLI backend rewrote it. A
@@ -2046,7 +2154,7 @@ def _update_specs_for_intent(
             "info_dict": _normalize_info_dict(new_info),
             "info_updated": info_updated,
             "updated_callees": result.get("updated_callees") or [],
-        }
+        }, "updated"
 
     def _reconcile_caller(caller_fqn, updates, base_idx):
         """
@@ -2073,26 +2181,72 @@ def _update_specs_for_intent(
                 with open(f"{cpath}.info.json", "r", encoding="utf-8") as f:
                     c_info = json.load(f)
             except (OSError, json.JSONDecodeError):
+                caller_failures[caller_fqn] = "generation_failed"
                 continue
 
             cresult = _llm_check_caller_info_update(
                 proj_dir, work_dir, base_idx + offset, caller_fqn, callee_name, clang, "",
                 callee_new_spec, c_info, csource,
             )
-            if not cresult or not cresult.get("info_updated"):
+            if cresult is None:
+                caller_failures[caller_fqn] = "generation_failed"
+                continue
+            if not cresult.get("info_updated"):
                 continue
             c_new_info = cresult.get("new_info")
             if not isinstance(c_new_info, dict):
+                caller_failures[caller_fqn] = "generation_failed"
                 continue
 
-            with open(f"{cpath}.info.json", "w", encoding="utf-8") as f:
-                json.dump(_normalize_info_dict(c_new_info), f, indent=2, ensure_ascii=False)
+            try:
+                merged_info = _merge_callee_info(c_info, c_new_info, callee_name)
+            except (AttributeError, TypeError, ValueError):
+                logging.exception("Invalid caller metadata replacement for %s", caller_fqn)
+                caller_failures[caller_fqn] = "generation_failed"
+                continue
+            info_path = f"{cpath}.info.json"
+            try:
+                with open(info_path, "rb") as f:
+                    old_info_bytes = f.read()
+            except OSError:
+                old_info_bytes = None
+            try:
+                temp_path = f"{info_path}.tmp"
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    json.dump(merged_info, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, info_path)
+                if not is_file_ready(cpath):
+                    raise ValueError("caller metadata failed readiness validation")
+            except Exception:
+                if old_info_bytes is not None:
+                    restore_path = f"{info_path}.restore.tmp"
+                    with open(restore_path, "wb") as f:
+                        f.write(old_info_bytes)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(restore_path, info_path)
+                else:
+                    try:
+                        os.remove(info_path)
+                    except FileNotFoundError:
+                        pass
+                try:
+                    os.remove(f"{info_path}.tmp")
+                except FileNotFoundError:
+                    pass
+                logging.exception("Caller metadata write failed for %s", caller_fqn)
+                caller_failures[caller_fqn] = "generation_failed"
+                continue
             changed = True
         return cpath if changed else None
 
     checked = set()
     to_check = set(seed)
     changed_spec_files = set()
+    outcomes = {}
+    caller_failures = {}
     counter = 0
     round_num = 0
 
@@ -2134,16 +2288,22 @@ def _update_specs_for_intent(
                     plans[i] = future.result()
                 except Exception:
                     logging.exception("Spec planning failed for %s", batch[i])
-        applied = [p for p in plans if p]
+                    plans[i] = (None, "generation_failed")
+        for fqn, planned in zip(batch, plans):
+            plan, status = planned or (None, "generation_failed")
+            outcomes[fqn] = status
+        applied = [plan for plan, _ in plans if plan]
 
         # Stage 2 (serial): write the new spec files and queue downward callees — no LLM, fast.
         # Kept serial so the shared to_check / changed_spec_files sets need no locking.
         queued_callees = 0
         for plan in applied:
-            with open(f"{plan['fpath']}.spec.json", "w", encoding="utf-8") as f:
-                json.dump(plan["spec_dict"], f, indent=2, ensure_ascii=False)
-            with open(f"{plan['fpath']}.info.json", "w", encoding="utf-8") as f:
-                json.dump(plan["info_dict"], f, indent=2, ensure_ascii=False)
+            try:
+                _write_metadata_pair(plan["fpath"], plan["spec_dict"], plan["info_dict"])
+            except Exception:
+                logging.exception("Metadata write failed for %s", plan["fqn"])
+                outcomes[plan["fqn"]] = "generation_failed"
+                continue
             changed_spec_files.add(os.path.relpath(plan["fpath"], extracted_dir))
             if plan["info_updated"]:
                 for callee_fqn in _resolve_callee_fqns(
@@ -2186,11 +2346,17 @@ def _update_specs_for_intent(
                         cpath = future.result()
                     except Exception:
                         logging.exception("Caller .info.json reconciliation failed for %s", caller_fqn)
+                        caller_failures[caller_fqn] = "generation_failed"
                         continue
                     if cpath:
                         changed_spec_files.add(os.path.relpath(cpath, extracted_dir))
 
-    return sorted(changed_spec_files)
+    for fqn in changed_targets:
+        fpath = file_map.get(fqn)
+        if not fpath or not is_file_ready(fpath) or outcomes.get(fqn) == "unsupported":
+            outcomes[fqn] = "generation_failed"
+    outcomes.update(caller_failures)
+    return IncrementalMetadataResult(sorted(changed_spec_files), outcomes)
 
 
 def _verify_incremental_functions(
@@ -2271,6 +2437,7 @@ def _verify_incremental_functions(
     # makes LLM calls, so run the targets concurrently like the full run does, bounded by
     # MAX_WORKERS. _verify_single_file writes each verdict to output_dir and returns it.
     mismatches = []
+    verification_failures = {}
 
     def _verify(rel):
         fpath = os.path.join(extracted_dir, rel)
@@ -2293,9 +2460,17 @@ def _verify_incremental_functions(
                 _, verdict = future.result()
             except Exception:
                 logging.exception("Verification failed for %s", rel)
+                verification_failures[rel] = "verification_failed"
+                continue
+            if verdict == "SKIPPED":
+                verification_failures[rel] = "verification_failed"
+                logging.error("Verification produced SKIPPED for required incremental target %s", rel)
                 continue
             if verdict == "MISMATCH":
                 mismatches.append(rel)
+
+    if verification_failures:
+        raise IncrementalMetadataError(verification_failures)
 
     logging.info("    [verify] reasoner reported %d MISMATCH(es) (candidate bugs).", len(mismatches))
     if not mismatches:
