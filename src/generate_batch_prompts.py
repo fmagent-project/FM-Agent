@@ -158,6 +158,8 @@ def extract_callee_spec_from_info(
 
     bare_names = [name for name in names if "::" not in name]
     for callee, name in named_callees:
+        if "::" in name:
+            continue
         if any(_info_line_mentions_name(name, candidate) for candidate in bare_names):
             return callee
     return None
