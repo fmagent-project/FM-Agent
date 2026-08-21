@@ -9,10 +9,12 @@ import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
 from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready
+from src.generate_batch_prompts import generate_batch_prompts
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
 from src.opencode_trace import function_id_from_extracted_path, run_opencode_traced
@@ -153,16 +155,13 @@ def run_spec_generation_and_verification(
 
             # Generate batch prompts for this layer. On resume, skip functions
             # that were already specced in a previous run.
-            batch_cmd = ["python3", "fm_agent/spec_prompts/generate_batch_prompts.py",
-                         "--phase", str(phase_num), "--layers", str(layer_idx)]
-            if resume:
-                batch_cmd.append("--resume")
-            subprocess.run(batch_cmd, cwd=proj_dir, check=True)
-
-            # Read manifest
-            manifest_path = os.path.join(batch_dir, "manifest.json")
-            with open(manifest_path, "r") as f:
-                manifest = json.load(f)
+            manifest = generate_batch_prompts(
+                work_dir=Path(work_dir),
+                phase=phase_num,
+                layers_spec=str(layer_idx),
+                output_dir=Path(batch_dir),
+                resume=resume,
+            )
             all_batches = manifest.get("batches", [])
 
             if not all_batches:
