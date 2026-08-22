@@ -1193,7 +1193,12 @@ function rowEl(it) {
   const body = document.createElement('div');
   body.className = 'details';
   body.appendChild(detailBody(it));
-  body.appendChild(sourceBody(it));
+  // Build the source pane only when the row is expanded. sourceBody tokenizes
+  // and DOM-constructs the (possibly whole-file) source; doing it for every
+  // collapsed row — and rebuilding on every filter/sort — would re-tokenize
+  // large shared files for every item. Expanded rows are few and rebuilt
+  // on the expand-triggered render(), so a simple eager check is enough.
+  if (open) body.appendChild(sourceBody(it));
   body.classList.toggle('hidden', !open);
   li.appendChild(body);
   return li;
@@ -1326,9 +1331,13 @@ def _render_html(items, sources):
     # interpreted as markup inside it; JSON.parse restores the literal values.
     payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     src_payload = src_payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    return (
-        _HTML_TEMPLATE.replace("__DATA__", payload).replace("__SOURCES__", src_payload)
-    )
+    # Splice the payloads between the two sentinels in a single pass: the
+    # template is partitioned before any payload is inserted, so neither the
+    # report data (which may mention __SOURCES__) nor embedded source text
+    # (which may contain __DATA__) is ever re-scanned as a substitution target.
+    pre, _, mid = _HTML_TEMPLATE.partition("__DATA__")
+    mid, _, post = mid.partition("__SOURCES__")
+    return pre + payload + mid + src_payload + post
 
 
 def generate_report(work_dir):
