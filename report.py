@@ -1341,7 +1341,11 @@ def _render_html(items, sources):
         ),
     )
     payload = json.dumps(ordered, ensure_ascii=False)
-    src_payload = json.dumps(sources, ensure_ascii=False)
+    # sort_keys: the sources dict preserves item collection order, and
+    # _collect_analyses' os.walk directory traversal is filesystem-dependent —
+    # identical artifacts could otherwise serialize different bytes across
+    # filesystems/copied workspaces, breaking generate_report's determinism.
+    src_payload = json.dumps(sources, sort_keys=True, ensure_ascii=False)
     # Neutralise characters that would close the JSON <script> block or be
     # interpreted as markup inside it; JSON.parse restores the literal values.
     payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
