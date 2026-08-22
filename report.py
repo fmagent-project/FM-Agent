@@ -951,8 +951,16 @@ function sourceBody(it) {
   // self-contained source page keeps the band instead.
   const start = range ? range.start : 1;
   const end = range ? range.end : lines.length;
+  // A stored span can be stale: regenerating a workspace against a changed
+  // source tree (or a stale adjacent codegraph index) may leave a location
+  // past the embedded file's last line. Clamp to the embedded line count and
+  // fall back to the whole file when the range no longer intersects it, so
+  // highlightLine never receives undefined and the row keeps rendering.
+  const showAll = !range || start > lines.length;
+  const lo = showAll ? 1 : start;
+  const hi = showAll ? lines.length : Math.min(end, lines.length);
   const st = { inBlock: false, inStr: null };
-  for (let i = start - 1; i < end; i++) {
+  for (let i = lo - 1; i < hi; i++) {
     const row = document.createElement('div');
     row.className = 'src-line';
     const ln = document.createElement('span');
@@ -1233,11 +1241,11 @@ function setup() {
   const overlay = document.createElement('div');
   overlay.id = 'page-overlay';
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.classList.remove('show');
+    if (e.target === overlay) { overlay.innerHTML = ''; overlay.classList.remove('show'); }
   });
   document.body.appendChild(overlay);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') overlay.classList.remove('show');
+    if (e.key === 'Escape') { overlay.innerHTML = ''; overlay.classList.remove('show'); }
   });
   $('search').addEventListener('input', (e) => { state.search = e.target.value; render(); });
   $('sort').addEventListener('change', (e) => { state.sort = e.target.value; render(); });
