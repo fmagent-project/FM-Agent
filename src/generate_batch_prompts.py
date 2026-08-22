@@ -55,6 +55,8 @@ COMMENT_PREFIX_BY_LANG = {
     "prolog": "%",
 }
 
+_QUALIFIED_NAME_SEPARATOR_RE = re.compile(r"::|\.")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate spec batch prompts for one phase/layer range.")
@@ -138,13 +140,32 @@ def extract_callee_spec_from_info(
     if not isinstance(callees, list):
         return None
 
+    named_callees = []
     for callee in callees:
         if not isinstance(callee, dict):
             continue
         name = callee.get("name", "")
         if not isinstance(name, str):
             continue
-        if any(_info_line_mentions_name(name, candidate) for candidate in names):
+        named_callees.append((callee, name))
+
+    for callee, name in named_callees:
+        if _info_name_matches_fqn(name, callee_fqn):
+            return callee
+
+    for callee, name in named_callees:
+        if any(
+            _info_name_matches_alias(name, alias)
+            for alias in aliases or ()
+            if alias
+        ):
+            return callee
+
+    bare_names = [name for name in names if not _is_qualified_name(name)]
+    for callee, name in named_callees:
+        if _is_qualified_name(name):
+            continue
+        if any(_info_line_mentions_name(name, candidate) for candidate in bare_names):
             return callee
     return None
 
@@ -155,9 +176,46 @@ def _callee_match_names(callee_fqn: str, aliases: Sequence[str]) -> List[str]:
         if not alias:
             continue
         names.append(alias)
-        if "::" in alias:
-            names.append(alias.rsplit("::", 1)[-1])
+        alias_parts = _qualified_name_parts(alias)
+        if len(alias_parts) > 1:
+            names.append(alias_parts[-1])
     return list(dict.fromkeys(names))
+
+
+def _qualified_name_parts(name: str) -> List[str]:
+    """Split C++- and dot-qualified source names into components."""
+    return [part for part in _QUALIFIED_NAME_SEPARATOR_RE.split(name) if part]
+
+
+def _is_qualified_name(name: str) -> bool:
+    """Return whether a source-level name contains a known qualifier."""
+    return bool(_QUALIFIED_NAME_SEPARATOR_RE.search(name))
+
+
+def _info_name_matches_fqn(info_name: str, callee_fqn: str) -> bool:
+    """Match a complete FQN or a source-language-qualified suffix."""
+    if info_name == callee_fqn:
+        return True
+    # Preserve literal FM-Agent FQN components, which may contain dots.
+    if "::" in info_name and callee_fqn.endswith(f"::{info_name}"):
+        return True
+    info_parts = _qualified_name_parts(info_name)
+    if len(info_parts) <= 1:
+        return False
+    fqn_parts = callee_fqn.split("::")
+    return (
+        len(info_parts) <= len(fqn_parts)
+        and fqn_parts[-len(info_parts) :] == info_parts
+    )
+
+
+def _info_name_matches_alias(info_name: str, alias: str) -> bool:
+    """Match an exact alias while accepting equivalent source qualifiers."""
+    if info_name == alias:
+        return True
+    if not _is_qualified_name(info_name) or not _is_qualified_name(alias):
+        return False
+    return _qualified_name_parts(info_name) == _qualified_name_parts(alias)
 
 
 def _info_line_mentions_name(first_line: str, name: str) -> bool:
