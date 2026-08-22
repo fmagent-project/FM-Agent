@@ -323,6 +323,7 @@ dependencies = [
     { name = "rich" },
     { name = "socksio" },
     { name = "tree-sitter" },
+    { name = "tree-sitter-arkts" },
     { name = "tree-sitter-c" },
     { name = "tree-sitter-cpp" },
     { name = "tree-sitter-go" },
@@ -342,6 +343,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7.0" },
     { name = "socksio", specifier = ">=1.0.0" },
     { name = "tree-sitter", specifier = ">=0.25,<0.27" },
+    { name = "tree-sitter-arkts", git = "https://github.com/harmony-contrib/tree-sitter-arkts.git?rev=9c7395bd9534cce840dd7115fd79be6c6ff45872" },
     { name = "tree-sitter-c", specifier = ">=0.24,<0.25" },
     { name = "tree-sitter-cpp", specifier = ">=0.23.4,<0.24" },
     { name = "tree-sitter-go", specifier = ">=0.25,<0.26" },
@@ -1522,6 +1524,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c9/1b/0b36fe2a984ecedc4ce6aefd5d56447a6626a8e9b595c4e48658510ce8f8/tree_sitter-0.26.0-cp314-cp314-win_amd64.whl", hash = "sha256:a4033fecc8f606c7f2e8b8014d0057b74668a7f0152763606f7bc25c5f9ec64c", size = 132688, upload-time = "2026-06-30T12:14:26.106Z" },
     { url = "https://files.pythonhosted.org/packages/4d/74/ebc041a13fbf40144afdb0d4b447e48e0b4012ca866c63de8b48f801f0c1/tree_sitter-0.26.0-cp314-cp314-win_arm64.whl", hash = "sha256:823251c4b6725a7c03ed497a339135ede7ae4bdde75bb8be7ef5e305aeb4ff52", size = 120287, upload-time = "2026-06-30T12:14:26.991Z" },
 ]
+
+[[package]]
+name = "tree-sitter-arkts"
+version = "0.2.0"
+source = { git = "https://github.com/harmony-contrib/tree-sitter-arkts.git?rev=9c7395bd9534cce840dd7115fd79be6c6ff45872#9c7395bd9534cce840dd7115fd79be6c6ff45872" }
 
 [[package]]
 name = "tree-sitter-c"
