@@ -309,7 +309,7 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 每一行展示报告标题、状态徽章、源文件（可点击跳转到原始源码）、函数名与代码位置。页面支持：
 
 - **搜索**：按标题、源文件、函数名、代码位置搜索
-- **筛选**：按状态（`confirmed` / `not_confirmed` / `error` / `pending`，或 `MATCH` / `MISMATCH` / `ERROR` / `SKIPPED`）与源文件筛选；状态按类型（bug/analysis）分组为树，勾选类型即选中其下全部状态；源文件为按路径折叠的目录树，勾选目录即选中其下所有文件
+- **筛选**：按状态（bug：`confirmed` / `not_confirmed` / `error` / `pending`；analysis：`bug_candidate` / `passed` / `error` / `skipped`）与源文件筛选
 - **排序**：按状态、源文件或函数名排序
 - **展开/折叠**：单个报告与全部报告一键展开/折叠，以及重置按钮
 

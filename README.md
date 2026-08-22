@@ -389,11 +389,10 @@ to the original source), the function name, and a code location. The page
 supports:
 
 - **Search** across title, source file, function name, and code location
-- **Filter** by status (`confirmed` / `not_confirmed` / `error` / `pending`,
-  or `MATCH` / `MISMATCH` / `ERROR` / `SKIPPED`) and by source file
+- **Filter** by status (bug: `confirmed` / `not_confirmed` / `error` /
+  `pending`; analysis: `bug_candidate` / `passed` / `error` / `skipped`)
+  and by source file
   (collapsible path tree; checking a directory selects all files under it).
-  Statuses are grouped by type (bug / analysis) as a tree — checking a type
-  selects all of its statuses
 - **Sort** by status, source file, or function name
 - **Expand / collapse** individual reports or all reports at once, plus a
   reset button
