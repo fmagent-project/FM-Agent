@@ -40,7 +40,7 @@ _PROJECT_CONFIG_FILES = ("elp.toml", "rebar.config", "rebar.lock")
 @dataclass
 class ErlangAnalysis:
     functions: dict[str, list[tuple[str, str]]]
-    edges: dict[tuple[str, str], set[str]]
+    edges: dict[str, set[str]]
     spans: dict[str, list[tuple[str, int, int]]] = field(default_factory=dict)
     server_info: dict | None = None
 
@@ -392,10 +392,42 @@ def _source_for_range(source: str, lsp_range: dict) -> str:
     return _SourceIndex.build(source).source_for_range(lsp_range)
 
 
-def _caller_module(path: str) -> str:
-    base = os.path.basename(path)
-    dot = base.rfind(".")
-    return base[:dot] + "-" + base[dot + 1 :] if dot > 0 else base
+def _canonical_path(path: str) -> str:
+    """Resolve a path for comparisons with ELP's canonical file URIs."""
+    return os.path.realpath(os.path.abspath(path))
+
+
+def _path_from_uri(uri: str) -> str | None:
+    """Return the local path represented by a file URI from ELP."""
+    parsed = urlparse(uri)
+    if parsed.scheme != "file" or parsed.netloc not in ("", "localhost"):
+        return None
+    path = unquote(parsed.path)
+    if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        path = path[1:]
+    return _canonical_path(path)
+
+
+def _function_fqn(proj_dir: str, source_path: str, function_id: str) -> str:
+    """Build the FQN assigned to an indexed logical source file."""
+    root = os.path.abspath(proj_dir)
+    path = os.path.abspath(source_path)
+    try:
+        is_under_root = os.path.commonpath((root, path)) == root
+    except ValueError:
+        is_under_root = False
+    if not is_under_root:
+        raise ValueError(f"Erlang source is outside project root: {source_path}")
+
+    relative_path = os.path.relpath(path, root)
+    source_dir, filename = os.path.split(relative_path)
+    dot = filename.rfind(".")
+    extracted_dir = (
+        filename[:dot] + "-" + filename[dot + 1 :] if dot > 0 else filename
+    )
+    parts = [part for part in Path(source_dir).parts if part not in ("", ".")]
+    parts.extend((extracted_dir, function_id))
+    return "::".join(parts)
 
 
 def _iter_project_files(proj_dir: str, suffixes: set[str]):
@@ -444,23 +476,24 @@ def _persist_analysis(proj_dir: str, fingerprint: tuple, analysis: ErlangAnalysi
     caller_files = {}
     for path, file_functions in sorted(analysis.functions.items()):
         rel_path = os.path.relpath(path, root).replace(os.sep, "/")
-        caller_module = _caller_module(path)
         for function_id, _source in file_functions:
-            functions.append({"id": function_id, "file": rel_path})
-            caller_files[(function_id, caller_module)] = rel_path
+            function_fqn = _function_fqn(root, path, function_id)
+            functions.append(
+                {"id": function_id, "fqn": function_fqn, "file": rel_path}
+            )
+            caller_files[function_fqn] = rel_path
 
     edges = [
         {
             "caller": caller,
-            "caller_module": caller_module,
-            "caller_file": caller_files.get((caller, caller_module)),
+            "caller_file": caller_files.get(caller),
             "callee": callee,
         }
-        for (caller, caller_module), callees in sorted(analysis.edges.items())
+        for caller, callees in sorted(analysis.edges.items())
         for callee in sorted(callees)
     ]
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "success",
         "backend": "elp",
         "server_info": analysis.server_info,
@@ -608,12 +641,15 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
         return ErlangAnalysis(functions={}, edges={})
 
     functions: dict[str, list[tuple[str, str]]] = {}
-    edges: dict[tuple[str, str], set[str]] = {}
+    edges: dict[str, set[str]] = {}
     spans: dict[str, list[tuple[str, int, int]]] = {}
     sources = {
         path: Path(path).read_text(encoding="utf-8", errors="replace")
         for path in files
     }
+    logical_paths_by_canonical = {}
+    for path in files:
+        logical_paths_by_canonical.setdefault(_canonical_path(path), []).append(path)
 
     with ElpClient(proj_dir) as client:
         server_info = client.initialize(files[0], sources[files[0]])
@@ -622,7 +658,6 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
         for path in files:
             source = sources[path]
             source_index = _SourceIndex.build(source)
-            caller_module = _caller_module(path)
             uri = client.document_uri(path)
             symbols = client.request(
                 "textDocument/documentSymbol", {"textDocument": {"uri": uri}}
@@ -649,8 +684,8 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
                 start_line, end_line = _symbol_line_span(symbol_range)
                 file_spans.append((function_id, start_line, end_line))
 
-                caller_key = (function_id, caller_module)
-                edges.setdefault(caller_key, set())
+                caller_fqn = _function_fqn(proj_dir, path, function_id)
+                edges.setdefault(caller_fqn, set())
                 selection = symbol.get("selectionRange") or symbol_range
                 prepared = client.request(
                     "textDocument/prepareCallHierarchy",
@@ -681,14 +716,24 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
                     "callHierarchy/outgoingCalls", {"item": item}
                 ) or []
                 for call in outgoing:
-                    target = call.get("to") or {}
+                    if not isinstance(call, dict):
+                        continue
+                    target = call.get("to")
+                    if not isinstance(target, dict):
+                        continue
+                    target_uri = target.get("uri")
+                    target_path = _path_from_uri(target_uri) if target_uri else None
+                    target_logical_paths = logical_paths_by_canonical.get(target_path, [])
+                    if not target_logical_paths:
+                        continue
                     try:
-                        target_id = _function_id(
-                            target.get("uri", symbol_uri), target.get("name", "")
-                        )
+                        target_id = _function_id(target_uri, target.get("name", ""))
                     except ValueError:
                         continue
-                    edges[caller_key].add(target_id)
+                    for target_logical_path in target_logical_paths:
+                        edges[caller_fqn].add(
+                            _function_fqn(proj_dir, target_logical_path, target_id)
+                        )
 
             if file_functions:
                 functions[path] = file_functions
@@ -783,6 +828,11 @@ def _callgraph_project_root(proj_dir: str) -> str:
     return root
 
 
-def call_edges(proj_dir: str) -> dict:
-    """Return module-qualified Erlang call edges in registry format."""
-    return _analysis_or_empty(_callgraph_project_root(proj_dir)).edges
+def call_edges(proj_dir: str) -> list[dict]:
+    """Return FQN-keyed Erlang call edges in the registry's standard format."""
+    analysis = _analysis_or_empty(_callgraph_project_root(proj_dir))
+    return [
+        {"caller": caller, "callee": callee, "kind": "call"}
+        for caller, callees in sorted(analysis.edges.items())
+        for callee in sorted(callees)
+    ]
