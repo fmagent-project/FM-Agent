@@ -1180,7 +1180,14 @@ function rowEl(it) {
     file.title = 'Open source page';
     // <button> has no default navigation, so a click (any button) never falls
     // through to an href="#" like an <a> would.
-    file.addEventListener('click', () => openPage(sourcePageHTML(it)));
+    file.addEventListener('click', (e) => {
+      // Opening the source page must not bubble to the row head's toggle
+      // handler — otherwise every "open source" also expands/collapses the row
+      // and rebuilds the whole list (re-tokenizing the file in sourceBody
+      // right after sourcePageHTML already did).
+      e.stopPropagation();
+      openPage(sourcePageHTML(it));
+    });
   }
   file.textContent = it.source_file || '—';
   head.appendChild(file);
