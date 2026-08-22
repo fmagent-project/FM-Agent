@@ -24,16 +24,24 @@ def remove_comments(code: str) -> str | None:
     source_start = 0
     source_end = len(source)
     if tree.root_node.has_error:
-        prefix = b"class __FM_AGENT_COMMENT_WRAPPER__ {\n"
-        source = prefix + source + b"\n}"
-        try:
-            tree = parser.parse(source)
-        except (TypeError, UnicodeError, ValueError):
+        tree = None
+        for prefix in (
+            b"class __FM_AGENT_COMMENT_WRAPPER__ {\n",
+            b"struct __FM_AGENT_COMMENT_WRAPPER__ {\n",
+        ):
+            wrapped_source = prefix + source + b"\n}"
+            try:
+                candidate = parser.parse(wrapped_source)
+            except (TypeError, UnicodeError, ValueError):
+                return None
+            if not candidate.root_node.has_error:
+                source = wrapped_source
+                tree = candidate
+                source_start = len(prefix)
+                source_end += source_start
+                break
+        if tree is None:
             return None
-        if tree.root_node.has_error:
-            return None
-        source_start = len(prefix)
-        source_end += source_start
 
     cleaned = bytearray(source)
     nodes = [tree.root_node]
