@@ -393,6 +393,7 @@ def _source_for_range(source: str, lsp_range: dict) -> str:
 
 
 def _canonical_path(path: str) -> str:
+    """Resolve a path for comparisons with ELP's canonical file URIs."""
     return os.path.realpath(os.path.abspath(path))
 
 
@@ -407,19 +408,15 @@ def _path_from_uri(uri: str) -> str | None:
     return _canonical_path(path)
 
 
-def _is_project_path(proj_dir: str, path: str) -> bool:
-    project_root = _canonical_path(proj_dir)
-    try:
-        return os.path.commonpath((project_root, _canonical_path(path))) == project_root
-    except ValueError:
-        return False
-
-
 def _function_fqn(proj_dir: str, source_path: str, function_id: str) -> str:
-    """Build the FQN assigned to this function's extracted source file."""
-    root = _canonical_path(proj_dir)
-    path = _canonical_path(source_path)
-    if not _is_project_path(root, path):
+    """Build the FQN assigned to an indexed logical source file."""
+    root = os.path.abspath(proj_dir)
+    path = os.path.abspath(source_path)
+    try:
+        is_under_root = os.path.commonpath((root, path)) == root
+    except ValueError:
+        is_under_root = False
+    if not is_under_root:
         raise ValueError(f"Erlang source is outside project root: {source_path}")
 
     relative_path = os.path.relpath(path, root)
@@ -650,6 +647,9 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
         path: Path(path).read_text(encoding="utf-8", errors="replace")
         for path in files
     }
+    logical_paths_by_canonical = {}
+    for path in files:
+        logical_paths_by_canonical.setdefault(_canonical_path(path), []).append(path)
 
     with ElpClient(proj_dir) as client:
         server_info = client.initialize(files[0], sources[files[0]])
@@ -723,15 +723,17 @@ def _analyze_project_uncached(proj_dir: str) -> ErlangAnalysis:
                         continue
                     target_uri = target.get("uri")
                     target_path = _path_from_uri(target_uri) if target_uri else None
-                    if target_path is None or not _is_project_path(proj_dir, target_path):
+                    target_logical_paths = logical_paths_by_canonical.get(target_path, [])
+                    if not target_logical_paths:
                         continue
                     try:
                         target_id = _function_id(target_uri, target.get("name", ""))
                     except ValueError:
                         continue
-                    edges[caller_fqn].add(
-                        _function_fqn(proj_dir, target_path, target_id)
-                    )
+                    for target_logical_path in target_logical_paths:
+                        edges[caller_fqn].add(
+                            _function_fqn(proj_dir, target_logical_path, target_id)
+                        )
 
             if file_functions:
                 functions[path] = file_functions
