@@ -154,7 +154,6 @@ def _bare_function_name(name: str) -> str:
 
 # Maps FM-Agent lang_key → the language string stored in codegraph's SQLite
 # nodes.language column. Only includes languages that codegraph actually supports.
-# ArkTS is omitted (not supported by codegraph).
 # CUDA: .cu is not in codegraph's built-in extension list and will not be indexed.
 #   To enable partial CUDA support, add {"extensions": {".cu": "cpp"}} to a
 #   codegraph.json file at the project root — codegraph will then parse .cu files
@@ -169,6 +168,7 @@ _CG_LANG = {
     "java":       ["java"],
     "javascript": ["javascript", "jsx"],  # codegraph stores .jsx files as language='jsx'
     "typescript": ["typescript", "tsx"],  # codegraph stores .tsx files as language='tsx'
+    "arkts":      ["arkts"],
 }
 
 # SQL fragment used to match the constructor method node when resolving
@@ -182,6 +182,7 @@ _CG_LANG = {
 _CONSTRUCTOR_FILTER = {
     "python":     "ctor.name = '__init__'",
     "typescript": "ctor.name = 'constructor'",
+    "arkts":      "ctor.name = 'constructor'",
     "javascript": "ctor.name = 'constructor'",
     "java":       "ctor.name = cls.name",
     "cpp":        "ctor.name = cls.name",

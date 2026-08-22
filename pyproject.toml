@@ -20,6 +20,7 @@ dependencies = [
     "tree-sitter-go>=0.25,<0.26",
     "tree-sitter-rust>=0.24,<0.25",
     "tree-sitter-typescript>=0.23,<0.24",
+    "tree-sitter-arkts",
 ]
 
 [project.scripts]
@@ -27,3 +28,6 @@ fm-agent = "main:main"
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+tree-sitter-arkts = { git = "https://github.com/harmony-contrib/tree-sitter-arkts.git", rev = "9c7395bd9534cce840dd7115fd79be6c6ff45872" }
