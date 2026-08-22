@@ -493,7 +493,7 @@ def _persist_analysis(proj_dir: str, fingerprint: tuple, analysis: ErlangAnalysi
         for callee in sorted(callees)
     ]
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "success",
         "backend": "elp",
         "server_info": analysis.server_info,
