@@ -391,7 +391,10 @@ supports:
 - **Search** across title, source file, function name, and code location
 - **Filter** by status (`confirmed` / `not_confirmed` / `error` / `pending`,
   or `MATCH` / `MISMATCH` / `ERROR` / `SKIPPED`) and by source file
-- **Sort** by status, source file, function name, or code location
+  (collapsible path tree; checking a directory selects all files under it).
+  Statuses are grouped by type (bug / analysis) as a tree — checking a type
+  selects all of its statuses
+- **Sort** by status, source file, or function name
 - **Expand / collapse** individual reports or all reports at once, plus a
   reset button
 
