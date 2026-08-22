@@ -392,6 +392,10 @@ def _source_for_range(source: str, lsp_range: dict) -> str:
     return _SourceIndex.build(source).source_for_range(lsp_range)
 
 
+def _canonical_path(path: str) -> str:
+    return os.path.realpath(os.path.abspath(path))
+
+
 def _path_from_uri(uri: str) -> str | None:
     """Return the local path represented by a file URI from ELP."""
     parsed = urlparse(uri)
@@ -400,21 +404,21 @@ def _path_from_uri(uri: str) -> str | None:
     path = unquote(parsed.path)
     if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
         path = path[1:]
-    return os.path.abspath(path)
+    return _canonical_path(path)
 
 
 def _is_project_path(proj_dir: str, path: str) -> bool:
-    project_root = os.path.abspath(proj_dir)
+    project_root = _canonical_path(proj_dir)
     try:
-        return os.path.commonpath((project_root, os.path.abspath(path))) == project_root
+        return os.path.commonpath((project_root, _canonical_path(path))) == project_root
     except ValueError:
         return False
 
 
 def _function_fqn(proj_dir: str, source_path: str, function_id: str) -> str:
     """Build the FQN assigned to this function's extracted source file."""
-    root = os.path.abspath(proj_dir)
-    path = os.path.abspath(source_path)
+    root = _canonical_path(proj_dir)
+    path = _canonical_path(source_path)
     if not _is_project_path(root, path):
         raise ValueError(f"Erlang source is outside project root: {source_path}")
 
