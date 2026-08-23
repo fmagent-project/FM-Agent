@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 from plugins.chip.detection import (
+    ChipContext,
     read_chip_context,
     validate_context_dialect,
 )
@@ -25,7 +27,7 @@ class ChipRunnerError(RuntimeError):
 def _load_strategy(
     proj_dir: str | Path,
     expected_dialect: str,
-) -> DialectStrategy:
+) -> tuple[ChipContext, DialectStrategy]:
     context = read_chip_context(proj_dir)
     validate_context_dialect(context, expected_dialect)
     strategy = get_dialect_strategy(context.dialect)
@@ -35,7 +37,7 @@ def _load_strategy(
         raise ChipRunnerError(
             f"chip {context.dialect} Stage 1/2 resources are missing: {rendered}"
         )
-    return strategy
+    return context, strategy
 
 
 def generate_phase_plan(
@@ -45,14 +47,18 @@ def generate_phase_plan(
 ) -> None:
     """Generate and dialect-check the standard ``fm_agent/phases.json``."""
     project = Path(proj_dir).resolve()
-    strategy = _load_strategy(project, expected_dialect)
+    context, strategy = _load_strategy(project, expected_dialect)
     work_dir = project / "fm_agent"
     _run_generate_phases(
         str(project),
         str(work_dir),
         str(_REPOSITORY_ROOT),
         workflow_source=strategy.phase_plan_workflow,
-        phase_plan_validator=strategy.validate_phase_plan,
+        submodules=context.submodules,
+        phase_plan_validator=partial(
+            strategy.validate_phase_plan,
+            submodules=context.submodules,
+        ),
     )
 
 
@@ -63,13 +69,16 @@ def generate_domain_context(
 ) -> None:
     """Generate standard domain-context files for the persisted dialect."""
     project = Path(proj_dir).resolve()
-    strategy = _load_strategy(project, expected_dialect)
+    context, strategy = _load_strategy(project, expected_dialect)
     phases_path = project / "fm_agent" / "phases.json"
     if not phases_path.is_file():
         raise ChipRunnerError(
             f"chip Stage 2 requires Stage 1 output at {phases_path}"
         )
-    phase_errors = strategy.validate_phase_plan(phases_path)
+    phase_errors = strategy.validate_phase_plan(
+        phases_path,
+        submodules=context.submodules,
+    )
     if phase_errors:
         raise ChipRunnerError(
             "chip Stage 2 refused a phase plan that does not match the "

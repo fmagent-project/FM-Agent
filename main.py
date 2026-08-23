@@ -187,6 +187,10 @@ def run_pipeline(
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
         sys.exit(1)
+    # Keep programmatic callers on the same normalized scope contract as the
+    # CLI. Chip plugin hooks read this persisted value because their public
+    # hook signature intentionally remains (proj_dir) -> None.
+    submodules = _normalize_submodules(proj_dir, submodules)
     # A plugin may support source languages that are intentionally not in the
     # built-in registry yet. Its configure hook owns the corresponding
     # pre-Stage-1 validation (the chip plugin detects Chisel/Verilog here).
@@ -232,8 +236,10 @@ def run_pipeline(
     _print_preflight_summary(estimate, estimate_path)
     if plugin_config is not None:
         plugin_context_path = os.path.join(work_dir, "plugin_context.json")
+        effective_plugin_context = dict(plugin_context or {})
+        effective_plugin_context["submodules"] = list(submodules or [])
         with open(plugin_context_path, "w", encoding="utf-8") as file:
-            json.dump(plugin_context or {}, file, indent=2)
+            json.dump(effective_plugin_context, file, indent=2)
         if plugin_config.configure_hook is not None:
             with _bind_spec_generation_config(spec_generation_config):
                 run_plugin_hook(
@@ -756,6 +762,7 @@ if __name__ == "__main__":
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
     plugin_context = {
         "extra_edge": extra_call_edges_path,
+        "submodules": [],
     }
     try:
         bug_validator_path = _resolve_bug_validator_path(args.bug_validator)
@@ -765,6 +772,7 @@ if __name__ == "__main__":
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
         parser.error(str(exc))
+    plugin_context["submodules"] = list(submodules)
 
     try:
         domain_knowledge_files = collect_domain_knowledge_paths(

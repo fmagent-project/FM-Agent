@@ -2,6 +2,7 @@
 
 from plugins.chip.detection import (
     detect_chip_context,
+    read_plugin_submodules,
     read_chip_context,
     validate_context_dialect,
     write_chip_context,
@@ -21,7 +22,8 @@ def configure(proj_dir: str) -> None:
     """Select one dialect once and configure its run-scoped SpecForm."""
     global _configured_dialect
     _configured_dialect = None
-    detected = detect_chip_context(proj_dir)
+    submodules = read_plugin_submodules(proj_dir)
+    detected = detect_chip_context(proj_dir, submodules)
     write_chip_context(proj_dir, detected)
 
     # Consume the persisted routing fact for configuration. Later stages must

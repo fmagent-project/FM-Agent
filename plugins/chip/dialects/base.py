@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from src.file_utils import _is_test_file
+from src.file_utils import _is_test_file, _is_under_submodules
 from src.languages.hardware import is_excluded_source_directory
 
 
@@ -49,7 +49,12 @@ class DialectStrategy:
             self.domain_context_workflow,
         )
 
-    def validate_phase_plan(self, phases_path: str | Path) -> list[str]:
+    def validate_phase_plan(
+        self,
+        phases_path: str | Path,
+        *,
+        submodules: tuple[str, ...] | list[str] = (),
+    ) -> list[str]:
         """Return dialect-specific errors for an otherwise valid phase plan."""
         path = Path(phases_path)
         with path.open("r", encoding="utf-8") as file:
@@ -91,6 +96,7 @@ class DialectStrategy:
                             raw_source,
                             location,
                             project_root,
+                            submodules=submodules,
                         )
                     )
 
@@ -109,7 +115,10 @@ class DialectStrategy:
                 + ", ".join(duplicates)
             )
 
-        expected_sources = self._discover_source_files(project_root)
+        expected_sources = self._discover_source_files(
+            project_root,
+            submodules=submodules,
+        )
         missing_sources = sorted(expected_sources - set(listed_sources))
         if missing_sources:
             sample = ", ".join(missing_sources[:10])
@@ -121,24 +130,34 @@ class DialectStrategy:
             )
         return errors
 
-    def _discover_source_files(self, project_root: Path) -> set[str]:
+    def _discover_source_files(
+        self,
+        project_root: Path,
+        *,
+        submodules: tuple[str, ...] | list[str] = (),
+    ) -> set[str]:
         """Return the complete in-scope source set for this dialect."""
         sources: set[str] = set()
-        for current_root, dirnames, filenames in os.walk(project_root):
-            dirnames[:] = sorted(
-                name
-                for name in dirnames
-                if not is_excluded_source_directory(name)
-            )
-            root = Path(current_root)
-            for filename in sorted(filenames):
-                path = root / filename
-                suffix = path.suffix.lower().lstrip(".")
-                if suffix not in self.extensions:
-                    continue
-                relative = path.relative_to(project_root).as_posix()
-                if not _is_test_file(relative):
-                    sources.add(relative)
+        roots = (
+            [project_root / submodule for submodule in submodules]
+            if submodules else [project_root]
+        )
+        for scan_root in roots:
+            for current_root, dirnames, filenames in os.walk(scan_root):
+                dirnames[:] = sorted(
+                    name
+                    for name in dirnames
+                    if not is_excluded_source_directory(name)
+                )
+                root = Path(current_root)
+                for filename in sorted(filenames):
+                    path = root / filename
+                    suffix = path.suffix.lower().lstrip(".")
+                    if suffix not in self.extensions:
+                        continue
+                    relative = path.relative_to(project_root).as_posix()
+                    if not _is_test_file(relative):
+                        sources.add(relative)
         return sources
 
     def _validate_source_path(
@@ -146,6 +165,8 @@ class DialectStrategy:
         raw_source: str,
         location: str,
         project_root: Path,
+        *,
+        submodules: tuple[str, ...] | list[str] = (),
     ) -> list[str]:
         normalized = raw_source.replace("\\", "/")
         pure_path = PurePosixPath(normalized)
@@ -157,6 +178,10 @@ class DialectStrategy:
             return [f"{location} must not be empty"]
 
         suffix = pure_path.suffix.lower().lstrip(".")
+        if submodules and not _is_under_submodules(normalized, submodules):
+            errors.append(
+                f"{location} {raw_source!r} is outside the selected submodule scope"
+            )
         if suffix not in self.extensions:
             errors.append(
                 f"{location} {raw_source!r} is not a {self.dialect} source; "
