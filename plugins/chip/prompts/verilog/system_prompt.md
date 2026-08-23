@@ -34,8 +34,19 @@ canonicalized or deduplicated.
 - Do not infer behavior from signal naming alone. Do not invent ports, widths,
   signedness, reset values, submodules, cycle relationships, or protocol rules.
   Mark genuinely unresolved facts as `TBD`.
-- Describe intended correct behavior. An implementation defect is not part of
-  the intended contract.
+- A ready/valid-style name does not establish a transfer condition. Check the
+  exact control expression before claiming that a handshake accepts, rejects,
+  buffers, or drops data.
+- Derive exact cycle counts only after accounting for counter-load, decrement,
+  zero-detection, transition, and nonblocking-assignment cycles. A loaded value
+  such as `N-1` is not by itself proof of an `N-1` cycle interval. Use `TBD`
+  instead of an unverified formula.
+- State whether a runtime configuration input is latched once or read again at
+  later state transitions. Do not silently treat a live input as frame-stable.
+- Describe intended correct behavior. When the source diverges from that
+  contract, identify the source divergence as an implementation risk; do not
+  mix the intended rule and the observed divergent behavior into contradictory
+  guarantees.
 - Use precise, falsifiable English. Avoid claims such as "properly",
   "correctly handles", "appropriate", or "as expected" unless the exact
   condition and observable result are stated.

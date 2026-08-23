@@ -20,6 +20,13 @@ class VerilogSpecForm(HardwareSpecForm):
             "Use exact declared module types, not instance labels, in "
             "'# Submodule:' entries and fold repeated instances into one "
             "dependency contract",
+            "Do not infer ready/valid transfers or other protocol behavior "
+            "from signal names; check the exact RTL control condition",
+            "State exact cycle counts only after accounting for counter load, "
+            "decrement, zero, and transition cycles; otherwise use TBD",
+            "If the RTL diverges from an intended protocol rule, describe the "
+            "intended contract and the source divergence without asserting "
+            "conflicting guarantees",
             "Cover every known direct module dependency in _info.md; missing "
             "Verilog dependency coverage blocks artifact completion",
         )

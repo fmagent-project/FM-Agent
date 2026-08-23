@@ -191,10 +191,7 @@ def run_pipeline(
     # CLI. Chip plugin hooks read this persisted value because their public
     # hook signature intentionally remains (proj_dir) -> None.
     submodules = _normalize_submodules(proj_dir, submodules)
-    # A plugin may support source languages that are intentionally not in the
-    # built-in registry yet. Its configure hook owns the corresponding
-    # pre-Stage-1 validation (the chip plugin detects Chisel/Verilog here).
-    if plugin_config is None and not _has_source_code(proj_dir, submodules):
+    if not _has_source_code(proj_dir, submodules):
         scope = f" selected submodule(s): {', '.join(submodules)}" if submodules else f" {proj_dir}"
         print(f"[Pipeline] ERROR: No source code files found in{scope}. "
               f"Supported extensions: {', '.join(sorted(EXT_TO_LANG.keys()))}")
