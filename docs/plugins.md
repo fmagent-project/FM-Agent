@@ -191,6 +191,65 @@ subclass or another plugin-owned implementation, must set
 compatibility check also applies when the command uses `--only-spec`, which is
 a per-run execution override rather than a different plugin strategy.
 
+## Built-in chip plugin
+
+The `chip` plugin runs the standard Stage 1–6 specification pipeline for one
+hardware dialect:
+
+```bash
+uv run python main.py <proj_dir> --plugin chip
+```
+
+It recognizes these project files:
+
+| Dialect | Extensions |
+| --- | --- |
+| Chisel | `.scala`, `.sc` |
+| Verilog/SystemVerilog | `.v`, `.sv`, `.svh` |
+
+The plugin scans the selected `proj_dir` / `--submodule` scope once before
+Stage 1 and writes the result to `fm_agent/chip_context.json`. Chisel is chosen
+when at least one Chisel file is present. If Verilog files are also present,
+the run remains Chisel-only and emits a warning. A Verilog run is selected only
+when the scope contains Verilog files and no Chisel files. Point `proj_dir` or
+`--submodule` at a narrower hardware subtree when this default is not the
+intended boundary.
+
+Chisel extraction identifies `Module`, `RawModule`, `BlackBox`, `ExtModule`,
+and `MultiIOModule` declarations. It uses conservative source analysis by
+default. When `FM_AGENT_CHISEL_CIRCT_INPUT` names elaborated `.fir` or `.mlir`
+input, it attempts the direct CIRCT pass and falls back to source analysis if
+the optional toolchain cannot run. `./install.sh --with-chisel` installs a
+pinned `firtool` and matching pass plugin; the complete settings are documented
+in [`tools/chisel-circt/README.md`](../tools/chisel-circt/README.md).
+
+Verilog/SystemVerilog extraction prefers `verible-verilog-syntax` when it is
+available on `PATH` and falls back to a conservative source scanner otherwise.
+Set `FM_AGENT_NO_VERIBLE=1` to force the fallback for diagnosis or comparison.
+
+Each extracted module receives sibling Markdown artifacts:
+
+- `<Module>_spec.md` describes its observable interface and behavioral
+  contract using the FG/FC/CK coverage structure and mandatory `<FG-API>`.
+- `<Module>_info.md` records caller-visible expectations for each direct
+  instantiated module, or `(no submodules)` for a leaf.
+
+Missing dependency coverage is advisory for Chisel because source-level Scala
+analysis may not see dynamic elaboration. It is blocking for Verilog when the
+registered language service provides a direct module edge. The chip forms
+disable the current software-only reasoning and bug-validation backend, so a
+successful run ends after hardware specifications are generated and checked.
+
+Current limitations:
+
+- one run never mixes Chisel and Verilog specification units;
+- there is no CLI dialect override; narrow the input scope instead;
+- resume semantics are not supported for chip runs;
+- Scala metaprogramming and dynamic Chisel elaboration can exceed source
+  analysis; use the direct CIRCT backend when an elaborated input is available;
+- generated exact-cycle and protocol claims should be reviewed against RTL,
+  especially when the source diverges from a named protocol convention.
+
 ## Resume, isolate, and incremental runs
 
 Modify hooks run whenever execution reaches their stage boundary. They still

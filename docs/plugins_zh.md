@@ -181,6 +181,61 @@ def configure(proj_dir: str) -> None:
 `--only-spec`，该兼容性校验仍然执行；`--only-spec` 是单次运行的执行覆盖，
 不是另一种插件策略。
 
+## 内置 chip 插件
+
+`chip` 插件针对单一硬件方言运行标准 Stage 1–6 规约生成流程：
+
+```bash
+uv run python main.py <proj_dir> --plugin chip
+```
+
+支持以下项目文件：
+
+| 方言 | 扩展名 |
+| --- | --- |
+| Chisel | `.scala`、`.sc` |
+| Verilog/SystemVerilog | `.v`、`.sv`、`.svh` |
+
+插件在 Stage 1 前只扫描一次所选 `proj_dir` / `--submodule` 范围，并把结果写入
+`fm_agent/chip_context.json`。只要范围内存在 Chisel 文件就选择 Chisel；如果
+同时存在 Verilog 文件，本次运行仍然只分析 Chisel，并输出警告。只有存在
+Verilog 文件且不存在 Chisel 文件时才选择 Verilog。若该默认边界不符合预期，
+请把 `proj_dir` 或 `--submodule` 指向更窄的硬件子树。
+
+Chisel 提取支持 `Module`、`RawModule`、`BlackBox`、`ExtModule` 和
+`MultiIOModule` 声明，默认使用保守的源码分析。当
+`FM_AGENT_CHISEL_CIRCT_INPUT` 指向 elaborated `.fir` 或 `.mlir` 输入时，插件会
+尝试 direct CIRCT pass；可选工具链无法运行时自动回退到源码分析。
+`./install.sh --with-chisel` 可安装固定版本的 `firtool` 和与其匹配的 pass
+plugin；完整设置见
+[`tools/chisel-circt/README.md`](../tools/chisel-circt/README.md)。
+
+Verilog/SystemVerilog 提取会优先使用 `PATH` 中的
+`verible-verilog-syntax`，不可用时回退到保守源码扫描。诊断或对比时可设置
+`FM_AGENT_NO_VERIBLE=1` 强制使用 fallback。
+
+每个提取模块生成两个相邻 Markdown 产物：
+
+- `<Module>_spec.md` 使用 FG/FC/CK coverage 结构和必需的 `<FG-API>` 描述可观察
+  接口与行为契约；
+- `<Module>_info.md` 记录父模块对每个直接实例化子模块的要求；叶模块写
+  `(no submodules)`。
+
+Chisel 源码分析可能无法看到动态 elaboration，因此缺失依赖覆盖仅作为
+advisory。对于语言服务提供的直接 Verilog 模块边，缺失依赖覆盖会阻塞产物通过。
+chip SpecForm 会关闭当前仅支持软件规约的 reasoning 和 Bug Validation backend，
+因此成功运行会在硬件规约生成和校验完成后结束。
+
+当前限制：
+
+- 单次运行不会混合 Chisel 与 Verilog 规约单元；
+- 没有 CLI 方言覆盖选项，需要通过缩小输入范围调整；
+- chip run 不支持 resume 语义；
+- Scala 元编程和动态 Chisel elaboration 可能超出源码分析能力；有 elaborated
+  输入时应使用 direct CIRCT backend；
+- 生成的精确周期和协议语义仍需对照 RTL 人工检查，尤其是源码行为偏离命名协议
+  惯例的情况。
+
 ## Resume、isolate 与 incremental
 
 执行到 Stage 边界时 Modify Hook 就会运行。即使内置 Stage 在 resume 中复用

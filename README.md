@@ -153,6 +153,20 @@ Erlang support is optional because its toolchain is not needed for other languag
 
 The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
 
+Chisel projects can be analyzed with the built-in `chip` pipeline plugin using
+source analysis alone. Direct elaborated-module analysis through CIRCT is an
+optional enhancement. To build a pinned `firtool` and the matching FM-Agent
+pass plugin, run:
+
+```bash
+./install.sh --with-chisel
+```
+
+This checkout and build can be large; it is not required for Verilog or for
+the Chisel source fallback. See
+[`tools/chisel-circt/README.md`](tools/chisel-circt/README.md) for the CIRCT
+input and environment-variable contract.
+
 FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so
 you do not need to hand-edit `~/.config/opencode/opencode.json` for the model
 or key. The configuration wizard above can still keep that file synchronized for
@@ -234,6 +248,20 @@ def hook(proj_dir: str) -> None:
 
 See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
 configuration, execution modes, lifecycle, and trust boundary.
+
+The built-in `chip` plugin generates standalone hardware module specifications
+for Chisel or Verilog/SystemVerilog projects:
+
+```bash
+uv run python main.py <proj_dir> --plugin chip
+```
+
+It selects one dialect from the in-scope file extensions, prefers Chisel when
+both dialects are present, and writes `_spec.md` / `_info.md` artifacts beside
+each extracted module under `fm_agent/extracted_functions/`. Use a narrower
+`proj_dir` or `--submodule` for a hardware subtree in a mixed repository. See
+[the chip plugin documentation](docs/plugins.md#built-in-chip-plugin) for
+supported extensions, optional backends, validation rules, and limitations.
 
 `proj_dir` must be a git repository.
 
