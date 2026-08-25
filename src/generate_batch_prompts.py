@@ -147,13 +147,14 @@ def extract_callee_spec_from_info(
         name = callee.get("name", "")
         if not isinstance(name, str):
             continue
-        named_callees.append((callee, name))
+        normalized_name = _name_without_call_decoration(name)
+        named_callees.append((callee, name, normalized_name))
 
-    for callee, name in named_callees:
+    for callee, name, _normalized_name in named_callees:
         if _info_name_matches_fqn(name, callee_fqn):
             return callee
 
-    for callee, name in named_callees:
+    for callee, name, _normalized_name in named_callees:
         if any(
             _info_name_matches_alias(name, alias)
             for alias in aliases or ()
@@ -162,10 +163,13 @@ def extract_callee_spec_from_info(
             return callee
 
     bare_names = [name for name in names if not _is_qualified_name(name)]
-    for callee, name in named_callees:
-        if _is_qualified_name(name):
+    for callee, _name, normalized_name in named_callees:
+        if _is_qualified_name(normalized_name):
             continue
-        if any(_info_line_mentions_name(name, candidate) for candidate in bare_names):
+        if any(
+            _info_line_mentions_name(normalized_name, candidate)
+            for candidate in bare_names
+        ):
             return callee
     return None
 
@@ -192,11 +196,41 @@ def _is_qualified_name(name: str) -> bool:
     return bool(_QUALIFIED_NAME_SEPARATOR_RE.search(name))
 
 
+def _name_without_call_decoration(name: str) -> str:
+    """Remove one balanced trailing call expression from a source name."""
+    stripped = name.rstrip()
+    if not stripped.endswith(")"):
+        return name
+
+    depth = 0
+    for index in range(len(stripped) - 1, -1, -1):
+        char = stripped[index]
+        if char == ")":
+            depth += 1
+        elif char == "(":
+            depth -= 1
+            if depth == 0:
+                undecorated = stripped[:index].rstrip()
+                # ``operator()`` is a function name; only a following pair of
+                # parentheses represents a call decoration for that operator.
+                components = _QUALIFIED_NAME_SEPARATOR_RE.split(undecorated)
+                last_component = components[-1].strip()
+                if last_component == "operator" and stripped[index:] == "()":
+                    return name
+                return undecorated
+    return name
+
+
 def _info_name_matches_fqn(info_name: str, callee_fqn: str) -> bool:
     """Match a complete FQN or a source-language-qualified suffix."""
     if info_name == callee_fqn:
         return True
     # Preserve literal FM-Agent FQN components, which may contain dots.
+    if "::" in info_name and callee_fqn.endswith(f"::{info_name}"):
+        return True
+    info_name = _name_without_call_decoration(info_name)
+    if info_name == callee_fqn:
+        return True
     if "::" in info_name and callee_fqn.endswith(f"::{info_name}"):
         return True
     info_parts = _qualified_name_parts(info_name)
@@ -211,6 +245,9 @@ def _info_name_matches_fqn(info_name: str, callee_fqn: str) -> bool:
 
 def _info_name_matches_alias(info_name: str, alias: str) -> bool:
     """Match an exact alias while accepting equivalent source qualifiers."""
+    if info_name == alias:
+        return True
+    info_name = _name_without_call_decoration(info_name)
     if info_name == alias:
         return True
     if not _is_qualified_name(info_name) or not _is_qualified_name(alias):
