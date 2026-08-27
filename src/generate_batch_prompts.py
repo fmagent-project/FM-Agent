@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -56,6 +57,12 @@ COMMENT_PREFIX_BY_LANG = {
 }
 
 _QUALIFIED_NAME_SEPARATOR_RE = re.compile(r"::|\.")
+_ERLANG_NAME_RE = re.compile(
+    r"^(?P<module>[A-Za-z_][\w@]*)\s*:\s*"
+    r"(?P<function>[A-Za-z_][\w@]*)/(?P<arity>\d+)$"
+)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,6 +145,11 @@ def extract_callee_spec_from_info(
     names = _callee_match_names(callee_fqn, aliases or ())
     callees = info_dict.get("callees", [])
     if not isinstance(callees, list):
+        logger.warning(
+            "No callee expectation matched FQN %s (aliases=%s, entries=invalid)",
+            callee_fqn,
+            list(aliases or ()),
+        )
         return None
 
     named_callees = []
@@ -148,13 +160,14 @@ def extract_callee_spec_from_info(
         if not isinstance(name, str):
             continue
         normalized_name = _name_without_call_decoration(name)
-        named_callees.append((callee, name, normalized_name))
+        bare_name = _bare_name_for_matching(normalized_name)
+        named_callees.append((callee, name, normalized_name, bare_name))
 
-    for callee, name, _normalized_name in named_callees:
+    for callee, name, _normalized_name, _bare_name in named_callees:
         if _info_name_matches_fqn(name, callee_fqn):
             return callee
 
-    for callee, name, _normalized_name in named_callees:
+    for callee, name, _normalized_name, _bare_name in named_callees:
         if any(
             _info_name_matches_alias(name, alias)
             for alias in aliases or ()
@@ -163,14 +176,34 @@ def extract_callee_spec_from_info(
             return callee
 
     bare_names = [name for name in names if not _is_qualified_name(name)]
-    for callee, _name, normalized_name in named_callees:
-        if _is_qualified_name(normalized_name):
+    bare_name_counts = {}
+    for _callee, _name, _normalized_name, bare_name in named_callees:
+        if bare_name:
+            bare_name_counts[bare_name.casefold()] = (
+                bare_name_counts.get(bare_name.casefold(), 0) + 1
+            )
+    for callee, _name, normalized_name, bare_name in named_callees:
+        if not bare_name or bare_name_counts.get(bare_name.casefold(), 0) != 1:
+            continue
+        if _is_qualified_name(normalized_name) and not _qualified_source_name_compatible(
+            normalized_name, callee_fqn
+        ):
+            continue
+        if _erlang_name_parts(normalized_name) and not _erlang_name_matches_fqn(
+            normalized_name, callee_fqn
+        ):
             continue
         if any(
-            _info_line_mentions_name(normalized_name, candidate)
+            _info_line_mentions_name(bare_name, candidate)
             for candidate in bare_names
         ):
             return callee
+    logger.warning(
+        "No callee expectation matched FQN %s (aliases=%s, entries=%d)",
+        callee_fqn,
+        list(aliases or ()),
+        len(named_callees),
+    )
     return None
 
 
@@ -196,11 +229,11 @@ def _is_qualified_name(name: str) -> bool:
     return bool(_QUALIFIED_NAME_SEPARATOR_RE.search(name))
 
 
-def _name_without_call_decoration(name: str) -> str:
-    """Remove one balanced trailing call expression from a source name."""
+def _trailing_parenthesized_group(name: str) -> Optional[Tuple[str, str]]:
+    """Return the prefix and contents of one balanced trailing ``(...)`` group."""
     stripped = name.rstrip()
     if not stripped.endswith(")"):
-        return name
+        return None
 
     depth = 0
     for index in range(len(stripped) - 1, -1, -1):
@@ -210,15 +243,63 @@ def _name_without_call_decoration(name: str) -> str:
         elif char == "(":
             depth -= 1
             if depth == 0:
-                undecorated = stripped[:index].rstrip()
-                # ``operator()`` is a function name; only a following pair of
-                # parentheses represents a call decoration for that operator.
-                components = _QUALIFIED_NAME_SEPARATOR_RE.split(undecorated)
-                last_component = components[-1].strip()
-                if last_component == "operator" and stripped[index:] == "()":
-                    return name
-                return undecorated
-    return name
+                return stripped[:index].rstrip(), stripped[index + 1 : -1].strip()
+    return None
+
+
+def _name_without_call_decoration(name: str) -> str:
+    """Remove one balanced trailing call expression from a source name."""
+    group = _trailing_parenthesized_group(name)
+    if not group:
+        return name
+    undecorated, contents = group
+    # ``operator()`` is a function name; only a following pair of parentheses
+    # represents a call decoration for that operator.
+    components = _QUALIFIED_NAME_SEPARATOR_RE.split(undecorated)
+    if components[-1].strip() == "operator" and not contents:
+        return name
+    return undecorated
+
+
+def _is_operator_call_name(name: str) -> bool:
+    group = _trailing_parenthesized_group(name)
+    if not group or group[1]:
+        return False
+    components = _QUALIFIED_NAME_SEPARATOR_RE.split(group[0])
+    return components[-1].strip() == "operator"
+
+
+def _erlang_name_parts(name: str) -> Optional[Tuple[str, str, int]]:
+    match = _ERLANG_NAME_RE.fullmatch(name.strip())
+    if not match:
+        return None
+    return match.group("module"), match.group("function"), int(match.group("arity"))
+
+
+def _erlang_name_matches_fqn(info_name: str, callee_fqn: str) -> bool:
+    parts = _erlang_name_parts(info_name)
+    fqn_parts = [part for part in callee_fqn.split("::") if part]
+    if not parts or len(fqn_parts) < 2:
+        return False
+    module, function, _arity = parts
+    return (
+        module.casefold() == fqn_parts[-2].casefold()
+        and function.casefold() == fqn_parts[-1].casefold()
+    )
+
+
+def _bare_name_for_matching(name: str) -> str:
+    """Return the final source-level component used by safe bare fallback."""
+    erlang_parts = _erlang_name_parts(name)
+    if erlang_parts:
+        return erlang_parts[1]
+    source_candidates = _source_name_fqn_candidates(name)
+    if source_candidates:
+        return source_candidates[0].split("::")[-1]
+    if _is_qualified_name(name):
+        parts = _qualified_name_parts(name)
+        return _codegraph_source_component(parts[-1]) if parts else ""
+    return name.strip().split()[0] if name.strip() else ""
 
 
 def _codegraph_source_component(component: str) -> str:
@@ -338,6 +419,31 @@ def _source_name_fqn_candidates(name: str) -> List[str]:
     return list(dict.fromkeys(candidates))
 
 
+def _qualified_source_name_compatible(name: str, callee_fqn: str) -> bool:
+    """Allow bare fallback only when a qualified spelling has a compatible suffix."""
+    fqn_parts = [part for part in callee_fqn.split("::") if part]
+    for candidate in _source_name_fqn_candidates(name):
+        candidate_parts = [part for part in candidate.split("::") if part]
+        if len(candidate_parts) <= 1:
+            continue
+        candidate_tails = [candidate_parts]
+        # A pure C++ namespace prefix may be absent from CodeGraph's FQN. Do
+        # not apply this relaxation to dot-prefixed source names such as
+        # ``pkg.Class::method`` where dropping ``pkg`` changes the meaning.
+        if "." not in name:
+            candidate_tails.extend(
+                candidate_parts[start:]
+                for start in range(1, len(candidate_parts) - 1)
+            )
+        for tail in candidate_tails:
+            if len(tail) <= len(fqn_parts) and all(
+                left.casefold() == right.casefold()
+                for left, right in zip(fqn_parts[-len(tail) :], tail)
+            ):
+                return True
+    return False
+
+
 def _fqn_has_component_suffix(callee_fqn: str, candidate: str) -> bool:
     """Return whether candidate equals a complete ``::``-delimited FQN suffix."""
     callee_parts = callee_fqn.split("::")
@@ -353,32 +459,75 @@ def _fqn_has_component_suffix(callee_fqn: str, candidate: str) -> bool:
 
 def _info_name_matches_fqn(info_name: str, callee_fqn: str) -> bool:
     """Match a complete FQN or a source-language-qualified suffix."""
-    if info_name == callee_fqn:
-        return True
-    # Preserve literal FM-Agent FQN components, which may contain dots.
-    if "::" in info_name and _fqn_has_component_suffix(callee_fqn, info_name):
-        return True
-    info_name = _name_without_call_decoration(info_name)
-    if info_name == callee_fqn:
-        return True
-    if "::" in info_name and _fqn_has_component_suffix(callee_fqn, info_name):
-        return True
-    return any(
-        _fqn_has_component_suffix(callee_fqn, candidate)
-        for candidate in _source_name_fqn_candidates(info_name)
-    )
+    variants = [info_name]
+    undecorated = _name_without_call_decoration(info_name)
+    if undecorated != info_name:
+        variants.append(undecorated)
+    for variant in variants:
+        if variant == callee_fqn:
+            return True
+        # Preserve literal FM-Agent FQN components, which may contain dots.
+        if "::" in variant and _fqn_has_component_suffix(callee_fqn, variant):
+            return True
+        if _erlang_name_matches_fqn(variant, callee_fqn):
+            return True
+        # Do not let the component normalizer erase a remaining call layer.
+        # Literal suffix matching above still supports ``operator()`` and one
+        # preserved call decoration when the FQN contains it.
+        if _trailing_parenthesized_group(variant) and not _is_operator_call_name(variant):
+            continue
+        if any(
+            _fqn_has_component_suffix(callee_fqn, candidate)
+            for candidate in _source_name_fqn_candidates(variant)
+        ):
+            return True
+
+    group = _trailing_parenthesized_group(info_name)
+    if group:
+        prefix, label = group
+        fqn_parts = [part for part in callee_fqn.split("::") if part]
+        if (
+            label
+            and len(fqn_parts) >= 2
+            and label.casefold() == fqn_parts[-1].casefold()
+            and _bare_name_for_matching(prefix).casefold()
+            == fqn_parts[-2].casefold()
+        ):
+            return True
+    return False
 
 
 def _info_name_matches_alias(info_name: str, alias: str) -> bool:
     """Match an exact alias while accepting equivalent source qualifiers."""
-    if info_name == alias:
-        return True
-    info_name = _name_without_call_decoration(info_name)
-    if info_name == alias:
-        return True
-    if not _is_qualified_name(info_name) or not _is_qualified_name(alias):
-        return False
-    return _qualified_name_parts(info_name) == _qualified_name_parts(alias)
+    variants = [info_name]
+    undecorated = _name_without_call_decoration(info_name)
+    if undecorated != info_name:
+        variants.append(undecorated)
+    for variant in variants:
+        if variant == alias:
+            return True
+        if _erlang_name_parts(variant) and _erlang_name_parts(alias):
+            left = _erlang_name_parts(variant)
+            right = _erlang_name_parts(alias)
+            if left and right and left == right:
+                return True
+        if _is_qualified_name(variant) and _is_qualified_name(alias):
+            if _qualified_name_parts(variant) == _qualified_name_parts(alias):
+                return True
+
+    group = _trailing_parenthesized_group(info_name)
+    if group:
+        prefix, label = group
+        alias_parts = alias.split("::") if "::" in alias else _qualified_name_parts(alias)
+        if (
+            label
+            and len(alias_parts) >= 2
+            and label.casefold() == alias_parts[-1].casefold()
+            and _bare_name_for_matching(prefix).casefold()
+            == alias_parts[-2].casefold()
+        ):
+            return True
+    return False
 
 
 def _info_line_mentions_name(first_line: str, name: str) -> bool:
