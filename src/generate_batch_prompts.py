@@ -221,25 +221,151 @@ def _name_without_call_decoration(name: str) -> str:
     return name
 
 
+def _codegraph_source_component(component: str) -> str:
+    """Mirror CodeGraph's bare-name and FQN-safe normalization for one part."""
+    name = component.strip()
+    if not name:
+        return ""
+
+    tail = name
+    if "::" in tail:
+        tail = tail.rsplit("::", 1)[1].lstrip()
+    elif "." in tail:
+        tail = tail.rsplit(".", 1)[1].lstrip()
+
+    if tail.startswith("operator"):
+        rest = tail[len("operator") :].lstrip()
+        if rest.startswith("[]"):
+            return "operator[]"
+        if rest.startswith("()"):
+            return "operator()"
+        if re.fullmatch(r"new(?:\s*\[\s*\])?", rest):
+            return "operator new[]" if "[" in rest else "operator new"
+        if re.fullmatch(r"delete(?:\s*\[\s*\])?", rest):
+            return "operator delete[]" if "[" in rest else "operator delete"
+
+        symbol = []
+        for char in rest:
+            if char in "+-*/%&|^~!=<>,":
+                symbol.append(char)
+            else:
+                break
+        if symbol:
+            return ("operator" + "".join(symbol)).replace("/", "_")
+
+    match = re.search(r"(?:^|::|\.)(\w+)$", name)
+    if match:
+        return match.group(1)
+    match = re.match(r"\(\s*\*\s*(\w+)\s*\)", name)
+    if match:
+        return match.group(1)
+    match = re.match(r"\*\s*(\w+)", name)
+    if match:
+        return match.group(1)
+    match = re.match(r"^(\w+)", name)
+    if match:
+        return match.group(1)
+    return name.replace("/", "_")
+
+
+def _has_top_level_hyphen_before_final_component(name: str) -> bool:
+    """Distinguish a literal ``base-ext`` FQN prefix from template arguments."""
+    angle_depth = 0
+    top_level_hyphens: List[int] = []
+    last_separator = -1
+    index = 0
+    while index < len(name):
+        char = name[index]
+        if char == "<":
+            angle_depth += 1
+        elif char == ">" and angle_depth:
+            angle_depth -= 1
+        elif angle_depth == 0:
+            if name.startswith("::", index):
+                last_separator = index
+                index += 2
+                continue
+            if char == ".":
+                last_separator = index
+            elif char == "-":
+                top_level_hyphens.append(index)
+        index += 1
+    return any(position < last_separator for position in top_level_hyphens)
+
+
+def _normalized_source_name_parts(name: str) -> List[str]:
+    """Return CodeGraph-shaped parts for one source-qualified spelling."""
+    # FM-Agent's file component uses ``base-ext`` and is not source syntax.
+    # It must stay on the literal-prefix side of a mixed candidate boundary.
+    # A hyphen inside a template argument (for example, ``Widget<-1>``) is
+    # source decoration and must not be mistaken for that file marker.
+    if _has_top_level_hyphen_before_final_component(name):
+        return []
+    parts = _QUALIFIED_NAME_SEPARATOR_RE.split(name)
+    if len(parts) <= 1 or any(not part.strip() for part in parts):
+        return []
+    normalized_parts = [_codegraph_source_component(part) for part in parts]
+    if any(not part for part in normalized_parts):
+        return []
+    return normalized_parts
+
+
+def _source_name_fqn_candidates(name: str) -> List[str]:
+    """Return complete source and literal-FQN-prefix interpretations of a name."""
+    candidates: List[str] = []
+
+    # Treat the complete spelling as a source-qualified name. This covers pure
+    # ``::``, pure dot, and mixed source scopes, including template arguments
+    # whose namespaces become separate CodeGraph components.
+    normalized_parts = _normalized_source_name_parts(name)
+    if normalized_parts:
+        candidates.append("::".join(normalized_parts))
+
+    # A leading FM-Agent FQN component may contain literal dots (for example,
+    # ``foo.test-go``). At every explicit FQN boundary, preserve the prefix and
+    # independently interpret the remaining qualified tail as source spelling.
+    for boundary in re.finditer(r"::", name):
+        literal_prefix = name[: boundary.start()].strip()
+        source_tail = name[boundary.end() :].strip()
+        if not literal_prefix or not source_tail:
+            continue
+        if any(not part.strip() for part in literal_prefix.split("::")):
+            continue
+        normalized_tail_parts = _normalized_source_name_parts(source_tail)
+        if normalized_tail_parts:
+            normalized_tail = "::".join(normalized_tail_parts)
+            candidates.append(f"{literal_prefix}::{normalized_tail}")
+    return list(dict.fromkeys(candidates))
+
+
+def _fqn_has_component_suffix(callee_fqn: str, candidate: str) -> bool:
+    """Return whether candidate equals a complete ``::``-delimited FQN suffix."""
+    callee_parts = callee_fqn.split("::")
+    candidate_parts = candidate.split("::")
+    return (
+        bool(candidate_parts)
+        and all(callee_parts)
+        and all(candidate_parts)
+        and len(candidate_parts) <= len(callee_parts)
+        and callee_parts[-len(candidate_parts) :] == candidate_parts
+    )
+
+
 def _info_name_matches_fqn(info_name: str, callee_fqn: str) -> bool:
     """Match a complete FQN or a source-language-qualified suffix."""
     if info_name == callee_fqn:
         return True
     # Preserve literal FM-Agent FQN components, which may contain dots.
-    if "::" in info_name and callee_fqn.endswith(f"::{info_name}"):
+    if "::" in info_name and _fqn_has_component_suffix(callee_fqn, info_name):
         return True
     info_name = _name_without_call_decoration(info_name)
     if info_name == callee_fqn:
         return True
-    if "::" in info_name and callee_fqn.endswith(f"::{info_name}"):
+    if "::" in info_name and _fqn_has_component_suffix(callee_fqn, info_name):
         return True
-    info_parts = _qualified_name_parts(info_name)
-    if len(info_parts) <= 1:
-        return False
-    fqn_parts = callee_fqn.split("::")
-    return (
-        len(info_parts) <= len(fqn_parts)
-        and fqn_parts[-len(info_parts) :] == info_parts
+    return any(
+        _fqn_has_component_suffix(callee_fqn, candidate)
+        for candidate in _source_name_fqn_candidates(info_name)
     )
 
 
