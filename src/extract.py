@@ -677,7 +677,7 @@ def _function_spans(filepath, lang_key, proj_dir=None):
 
 def run_extraction(
     proj_dir, work_dir=None, force=False, verbose=False,
-    return_unavailable_backends=False,
+    return_unavailable_backends=False, specification=None,
 ):
     """Run function extraction on a project directory.
 
@@ -687,7 +687,8 @@ def run_extraction(
 
     Returns (written_count, skipped_count). When
     ``return_unavailable_backends`` is true, appends the languages whose
-    semantic full-project extraction backend failed.
+    semantic full-project extraction backend failed. ``specification`` may
+    limit work to its already-registered language keys.
     """
     if work_dir is None:
         work_dir = proj_dir
@@ -699,7 +700,9 @@ def run_extraction(
         phases_data = json.load(f)
 
     registry_result = batch_extract_all(
-        proj_dir, include_unavailable=return_unavailable_backends
+        proj_dir,
+        include_unavailable=return_unavailable_backends,
+        specification=specification,
     )
     if return_unavailable_backends:
         registry_funcs, registry_langs, unavailable_backends = registry_result
@@ -740,6 +743,10 @@ def run_extraction(
         if not lang_key:
             logging.warning(f"Unsupported file extension '.{ext}' for {src_rel}, skipping.")
             continue
+        if specification is not None and not specification.allows_language(lang_key):
+            if verbose:
+                print(f"  SKIP (Profile language filter): {src_rel}")
+            continue
 
         # Compute output directory: replace last dot in filename with hyphen
         src_dir = os.path.dirname(src_rel)
@@ -775,9 +782,13 @@ def run_extraction(
             # maps "/" -> "_", and falls back to "_function" for empty names.
             out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
 
-            # Skip only when the extracted file already has valid .spec.json and
-            # .info.json sidecars.
-            if not force and os.path.exists(out_file) and is_file_ready(out_file):
+            # Skip only when the extracted file already has both valid
+            # Profile-defined artifacts.
+            if (
+                not force
+                and os.path.exists(out_file)
+                and is_file_ready(out_file, specification)
+            ):
                 if verbose:
                     print(f"  SKIP (specced): {os.path.relpath(out_file, proj_dir)}")
                 skipped += 1

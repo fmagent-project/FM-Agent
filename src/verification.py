@@ -9,6 +9,7 @@ from .file_utils import (
     is_file_ready,
 )
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
+from .specification import SOFTWARE_PROFILE, SpecificationProfile
 from .llm_client import build_llm_cli_command
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
@@ -81,6 +82,7 @@ def streaming_reasoner(
     bug_validator_path=None,
     validate_bugs=True,
     all_bugs=False,
+    specification: SpecificationProfile = SOFTWARE_PROFILE,
 ):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
     if work_dir is None:
@@ -152,7 +154,7 @@ def streaming_reasoner(
                             continue
                         if file_path in failed:
                             continue
-                        if not is_file_ready(file_path):
+                        if not is_file_ready(file_path, specification):
                             continue
 
                         # File is ready and not yet submitted or processed.
@@ -300,7 +302,7 @@ def streaming_reasoner(
                         ext = os.path.splitext(file_path)[1]
                         if ext not in EXT_TO_LANG:
                             continue
-                        if not is_file_ready(file_path):
+                        if not is_file_ready(file_path, specification):
                             continue
                         _submit_file(file_path, ext)
                         newly_ready = True

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from src.extract import EXT_TO_LANG, LANG_CONFIG
 from src.file_utils import _is_metadata_sidecar
 from src.languages.registry import call_edges_all
+from src.specification import SOFTWARE_PROFILE, SpecificationProfile
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +27,7 @@ def _load_phases(proj_dir):
 # 1.2 Collect files per phase
 # ---------------------------------------------------------------------------
 
-def _collect_phase_files(proj_dir, phase_data):
+def _collect_phase_files(proj_dir, phase_data, specification: SpecificationProfile = SOFTWARE_PROFILE):
     """For a phase, collect all extracted function file paths.
 
     Returns list of (file_path, module_name) tuples.
@@ -57,7 +58,15 @@ def _collect_phase_files(proj_dir, phase_data):
             for root, _dirs, fnames in os.walk(func_dir):
                 for fname in fnames:
                     fpath = os.path.join(root, fname)
-                    if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
+                    if (
+                        os.path.isfile(fpath)
+                        and not _is_metadata_sidecar(fname, specification)
+                        and specification.allows_language(
+                            EXT_TO_LANG.get(
+                                os.path.splitext(fname)[1].lstrip(".").lower()
+                            )
+                        )
+                    ):
                         results.append((fpath, module_name))
 
     return results
@@ -652,7 +661,7 @@ def _compute_layers(phase_fqns, callees_map, callers_map):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None):
+def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None, specification: SpecificationProfile = SOFTWARE_PROFILE):
     """Generate topdown layer JSON files for the specified phases (or all phases).
 
     Args:
@@ -671,7 +680,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
     # Build global stem->FQN mapping across ALL phases for all_callees
     global_stem_to_fqns = defaultdict(set)
     for pi in phases_data["phases"]:
-        for filepath, _ in _collect_phase_files(proj_dir, pi):
+        for filepath, _ in _collect_phase_files(proj_dir, pi, specification):
             fqn = _file_to_fqn(filepath, proj_dir)
             stem = fqn.split("::")[-1]
             global_stem_to_fqns[stem].add(fqn)
@@ -686,7 +695,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None)
             continue
 
         # 1.2 Collect files
-        phase_files = _collect_phase_files(proj_dir, phase_info)
+        phase_files = _collect_phase_files(proj_dir, phase_info, specification)
         if not phase_files:
             logging.warning(f"Phase {phase_num} ({phase_name}): no extracted files found, skipping.")
             continue

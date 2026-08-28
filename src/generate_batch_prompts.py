@@ -11,9 +11,11 @@ try:
     # When imported as part of the src package (e.g. incremental_reasoner).
     from .file_utils import is_file_ready
     from .domain_knowledge import list_staged_domain_knowledge_relpaths
+    from .specification import BatchPromptContext, SOFTWARE_PROFILE, SpecificationProfile
 except ImportError:
     # When run directly from the source tree, file_utils.py sits beside this script.
     from file_utils import is_file_ready
+    from specification import BatchPromptContext, SOFTWARE_PROFILE, SpecificationProfile
 
     def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
         knowledge_dir = Path(work_dir) / "spec_prompts" / "domain_context" / "user_knowledge"
@@ -91,19 +93,19 @@ def parse_layers_spec(layers_spec: str) -> Tuple[int, int]:
     return start, end
 
 
-def _spec_json_path(filepath: Path) -> Path:
+def _spec_json_path(filepath: Path, specification: SpecificationProfile = SOFTWARE_PROFILE) -> Path:
     """Return the spec sidecar next to one extracted function file."""
-    return Path(str(filepath) + ".spec.json")
+    return specification.artifact_paths(filepath).self_spec
 
 
-def _info_json_path(filepath: Path) -> Path:
+def _info_json_path(filepath: Path, specification: SpecificationProfile = SOFTWARE_PROFILE) -> Path:
     """Return the info sidecar next to one extracted function file."""
-    return Path(str(filepath) + ".info.json")
+    return specification.artifact_paths(filepath).dependency_info
 
 
-def extract_spec_block(filepath: Path) -> Optional[str]:
+def extract_spec_block(filepath: Path, specification: SpecificationProfile = SOFTWARE_PROFILE) -> Optional[str]:
     """Read .spec.json and rebuild reasoner-facing spec text."""
-    spec_path = _spec_json_path(filepath)
+    spec_path = _spec_json_path(filepath, specification)
 
     try:
         with spec_path.open("r", encoding="utf-8") as file:
@@ -121,9 +123,9 @@ def extract_spec_block(filepath: Path) -> Optional[str]:
     )
 
 
-def extract_info_block(filepath: Path) -> Optional[dict]:
+def extract_info_block(filepath: Path, specification: SpecificationProfile = SOFTWARE_PROFILE) -> Optional[dict]:
     """Read the adjacent .info.json object when it is usable."""
-    info_path = _info_json_path(filepath)
+    info_path = _info_json_path(filepath, specification)
 
     try:
         with info_path.open("r", encoding="utf-8") as file:
@@ -662,17 +664,20 @@ def build_prompt(
     work_dir: Path,
     fm_agent_prefix: str,
     ext_to_lang: Dict[str, str],
+    specification: SpecificationProfile = SOFTWARE_PROFILE,
 ) -> str:
     lines: List[str] = []
     sample_lang = "unknown"
     if functions:
         sample_lang, _ = detect_lang_and_comment(functions[0]["file"], ext_to_lang)
+    self_artifact_name, dependency_artifact_name = specification.example_artifact_names()
 
     lines.append(f"You are generating behavioral specifications for Phase {phase}, Layer {layer_idx}.")
     lines.append("")
     lines.append(
         f"Language: {sample_lang}. "
-        "Write specifications to adjacent .spec.json and .info.json files."
+        f"Write specifications to adjacent {specification.artifacts.self_suffix} "
+        f"and {specification.artifacts.dependency_suffix} files."
     )
     lines.append("")
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
@@ -710,21 +715,15 @@ def build_prompt(
             if not caller_meta:
                 continue
             caller_file = work_dir / caller_meta["file"]
-            spec_block = extract_spec_block(caller_file)
+            spec_block = specification.read_self_spec(caller_file)
             if spec_block and (caller_name, spec_block) not in caller_specs:
                 caller_specs.append((caller_name, spec_block))
-            info_dict = extract_info_block(caller_file)
-            if not info_dict:
-                continue
-            entry = extract_callee_spec_from_info(
-                info_dict, fn_name, info_names_by_caller.get(caller_name, [])
+            entry_text = specification.read_dependency_expectation(
+                caller_file,
+                fn_name,
+                info_names_by_caller.get(caller_name, []),
             )
-            if entry:
-                entry_text = (
-                    f"{entry.get('signature', '')}\n"
-                    f"  Pre-condition: {entry.get('pre_condition', '')}\n"
-                    f"  Post-condition: {entry.get('post_condition', '')}"
-                )
+            if entry_text:
                 caller_expectations.setdefault(fn_name, []).append(
                     (caller_name, entry_text)
                 )
@@ -777,44 +776,14 @@ def build_prompt(
             lines.append("  Earlier-layer callers: (none)")
 
     lines.append("")
-    lines.append("## SPEC FORMAT (write JSON files; do NOT modify source files)")
-    lines.append("")
-    lines.append(
-        "For each function file `<function-file>`, "
-        "write TWO JSON files in the SAME directory. "
-        "`<function-file>` includes its original extension "
-        "(for example, `foo.py` must produce `foo.py.spec.json` "
-        "and `foo.py.info.json`):"
+    lines.extend(
+        specification.prompt_contract.batch_output_section(
+            BatchPromptContext(
+                self_artifact_name=self_artifact_name,
+                dependency_artifact_name=dependency_artifact_name,
+            )
+        )
     )
-    lines.append("")
-    lines.append("`<function-file>.spec.json`:")
-    lines.append("```json")
-    lines.append(
-        '{"signature": "<FunctionName>(<params>) -> <ReturnType>", '
-        '"pre_condition": "...", "post_condition": "..."}'
-    )
-    lines.append("```")
-    lines.append("")
-    lines.append("`<function-file>.info.json`:")
-    lines.append("```json")
-    lines.append(
-        '{"callees": [{"name": "<callee_name>", "signature": "...", '
-        '"pre_condition": "...", "post_condition": "..."}]}'
-    )
-    lines.append("```")
-    lines.append("")
-    lines.append('If the function has no callees: write `{"callees": []}` to the .info.json file.')
-    lines.append("")
-    lines.append("## PROCESS")
-    lines.append("For each function:")
-    lines.append("1. Read the extracted file")
-    lines.append("2. Read caller expectations above - what do callers NEED from this function?")
-    lines.append("3. Write a behavioral spec describing WHAT it guarantees (not HOW)")
-    lines.append(
-        "4. Write the COMPLETE .spec.json and .info.json objects next to the "
-        "UNCHANGED source file"
-    )
-    lines.append("5. Use the Write tool to save both JSON files")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -827,6 +796,7 @@ def generate_batch_prompts(
     output_dir: Optional[Path] = None,
     resume: bool = False,
     dry_run: bool = False,
+    specification: SpecificationProfile = SOFTWARE_PROFILE,
 ) -> dict:
     """Build, persist, and return the batch manifest for a layer range."""
     if batch_size <= 0:
@@ -888,7 +858,11 @@ def generate_batch_prompts(
             # done — but the manifest below still records the full batch.
             prompt_funcs = fn_batch
             if resume:
-                prompt_funcs = [fn for fn in fn_batch if not is_file_ready(work_dir / fn["file"])]
+                prompt_funcs = [
+                    fn
+                    for fn in fn_batch
+                    if not is_file_ready(work_dir / fn["file"], specification)
+                ]
                 skipped_functions += len(fn_batch) - len(prompt_funcs)
             out_path = output_dir / filename
             # On resume, a batch whose functions are all already specced has no
@@ -907,6 +881,7 @@ def generate_batch_prompts(
                     work_dir,
                     fm_agent_prefix,
                     ext_to_lang,
+                    specification,
                 )
                 write_targets.append((out_path, content))
             else:

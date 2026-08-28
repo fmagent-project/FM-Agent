@@ -73,6 +73,42 @@ def hook(proj_dir: str) -> None:
 
 `configure_function` 可选。插件可以配置任意一部分受支持 Stage。
 
+## Specification Profile（可选）
+
+插件可以在 `configure` 中同步注册一个 `SpecificationProfile`。阶段编排、LLM 调度、
+重试和 trace 仍由公共 Pipeline 负责，Profile 提供两个产物和四个 prompt 资源。Profile
+默认使用标准 JSON spec/info contract；只有非 JSON 格式（例如 Markdown）可自定义
+`PromptContract`。示例如下：
+
+```python
+from src.specification import ArtifactPair, PromptBundle, SpecificationProfile, configure_specification
+from plugin_prompt_contract import MARKDOWN_PROMPT_CONTRACT
+
+
+def configure(proj_dir: str) -> None:
+    configure_specification(SpecificationProfile(
+        id="markdown", schema_version="V1",
+        artifacts=ArtifactPair(
+            self_suffix="_spec.md", dependency_suffix="_info.md",
+            append_to_filename=False,
+        ),
+        prompts=PromptBundle(
+            phase_plan="prompts/workflow_generate_phases.md",
+            domain_context="prompts/workflow_generate_domain_context.md",
+            system="prompts/system_prompt.md",
+            batch_workflow="prompts/workflow_spec_step4_batch.md",
+        ),
+        prompt_contract=MARKDOWN_PROMPT_CONTRACT,
+        languages=("python",),
+    ))
+```
+
+`prompts/*` 相对插件根目录解析。固定生成两个产物（上例中 `foo.py` 对应
+`foo_spec.md` 与 `foo_info.md`）。自定义 Profile 默认关闭 `enable_reasoning`；公共校验
+先要求两个文件存在且非空，再调用可选 `validator`。校验失败沿用 Stage 6 retry。`languages`
+只能筛选已注册语言，不能新增 parser。Profile 与 Stage Hook 可混用且不额外做冲突检测；
+自定义 Profile 不启用 software reasoning，也不提供正确性保障。
+
 ## 执行模式
 
 ### Pass
@@ -129,9 +165,11 @@ Hook 通过标准项目文件修改输入或输出，不返回 Stage 数据。
 
 ```json
 {
-  "extra_edge": null
+  "extra_edge": null, "submodules": ["src"]
 }
 ```
+
+`submodules` 仅在指定 `--submodule` 时写入，值为归一化后的项目相对路径。
 
 configure Hook 可以直接读取：
 

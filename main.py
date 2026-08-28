@@ -42,6 +42,12 @@ from src.run_estimate import (
     write_history,
     write_preflight_estimate,
 )
+from src.specification import (
+    SOFTWARE_PROFILE,
+    SpecificationProfile,
+    SpecificationProfileSession,
+    bind_profile_session,
+)
 import os
 import sys
 import argparse
@@ -50,6 +56,7 @@ import time
 import shutil
 import logging
 import contextlib
+from pathlib import Path
 
 
 def _clean_previous_run(work_dir):
@@ -208,6 +215,7 @@ def run_pipeline(
     initial_history=None,
     plugin_context=None,
     all_bugs=False,
+    specification: SpecificationProfile | None = None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -223,6 +231,11 @@ def run_pipeline(
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     extra_call_edges = load_call_edges(extra_call_edges_path)
+    profile_session = SpecificationProfileSession(
+        default_profile=specification or SOFTWARE_PROFILE,
+        plugin_root=(plugin_config.root if plugin_config is not None else None),
+        default_prompt_root=Path(script_dir),
+    )
 
     # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
@@ -238,8 +251,6 @@ def run_pipeline(
         if initial_history is None:
             preserved_history = preserve_history_before_clean(work_dir)
         _clean_previous_run(work_dir)
-    if resume and not only_spec:
-        _ensure_resume_mode_compatible(output_dir, all_bugs)
     os.makedirs(work_dir, exist_ok=True)
     if preserved_history:
         write_history(work_dir, preserved_history)
@@ -252,16 +263,23 @@ def run_pipeline(
     _print_preflight_summary(estimate, estimate_path)
     if plugin_config is not None:
         plugin_context_path = os.path.join(work_dir, "plugin_context.json")
+        effective_plugin_context = dict(plugin_context or {})
+        if submodules:
+            effective_plugin_context["submodules"] = list(submodules)
         with open(plugin_context_path, "w", encoding="utf-8") as file:
-            json.dump(plugin_context or {}, file, indent=2)
+            json.dump(effective_plugin_context, file, indent=2)
         if plugin_config.configure_hook is not None:
-            run_plugin_hook(
-                plugin_config.name,
-                "configure",
-                plugin_config.configure_function,
-                plugin_config.configure_hook,
-                proj_dir,
-            )
+            with bind_profile_session(profile_session):
+                run_plugin_hook(
+                    plugin_config.name,
+                    "configure",
+                    plugin_config.configure_function,
+                    plugin_config.configure_hook,
+                    proj_dir,
+                )
+    specification = profile_session.freeze_and_validate()
+    if resume and not only_spec and specification.enable_reasoning:
+        _ensure_resume_mode_compatible(output_dir, all_bugs)
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
     )
@@ -305,6 +323,8 @@ def run_pipeline(
         _run_generate_phases(
             proj_dir, work_dir, script_dir, resume=resume,
             submodules=submodules,
+            workflow_source=specification.prompts.phase_plan,
+            specification=specification,
         )
         if phase_stage is not None and phase_stage.output_hook is not None:
             run_plugin_hook(
@@ -323,6 +343,7 @@ def run_pipeline(
         required_source_files=surviving_required_source_files,
         submodules=submodules,
         one_phase=one_phase,
+        specification=specification,
     )
 
     print("[Pipeline] Stage 2/6: Generating domain context...")
@@ -353,6 +374,7 @@ def run_pipeline(
             work_dir,
             script_dir,
             resume=resume and not phases_modified,
+            workflow_source=specification.prompts.domain_context,
         )
         if context_stage is not None and context_stage.output_hook is not None:
             run_plugin_hook(
@@ -396,7 +418,7 @@ def run_pipeline(
                 extraction_stage.input_hook,
                 proj_dir,
             )
-        run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
+        run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True, specification=specification)
         if extraction_stage is not None and extraction_stage.output_hook is not None:
             run_plugin_hook(
                 plugin_config.name,
@@ -409,10 +431,10 @@ def run_pipeline(
     # Copy system_prompt.md to spec_prompts/system_prompt.md
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
     os.makedirs(spec_prompts_dir, exist_ok=True)
-    shutil.copy2(
-        os.path.join(script_dir, "md", "system_prompt.md"),
-        os.path.join(spec_prompts_dir, "system_prompt.md"),
-    )
+    system_prompt_source = Path(specification.prompts.system)
+    system_prompt_destination = Path(spec_prompts_dir) / "system_prompt.md"
+    if system_prompt_source.resolve() != system_prompt_destination.resolve():
+        shutil.copy2(system_prompt_source, system_prompt_destination)
 
     phases_path = os.path.join(work_dir, "phases.json")
     with open(phases_path, "r") as f:
@@ -446,10 +468,11 @@ def run_pipeline(
                 file_list_stage.input_hook,
                 proj_dir,
             )
-        file_list = collect_file_names(input_dir, file_list_path)
+        file_list = collect_file_names(input_dir, file_list_path, specification)
         if submodules:
             file_list = _write_file_names(
-                _get_all_phase_files(phases_data, input_dir), file_list_path
+                _get_all_phase_files(phases_data, input_dir, specification),
+                file_list_path,
             )
         if file_list_stage is not None and file_list_stage.output_hook is not None:
             run_plugin_hook(
@@ -490,7 +513,7 @@ def run_pipeline(
                 topdown_stage.input_hook,
                 proj_dir,
             )
-        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges, specification=specification)
         if topdown_stage is not None and topdown_stage.output_hook is not None:
             run_plugin_hook(
                 plugin_config.name,
@@ -501,7 +524,7 @@ def run_pipeline(
             )
 
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
-    if only_spec:
+    if only_spec or not specification.enable_reasoning:
         print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
     else:
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
@@ -541,11 +564,12 @@ def run_pipeline(
             bug_validator_path=bug_validator_path,
             validate_bugs=validate_bugs,
             all_bugs=all_bugs,
+            specification=specification,
         )
 
-    # Print confirmed bug count (skipped in only-spec mode, which runs no
-    # reasoning or bug validation, and when validation is explicitly disabled).
-    if not only_spec and validate_bugs:
+    # Print confirmed bug count only when reasoning and bug validation are
+    # both enabled for the active profile and invocation.
+    if not only_spec and validate_bugs and specification.enable_reasoning:
         if all_bugs:
             # A resumed run may find every function and candidate validation
             # already complete, so no watcher runs to refresh the persistent
@@ -568,7 +592,7 @@ def run_pipeline(
     except Exception as exc:
         logging.warning("[Pipeline] report.html generation skipped: %s", exc)
 
-    if only_spec:
+    if only_spec or not specification.enable_reasoning:
         print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
     else:
         print("[Pipeline] Done.")

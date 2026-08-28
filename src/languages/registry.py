@@ -79,18 +79,28 @@ def remove_comments_for_function(code: str, language: str | None) -> str | None:
     return handler.remove_comments(code)
 
 
-def batch_extract_all(proj_dir: str, include_unavailable: bool = False) -> tuple:
+def batch_extract_all(proj_dir: str, include_unavailable: bool = False, specification=None) -> tuple:
     """Call batch_extract for every registered language and merge results.
 
-    Returns (funcs, langs) where funcs is {abs_filepath: [(func_name, body)]}
-    and langs is the set of language keys that returned data. When
+    When ``specification`` contains a language filter, only those
+    already-registered language keys are dispatched. Returns (funcs, langs)
+    where funcs is
+    {abs_filepath: [(func_name, body)]} and langs is the set of language keys
+    that returned data. When
     ``include_unavailable`` is true, appends the set of languages whose
     semantic extraction backend failed.
     """
     funcs = {}
     langs = set()
     unavailable = set()
+    selected_languages = (
+        set(specification.languages)
+        if specification is not None and specification.languages is not None
+        else None
+    )
     for lang, handler in REGISTRY.items():
+        if selected_languages is not None and lang not in selected_languages:
+            continue
         result = handler.batch_extract(proj_dir)
         if result is None:
             unavailable.add(lang)

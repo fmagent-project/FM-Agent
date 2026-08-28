@@ -77,6 +77,46 @@ framework does not replace this argument with another internal path.
 `configure_function` is optional. A plugin may configure any subset of the
 supported stages.
 
+## Specification Profile (optional)
+
+A plugin may register one `SpecificationProfile` synchronously from `configure`.
+The common Pipeline keeps stage orchestration, LLM scheduling, retries, and
+traces; the Profile supplies two artifacts and four prompt resources. Profiles
+use the standard JSON spec/info contract by default; only non-JSON formats such
+as Markdown may customize `PromptContract`. Example:
+
+```python
+from src.specification import ArtifactPair, PromptBundle, SpecificationProfile, configure_specification
+from plugin_prompt_contract import MARKDOWN_PROMPT_CONTRACT
+
+
+def configure(proj_dir: str) -> None:
+    configure_specification(SpecificationProfile(
+        id="markdown", schema_version="V1",
+        artifacts=ArtifactPair(
+            self_suffix="_spec.md", dependency_suffix="_info.md",
+            append_to_filename=False,
+        ),
+        prompts=PromptBundle(
+            phase_plan="prompts/workflow_generate_phases.md",
+            domain_context="prompts/workflow_generate_domain_context.md",
+            system="prompts/system_prompt.md",
+            batch_workflow="prompts/workflow_spec_step4_batch.md",
+        ),
+        prompt_contract=MARKDOWN_PROMPT_CONTRACT,
+        languages=("python",),
+    ))
+```
+
+Relative `prompts/*` paths resolve against the plugin root. Exactly two artifacts
+are produced (`foo.py` maps to `foo_spec.md` and `foo_info.md` here). Custom
+Profiles default to `enable_reasoning=False`; readiness first requires both
+files to exist and be non-empty, then an optional `validator` may add checks.
+Validator failures use the normal Stage 6 retry path. `languages` only filters
+already registered languages and cannot add a parser. Profiles and Stage Hooks
+may be mixed without extra conflict diagnostics; custom Profiles do not enable
+software reasoning or provide correctness guarantees.
+
 ## Execution modes
 
 ### Pass
@@ -136,9 +176,12 @@ When a plugin is active, FM-Agent writes
 
 ```json
 {
-  "extra_edge": null
+  "extra_edge": null, "submodules": ["src"]
 }
 ```
+
+`submodules` is written only for `--submodule` and contains normalized
+project-relative paths.
 
 A configure hook can read it directly:
 
