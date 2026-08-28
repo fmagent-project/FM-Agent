@@ -141,7 +141,12 @@ def extract_callee_spec_from_info(
     callee_fqn: str,
     aliases: Optional[Sequence[str]] = None,
 ) -> Optional[dict]:
-    """Return the callee object matching the requested FQN or edge aliases."""
+    """Return the callee object matching the FQN or trusted edge aliases.
+
+    ``aliases`` must contain only names supplied by a supplemental edge's
+    ``callee.info_names``.  The matcher deliberately does not infer aliases
+    from the candidate entries in ``info_dict``.
+    """
     names = _callee_match_names(callee_fqn, aliases or ())
     callees = info_dict.get("callees", [])
     if not isinstance(callees, list):
@@ -185,10 +190,14 @@ def extract_callee_spec_from_info(
     for callee, _name, normalized_name, bare_name in named_callees:
         if not bare_name or bare_name_counts.get(bare_name.casefold(), 0) != 1:
             continue
-        if _is_qualified_name(normalized_name) and not _qualified_source_name_compatible(
-            normalized_name, callee_fqn
-        ):
-            continue
+        if _is_qualified_name(normalized_name):
+            # A source-qualified entry that failed the explicit FQN/alias
+            # passes must not be reduced to its final component: doing so can
+            # attach ``wrong::Class::method`` to ``src::Class::method``.
+            # ``self``/``this`` are receiver syntax, not namespaces; dotted
+            # member syntax is eligible only when its receiver names target.
+            if not _qualified_source_name_compatible(normalized_name, callee_fqn):
+                continue
         if _erlang_name_parts(normalized_name) and not _erlang_name_matches_fqn(
             normalized_name, callee_fqn
         ):
@@ -226,7 +235,19 @@ def _qualified_name_parts(name: str) -> List[str]:
 
 def _is_qualified_name(name: str) -> bool:
     """Return whether a source-level name contains a known qualifier."""
-    return bool(_QUALIFIED_NAME_SEPARATOR_RE.search(name))
+    angle_depth = 0
+    index = 0
+    while index < len(name):
+        char = name[index]
+        if char == "<":
+            angle_depth += 1
+        elif char == ">" and angle_depth:
+            angle_depth -= 1
+        elif angle_depth == 0:
+            if char == "." or name.startswith("::", index):
+                return True
+        index += 1
+    return False
 
 
 def _trailing_parenthesized_group(name: str) -> Optional[Tuple[str, str]]:
@@ -281,7 +302,23 @@ def _erlang_name_matches_fqn(info_name: str, callee_fqn: str) -> bool:
     fqn_parts = [part for part in callee_fqn.split("::") if part]
     if not parts or len(fqn_parts) < 2:
         return False
-    module, function, _arity = parts
+    module, function, arity = parts
+
+    # Erlang functions produced by the ELP adapter use an encoded final
+    # component: ``module__function__arity``.  Older metadata may instead
+    # expose ``module::function`` without an arity.  Compare arity whenever
+    # the FQN carries it, while retaining compatibility for the old form.
+    encoded = re.fullmatch(
+        r"(?P<module>[A-Za-z_][\w@]*)__(?P<function>[A-Za-z_][\w@]*)__(?P<arity>\d+)",
+        fqn_parts[-1],
+    )
+    if encoded:
+        return (
+            module.casefold() == encoded.group("module").casefold()
+            and function.casefold() == encoded.group("function").casefold()
+            and arity == int(encoded.group("arity"))
+        )
+
     return (
         module.casefold() == fqn_parts[-2].casefold()
         and function.casefold() == fqn_parts[-1].casefold()
@@ -299,7 +336,32 @@ def _bare_name_for_matching(name: str) -> str:
     if _is_qualified_name(name):
         parts = _qualified_name_parts(name)
         return _codegraph_source_component(parts[-1]) if parts else ""
-    return name.strip().split()[0] if name.strip() else ""
+    bare = name.strip().split()[0] if name.strip() else ""
+    # Template arguments decorate a function name but do not identify its
+    # callee for the safe bare fallback.  Canonicalizing here makes
+    # ``run<int>()`` and ``run<float>()`` collide instead of selecting the
+    # first entry based on incidental ordering.
+    if "<" in name:
+        # Look at the original spelling so spaces inside template arguments
+        # do not truncate the token before we canonicalize it.
+        template_start = name.find("<")
+        prefix = name[:template_start].strip()
+        if re.fullmatch(r"[A-Za-z_]\w*", prefix):
+            bare = prefix
+            return bare
+    if "<" in bare:
+        angle_depth = 0
+        end = None
+        for index, char in enumerate(bare):
+            if char == "<":
+                if angle_depth == 0:
+                    end = index
+                angle_depth += 1
+            elif char == ">" and angle_depth:
+                angle_depth -= 1
+        if end is not None and angle_depth == 0:
+            bare = bare[:end]
+    return bare
 
 
 def _codegraph_source_component(component: str) -> str:
@@ -382,6 +444,23 @@ def _normalized_source_name_parts(name: str) -> List[str]:
     # source decoration and must not be mistaken for that file marker.
     if _has_top_level_hyphen_before_final_component(name):
         return []
+    # Namespace separators inside template arguments do not qualify the
+    # function itself (for example, ``run<std::pair<int, float>>``).
+    angle_depth = 0
+    has_top_level_separator = False
+    index = 0
+    while index < len(name):
+        char = name[index]
+        if char == "<":
+            angle_depth += 1
+        elif char == ">" and angle_depth:
+            angle_depth -= 1
+        elif angle_depth == 0 and (char == "." or name.startswith("::", index)):
+            has_top_level_separator = True
+            break
+        index += 1
+    if not has_top_level_separator:
+        return []
     parts = _QUALIFIED_NAME_SEPARATOR_RE.split(name)
     if len(parts) <= 1 or any(not part.strip() for part in parts):
         return []
@@ -420,27 +499,27 @@ def _source_name_fqn_candidates(name: str) -> List[str]:
 
 
 def _qualified_source_name_compatible(name: str, callee_fqn: str) -> bool:
-    """Allow bare fallback only when a qualified spelling has a compatible suffix."""
+    """Allow only receiver/member spellings safe for bare fallback."""
+    parts = _qualified_name_parts(name)
+    if len(parts) == 2 and parts[0].strip().casefold() in {"self", "this"}:
+        return True
+
+    # Preserve the existing receiver/member spelling used by languages that
+    # write ``Engine.start`` while requiring its receiver to identify the same
+    # class as the target FQN.  This avoids treating arbitrary dotted names
+    # such as ``myself.run`` as pseudo-receivers.
     fqn_parts = [part for part in callee_fqn.split("::") if part]
-    for candidate in _source_name_fqn_candidates(name):
-        candidate_parts = [part for part in candidate.split("::") if part]
-        if len(candidate_parts) <= 1:
-            continue
-        candidate_tails = [candidate_parts]
-        # A pure C++ namespace prefix may be absent from CodeGraph's FQN. Do
-        # not apply this relaxation to dot-prefixed source names such as
-        # ``pkg.Class::method`` where dropping ``pkg`` changes the meaning.
-        if "." not in name:
-            candidate_tails.extend(
-                candidate_parts[start:]
-                for start in range(1, len(candidate_parts) - 1)
-            )
-        for tail in candidate_tails:
-            if len(tail) <= len(fqn_parts) and all(
-                left.casefold() == right.casefold()
-                for left, right in zip(fqn_parts[-len(tail) :], tail)
-            ):
-                return True
+    if (
+        len(parts) == 2
+        and len(fqn_parts) >= 2
+        and parts[0].strip().casefold() == fqn_parts[-2].casefold()
+        and parts[1].strip().casefold() == fqn_parts[-1].casefold()
+    ):
+        return True
+
+    # Qualified names have already had an exact/normalized suffix comparison
+    # opportunity.  Never trim arbitrary namespace components during the bare
+    # fallback: a shared tail is not evidence that the qualifiers agree.
     return False
 
 

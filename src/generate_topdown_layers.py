@@ -467,6 +467,8 @@ def _add_resolved_extra_edge(
 
     before = len(all_callees_map[caller_fqn])
     all_callees_map[caller_fqn].add(callee_fqn)
+    # Preserve only the explicit aliases supplied by this supplemental edge;
+    # the prompt matcher treats these as trusted evidence for qualified names.
     edge_aliases_map[callee_fqn][caller_fqn].update(edge.info_names)
 
     if callee_fqn in phase_fqns:
