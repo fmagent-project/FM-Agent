@@ -37,6 +37,8 @@ COMMENT_PREFIX_BY_LANG = {
     "cpp": "//",
     "cxx": "//",
     "cc": "//",
+    "chisel": "//",
+    "verilog": "//",
     "java": "//",
     "go": "//",
     "rust": "//",
@@ -65,17 +67,43 @@ _ERLANG_NAME_RE = re.compile(
 logger = logging.getLogger(__name__)
 
 
+def extension_language_map(
+    languages: Sequence[str],
+    file_extensions: Sequence[str],
+) -> dict[str, str]:
+    """Map phase-plan extensions to languages without silent truncation.
+
+    A single configured language may own multiple extensions, such as Chisel
+    owning scala and sc or Verilog owning v, sv and svh. When more than one
+    language is configured, retain positional mapping but reject ambiguity.
+    """
+    normalized_extensions = [
+        extension.lower().lstrip(".") for extension in file_extensions
+    ]
+    if len(languages) == 1:
+        return {
+            extension: languages[0]
+            for extension in normalized_extensions
+        }
+    if len(languages) > 1 and len(languages) != len(normalized_extensions):
+        raise ValueError(
+            "phases.json languages and file_extensions must have equal lengths "
+            "when more than one language is configured"
+        )
+    return dict(zip(normalized_extensions, languages))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate spec batch prompts for one phase/layer range.")
     parser.add_argument("--phase", type=int, required=True, help="Phase number, e.g. 3")
     parser.add_argument("--layers", required=True, help="Layer index or inclusive range, e.g. 0 or 0-5")
-    parser.add_argument("--batch-size", type=int, default=2, help="Functions per prompt file")
+    parser.add_argument("--batch-size", type=int, default=2, help="Units per prompt file")
     parser.add_argument("--output-dir", default=None, help="Output directory for batch prompt files")
     parser.add_argument("--dry-run", action="store_true", help="Show plan without writing files")
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip functions already specced (file_utils.is_file_ready) when building batches",
+        help="Skip units already specced (file_utils.is_file_ready) when building batches",
     )
     return parser.parse_args()
 
@@ -693,7 +721,7 @@ def build_prompt(
             lines.append(f"- {path}")
     lines.append("")
     lines.append("## KEY RULES")
-    lines.append("- Describe WHAT the function guarantees, NOT HOW it implements it")
+    lines.append("- Describe WHAT each extracted unit guarantees, NOT HOW it implements it")
     lines.append("- Do NOT name internal helper calls, loop structure, or data layout decisions")
     lines.append("- Do NOT enumerate members of sets - describe the GOVERNING RULE")
     lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
@@ -752,18 +780,18 @@ def build_prompt(
 
     if is_cycle:
         lines.append("## CYCLE LAYER GUIDANCE")
-        lines.append("These functions call each other (mutual recursion / circular dependencies).")
+        lines.append("These units call each other (mutual recursion / circular dependencies).")
         lines.append(
             'Ask: "What is true after this function returns, regardless of which caller invoked it and which code path executed?" '
             "That invariant is your post-condition."
         )
         lines.append("")
-        lines.append("DISPATCH FUNCTION TEST: If your spec has N bullets where N equals the number")
+        lines.append("DISPATCH UNIT TEST: If your spec has N bullets where N equals the number")
         lines.append("of switch arms / dispatch cases, you are transcribing the implementation.")
         lines.append("A dispatch function's contract is the invariant that holds ACROSS ALL cases.")
         lines.append("")
 
-    lines.append(f"## FUNCTIONS ({len(functions)} total - process ALL)")
+    lines.append(f"## UNITS ({len(functions)} total - process ALL)")
     for idx, fn in enumerate(functions, start=1):
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
@@ -811,7 +839,7 @@ def generate_batch_prompts(
     project = phases_json["project"]
     languages = phases_json.get("languages", [])
     exts = phases_json.get("file_extensions", [])
-    ext_to_lang = {ext.lower().lstrip("."): lang for ext, lang in zip(exts, languages)}
+    ext_to_lang = extension_language_map(languages, exts)
 
     topdown_path = work_dir / "spec_prompts" / f"phase_{phase:02d}_topdown_layers.json"
     topdown = read_json(topdown_path)

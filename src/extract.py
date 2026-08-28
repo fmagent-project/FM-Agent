@@ -144,6 +144,35 @@ LANG_CONFIG = {
         },
         "body": "brace",
     },
+    "chisel": {
+        "comment_prefix": "//",
+        "skip_prefixes": ("//", "/*", "*", "package", "import"),
+        "skip_keywords_line": (),
+        "keywords": {
+            "abstract", "case", "catch", "class", "def", "do", "else",
+            "extends", "final", "finally", "for", "if", "implicit",
+            "import", "lazy", "match", "new", "object", "override",
+            "package", "private", "protected", "return", "sealed",
+            "super", "this", "throw", "trait", "try", "type", "val",
+            "var", "while", "with", "yield",
+        },
+        "body": "external",
+    },
+    "verilog": {
+        "comment_prefix": "//",
+        "skip_prefixes": ("//", "/*", "*", "`"),
+        "skip_keywords_line": (),
+        "keywords": {
+            "always", "always_comb", "always_ff", "always_latch", "and",
+            "assign", "begin", "buf", "case", "do", "else", "end",
+            "endcase", "endfunction", "endgenerate", "endmodule",
+            "endpackage", "endtask", "for", "forever", "function",
+            "generate", "if", "initial", "module", "nand", "nor", "not",
+            "or", "package", "parameter", "primitive", "repeat", "task",
+            "wait", "while", "xnor", "xor",
+        },
+        "body": "external",
+    },
 }
 
 # Map file extensions to language keys
@@ -158,6 +187,8 @@ EXT_TO_LANG = {
     "js": "javascript", "jsx": "javascript",
     "cu": "cuda", "cuh": "cuda",
     "ets": "arkts",
+    "scala": "chisel", "sc": "chisel",
+    "v": "verilog", "sv": "verilog", "svh": "verilog",
 }
 
 # ---------------------------------------------------------------------------
@@ -738,7 +769,7 @@ def run_extraction(
             continue
 
         # Detect language from file extension
-        ext = src_rel.rsplit('.', 1)[-1] if '.' in src_rel else ''
+        ext = src_rel.rsplit('.', 1)[-1].lower() if '.' in src_rel else ''
         lang_key = EXT_TO_LANG.get(ext)
         if not lang_key:
             logging.warning(f"Unsupported file extension '.{ext}' for {src_rel}, skipping.")
@@ -845,7 +876,7 @@ def _validate_extraction(extracted_dir, registry_langs=None):
     failures = []
     for root, _, files in os.walk(extracted_dir):
         for fname in files:
-            ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
+            ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
             lang_key = EXT_TO_LANG.get(ext)
             if not lang_key:
                 continue

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from config import MAX_WORKERS, OPENCODE_MAX_RETRIES, OPENCODE_SPEC_MODEL
 from src.domain_knowledge import list_staged_domain_knowledge_relpaths
-from src.file_utils import _get_incomplete_verification_files, _get_phase_files, is_file_ready
+from src.file_utils import _get_incomplete_verification_files, _get_phase_files
 from src.generate_batch_prompts import generate_batch_prompts
 from src.generate_topdown_layers import generate_topdown_layers
 from src.llm_client import build_llm_cli_command
@@ -22,13 +22,68 @@ from src.specification import GenerationPromptContext, SOFTWARE_PROFILE, Specifi
 from src.verification import streaming_reasoner
 
 
-def _get_pending_batches(batches, proj_dir, specification: SpecificationProfile = SOFTWARE_PROFILE):
-    """Return batches that still have at least one function without specs."""
+def _canonical_path(path) -> str:
+    """Return a stable absolute key for paths from manifests and top-down JSON."""
+    return os.path.normcase(os.path.realpath(os.fspath(path)))
+
+
+def _build_expected_dependencies_by_file(layers_data, work_dir):
+    """Build extracted-unit path -> direct dependency FQN metadata.
+
+    Top-down files are normally relative to `work_dir` and therefore begin
+    with `extracted_functions/`. Older/generated metadata may include the
+    `fm_agent/` prefix; accept both forms so validation is independent of
+    how the batch manifest spelled the same file.
+    """
+    work_dir = Path(work_dir)
+    work_prefix = f"{work_dir.name}/"
+    expected_by_file = {}
+    for layer in layers_data.get("layers", []):
+        if not isinstance(layer, dict):
+            continue
+        for unit in layer.get("functions", []):
+            if not isinstance(unit, dict):
+                continue
+            relative_file = unit.get("file")
+            if not isinstance(relative_file, str) or not relative_file:
+                continue
+            relative_file = relative_file.replace("\\", "/")
+            if relative_file.startswith(work_prefix):
+                relative_file = relative_file[len(work_prefix):]
+            unit_path = Path(relative_file)
+            if not unit_path.is_absolute():
+                unit_path = work_dir / unit_path
+
+            raw_dependencies = unit.get("all_callees", ())
+            if not isinstance(raw_dependencies, (list, tuple, set)):
+                raw_dependencies = ()
+            dependencies = {
+                dependency
+                for dependency in raw_dependencies
+                if isinstance(dependency, str) and dependency
+            }
+            path_key = _canonical_path(unit_path)
+            dependencies.update(expected_by_file.get(path_key, ()))
+            expected_by_file[path_key] = tuple(sorted(dependencies))
+    return expected_by_file
+
+
+def _expected_dependencies_for_file(file_path, expected_dependencies_by_file):
+    if not expected_dependencies_by_file:
+        return ()
+    return expected_dependencies_by_file.get(_canonical_path(file_path), ())
+
+
+def _get_pending_batches(batches, proj_dir, specification: SpecificationProfile = SOFTWARE_PROFILE, expected_dependencies_by_file=None):
+    """Return batches that still have at least one unit without specs."""
     pending = []
     for batch in batches:
         for func_rel in batch.get("functions", []):
             full_path = os.path.join(proj_dir, func_rel)
-            validation = specification.validate(Path(full_path))
+            validation = specification.validate(
+                Path(full_path),
+                expected_dependencies=_expected_dependencies_for_file(full_path, expected_dependencies_by_file),
+            )
             if validation.warnings:
                 for warning in validation.warnings:
                     logging.warning(
@@ -55,6 +110,7 @@ def _run_spec_generation_batch(
     batch_rel_dir,
     batch_info,
     specification: SpecificationProfile = SOFTWARE_PROFILE,
+    expected_dependencies_by_file=None,
 ):
     # Run one batch end-to-end so the executor can refill slots as soon as a
     # batch finishes, instead of waiting for a whole chunk barrier.
@@ -71,7 +127,8 @@ def _run_spec_generation_batch(
     if attempt > 1:
         for function_file in function_files:
             validation = specification.validate(
-                Path(proj_dir) / function_file
+                Path(proj_dir) / function_file,
+                _expected_dependencies_for_file(Path(proj_dir) / function_file, expected_dependencies_by_file)
             )
             if not validation.ready:
                 details = "; ".join(validation.errors) or "artifact validation failed"
@@ -171,6 +228,7 @@ def run_spec_generation_and_verification(
             generate_topdown_layers(work_dir, [phase_num], extra_call_edges, specification)
         with open(layers_json_path, "r") as f:
             layers_data = json.load(f)
+        expected_dependencies_by_file = _build_expected_dependencies_by_file(layers_data, work_dir)
         total_layers = layers_data.get("total_layers", 1)
 
         batch_dir = os.path.join(
@@ -210,7 +268,7 @@ def run_spec_generation_and_verification(
 
             for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
                 # Find batches with unspecced functions
-                pending_batches = _get_pending_batches(all_batches, proj_dir, specification)
+                pending_batches = _get_pending_batches(all_batches, proj_dir, specification, expected_dependencies_by_file)
                 if not pending_batches:
                     # All functions in this layer are specced. In only-spec mode
                     # we stop here without running the reasoner/bug validation.
@@ -270,6 +328,7 @@ def run_spec_generation_and_verification(
                                 batch_rel_dir,
                                 batch_info,
                                 specification,
+                                expected_dependencies_by_file,
                             )
                         )
 
@@ -301,9 +360,12 @@ def run_spec_generation_and_verification(
                 # Check if any files in this layer received specs
                 specs_generated = sum(
                     1 for rel in layer_files
-                    if is_file_ready(os.path.join(input_dir, rel), specification)
+                    if specification.validate(
+                        Path(input_dir) / rel,
+                        expected_dependencies=_expected_dependencies_for_file(Path(input_dir) / rel, expected_dependencies_by_file)
+                    ).ready
                 )
-                if specs_generated > 0 and not _get_pending_batches(all_batches, proj_dir, specification):
+                if specs_generated > 0 and not _get_pending_batches(all_batches, proj_dir, specification, expected_dependencies_by_file):
                     break
 
                 if specs_generated > 0:

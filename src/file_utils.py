@@ -494,7 +494,7 @@ def _iter_project_source_files(proj_dir, submodules=None, specification=None):
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
                        {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
             for fname in files:
-                ext = fname.rsplit('.', 1)[-1] if '.' in fname else ''
+                ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
                 if ext not in source_exts:
                     continue
                 rel = os.path.relpath(os.path.join(root, fname), proj_dir)

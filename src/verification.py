@@ -94,7 +94,7 @@ def streaming_reasoner(
     if file_list is not None:
         expected_files = set(
             os.path.join(input_dir, rel) for rel in file_list
-            if os.path.splitext(rel)[1] in EXT_TO_LANG
+            if os.path.splitext(rel)[1].lower() in EXT_TO_LANG
         )
     else:
         expected_files = None
@@ -114,7 +114,7 @@ def streaming_reasoner(
         num_functions = sum(
             1 for root, _, files in os.walk(input_dir)
             for fname in files
-            if os.path.splitext(fname)[1] in EXT_TO_LANG
+            if os.path.splitext(fname)[1].lower() in EXT_TO_LANG
         )
         print(f"Functions pending verification: {num_functions}")
 
@@ -142,7 +142,7 @@ def streaming_reasoner(
                 # Scan for new ready files
                 for root, _, files in os.walk(input_dir):
                     for fname in files:
-                        ext = os.path.splitext(fname)[1]
+                        ext = os.path.splitext(fname)[1].lower()
                         if ext not in EXT_TO_LANG:
                             continue
                         file_path = os.path.join(root, fname)
@@ -299,7 +299,7 @@ def streaming_reasoner(
                     # last regular scan, so check remaining expected files once more.
                     newly_ready = False
                     for file_path in (expected_files or set()) - processed - submitted - failed:
-                        ext = os.path.splitext(file_path)[1]
+                        ext = os.path.splitext(file_path)[1].lower()
                         if ext not in EXT_TO_LANG:
                             continue
                         if not is_file_ready(file_path, specification):
