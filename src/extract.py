@@ -754,6 +754,7 @@ def run_extraction(
     output_base = os.path.join(work_dir, "extracted_functions")
     written = 0
     skipped = 0
+    handled_empty = 0
     errors = []
 
     for src_rel in source_files:
@@ -790,12 +791,17 @@ def run_extraction(
         out_dir = os.path.join(output_base, src_dir, dir_name) if src_dir else os.path.join(output_base, dir_name)
 
         registry_key = os.path.normcase(os.path.normpath(src_path))
-        if registry_key in registry_funcs:
+        handled_by_registry = registry_key in registry_funcs
+        if handled_by_registry:
             funcs = registry_funcs[registry_key]
         else:
             funcs = extract_functions_from_file(src_path, lang_key)
         if not funcs:
-            logging.warning(f"No functions extracted from {src_rel}")
+            if handled_by_registry:
+                handled_empty += 1
+                logging.info(f"No analysis units in handled source file {src_rel}")
+            else:
+                logging.warning(f"No functions extracted from {src_rel}")
             continue
 
         os.makedirs(out_dir, exist_ok=True)
@@ -834,7 +840,10 @@ def run_extraction(
     print(f"Extraction complete: {written} written, {skipped} skipped.")
 
     if written == 0 and skipped == 0:
-        logging.error("Nothing was extracted — check phases.json source_files paths.")
+        if handled_empty:
+            logging.info(f"Extraction completed with {handled_empty} handled source file(s) containing no analysis units.")
+        else:
+            logging.error("Nothing was extracted — check phases.json source_files paths.")
         return (
             (written, skipped, unavailable_backends)
             if return_unavailable_backends else (written, skipped)

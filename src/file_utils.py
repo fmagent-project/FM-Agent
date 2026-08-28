@@ -1,6 +1,9 @@
 import json
 import os
 import re
+from pathlib import Path
+
+from .languages.hardware import is_excluded_source_directory
 
 
 _METADATA_SIDECAR_SUFFIXES = (".spec.json", ".info.json")
@@ -169,6 +172,17 @@ _TEST_FILE_PATTERNS = [
     re.compile(r'^.*\.test\.(?:ets)$'),    # ArkTS: foo.test.ets
     re.compile(r'^.*_(?:SUITE|tests?)\.erl$'),  # Erlang: Common Test / EUnit
 ]
+
+_CHISEL_TEST_FILE_PATTERN = re.compile(
+    r"^.*(?:Spec|Test|Tester)\.(?:scala|sc)$",
+    re.IGNORECASE,
+)
+_VERILOG_TEST_FILE_PATTERN = re.compile(
+    r"^(?:tb_.+|testbench(?:_.+)?|.+_(?:tb|test|testbench))"
+    r"\.(?:v|sv|svh)$",
+    re.IGNORECASE,
+)
+_VERILOG_TEST_DIR_NAMES = frozenset({"tb", "sim", "testbench"})
 
 
 # Project-relative paths that must never be treated as test files, even when
@@ -491,8 +505,7 @@ def _iter_project_source_files(proj_dir, submodules=None, specification=None):
     for scan_root in scan_roots:
         for root, dirs, files in os.walk(scan_root):
             # Skip hidden dirs and common non-source dirs
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
-                       {'node_modules', '__pycache__', 'venv', '.venv', 'fm_agent'}]
+            dirs[:] = [d for d in dirs if not is_excluded_source_directory(d)]
             for fname in files:
                 ext = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
                 if ext not in source_exts:
@@ -520,6 +533,23 @@ def _is_test_file(rel_path):
     for part in parts[:-1]:
         if part.lower() in _TEST_DIR_NAMES:
             return True
+    extension = Path(parts[-1]).suffix.lower()
+    if extension in {".scala", ".sc"}:
+        lower_parts = [part.lower() for part in parts[:-1]]
+        in_main_source_tree = any(
+            lower_parts[index:index + 2] == ["src", "main"]
+            for index in range(len(lower_parts) - 1)
+        )
+        if in_main_source_tree:
+            return False
+        return bool(_CHISEL_TEST_FILE_PATTERN.match(parts[-1]))
+    if extension in {".v", ".sv", ".svh"}:
+        if any(
+            part.lower() in _VERILOG_TEST_DIR_NAMES
+            for part in parts[:-1]
+        ):
+            return True
+        return bool(_VERILOG_TEST_FILE_PATTERN.match(parts[-1]))
     # Check filename against test patterns
     basename = parts[-1]
     for pat in _TEST_FILE_PATTERNS:
