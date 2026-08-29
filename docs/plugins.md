@@ -87,7 +87,6 @@ as Markdown may customize `PromptContract`. Example:
 
 ```python
 from src.specification import ArtifactPair, PromptBundle, SpecificationProfile, configure_specification
-from plugin_prompt_contract import MARKDOWN_PROMPT_CONTRACT
 
 
 def configure(proj_dir: str) -> None:
@@ -103,7 +102,7 @@ def configure(proj_dir: str) -> None:
             system="prompts/system_prompt.md",
             batch_workflow="prompts/workflow_spec_step4_batch.md",
         ),
-        prompt_contract=MARKDOWN_PROMPT_CONTRACT,
+        prompt_contract=MARKDOWN_PROMPT_CONTRACT,  # implemented by this plugin
         languages=("python",),
     ))
 ```
@@ -116,6 +115,38 @@ Validator failures use the normal Stage 6 retry path. `languages` only filters
 already registered languages and cannot add a parser. Profiles and Stage Hooks
 may be mixed without extra conflict diagnostics; custom Profiles do not enable
 software reasoning or provide correctness guarantees.
+
+## Built-in chip plugin
+
+The built-in `chip` plugin selects one hardware Profile during `configure` and
+uses the common Stage 1–6 Pipeline. Its manifest has `stages: {}`.
+
+```bash
+uv run python main.py <proj_dir> --plugin chip
+```
+
+The Profile is selected from the source scope used by the run:
+
+| Dialect | Extensions | Profile |
+| --- | --- | --- |
+| Chisel | `.scala`, `.sc` | `chip-chisel` |
+| Verilog/SystemVerilog | `.v`, `.sv`, `.svh` | `chip-verilog` |
+
+Chisel wins when both dialects are present, with a warning; otherwise Verilog
+is selected when its extensions are in scope. Use a narrower `proj_dir` or
+`--submodule` scope for a hardware subtree.
+
+Chisel uses source analysis by default and optionally CIRCT via
+`FM_AGENT_CHISEL_CIRCT_INPUT`; Verilog prefers `verible-verilog-syntax` and
+otherwise uses its source fallback. See
+[`tools/chisel-circt/README.md`](../tools/chisel-circt/README.md) for setup.
+
+Each extracted module produces sibling `<Module>_spec.md` and
+`<Module>_info.md` artifacts under `fm_agent/extracted_functions/`. The first
+contains the FG/FC/CK tree and `<FG-API>`; the second contains direct-submodule
+expectations. Missing known dependency coverage is advisory for Chisel and
+blocking for Verilog. Chip Profiles disable software reasoning and bug
+validation.
 
 ## Execution modes
 

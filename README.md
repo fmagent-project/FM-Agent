@@ -21,6 +21,7 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 
 ## Table of Contents
 
+- [FM-Agent: Scaling Formal Methods to Large Systems via LLM-Based Hoare-Style Reasoning](#fm-agent-scaling-formal-methods-to-large-systems-via-llm-based-hoare-style-reasoning)
   - [Table of Contents](#table-of-contents)
   - [File Structure](#file-structure)
   - [Environment Setup](#environment-setup)
@@ -28,7 +29,16 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
       - [Tested macOS Environment](#tested-macos-environment)
     - [Install Dependencies](#install-dependencies)
   - [Configuration](#configuration)
+    - [Structured Trace](#structured-trace)
   - [Quick Start](#quick-start)
+    - [Pipeline plugins](#pipeline-plugins)
+    - [Chip plugin](#chip-plugin)
+    - [Pre-run estimate](#pre-run-estimate)
+    - [Incremental Mode](#incremental-mode)
+    - [Live Dashboard](#live-dashboard)
+    - [Output](#output)
+      - [Bug Reports (`fm_agent/bug_validation/<bug_id>.md`)](#bug-reports-fm_agentbug_validationbug_idmd)
+      - [Interactive Report Index (`fm_agent/report.html`)](#interactive-report-index-fm_agentreporthtml)
   - [Important Notes](#important-notes)
   - [Citation](#citation)
   - [Contact](#contact)
@@ -153,6 +163,14 @@ Erlang support is optional because its toolchain is not needed for other languag
 
 The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
 
+Chisel projects can use the built-in `chip` plugin with source analysis alone. Direct elaborated-module analysis through CIRCT is optional; install the pinned `firtool` and matching FM-Agent pass plugin with:
+
+```bash
+./install.sh --with-chisel
+```
+
+The CIRCT checkout and build can be large and are not required for Verilog or for Chisel source fallback. See [`tools/chisel-circt/README.md`](tools/chisel-circt/README.md) for the build and environment-variable contract.
+
 FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so
 you do not need to hand-edit `~/.config/opencode/opencode.json` for the model
 or key. The configuration wizard above can still keep that file synchronized for
@@ -234,6 +252,16 @@ def hook(proj_dir: str) -> None:
 
 See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
 configuration, execution modes, lifecycle, and trust boundary.
+
+### Chip plugin
+
+The built-in `chip` plugin runs the common Stage 1–6 Pipeline with a detected Chisel or Verilog Profile:
+
+```bash
+uv run python main.py <proj_dir> --plugin chip
+```
+
+It selects Chisel when `.scala`/`.sc` files are in scope and selects Verilog/SystemVerilog (`.v`/`.sv`/`.svh`) only when no Chisel source is present. Mixed scopes produce a warning and process only Chisel. Use a narrower `proj_dir` or `--submodule` to select the intended hardware subtree. Each extracted module produces adjacent `<Module>_spec.md` and `<Module>_info.md` files under `fm_agent/extracted_functions/`; chip Profiles disable software reasoning and bug validation. CIRCT, Verible, fallback behavior, and validation are documented in [Pipeline Plugins](docs/plugins.md#built-in-chip-plugin).
 
 `proj_dir` must be a git repository.
 

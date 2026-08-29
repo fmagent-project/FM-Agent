@@ -82,7 +82,6 @@ def hook(proj_dir: str) -> None:
 
 ```python
 from src.specification import ArtifactPair, PromptBundle, SpecificationProfile, configure_specification
-from plugin_prompt_contract import MARKDOWN_PROMPT_CONTRACT
 
 
 def configure(proj_dir: str) -> None:
@@ -98,7 +97,7 @@ def configure(proj_dir: str) -> None:
             system="prompts/system_prompt.md",
             batch_workflow="prompts/workflow_spec_step4_batch.md",
         ),
-        prompt_contract=MARKDOWN_PROMPT_CONTRACT,
+        prompt_contract=MARKDOWN_PROMPT_CONTRACT,  # 由插件自行实现
         languages=("python",),
     ))
 ```
@@ -108,6 +107,34 @@ def configure(proj_dir: str) -> None:
 先要求两个文件存在且非空，再调用可选 `validator`。校验失败沿用 Stage 6 retry。`languages`
 只能筛选已注册语言，不能新增 parser。Profile 与 Stage Hook 可混用且不额外做冲突检测；
 自定义 Profile 不启用 software reasoning，也不提供正确性保障。
+
+## 内置 chip 插件
+
+内置 `chip` 插件在 `configure` 中选择一个硬件 Profile，随后使用公共 Stage 1–6
+Pipeline。它的 manifest 使用 `stages: {}`。
+
+```bash
+uv run python main.py <proj_dir> --plugin chip
+```
+
+插件根据本次运行的 source scope 选择 Profile：
+
+| 方言 | 扩展名 | Profile |
+| --- | --- | --- |
+| Chisel | `.scala`、`.sc` | `chip-chisel` |
+| Verilog/SystemVerilog | `.v`、`.sv`、`.svh` | `chip-verilog` |
+
+两类方言同时存在时优先选择 Chisel 并输出 warning；否则在范围内存在 Verilog 扩展名时
+选择 Verilog。若仓库包含无关硬件代码，请使用更窄的 `proj_dir` 或 `--submodule`。
+
+Chisel 默认使用源码分析，也可通过 `FM_AGENT_CHISEL_CIRCT_INPUT` 使用 CIRCT；Verilog
+优先使用 `verible-verilog-syntax`，否则使用源码 fallback。工具配置见
+[`tools/chisel-circt/README.md`](../tools/chisel-circt/README.md)。
+
+每个提取出的 module 会在 `fm_agent/extracted_functions/` 下生成相邻的
+`<Module>_spec.md` 和 `<Module>_info.md`。前者包含 FG/FC/CK 树和 `<FG-API>`，后者记录
+直接 submodule 的要求。已知依赖 coverage 缺失时，Chisel 是 advisory，Verilog 会阻塞
+通过。chip Profile 不启用 software reasoning 和 Bug Validation。
 
 ## 执行模式
 

@@ -128,6 +128,14 @@ Erlang 工具链不影响其他语言，因此默认不安装。如需自动安�
 
 该选项在 macOS 上使用 Homebrew；在 Ubuntu 上，当系统 OTP 缺失或版本过低时使用 RabbitMQ Team Erlang PPA。Ubuntu 配置已使用 Erlang/OTP 26+ 验证；macOS Erlang 配置尚未测试，将使用 Homebrew 选择的当前公式版本。Linux 下的 rebar3 和 ELP 会安装到 `~/.local/bin`，请确保新终端的 `PATH` 包含该目录。你也可以手动安装这些工具，确认 `rebar3 version` 和 `elp version` 可执行，并在需要时将 `ELP_COMMAND` 设置为 ELP 的绝对路径。
 
+Chisel 项目可以仅使用源码分析运行内置 `chip` 插件。基于 elaborated module 的 CIRCT 分析是可选能力；如需安装固定版本的 `firtool` 和匹配的 FM-Agent pass plugin，运行：
+
+```bash
+./install.sh --with-chisel
+```
+
+CIRCT checkout 和构建体积可能较大；Verilog 以及 Chisel source fallback 都不依赖它。构建方式和环境变量契约见 [`tools/chisel-circt/README.md`](tools/chisel-circt/README.md)。
+
 FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无需手动编辑 `~/.config/opencode/opencode.json` 来设置模型或密钥。上面的配置向导仍然可以把该文件同步好，并把 API 密钥写入用户状态/配置目录下按 provider 区分的私有本地文件，方便独立使用 OpenCode（见 [docs/config_llm.md](docs/config_llm.md)）。
 如果你已经设置了 `OPENCODE_CONFIG`，向导会优先更新那个文件，而不是默认的全局路径。若未设置该变量但设置了 `OPENCODE_CONFIG_DIR`，向导会更新该目录中的 `opencode.jsonc`（存在时）或 `opencode.json`。
 
@@ -183,6 +191,16 @@ def hook(proj_dir: str) -> None:
 
 插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
 [Pipeline 插件](docs/plugins_zh.md)。
+
+### Chip 插件
+
+内置 `chip` 插件通过检测到的 Chisel 或 Verilog Profile 运行公共 Stage 1–6 Pipeline：
+
+```bash
+uv run python main.py <proj_dir> --plugin chip
+```
+
+范围内存在 `.scala`/`.sc` 时选择 Chisel；只有不存在 Chisel 源文件时才选择 Verilog/SystemVerilog（`.v`/`.sv`/`.svh`）。混合范围会输出 warning，并只处理 Chisel。若要选择特定硬件子树，请缩小 `proj_dir` 或使用 `--submodule`。每个提取 module 会在 `fm_agent/extracted_functions/` 下生成相邻的 `<Module>_spec.md` 和 `<Module>_info.md`；chip Profile 不启用 software reasoning 和 Bug Validation。CIRCT、Verible、fallback 和校验规则见 [Pipeline 插件](docs/plugins_zh.md#内置-chip-插件)。
 
 `proj_dir` 必须是一个 git 仓库。
 
