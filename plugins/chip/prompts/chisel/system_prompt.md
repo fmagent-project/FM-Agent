@@ -21,6 +21,10 @@ canonicalized or deduplicated.
   observable effect on ports, widths, capacity, topology, or supported features;
   do not present them as runtime clocked behavior.
 - Preserve exact port, Bundle field, parameter, and declared submodule names.
+- Treat a Chisel Bundle, trait, or base type that is directly used by the
+  target as dependency context even when it has no standalone artifact. Its
+  fields, inherited parameters, and width expressions may be required to
+  explain the target interface or the caller's dependency contract.
 - Expand verification-relevant `Bundle`, `Vec`, `Decoupled`, `Valid`, enum, and
   nested interface fields. State direction, width/type, and handshake meaning
   only when supported by the source or domain context.
@@ -98,6 +102,17 @@ Example shape:
   occurs and request information remains stable as required by the interface.
 ```
 
+## Dependency versus artifact boundary
+
+The standalone artifact boundary is narrower than the Chisel dependency
+boundary. A declaration without `val io` is context-only: do not write its own
+`_spec.md` or `_info.md`, but do not erase it from a parent module's dependency
+analysis. When the parent directly instantiates, exchanges, extends, or mixes
+in a Chisel declaration, describe the guarantee the parent requires under a
+`# Submodule: <ExactDeclaredName>` entry. External declarations that are not
+available in the extracted scope should be identified as external and kept
+qualified with `TBD` details rather than invented.
+
 ## `<ExtractedStem>_info.md`
 
 This document is caller-driven: derive each entry from how the parent drives,
@@ -111,9 +126,12 @@ Start every direct dependency with exactly:
 ```
 
 Under the heading, state the interface, timing, reset, protocol, ordering, and
-data guarantees the parent requires. Use the declared Chisel module name, not an
-instance variable name or a file-qualified graph identifier. Include each known
-direct submodule once even when it is instantiated multiple times.
+data guarantees the parent requires. For Chisel, a direct dependency may be a
+hardware module, a Bundle exchanged through an interface, or a trait/base type
+whose parameters or fields affect the target. Use the declared Chisel name, not
+an instance variable name or a file-qualified graph identifier. Include each
+known direct dependency once even when it is instantiated multiple times. A
+context-only dependency may appear here without receiving standalone artifacts.
 
 If the module has no known direct submodules, write the exact marker
 `(no submodules)` and do not add a `# Submodule:` entry. Never combine the leaf
@@ -127,6 +145,10 @@ Before finishing each module, confirm that:
 1. Both sibling Markdown artifacts exist and the extracted source is unchanged.
 2. The spec contains `<FG-API>` and every FG contains an FC with at least one CK.
 3. Port, Bundle field, parameter, clock/reset, and protocol claims are supported.
-4. Every known direct submodule has one non-empty `# Submodule:` entry, or the
-   module is explicitly marked `(no submodules)`.
-5. Both documents are entirely in English.
+4. Every known direct Chisel dependency has one non-empty `# Submodule:` entry,
+   or the module is explicitly marked `(no submodules)` when no dependency is
+   known. This includes directly consumed context-only Bundle/trait/base types.
+5. Cover each applicable behavior with falsifiable normal, boundary, conflict,
+   reset/flush/replay, latency/backpressure, and error cases without inventing
+   unsupported cases.
+6. Both documents are entirely in English.

@@ -33,7 +33,8 @@ class HardwarePromptContract:
             "must have a non-empty matching section; missing coverage is an error."
             if self.dialect == "verilog"
             else
-            "For Chisel, include every known direct module dependency; missing "
+            "For Chisel, include every known direct dependency used by the target, "
+            "including directly consumed Bundle/trait/base-type context; missing "
             "coverage is advisory and must not be replaced by an invented dependency."
         )
         dialect_rules = (
@@ -44,7 +45,12 @@ class HardwarePromptContract:
                 "fields only when their names, types, directions, or meanings are "
                 "supported by the source or domain context.",
                 "Keep ordinary Scala classes, objects, traits, parameters, and helpers "
-                "as context rather than independent hardware modules.",
+                "as context rather than independent hardware modules; directly "
+                "consumed Chisel Bundle/trait/base declarations may still appear "
+                "in the caller-driven dependency-info document.",
+                "For each applicable behavior, cover falsifiable normal, boundary, "
+                "conflict, reset/flush/replay, latency/backpressure, and error cases "
+                "without inventing unsupported cases.",
             )
             if self.dialect == "chisel"
             else

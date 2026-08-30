@@ -649,6 +649,17 @@ def chunked(items: List[dict], size: int) -> List[List[dict]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+def _artifact_eligible(function: dict) -> bool:
+    """Return whether a topdown unit should receive standalone artifacts.
+
+    This is an opt-in metadata contract. Existing software topdown files do
+    not contain the field and retain the historical behavior. Hardware
+    plugins may mark Bundle/trait declarations as context-only while keeping
+    them in the dependency graph used to render prompts.
+    """
+    return function.get("artifact_eligible", True) is not False
+
+
 def read_json(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"missing required file: {path}")
@@ -726,6 +737,32 @@ def build_prompt(
     lines.append("- Do NOT enumerate members of sets - describe the GOVERNING RULE")
     lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
     lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each one")
+
+    context_units: List[Tuple[str, dict]] = []
+    context_seen = set()
+    for fn in functions:
+        for callee_name in fn.get("all_callees", ()):
+            if not isinstance(callee_name, str) or callee_name in context_seen:
+                continue
+            callee_meta = all_funcs.get(callee_name)
+            if callee_meta is None or _artifact_eligible(callee_meta):
+                continue
+            context_seen.add(callee_name)
+            context_units.append((callee_name, callee_meta))
+
+    if context_units:
+        lines.append("")
+        lines.append("## CONTEXT-ONLY DECLARATIONS")
+        lines.append(
+            "These declarations are retained for dependency and interface "
+            "semantics. They are context only and must not receive standalone "
+            "specification artifacts. Read each source file when determining "
+            "the target unit's interface or dependency requirements:"
+        )
+        for context_name, context_meta in sorted(context_units):
+            lines.append(
+                f"- {context_name}: {fm_agent_prefix}{context_meta['file']}"
+            )
 
     caller_specs: List[Tuple[str, str]] = []
     caller_expectations: Dict[str, List[Tuple[str, str]]] = {}
@@ -867,6 +904,7 @@ def generate_batch_prompts(
 
     manifest_batches = []
     total_functions = 0
+    total_context_functions = 0
     skipped_functions = 0
     batch_index = 0
     write_targets: List[Tuple[Path, str]] = []
@@ -874,7 +912,11 @@ def generate_batch_prompts(
 
     for layer_idx in range(start_layer, end_layer + 1):
         layer = layers[layer_idx]
-        layer_functions = layer.get("functions", [])
+        all_layer_functions = layer.get("functions", [])
+        layer_functions = [
+            fn for fn in all_layer_functions if _artifact_eligible(fn)
+        ]
+        total_context_functions += len(all_layer_functions) - len(layer_functions)
         is_cycle = bool(layer.get("cycle_resolution", False))
         tag = "cycle" if is_cycle else "extracted"
         chunks = chunked(layer_functions, batch_size)
@@ -933,6 +975,7 @@ def generate_batch_prompts(
         "phase": phase,
         "layers": layers_spec,
         "total_functions": total_functions,
+        "total_context_functions": total_context_functions,
         "total_batches": len(manifest_batches),
         "batches": manifest_batches,
     }

@@ -2,5 +2,10 @@
   "name": "chip",
   "version": "V0.1",
   "configure_function": "configure",
-  "stages": {}
+  "stages": {
+    "generate_specs_and_verification": {
+      "type": "modify",
+      "input_function": "prepare_spec_generation"
+    }
+  }
 }

@@ -3,6 +3,7 @@
 from src.specification import configure_specification
 
 from plugins.chip.detection import detect_chip_context, read_plugin_submodules
+from plugins.chip.eligibility import prepare_spec_generation
 from plugins.chip.profiles import PROFILES
 
 

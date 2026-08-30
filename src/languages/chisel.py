@@ -39,6 +39,16 @@ _MODULE_ROOTS = frozenset({
     "ExtModule",
     "MultiIOModule",
 })
+_NON_MODULE_ROOTS = frozenset({
+    "Bundle",
+    "Record",
+    "Data",
+})
+_CONTEXT_DECLARATION_KINDS = frozenset({
+    "class",
+    "trait",
+    "object",
+})
 _MODIFIER = (
     r"(?:"
     r"(?:private|protected)(?:\[[\w.]+\])?"
@@ -57,7 +67,27 @@ _NEW_MODULE_RE = re.compile(
     r"\bnew\s+"
     r"(?P<name>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)"
 )
+_INHERITED_DECLARATION_RE = re.compile(
+    r"\b(?:extends|with)\s+"
+    r"(?P<name>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)"
+)
 _DYNAMIC_MODULE_RE = re.compile(r"\bModule\s*\((?!\s*new\b)")
+_CHISEL_REF_RE = re.compile(
+    r"\b(?P<constructor>new)\s+"
+    r"(?P<constructor_name>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)"
+    r"|\b(?P<inheritance>extends|with)\s+"
+    r"(?P<inheritance_name>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)"
+    r"|(?<![A-Za-z0-9_$])"
+    r"(?P<reference>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)"
+    r"\s*(?P<operator>[.(])"
+)
+_DECLARATION_REFERENCE_PREFIX_RE = re.compile(
+    r"\b(?:class|object|trait|def)\s*$"
+)
+_CHISEL_IO_DECL_RE = re.compile(
+    r"\bval\s+io\b\s*(?::[^=\n]+)?=",
+    re.MULTILINE,
+)
 _PACKAGE_RE = re.compile(
     r"^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)"
     r"\s*(?:\{)?\s*$",
@@ -96,6 +126,15 @@ class ChiselUnit:
     span: tuple[int, int] | None
     package: str | None = None
     fqn: str | None = None
+    parent_prefix: str | None = None
+
+
+@dataclass(frozen=True)
+class _ModuleClassification:
+    """Deterministic source-fallback classification and its explanation."""
+
+    is_module: bool
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -621,6 +660,17 @@ def mask_non_code(text: str) -> str:
     return "".join(masked)
 
 
+def chisel_defines_io(text: str) -> bool:
+    """Return whether *text* contains a real Chisel ``val io`` declaration.
+
+    This deliberately mirrors the chip artifact policy rather than attempting
+    to prove the right-hand side is an ``IO(...)`` call. Comments and Scala
+    string/character literals are masked before matching so prose and examples
+    cannot make a unit eligible.
+    """
+    return _CHISEL_IO_DECL_RE.search(mask_non_code(text)) is not None
+
+
 def _line_depths(masked_lines: list[str]) -> list[int]:
     depths = []
     depth = 0
@@ -695,12 +745,26 @@ def _declaration_end(masked_lines: list[str], start_line: int) -> int:
     return _matching_block_end(masked_lines, start_line)
 
 
-def _parent_from_signature(signature: str) -> str | None:
+def _parent_reference_from_signature(
+    signature: str,
+) -> tuple[str | None, str | None]:
+    """Return the bare parent name and its optional qualifier."""
     match = re.search(
         r"\bextends\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)",
         signature,
     )
-    return match.group(1).rsplit(".", 1)[-1] if match else None
+    if match is None:
+        return None, None
+
+    reference = match.group(1)
+    prefix, separator, parent = reference.rpartition(".")
+    return (parent, prefix) if separator else (reference, None)
+
+
+def _parent_from_signature(signature: str) -> str | None:
+    """Return only the final parent component for legacy callers."""
+    parent, _prefix = _parent_reference_from_signature(signature)
+    return parent
 
 
 def _package_name(masked_text: str) -> str | None:
@@ -754,6 +818,7 @@ def _declarations(path: Path, rel_path: str) -> list[ChiselUnit]:
         signature = " ".join(
             masked_lines[line_index:signature_end + 1]
         )
+        parent, parent_prefix = _parent_reference_from_signature(signature)
         units.append(
             ChiselUnit(
                 abs_path=os.path.abspath(path),
@@ -761,9 +826,10 @@ def _declarations(path: Path, rel_path: str) -> list[ChiselUnit]:
                 source="\n".join(source_lines[line_index:end_line + 1]) + "\n",
                 kind=match.group("kind"),
                 name=match.group("name"),
-                parent=_parent_from_signature(signature),
+                parent=parent,
                 span=(line_index, end_line),
                 package=_package_name(masked_text),
+                parent_prefix=parent_prefix,
             )
         )
         line_index = end_line + 1
@@ -771,34 +837,110 @@ def _declarations(path: Path, rel_path: str) -> list[ChiselUnit]:
     return units
 
 
-def _module_units(units: list[ChiselUnit]) -> tuple[ChiselUnit, ...]:
+def _classify_module_units(
+    units: list[ChiselUnit],
+) -> dict[int, _ModuleClassification]:
+    """Classify declarations for the source fallback without a Scala resolver.
+
+    Unknown external parents are intentionally retained: projects commonly put
+    their Module or Bundle base classes outside the selected source scope. The
+    chip eligibility policy is responsible for deciding which retained units
+    become independent artifacts.
+    """
     declarations_by_name: dict[str, list[int]] = defaultdict(list)
     for index, unit in enumerate(units):
-        if unit.kind == "class":
+        if unit.kind in {"class", "trait"}:
             declarations_by_name[unit.name].append(index)
 
-    resolved: dict[int, bool] = {}
+    resolved: dict[int, _ModuleClassification] = {}
     visiting: set[int] = set()
 
-    def is_module(index: int) -> bool:
+    def is_chisel3_name(prefix: str | None) -> bool:
+        return (
+            prefix is None
+            or prefix == "chisel3"
+            or prefix.endswith(".chisel3")
+        )
+
+    def local_parent_indices(unit: ChiselUnit) -> tuple[int, ...]:
+        if unit.parent is None:
+            return ()
+        candidates = declarations_by_name.get(unit.parent, ())
+        if not unit.parent_prefix:
+            return tuple(candidates)
+
+        qualified = tuple(
+            candidate
+            for candidate in candidates
+            if units[candidate].package == unit.parent_prefix
+            or (
+                units[candidate].package
+                and units[candidate].package.endswith(
+                    "." + unit.parent_prefix
+                )
+            )
+        )
+        return qualified
+
+    def is_module(index: int) -> _ModuleClassification:
         if index in resolved:
             return resolved[index]
         if index in visiting:
-            return False
+            return _ModuleClassification(True, "inheritance_cycle")
+
         visiting.add(index)
         unit = units[index]
-        result = unit.kind == "class" and unit.parent in _MODULE_ROOTS
-        if unit.kind == "class" and unit.parent and not result:
-            result = any(
+        if unit.kind not in {"class", "trait"}:
+            result = _ModuleClassification(False, "non_hardware_declaration")
+        elif unit.parent is None:
+            result = _ModuleClassification(False, "no_parent")
+        elif unit.parent in _MODULE_ROOTS and is_chisel3_name(unit.parent_prefix):
+            result = _ModuleClassification(True, "direct_chisel_module_parent")
+        elif unit.parent in _NON_MODULE_ROOTS and is_chisel3_name(unit.parent_prefix):
+            result = _ModuleClassification(False, "direct_chisel_data_parent")
+        else:
+            parent_results = tuple(
                 is_module(parent_index)
-                for parent_index in declarations_by_name.get(unit.parent, ())
+                for parent_index in local_parent_indices(unit)
             )
+            if parent_results:
+                if any(parent_result.is_module for parent_result in parent_results):
+                    reason = (
+                        "ambiguous_local_parent_preserved"
+                        if not all(
+                            parent_result.is_module
+                            for parent_result in parent_results
+                        )
+                        else "inherited_local_module"
+                    )
+                    result = _ModuleClassification(True, reason)
+                elif any(
+                    parent_result.reason == "inheritance_cycle"
+                    for parent_result in parent_results
+                ):
+                    result = _ModuleClassification(True, "inheritance_cycle")
+                else:
+                    result = _ModuleClassification(False, "inherited_non_module")
+            else:
+                # Keep unresolved external parents because their definition may
+                # live outside the selected scope (e.g. XSModule/DCacheModule).
+                result = _ModuleClassification(True, "unresolved_external_parent")
+
         visiting.remove(index)
         resolved[index] = result
         return result
 
+    for index in range(len(units)):
+        is_module(index)
+    return resolved
+
+
+def _module_units(units: list[ChiselUnit]) -> tuple[ChiselUnit, ...]:
+    classifications = _classify_module_units(units)
     return tuple(
-        unit for index, unit in enumerate(units) if is_module(index)
+        unit
+        for index, unit in enumerate(units)
+        if unit.kind == "class" and classifications[index].is_module
     )
 
 
@@ -949,12 +1091,22 @@ def _deduped_records(
     analysis: ChiselAnalysis,
     *,
     spans: bool,
+    units: tuple[ChiselUnit, ...] | None = None,
 ) -> dict[str, list[tuple]]:
     grouped: dict[str, list[tuple]] = {
         path: [] for path in analysis.files
     }
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for unit in analysis.modules:
+    # ``modules`` is intentionally narrower than the source declaration set:
+    # Chisel Bundle/trait declarations are useful context even though they do
+    # not become standalone hardware artifacts. Extraction must preserve that
+    # context and leave artifact eligibility to the chip profile.
+    source_units = (
+        _extraction_units(analysis)
+        if units is None
+        else units
+    )
+    for unit in source_units:
         name = canonicalize(unit.name)
         count = counts[unit.abs_path][name]
         counts[unit.abs_path][name] += 1
@@ -969,13 +1121,46 @@ def _deduped_records(
     return grouped
 
 
+def _extraction_units(analysis: ChiselAnalysis) -> tuple[ChiselUnit, ...]:
+    """Return artifact candidates plus source context for one backend.
+
+    Source fallback has no elaborated module set, so every Scala declaration is
+    retained and the chip eligibility hook decides which declarations receive
+    artifacts. With a direct CIRCT graph, keep only graph-mapped hardware
+    modules as artifact candidates, while retaining non-IO declarations as
+    context. This preserves Bundle/trait relationships without turning an
+    unrelated IO-bearing source declaration that CIRCT did not elaborate into
+    a standalone artifact.
+    """
+    declarations = tuple(
+        unit
+        for unit in analysis.declarations
+        if unit.kind in _CONTEXT_DECLARATION_KINDS
+    )
+    if analysis.circt_graph is None:
+        return declarations
+
+    selected_modules = set(analysis.modules)
+    return tuple(
+        unit
+        for unit in declarations
+        if unit in selected_modules or not chisel_defines_io(unit.source)
+    )
+
+
 def batch_extract(proj_dir: str) -> dict[str, list[tuple[str, str]]]:
-    """Return module units, retaining empty lists for handled Chisel files."""
+    """Return Chisel declarations, retaining handled-empty source files.
+
+    The returned units include hardware modules and supporting Bundle/trait/
+    object declarations. The chip profile decides which of these declarations
+    receive standalone specification artifacts; dropping context here makes
+    dependency-aware prompts unable to describe the module boundary.
+    """
     return _deduped_records(_analyze(proj_dir), spans=False)
 
 
 def function_spans(proj_dir: str, filepath: str):
-    """Return module spans; Chisel files with no modules are handled-empty."""
+    """Return Chisel declaration spans; handled files may have no units."""
     path = Path(os.path.abspath(filepath))
     if path.suffix.lower() not in CHISEL_EXTENSIONS or not path.is_file():
         return None
@@ -1013,7 +1198,8 @@ def _extracted_unit_fqn(relative_path: Path) -> str:
     return "::".join(relative_path.with_suffix("").parts)
 
 
-def _extracted_modules(proj_dir: str | Path) -> tuple[ChiselUnit, ...]:
+def _extracted_units(proj_dir: str | Path) -> tuple[ChiselUnit, ...]:
+    """Read all extracted Chisel declarations, including context units."""
     extracted_root = _work_dir(proj_dir) / "extracted_functions"
     if not extracted_root.is_dir():
         return ()
@@ -1024,7 +1210,7 @@ def _extracted_modules(proj_dir: str | Path) -> tuple[ChiselUnit, ...]:
         relative_path = path.relative_to(extracted_root)
         declarations = _declarations(path, relative_path.as_posix())
         for unit in declarations:
-            if unit.kind != "class":
+            if unit.kind not in _CONTEXT_DECLARATION_KINDS:
                 continue
             units.append(
                 ChiselUnit(
@@ -1037,9 +1223,51 @@ def _extracted_modules(proj_dir: str | Path) -> tuple[ChiselUnit, ...]:
                     span=unit.span,
                     package=unit.package,
                     fqn=_extracted_unit_fqn(relative_path),
+                    parent_prefix=unit.parent_prefix,
                 )
             )
     return tuple(units)
+
+
+def extracted_module_classifications(
+    proj_dir: str | Path,
+) -> dict[str, tuple[dict[str, object], ...]]:
+    """Return Module classifications for extracted Chisel declarations.
+
+    The Stage 6 chip hook receives extracted files rather than the in-memory
+    :class:`ChiselAnalysis` created during Stage 3. Reconstruct the same
+    project-wide inheritance view from those files and key the result by the
+    extracted FQN used by topdown layers. Multiple declarations under one
+    extracted file are retained as a tuple so callers never silently choose a
+    declaration when the source is ambiguous.
+    """
+    units = list(_extracted_units(proj_dir))
+    classifications = _classify_module_units(units)
+    records: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for index, unit in enumerate(units):
+        fqn = unit.fqn or _extracted_unit_fqn(Path(unit.rel_path))
+        classification = classifications[index]
+        records[fqn].append(
+            {
+                "declared_name": unit.name,
+                "kind": unit.kind,
+                "is_module": classification.is_module,
+                "reason": classification.reason,
+            }
+        )
+    return {
+        fqn: tuple(entries)
+        for fqn, entries in records.items()
+    }
+
+
+def _extracted_modules(proj_dir: str | Path) -> tuple[ChiselUnit, ...]:
+    """Compatibility alias for callers that used the old private helper.
+
+    Despite its historical name, the call graph now needs all extracted
+    Chisel declarations so that Bundle and trait dependencies remain visible.
+    """
+    return _extracted_units(proj_dir)
 
 
 def _local_declaration_names(source: str, own_name: str) -> set[str]:
@@ -1055,12 +1283,50 @@ def _instantiated_names(source: str) -> set[str]:
     }
 
 
+def _inherited_names(source: str) -> set[str]:
+    """Return declarations named by Scala ``extends``/``with`` clauses."""
+    return {
+        match.group("name")
+        for match in _INHERITED_DECLARATION_RE.finditer(mask_non_code(source))
+    }
+
+
+def _chisel_references(source: str) -> tuple[tuple[str, str], ...]:
+    """Return static Chisel references with their syntactic use kind.
+
+    The kind is one of ``new``, ``inheritance``, or ``reference``. The last
+    form covers companion construction and member access such as
+    ``Foo(...)`` and ``Foo.default``. Keeping the syntax here lets the target
+    resolver choose a class, trait, or object without treating companion
+    declarations as an unresolved ambiguity.
+    """
+    masked_source = mask_non_code(source)
+    references = []
+    for match in _CHISEL_REF_RE.finditer(masked_source):
+        if match.group("constructor"):
+            references.append(("new", match.group("constructor_name")))
+        elif match.group("inheritance"):
+            references.append(("inheritance", match.group("inheritance_name")))
+        else:
+            # ``class Foo(...)`` and ``def Foo(...)`` are declarations, not
+            # references to a companion named Foo. The generic reference arm
+            # intentionally accepts both call and member-access syntax, so
+            # filter declaration headers after matching them.
+            prefix = masked_source[:match.start("reference")]
+            if _DECLARATION_REFERENCE_PREFIX_RE.search(prefix):
+                continue
+            references.append(("reference", match.group("reference")))
+    return tuple(references)
+
+
 def _resolve_target(
     reference: str,
     candidates: list[tuple[str, ChiselUnit]],
+    preferred_kinds: tuple[str, ...] = (),
 ) -> list[str]:
-    if len(candidates) <= 1:
-        return [fqn for fqn, _unit in candidates]
+    if not candidates:
+        return []
+
     qualifier, separator, _name = reference.rpartition(".")
     if separator:
         qualified = [
@@ -1069,14 +1335,42 @@ def _resolve_target(
             if unit.package == qualifier
             or (unit.package and unit.package.endswith("." + qualifier))
         ]
-        if len(qualified) == 1:
-            return qualified
-    logging.warning(
-        "Skipping ambiguous Chisel module reference %s; candidates: %s",
-        reference,
-        ", ".join(sorted(fqn for fqn, _unit in candidates)),
-    )
-    return []
+        # Extracted Chisel snippets do not retain package declarations. Only
+        # narrow the candidates when the package information is available;
+        # otherwise a qualified local reference would be lost merely because
+        # the scanner is operating on an extracted snippet.
+        if qualified:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if candidate[0] in set(qualified)
+            ]
+            if not candidates:
+                return []
+
+    if preferred_kinds:
+        selected = []
+        for kind in preferred_kinds:
+            selected = [
+                (fqn, unit)
+                for fqn, unit in candidates
+                if unit.kind == kind
+            ]
+            if selected:
+                candidates = selected
+                break
+        else:
+            # A constructor cannot target an object, and an extends/with
+            # clause cannot target an object. Treat that as an external or
+            # unresolved reference instead of creating a false edge.
+            return []
+
+    # Several same-kind declarations with the same simple name are a valid
+    # over-approximation for this text-only backend (for example, two source
+    # packages containing the same Bundle type). The old chip resolver kept
+    # all candidates of the selected kind; preserve that behavior while
+    # avoiding the class/object companion ambiguity.
+    return list(dict.fromkeys(fqn for fqn, _unit in candidates))
 
 
 def _direct_circt_edges(analysis: ChiselAnalysis) -> dict[str, set[str]]:
@@ -1085,8 +1379,18 @@ def _direct_circt_edges(analysis: ChiselAnalysis) -> dict[str, set[str]]:
     if graph is None:
         return {}
 
+    all_units = tuple(
+        unit
+        for unit in analysis.declarations
+        if unit.kind in _CONTEXT_DECLARATION_KINDS
+    )
     fqn_by_unit = {
-        unit: fqn for fqn, unit in _source_units_with_fqns(analysis.modules)
+        unit: fqn for fqn, unit in _source_units_with_fqns(all_units)
+    }
+    circt_module_fqns = {
+        fqn_by_unit[unit]
+        for unit in analysis.modules
+        if unit in fqn_by_unit
     }
     edges: dict[str, set[str]] = defaultdict(set)
     unmapped_edges = 0
@@ -1113,6 +1417,69 @@ def _direct_circt_edges(analysis: ChiselAnalysis) -> dict[str, set[str]]:
             "could not be mapped",
             unmapped_edges,
         )
+    # CIRCT remains authoritative for elaborated hardware-module edges. Add
+    # source-level declaration edges only when at least one endpoint is Scala
+    # context that CIRCT intentionally does not represent (Bundle/trait/base-
+    # type relations). This keeps a source scanner from overriding or
+    # duplicating the direct-pass hardware graph.
+    source_edges = _source_call_edges(
+        [(fqn, unit) for unit, fqn in fqn_by_unit.items()]
+    )
+    for caller_fqn, callee_fqns in source_edges.items():
+        for callee_fqn in callee_fqns:
+            if (
+                caller_fqn in circt_module_fqns
+                and callee_fqn in circt_module_fqns
+            ):
+                continue
+            if caller_fqn not in edges or callee_fqn not in edges[caller_fqn]:
+                edges[caller_fqn].add(callee_fqn)
+    return dict(edges)
+
+
+def _source_call_edges(
+    units_with_fqns: list[tuple[str, ChiselUnit]],
+) -> dict[str, set[str]]:
+    """Build source-fallback edges for instantiation and inheritance.
+
+    ``new`` captures constructed modules and Bundles. ``extends``/``with``
+    captures the Chisel mixins and local Bundle hierarchy that form part of a
+    caller's observable type contract. Companion construction/member access
+    is resolved with object-first priority. Unknown external names simply have
+    no extracted target and therefore remain external dependencies.
+    """
+    by_name: dict[str, list[tuple[str, ChiselUnit]]] = defaultdict(list)
+    for fqn, unit in units_with_fqns:
+        by_name[unit.name].append((fqn, unit))
+
+    edges: dict[str, set[str]] = defaultdict(set)
+    for caller_fqn, caller in units_with_fqns:
+        shadowed = _local_declaration_names(caller.source, caller.name)
+        masked_source = mask_non_code(caller.source)
+        if _DYNAMIC_MODULE_RE.search(masked_source):
+            logging.warning(
+                "Chisel source fallback could not resolve one or more dynamic "
+                "Module(...) constructions in %s",
+                caller_fqn,
+            )
+
+        for reference_kind, reference in _chisel_references(caller.source):
+            simple_name = reference.rsplit(".", 1)[-1]
+            if reference_kind == "new":
+                preferred_kinds = ("class",)
+                if simple_name in shadowed:
+                    continue
+            elif reference_kind == "inheritance":
+                preferred_kinds = ("class", "trait")
+            else:
+                preferred_kinds = ("object", "def", "class", "trait")
+            for callee_fqn in _resolve_target(
+                reference,
+                by_name.get(simple_name, []),
+                preferred_kinds,
+            ):
+                if callee_fqn != caller_fqn:
+                    edges[caller_fqn].add(callee_fqn)
     return dict(edges)
 
 
@@ -1122,7 +1489,7 @@ def call_edges(proj_dir: str) -> dict[str, set[str]]:
     if analysis.circt_graph is not None:
         return _direct_circt_edges(analysis)
 
-    extracted = _extracted_modules(proj_dir)
+    extracted = _extracted_units(proj_dir)
     if extracted:
         units_with_fqns = [
             (unit.fqn or _extracted_unit_fqn(Path(unit.rel_path)), unit)
@@ -1130,30 +1497,11 @@ def call_edges(proj_dir: str) -> dict[str, set[str]]:
         ]
     else:
         units_with_fqns = _source_units_with_fqns(
-            analysis.modules
+            tuple(
+                unit
+                for unit in analysis.declarations
+                if unit.kind in _CONTEXT_DECLARATION_KINDS
+            )
         )
 
-    by_name: dict[str, list[tuple[str, ChiselUnit]]] = defaultdict(list)
-    for fqn, unit in units_with_fqns:
-        by_name[unit.name].append((fqn, unit))
-
-    edges: dict[str, set[str]] = defaultdict(set)
-    for caller_fqn, caller in units_with_fqns:
-        shadowed = _local_declaration_names(caller.source, caller.name)
-        if _DYNAMIC_MODULE_RE.search(mask_non_code(caller.source)):
-            logging.warning(
-                "Chisel source fallback could not resolve one or more dynamic "
-                "Module(...) constructions in %s",
-                caller_fqn,
-            )
-        for reference in _instantiated_names(caller.source):
-            simple_name = reference.rsplit(".", 1)[-1]
-            if simple_name in shadowed:
-                continue
-            for callee_fqn in _resolve_target(
-                reference,
-                by_name.get(simple_name, []),
-            ):
-                if callee_fqn != caller_fqn:
-                    edges[caller_fqn].add(callee_fqn)
-    return dict(edges)
+    return _source_call_edges(units_with_fqns)
