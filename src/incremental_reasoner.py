@@ -1877,6 +1877,8 @@ def _collect_caller_context(fqn, callers_map, file_map, edge_aliases_map=None):
         info_dict = extract_info_block(cpath_p)
         aliases = ()
         if edge_aliases_map:
+            # These are edge-scoped callee.info_names from supplemental edges,
+            # not names inferred from the caller's .info.json candidates.
             aliases = tuple(edge_aliases_map.get(fqn, {}).get(caller_fqn, ()))
         callee_entry = (
             extract_callee_spec_from_info(info_dict, fqn, aliases)
