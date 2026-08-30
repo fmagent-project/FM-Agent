@@ -1,5 +1,8 @@
 from src.call_graph_edges import load_call_edges
-from src.entry_reasoning_pipeline import run_entry_pipeline
+from plugins.entry_reasoning.plugin import (
+    _entry_func_source_rel,
+    _make_run_copy,
+)
 from src.file_utils import (
     collect_file_names,
     _has_source_code,
@@ -8,6 +11,7 @@ from src.file_utils import (
     _json_file_is_valid,
     _is_under_submodules,
     _ensure_resume_mode_compatible,
+    clear_test_file_exemptions,
 )
 from src.verification import _generate_all_bugs_validation_summary
 from src.extract import run_extraction, EXT_TO_LANG
@@ -101,6 +105,34 @@ def _format_estimate_duration(seconds):
     return f"{seconds}s"
 
 
+def _existing_required_source_files(proj_dir, required_source_files):
+    """Keep required files that still exist after a Stage 1 scope hook."""
+    if required_source_files is None:
+        return None
+    return [
+        source_file
+        for source_file in required_source_files
+        if os.path.isfile(os.path.join(proj_dir, source_file))
+    ]
+
+
+def _finalize_failed_entry_run(original_proj_dir, entry_run_dir):
+    """Preserve partial entry results after failure and remove the run copy."""
+    if not entry_run_dir or not os.path.isdir(entry_run_dir):
+        return
+
+    run_work_dir = os.path.join(entry_run_dir, "fm_agent")
+    ready_marker = os.path.join(run_work_dir, ".entry_scope_ready")
+    original_work_dir = os.path.join(original_proj_dir, "fm_agent")
+    if os.path.isfile(ready_marker) and os.path.isdir(run_work_dir):
+        os.remove(ready_marker)
+        if os.path.isdir(original_work_dir):
+            shutil.rmtree(original_work_dir)
+        shutil.copytree(run_work_dir, original_work_dir, symlinks=True)
+        print(f"[EntryPlugin] Copied partial fm_agent/ to {original_work_dir}.")
+    shutil.rmtree(entry_run_dir, ignore_errors=True)
+
+
 def _resolve_bug_validator_path(raw_path):
     """Resolve a custom bug-validator prompt path from the launch directory."""
     if not raw_path:
@@ -171,6 +203,7 @@ def run_pipeline(
     extra_call_edges_path=None,
     only_spec=False,
     bug_validator_path=None,
+    validate_bugs=True,
     plugin_config=None,
     initial_history=None,
     plugin_context=None,
@@ -282,9 +315,12 @@ def run_pipeline(
                 proj_dir,
             )
 
+    surviving_required_source_files = _existing_required_source_files(
+        proj_dir, required_source_files
+    )
     phases_modified = _post_process_phases(
         proj_dir, work_dir,
-        required_source_files=required_source_files,
+        required_source_files=surviving_required_source_files,
         submodules=submodules,
         one_phase=one_phase,
     )
@@ -503,20 +539,13 @@ def run_pipeline(
             extra_call_edges=extra_call_edges,
             only_spec=only_spec,
             bug_validator_path=bug_validator_path,
+            validate_bugs=validate_bugs,
             all_bugs=all_bugs,
         )
-        if spec_stage is not None and spec_stage.output_hook is not None:
-            run_plugin_hook(
-                plugin_config.name,
-                "generate_specs_and_verification",
-                spec_stage.output_function,
-                spec_stage.output_hook,
-                proj_dir,
-            )
 
     # Print confirmed bug count (skipped in only-spec mode, which runs no
-    # reasoning or bug validation).
-    if not only_spec:
+    # reasoning or bug validation, and when validation is explicitly disabled).
+    if not only_spec and validate_bugs:
         if all_bugs:
             # A resumed run may find every function and candidate validation
             # already complete, so no watcher runs to refresh the persistent
@@ -543,6 +572,15 @@ def run_pipeline(
         print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
     else:
         print("[Pipeline] Done.")
+
+    if spec_stage is not None and spec_stage.output_hook is not None:
+        run_plugin_hook(
+            plugin_config.name,
+            "generate_specs_and_verification",
+            spec_stage.output_function,
+            spec_stage.output_hook,
+            proj_dir,
+        )
 
 
 if __name__ == "__main__":
@@ -678,9 +716,12 @@ if __name__ == "__main__":
         sys.exit(0)
 
     selected_plugin = args.plugin
-
-    if selected_plugin and args.entry_func is not None:
-        parser.error("--plugin cannot be combined with --entry-func.")
+    if args.entry_func is not None:
+        if selected_plugin is not None:
+            parser.error("--plugin cannot be combined with --entry-func.")
+        selected_plugin = "entry_reasoning"
+    elif selected_plugin == "entry_reasoning":
+        parser.error("the entry_reasoning plugin requires --entry-func.")
 
     plugin_config = None
     if selected_plugin:
@@ -700,6 +741,7 @@ if __name__ == "__main__":
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
+    is_entry = args.entry_func is not None
     extra_call_edges_path = args.extra_edge
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
@@ -771,42 +813,47 @@ if __name__ == "__main__":
 
     start_time = time.time()
 
-    # Entry-point mode uses its dedicated copy-and-trim pipeline.
-    if args.entry_func is not None:
-        run_entry_pipeline(
-            proj_dir,
-            entry_func=args.entry_func,
-            end_funcs=args.end_func,
-            resume=resume,
-            domain_knowledge_files=domain_knowledge_files,
-            one_phase=args.one_phase,
-            extra_call_edges_path=extra_call_edges_path,
-            only_spec=args.only_spec,
-            bug_validator_path=bug_validator_path,
-            all_bugs=args.all_bugs,
-        )
-        end_time = time.time()
-        logging.info(f"Total time: {end_time - start_time:.2f} seconds")
-        sys.exit(0)
+    original_proj_dir = proj_dir
+    entry_run_dir = None
+    required_source_files = None
+    validate_bugs = True
+    if is_entry:
+        entry_run_dir = original_proj_dir + ".fm-entry-run"
+        _make_run_copy(original_proj_dir, entry_run_dir)
+        required_source_files = list(dict.fromkeys(
+            _entry_func_source_rel(entry) for entry in args.entry_func
+        ))
+        validate_bugs = False
+        plugin_context.update({
+            "original_proj_dir": original_proj_dir,
+            "entry_run_dir": entry_run_dir,
+            "entry_funcs": args.entry_func,
+            "end_funcs": args.end_func or [],
+            "all_bugs": args.all_bugs,
+        })
 
     # Incremental mode diffs against the commit recorded by a previous run, and
     # --isolate snapshots the repo via a git worktree, so both require a git repo.
     # A non-git project can only run the full pipeline against the project directory
     # itself.
-    if not _is_git_repo(proj_dir):
+    if not is_entry and not _is_git_repo(proj_dir):
         parser.error(
             f"FM-Agent requires a git repository, but {proj_dir} is not."
         )
 
     # Resolve the intent path before snapshotting, since cwd-relative paths must
     # resolve against the real project, not the frozen worktree copy.
-    intent_path = os.path.abspath(args.incremental) if args.incremental else None
+    intent_path = (
+        os.path.abspath(args.incremental)
+        if not is_entry and args.incremental
+        else None
+    )
 
     # In incremental mode the commit to diff against is the most recent one recorded
     # in version.log (the last line, since each run appends its commit). Read it from
     # the real project before snapshotting.
     old_commit = None
-    if args.incremental:
+    if not is_entry and args.incremental:
         version_path = os.path.join(proj_dir, "fm_agent", "version.log")
         if os.path.exists(version_path):
             with open(version_path, "r") as f:
@@ -816,14 +863,16 @@ if __name__ == "__main__":
     # Capture the project's latest commit id before running. With --isolate the
     # pipeline runs against a throwaway worktree snapshot whose HEAD is a synthetic
     # snapshot commit, so the version to record must come from the real project.
-    new_commit = _get_head_commit(proj_dir)
+    new_commit = _get_head_commit(proj_dir) if not is_entry else None
 
     # With --isolate, the pipeline runs against the snapshot's fm_agent/. Resuming
     # needs the previous run's fm_agent/ (phases.json, specs, verification results)
     # to be present in the snapshot, so copy the excluded workspace in for resume
     # too — not just incremental mode.
     run_ctx = (
-        frozen_worktree(
+        contextlib.nullcontext(entry_run_dir)
+        if is_entry
+        else frozen_worktree(
             proj_dir, copy_excluded=bool(args.incremental) or resume
         )
         if args.isolate
@@ -838,7 +887,7 @@ if __name__ == "__main__":
         try:
             # Incremental mode requires a recorded commit to diff against; without a
             # version.log from a previous run, fall back to the full pipeline.
-            if args.incremental and old_commit:
+            if not is_entry and args.incremental and old_commit:
                 run_incremental_pipeline(
                     run_dir,
                     intent_path,
@@ -854,12 +903,14 @@ if __name__ == "__main__":
                 run_pipeline(
                     run_dir,
                     resume=resume,
+                    required_source_files=required_source_files,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     only_spec=args.only_spec,
                     bug_validator_path=bug_validator_path,
+                    validate_bugs=validate_bugs,
                     plugin_config=plugin_config,
                     initial_history=isolated_history,
                     plugin_context=plugin_context,
@@ -869,18 +920,22 @@ if __name__ == "__main__":
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
             # copied back to the real project below. Only recorded on success so a
             # partial run does not advance the version baseline.
-            _record_version(new_commit, os.path.join(run_dir, "fm_agent"))
-            record_completed_run(
-                os.path.join(run_dir, "fm_agent"),
-                duration_seconds=time.time() - start_time,
-            )
+            if not is_entry:
+                _record_version(new_commit, os.path.join(run_dir, "fm_agent"))
+                record_completed_run(
+                    os.path.join(run_dir, "fm_agent"),
+                    duration_seconds=time.time() - start_time,
+                )
         finally:
             # With --isolate the pipeline ran against a throwaway snapshot, so its
             # fm_agent/ results live in the snapshot. Copy them back into the real
             # project so they are not lost when the snapshot is discarded — this runs
             # even when the pipeline crashes or is interrupted mid-run, so partial
             # progress survives and can be resumed with --resume.
-            if args.isolate:
+            if is_entry:
+                _finalize_failed_entry_run(original_proj_dir, entry_run_dir)
+                clear_test_file_exemptions()
+            elif args.isolate:
                 src_fm = os.path.join(run_dir, "fm_agent")
                 dst_fm = os.path.join(proj_dir, "fm_agent")
                 if os.path.isdir(src_fm):

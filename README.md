@@ -211,11 +211,13 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `proj_dir`                  | Directory of codebase that you want to check correctness                                        |
 | `--resume`                  | Continue a previous, interrupted run instead of starting over                                   |
 | `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
-| `--all-bugs`                | Continue reasoning after a mismatch and report every candidate. Full and incremental modes validate each candidate; entry mode does not run bug validation. |
+| `--all-bugs`                | Continue reasoning after a mismatch and report every candidate. Full and incremental modes validate each candidate. |
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
 | `--bug-validator FILE`       | Use a custom Markdown prompt for bug validation instead of the built-in `md/bug_validator.md`. |
 | `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
 | `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
+| `--entry-func PATH [PATH ...]` | Start entry-scoped reasoning from one or more function FQNs. This automatically enables the bundled entry plugin. |
+| `--end-func PATH [PATH ...]` | Optionally stop entry-scoped reasoning at one or more function FQNs. |
 | `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
 | `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
 | `--estimate`                | Scan scope and print a history-based time, LLM-call, token, and cost estimate without making LLM calls. |
@@ -235,7 +237,29 @@ def hook(proj_dir: str) -> None:
 See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
 configuration, execution modes, lifecycle, and trust boundary.
 
-`proj_dir` must be a git repository.
+Full and incremental runs require `proj_dir` to be a git repository. Entry-scoped
+runs use their own isolated copy and do not require a Git checkout.
+
+### Entry-scoped reasoning
+
+Analyze the union reachable from one or more entry functions:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b
+```
+
+Add end functions to retain only valid requested entry-to-end chains. Each end
+function is terminal in the selected scope:
+
+```bash
+uv run python main.py <proj_dir> \
+  --entry-func main-py::entry_a api-py::entry_b \
+  --end-func services-py::end_a services-py::end_b
+```
+
+Every requested entry must exist. The option cannot be combined with
+`--plugin` or `--submodule`.
 
 ### Pre-run estimate
 
@@ -290,21 +314,18 @@ uv run python main.py <proj_dir> --submodule src/core src/runtime
 uv run python main.py <proj_dir> --incremental intent.md --submodule src/core src/runtime
 ```
 
-`--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`, but not with `--entry-func`.
+`--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`.
 
-Use `--all-bugs` with full, incremental, or entry-point analysis:
+Use `--all-bugs` with full or incremental analysis:
 
 ```bash
 uv run python main.py <proj_dir> --all-bugs
 uv run python main.py <proj_dir> --incremental intent.md --all-bugs
-uv run python main.py <proj_dir> --entry-func src::main --all-bugs
 ```
 
 The option is off by default. When enabled, FM-Agent continues through later
 reasoning checkpoints and writes one standard mismatch result per candidate.
-Full and incremental modes validate each candidate independently. Entry-point
-reasoning reports the candidates and their count but intentionally does not run
-bug validation.
+Full and incremental modes validate each candidate independently.
 
 For a result such as `path/to/function.json`, all-bugs candidates are written
 beside it as `path/to/function.bug-001.json`, `bug-002.json`, and so on. The
@@ -322,7 +343,7 @@ Use `--only-spec` to stop after generating behavioral specs, skipping the reason
 uv run python main.py <proj_dir> --only-spec
 ```
 
-Use `--extra-edge FILE` when the static parser cannot see an important call relationship, such as indirect syscall dispatch. Supplemental edges are applied to full, entry-point-scoped, and incremental runs. The JSON shape is:
+Use `--extra-edge FILE` when the static parser cannot see an important call relationship, such as indirect syscall dispatch. Supplemental edges are applied to full and incremental runs. The JSON shape is:
 
 ```json
 {

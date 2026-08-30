@@ -79,6 +79,7 @@ def streaming_reasoner(
     already_processed=None,
     resume=False,
     bug_validator_path=None,
+    validate_bugs=True,
     all_bugs=False,
 ):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
@@ -182,7 +183,8 @@ def streaming_reasoner(
                         rel_path = os.path.relpath(fpath, proj_dir) if proj_dir else os.path.relpath(fpath, input_dir)
                         # Submit bug validation for MISMATCH results; defer printing
                         if (
-                            verdict == "MISMATCH"
+                            validate_bugs
+                            and verdict == "MISMATCH"
                             and proj_dir is not None
                             and config.BUG_VALIDATION_MAX_RETRIES > 0
                         ):
@@ -353,8 +355,8 @@ def streaming_reasoner(
                 logging.error(f"Error for {fpath}: {exc}")
         logging.info("Done.")
 
-    # Generate validation summary after all work is done
-    if proj_dir is not None:
+    # Generate a validation summary only when bug validation was enabled.
+    if proj_dir is not None and validate_bugs:
         if all_bugs:
             _generate_all_bugs_validation_summary(work_dir)
         else:

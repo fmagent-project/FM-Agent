@@ -168,9 +168,68 @@ plugin authors should make hooks safe to repeat.
 In isolate mode hooks receive the isolated worktree path. The existing isolate
 workflow copies `fm_agent/` results back to the original project.
 
-Pipeline hooks are supported for full, resume, and isolate runs. Entry and
-incremental pipelines do not receive plugin configuration or execute plugin
-hooks. `--plugin` cannot be combined with `--entry-func`.
+Pipeline hooks are supported for full, resume, and isolate runs. Incremental
+pipelines do not receive plugin configuration or execute plugin hooks.
+
+Entry-point runs automatically activate the bundled `entry_reasoning` plugin.
+`--entry-func` cannot be combined with a separately selected `--plugin`.
+
+## Bundled entry reasoning plugin
+
+The bundled plugin uses the standard layout:
+
+```text
+plugins/
+└── entry_reasoning/
+    ├── plugin.json
+    └── plugin.py
+```
+
+Before `run_pipeline()` starts, FM-Agent copies the original project to the
+sibling `<proj_dir>.fm-entry-run` directory and passes that isolated path as the
+pipeline project. The original source tree is never trimmed.
+
+The plugin configures two modify hooks:
+
+```text
+generate_phase_plan input hook
+→ extract all functions in a temporary selection copy
+→ build the call graph
+→ select the union reachable from entry_funcs
+→ optionally restrict paths to end_funcs
+→ delete unrelated files and functions from the entry run copy
+→ run the built-in Stages 1–6 on the trimmed copy
+→ generate_specs_and_verification output hook
+→ copy fm_agent/ back to the original project
+→ remove the entry run copy
+```
+
+The entry plugin context contains:
+
+```json
+{
+  "original_proj_dir": "/path/to/demo",
+  "entry_run_dir": "/path/to/demo.fm-entry-run",
+  "entry_funcs": ["src::main-c::main", "api::server-c::serve"],
+  "end_funcs": [],
+  "extra_edge": null,
+  "all_bugs": false
+}
+```
+
+`--entry-func` accepts one or more space-separated function FQNs. Without
+`--end-func`, entry reasoning analyzes the union reachable from every requested
+entry. With end functions, it retains only functions on a valid requested
+entry-to-end chain and treats each end function as terminal. Every requested
+entry is validated; missing FQNs are reported together. All entry source files
+are exempt from test-file filtering, while only entry source files that survive
+end pruning are forced into `phases.json`.
+
+Entry runs generate specifications and reasoning results but intentionally skip
+bug validation. The Stage 6 output hook publishes successful results. If a
+later stage fails, the CLI copies available partial results back and removes the
+run copy. If entry selection itself fails, the previous `fm_agent/` directory is
+left unchanged. Only `fm_agent/` is copied back; trimmed sources are discarded.
 
 ## Validation and trust boundary
 

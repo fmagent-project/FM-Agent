@@ -160,8 +160,65 @@ ready 产物并跳过内部生成，边界 Hook 仍会执行，因此插件作�
 isolate 模式下 Hook 收到隔离 worktree 路径；现有 isolate 流程会把 `fm_agent/`
 结果复制回原项目。
 
-Pipeline Hook 支持 full、resume 和 isolate。Entry 和 incremental Pipeline
-不接收插件配置，也不执行插件 Hook。`--plugin` 不能与 `--entry-func` 组合使用。
+Pipeline Hook 支持 full、resume 和 isolate。Incremental Pipeline 不接收插件
+配置，也不执行插件 Hook。
+
+入口函数运行会自动启用内置 `entry_reasoning` 插件。`--entry-func` 不能与另一个
+显式选择的 `--plugin` 组合使用。
+
+## 内置 entry reasoning 插件
+
+内置插件使用标准目录结构：
+
+```text
+plugins/
+└── entry_reasoning/
+    ├── plugin.json
+    └── plugin.py
+```
+
+在 `run_pipeline()` 开始前，FM-Agent 将原项目复制到同级的
+`<proj_dir>.fm-entry-run` 目录，并把该隔离路径作为 Pipeline 项目。原项目源码
+不会被裁剪。
+
+该插件配置两个 modify Hook：
+
+```text
+generate_phase_plan input Hook
+→ 在临时 selection copy 中提取全部函数
+→ 构建调用图
+→ 选择从所有 entry_funcs 可达的函数并集
+→ 根据 end_funcs 可选地限制调用路径
+→ 从 entry run copy 删除不相关文件和函数
+→ 在裁剪后的副本上运行内置 Stage 1–6
+→ generate_specs_and_verification output Hook
+→ 将 fm_agent/ 复制回原项目
+→ 删除 entry run copy
+```
+
+entry 插件上下文包含：
+
+```json
+{
+  "original_proj_dir": "/path/to/demo",
+  "entry_run_dir": "/path/to/demo.fm-entry-run",
+  "entry_funcs": ["src::main-c::main", "api::server-c::serve"],
+  "end_funcs": [],
+  "extra_edge": null,
+  "all_bugs": false
+}
+```
+
+`--entry-func` 可接受一个或多个以空格分隔的函数 FQN。未指定 `--end-func`
+时，入口推理分析每个请求入口可达函数的并集；指定 end function 后，只保留任一
+请求入口到任一 end function 的有效调用链，并将每个 end function 视为终点。所有
+请求入口都会被校验，缺失 FQN 会一次性报告。所有入口源文件都会绕过 test-file
+过滤；只有经过 end 裁剪后仍存在的入口源文件才会被强制写入 `phases.json`。
+
+入口函数运行会生成规约和推理结果，但按设计跳过 Bug Validation。Stage 6 output
+Hook 发布正常结果；若后续 Stage 失败，CLI 会复制已有的部分结果并删除 run copy。
+如果 entry 选择本身失败，则保留原有 `fm_agent/`。只会复制回 `fm_agent/`，裁剪后
+的源码会随 run copy 一起丢弃。
 
 ## 验证与信任边界
 
