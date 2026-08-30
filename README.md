@@ -381,16 +381,14 @@ A single self-contained `report.html` is generated automatically at the end of
 every full pipeline run (spec-only mode included), aggregating both the bug
 validation results and the per-function logic verification results into one
 browseable page. It is rendered purely from the run artifacts — no LLM calls,
-no network, no extra dependencies — and is byte-deterministic: the same
-artifacts always produce the same page.
+no network, no extra dependencies.
 
 Each row shows the report title, a status badge, the source file (linked back
 to the original source), the function name, and a code location. The page
 supports:
 
 - **Search** across title, source file, function name, and code location
-- **Filter** by status (bug: `confirmed` / `not_confirmed` / `error` /
-  `pending`; analysis: `bug_candidate` / `passed` / `error` / `skipped`)
+- **Filter** by status (`confirmed_bug` / `potential_bug`)
   and by source file
   (collapsible path tree; checking a directory selects all files under it).
 - **Sort** by status, source file, or function name
