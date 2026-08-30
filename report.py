@@ -1,10 +1,12 @@
 """Deterministic HTML report index for an FM-Agent run.
 
 Scans the ``<proj_dir>/fm_agent/`` workspace artifacts — bug validation
-reports (``bug_validation/*.result.json`` + ``summary.json``) and per-function
-analysis results (``logic_verification_results/**/*.json``) — and renders a
+reports (``bug_validation/*.result.json`` + ``summary.json``) — and renders a
 self-contained ``report.html`` with client-side search / filter / sort /
-expand-collapse. No LLM calls, no network, no new dependencies: the same
+expand-collapse. Only bug validations that reached a conclusion
+(``confirmed`` / ``not_confirmed``) are shown; analysis results and
+``error`` / ``pending`` validations are excluded from the page. No LLM
+calls, no network, no new dependencies: the same
 artifacts always produce the same byte-identical page.
 
 The page is written to ``<work_dir>/report.html`` and is regenerated
@@ -471,7 +473,7 @@ main { padding: 6px 22px 40px; }
 ul#items { list-style: none; margin: 0; padding: 0; }
 li.item { margin: 0 0 8px; border: 2px solid var(--border); border-radius: 8px;
           background: var(--panel); overflow: hidden; }
-.head { display: grid; grid-template-columns: 72px 104px minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1fr) 96px auto;
+.head { display: grid; grid-template-columns: 104px minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1fr) 96px auto;
         gap: 8px; align-items: center; padding: 9px 12px; cursor: pointer; }
 .head:hover { background: #f6f8fa; }
 .head .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -486,11 +488,9 @@ li.item { margin: 0 0 8px; border: 2px solid var(--border); border-radius: 8px;
 .chev { color: var(--muted); user-select: none; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
          font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; }
-.kind-bug { background: #8250df; }
-.kind-analysis { background: #0969da; }
 .status-confirmed { background: #cf222e; }
 .status-MATCH { background: #1a7f37; }
-.status-not_confirmed { background: #2da44e; }
+.status-not_confirmed { background: #e36209; }
 .status-MISMATCH { background: #9a6700; }
 .status-error, .status-ERROR { background: #a40e26; }
 .status-pending, .status-SKIPPED { background: #59636e; }
@@ -573,8 +573,8 @@ const STATUS_RANK = {confirmed:0, not_confirmed:1, error:2, pending:3, MISMATCH:
 const STATUS_LABEL = {
   MISMATCH: 'bug_candidate',
   MATCH: 'passed',
-  confirmed: 'confirmed',
-  not_confirmed: 'not_confirmed',
+  confirmed: 'confirmed_bug',
+  not_confirmed: 'potential_bug',
   error: 'error',
   pending: 'pending',
   ERROR: 'error',
@@ -630,63 +630,31 @@ function badge(cls, text) {
 }
 
 function buildStatusOptions() {
-  // Type / Status tree: bug and analysis are root "directories", their statuses
-  // nest beneath like files. Checking a root selects all of its statuses
-  // (indeterminate when partial). Root rows default to collapsed.
+  // Flat list of status checkboxes. The report carries only concluded bug
+  // validations (confirmed / not_confirmed), so there are no kind roots — the
+  // bug/analysis distinction is gone from the page.
   const container = $('status-opts');
   container.textContent = '';
+  const vals = Array.from(new Set(DATA.map((it) => it.status)))
+    .filter((v) => v !== '')
+    .sort((a, b) => (STATUS_RANK[a] ?? 99) - (STATUS_RANK[b] ?? 99) || (a < b ? -1 : a > b ? 1 : 0));
   const ul = document.createElement('ul');
   ul.className = 'tree';
-  const KIND_ORDER = { bug: 0, analysis: 1 };
-  const kinds = [...new Set(DATA.map((it) => it.kind))].sort((a, b) =>
-    (KIND_ORDER[a] ?? 99) - (KIND_ORDER[b] ?? 99) || (a < b ? -1 : a > b ? 1 : 0));
-  for (const k of kinds) {
-    const vals = Array.from(new Set(DATA.filter((it) => it.kind === k).map((it) => it.status)))
-      .filter((v) => v !== '')
-      .sort((a, b) => (STATUS_RANK[a] ?? 99) - (STATUS_RANK[b] ?? 99) || (a < b ? -1 : a > b ? 1 : 0));
-    if (!vals.length) continue;
+  for (const v of vals) {
     const li = document.createElement('li');
-    const row = document.createElement('div');
-    row.className = 'dir';
+    const label = document.createElement('label');
+    label.className = 'opt';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    const n = vals.length, sel = vals.filter((v) => state.statuses.has(v)).length;
-    cb.checked = n > 0 && sel === n;
-    cb.indeterminate = sel > 0 && sel < n;
+    cb.value = v;
+    cb.checked = state.statuses.has(v);
     cb.addEventListener('change', () => {
-      for (const v of vals) cb.checked ? state.statuses.add(v) : state.statuses.delete(v);
+      if (cb.checked) state.statuses.add(v); else state.statuses.delete(v);
       render();
     });
-    const label = document.createElement('span');
-    label.className = 'dir-label';
-    const open = state.statusDirs.has(k);
-    label.textContent = (open ? '▾ ' : '▸ ') + k;
-    label.addEventListener('click', () => {
-      if (state.statusDirs.has(k)) state.statusDirs.delete(k); else state.statusDirs.add(k);
-      render();
-    });
-    row.appendChild(cb); row.appendChild(label);
-    li.appendChild(row);
-    const sub = document.createElement('ul');
-    for (const v of vals) {
-      const vli = document.createElement('li');
-      const vlabel = document.createElement('label');
-      vlabel.className = 'opt';
-      const vcb = document.createElement('input');
-      vcb.type = 'checkbox';
-      vcb.value = v;
-      vcb.checked = state.statuses.has(v);
-      vcb.addEventListener('change', () => {
-        if (vcb.checked) state.statuses.add(v); else state.statuses.delete(v);
-        render();
-      });
-      vlabel.appendChild(vcb);
-      vlabel.appendChild(document.createTextNode(' ' + (STATUS_LABEL[v] || v)));
-      vli.appendChild(vlabel);
-      sub.appendChild(vli);
-    }
-    sub.classList.toggle('hidden', !open);
-    li.appendChild(sub);
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(' ' + (STATUS_LABEL[v] || v)));
+    li.appendChild(label);
     ul.appendChild(li);
   }
   container.appendChild(ul);
@@ -1167,7 +1135,6 @@ function rowEl(it) {
     render();
   });
 
-  head.appendChild(badge('kind-' + it.kind, it.kind));
   head.appendChild(badge('status-' + it.status, STATUS_LABEL[it.status] || it.status));
   const title = document.createElement('span');
   title.className = 'title';
@@ -1231,16 +1198,9 @@ function render() {
 
   $('empty').classList.toggle('hidden', shown.length > 0);
 
-  const total = { bug: 0, analysis: 0 };
-  for (const it of DATA) total[it.kind] = (total[it.kind] || 0) + 1;
-  const shownKinds = { bug: 0, analysis: 0 };
-  for (const it of shown) shownKinds[it.kind] = (shownKinds[it.kind] || 0) + 1;
   const filtered = state.search.trim() || state.statuses.size || state.files.size;
-  let stats = shown.length + ' / ' + DATA.length + ' reports' +
-              '  ·  bugs ' + total.bug + '  ·  analyses ' + total.analysis;
-  if (filtered) {
-    stats += '  ·  shown: ' + shownKinds.bug + ' bug, ' + shownKinds.analysis + ' analysis';
-  }
+  let stats = shown.length + ' / ' + DATA.length + ' bug reports';
+  if (filtered) stats += '  ·  shown: ' + shown.length;
   $('stats').textContent = stats;
 }
 
@@ -1365,7 +1325,14 @@ def generate_report(work_dir):
     Deterministic and LLM-free: re-running on the same artifacts produces the
     same bytes. Returns the absolute path of the written file.
     """
-    items = _collect_bugs(work_dir) + _collect_analyses(work_dir)
+    items = _collect_bugs(work_dir)
+    # Report only concluded bug validations: confirmed / not_confirmed.
+    # Per-function analysis items and error/pending validations are excluded
+    # from the page entirely (their sources/detail are not embedded either).
+    items = [
+        it for it in items
+        if it["kind"] == "bug" and it["status"] in ("confirmed", "not_confirmed")
+    ]
     _enrich_locations(work_dir, items)
     _attach_source_href(work_dir, items)
     _embed_detail_full(work_dir, items)
