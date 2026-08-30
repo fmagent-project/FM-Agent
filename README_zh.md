@@ -165,8 +165,6 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | `--bug-validator FILE` | 使用自定义 Markdown 提示词执行 Bug 验证，替代内置的 `md/bug_validator.md`。 |
 | `--isolate` | 针对项目的隔离 git worktree 快照运行，而非直接在项目目录上运行。 |
 | `--submodule PATH [PATH ...]` | 只处理 `proj_dir` 中一个或多个子目录下的源代码。 |
-| `--entry-func PATH [PATH ...]` | 从一个或多个函数 FQN 开始进行入口范围推理，并自动启用内置入口插件。 |
-| `--end-func PATH [PATH ...]` | 可选：在一个或多个函数 FQN 处停止入口范围推理。 |
 | `--extra-edge FILE` | 从 JSON 文件或目录向静态调用图补充 caller 到 callee 的边。 |
 | `--only-spec` | 只生成行为规约，跳过推理与 Bug 验证阶段。不能与 `--incremental` 一起使用。 |
 | `--estimate` | 不调用 LLM，仅扫描范围并输出基于历史数据的时间、LLM 调用次数、Token 与费用预估。 |
@@ -186,28 +184,7 @@ def hook(proj_dir: str) -> None:
 插件目录结构、JSON 配置、执行模式、生命周期和信任边界参见
 [Pipeline 插件](docs/plugins_zh.md)。
 
-完整和增量运行要求 `proj_dir` 是 Git 仓库。入口范围运行会使用自己的隔离副本，
-因此不要求 Git checkout。
-
-### 入口范围推理
-
-从一个或多个入口函数分析其可达函数的并集：
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::entry_a api-py::entry_b
-```
-
-指定 end function 后，只保留请求入口到任一 end function 的有效调用链；每个
-end function 都是选定范围内的终点：
-
-```bash
-uv run python main.py <proj_dir> \
-  --entry-func main-py::entry_a api-py::entry_b \
-  --end-func services-py::end_a services-py::end_b
-```
-
-所有请求入口都必须存在。该选项不能与 `--plugin` 或 `--submodule` 一起使用。
+`proj_dir` 必须是一个 git 仓库。
 
 ### 运行前预估
 
