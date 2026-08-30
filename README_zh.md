@@ -330,8 +330,8 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 每一行展示报告标题、状态徽章、源文件（可点击跳转到原始源码）、函数名与代码位置。页面支持：
 
 - **搜索**：按标题、源文件、函数名、代码位置搜索
-- **筛选**：按状态（`confirmed` / `not_confirmed` / `error` / `pending`，或 `MATCH` / `MISMATCH` / `ERROR` / `SKIPPED`）与源文件筛选
-- **排序**：按状态、源文件、函数名或代码位置排序
+- **筛选**：按状态（bug：`confirmed` / `not_confirmed` / `error` / `pending`；analysis：`bug_candidate` / `passed` / `error` / `skipped`）与源文件筛选
+- **排序**：按状态、源文件或函数名排序
 - **展开/折叠**：单个报告与全部报告一键展开/折叠，以及重置按钮
 
 页面写入 `fm_agent/report.html`，用浏览器打开即可浏览。也可随时基于任意已有运行的产物重新生成：`uv run python report.py <项目目录>`（也可直接传入 `fm_agent/` 工作目录或归档的工作区目录）。增量模式（`--incremental`）不会自动生成该页面，需手动运行上述命令。
