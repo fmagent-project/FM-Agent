@@ -290,6 +290,12 @@ FM-Agent 自带一个独立的实时 TUI 监控面板（[dashboard.py](dashboard
 uv run python dashboard.py <proj_dir>
 ```
 
+也可以直接在主命令中启用，Dashboard 会自动关联本次运行的工作目录，并在流水线结束时退出：
+
+```bash
+uv run python main.py <proj_dir> --dashboard
+```
+
 如需在不启动流水线、不调用 LLM 的情况下生成并展示一次运行前估算：
 
 ```bash

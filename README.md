@@ -367,6 +367,14 @@ FM-Agent ships a standalone real-time TUI dashboard ([dashboard.py](dashboard.py
 uv run python dashboard.py <proj_dir>
 ```
 
+Alternatively, start it automatically from the main command; it monitors the
+current run's workspace (including isolated runs) and is stopped when the run
+finishes:
+
+```bash
+uv run python main.py <proj_dir> --dashboard
+```
+
 To generate and display only the pre-run estimate, without starting the
 pipeline or making LLM calls:
 
