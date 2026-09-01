@@ -297,8 +297,11 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
         started = utc_now_iso()
         response = None
         usage = {}
+        reasoning = None
         try:
-            response, usage = _retry_create(_llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages)
+            response, usage, reasoning = _retry_create(
+                _llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages
+            )
         except Exception as exc:
             event = {
                 "event_id": event_id,
@@ -346,7 +349,7 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
                 "parse_error": parse_error,
             },
         }
-        record_llm_exchange(trace_dir, event_id, event, messages, response)
+        record_llm_exchange(trace_dir, event_id, event, messages, response, reasoning)
         if has_violation is not None:
             if has_violation:
                 stmts = stmts or "(unable to extract)"
