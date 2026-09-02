@@ -25,7 +25,7 @@ from src.git import (
     _record_version,
 )
 from src.languages.codegraph import try_codegraph_init
-from src.plugin import run_plugin_hook
+from src.plugin import PLUGIN_OPTION_NAMES, get_unsupported_plugin_options, run_plugin_hook
 from src.pipeline_setup import (
     _run_setup_extract,
     _run_generate_phases,
@@ -48,6 +48,7 @@ from src.specification import (
     SpecificationProfileSession,
     bind_profile_session,
 )
+from config import settings
 import os
 import sys
 import argparse
@@ -198,6 +199,34 @@ def _normalize_submodules(proj_dir, submodules):
         if not collapsed or not _is_under_submodules(rel, collapsed):
             collapsed.append(rel)
     return collapsed
+
+
+def _active_plugin_options(args, effective_resume):
+    """Return active plugin-sensitive options."""
+    active = {
+        name
+        for name in PLUGIN_OPTION_NAMES
+        if getattr(args, name, False)
+    }
+    if effective_resume:
+        active.add("resume")
+    if settings.runtime.domain_knowledge_paths.strip() or os.environ.get("FM_AGENT_DOMAIN_KNOWLEDGE"):
+        active.add("domain_knowledge")
+    return active
+
+
+def _validate_plugin_options(parser, plugin_config, args, resume):
+    """Fail before side effects when a plugin denies an active option."""
+    unsupported = get_unsupported_plugin_options(
+        plugin_config,
+        _active_plugin_options(args, resume),
+    )
+    if unsupported:
+        flags = ", ".join(f"--{name.replace('_', '-')}" for name in unsupported)
+        parser.error(
+            f"Plugin '{plugin_config.name}' does not support option(s): {flags}. "
+            "Remove the option(s) or use a compatible plugin."
+        )
 
 
 def run_pipeline(
@@ -764,6 +793,8 @@ if __name__ == "__main__":
         parser.error("the following arguments are required: proj_dir")
 
     resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
+    if plugin_config is not None:
+        _validate_plugin_options(parser, plugin_config, args, resume)
     proj_dir = os.path.abspath(args.proj_dir)
     is_entry = args.entry_func is not None
     extra_call_edges_path = args.extra_edge

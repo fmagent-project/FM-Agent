@@ -2,6 +2,13 @@
   "name": "chip",
   "version": "V0.1",
   "configure_function": "configure",
+  "unsupported_options": [
+    "incremental",
+    "end_func",
+    "all_bugs",
+    "bug_validator",
+    "estimate"
+  ],
   "stages": {
     "generate_specs_and_verification": {
       "type": "modify",

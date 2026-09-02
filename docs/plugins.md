@@ -77,6 +77,33 @@ framework does not replace this argument with another internal path.
 `configure_function` is optional. A plugin may configure any subset of the
 supported stages.
 
+### Option compatibility (optional)
+
+Plugins may explicitly reject command-line options they cannot honor:
+
+```json
+{
+  "name": "example_plugin",
+  "version": "V1.0",
+  "unsupported_options": ["resume", "incremental"],
+  "stages": {}
+}
+```
+
+The field is a sparse denylist: an option not listed is treated as supported.
+Names use the argparse destination (`one_phase`, `domain_knowledge`, and so
+on). The currently registered option names are `resume`, `incremental`,
+`isolate`, `one_phase`, `all_bugs`, `only_spec`, `estimate`,
+`domain_knowledge`, `submodule`, `end_func`, `extra_edge`, and
+`bug_validator`. `--knowledge` shares the `domain_knowledge` name, and
+`FM_AGENT_RESUME=1` shares the `resume` name.
+
+FM-Agent checks the denylist before resolving option paths, running the
+environment check, creating an isolated worktree, mutating `fm_agent/`, or
+making LLM calls. This is an additional plugin compatibility check; existing
+global CLI combination rules still apply. The field does not replace the Hook
+contract or make a Profile mandatory.
+
 ## Specification Profile (optional)
 
 A plugin may register one `SpecificationProfile` synchronously from `configure`.
@@ -119,7 +146,9 @@ software reasoning or provide correctness guarantees.
 ## Built-in chip plugin
 
 The built-in `chip` plugin selects one hardware Profile during `configure` and
-uses the common Stage 1–6 Pipeline. Its manifest has `stages: {}`.
+uses the common Stage 1–6 Pipeline. Its manifest adds a Stage 6 modify Hook for
+Chisel artifact eligibility and explicitly rejects options whose current
+semantics are not defined for chip.
 
 ```bash
 uv run python main.py <proj_dir> --plugin chip
@@ -147,6 +176,13 @@ contains the FG/FC/CK tree and `<FG-API>`; the second contains direct-submodule
 expectations. Missing known dependency coverage is advisory for Chisel and
 blocking for Verilog. Chip Profiles disable software reasoning and bug
 validation.
+
+Chip follows the common option contract for `--resume`/`FM_AGENT_RESUME=1`,
+`--submodule`, `--one-phase`, `--domain-knowledge`/`--knowledge`, `--extra-edge`,
+fresh `--isolate` runs, and `--only-spec`; resume uses the same best-effort
+semantics as the software pipeline. Its manifest explicitly rejects
+`--incremental`, `--end-func`, `--all-bugs`, `--bug-validator`, and `--estimate`;
+these options fail before any workspace or LLM side effect.
 
 ## Execution modes
 
@@ -243,7 +279,8 @@ In isolate mode hooks receive the isolated worktree path. The existing isolate
 workflow copies `fm_agent/` results back to the original project.
 
 Pipeline hooks are supported for full, resume, and isolate runs. Incremental
-pipelines do not receive plugin configuration or execute plugin hooks.
+pipelines do not receive plugin configuration or execute plugin hooks. A plugin
+may reject any of those options with `unsupported_options`.
 
 Entry-point runs automatically activate the bundled `entry_reasoning` plugin.
 `--entry-func` cannot be combined with a separately selected `--plugin`.
