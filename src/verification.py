@@ -9,6 +9,7 @@ from .file_utils import (
     is_file_ready,
 )
 from .opencode_trace import function_id_from_result_path, run_opencode_traced
+from .specification import SOFTWARE_PROFILE, SpecificationProfile
 from .llm_client import build_llm_cli_command
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
@@ -81,6 +82,7 @@ def streaming_reasoner(
     bug_validator_path=None,
     validate_bugs=True,
     all_bugs=False,
+    specification: SpecificationProfile = SOFTWARE_PROFILE,
 ):
     """Continuously watch input_dir for ready files, verify them, and validate bugs."""
     if work_dir is None:
@@ -92,7 +94,7 @@ def streaming_reasoner(
     if file_list is not None:
         expected_files = set(
             os.path.join(input_dir, rel) for rel in file_list
-            if os.path.splitext(rel)[1] in EXT_TO_LANG
+            if os.path.splitext(rel)[1].lower() in EXT_TO_LANG
         )
     else:
         expected_files = None
@@ -112,7 +114,7 @@ def streaming_reasoner(
         num_functions = sum(
             1 for root, _, files in os.walk(input_dir)
             for fname in files
-            if os.path.splitext(fname)[1] in EXT_TO_LANG
+            if os.path.splitext(fname)[1].lower() in EXT_TO_LANG
         )
         print(f"Functions pending verification: {num_functions}")
 
@@ -140,7 +142,7 @@ def streaming_reasoner(
                 # Scan for new ready files
                 for root, _, files in os.walk(input_dir):
                     for fname in files:
-                        ext = os.path.splitext(fname)[1]
+                        ext = os.path.splitext(fname)[1].lower()
                         if ext not in EXT_TO_LANG:
                             continue
                         file_path = os.path.join(root, fname)
@@ -152,7 +154,7 @@ def streaming_reasoner(
                             continue
                         if file_path in failed:
                             continue
-                        if not is_file_ready(file_path):
+                        if not is_file_ready(file_path, specification):
                             continue
 
                         # File is ready and not yet submitted or processed.
@@ -297,10 +299,10 @@ def streaming_reasoner(
                     # last regular scan, so check remaining expected files once more.
                     newly_ready = False
                     for file_path in (expected_files or set()) - processed - submitted - failed:
-                        ext = os.path.splitext(file_path)[1]
+                        ext = os.path.splitext(file_path)[1].lower()
                         if ext not in EXT_TO_LANG:
                             continue
-                        if not is_file_ready(file_path):
+                        if not is_file_ready(file_path, specification):
                             continue
                         _submit_file(file_path, ext)
                         newly_ready = True

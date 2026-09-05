@@ -22,6 +22,21 @@ SUPPORTED_STAGES = {
     "generate_specs_and_verification",
 }
 
+PLUGIN_OPTION_NAMES = (
+    "resume",
+    "incremental",
+    "isolate",
+    "one_phase",
+    "all_bugs",
+    "only_spec",
+    "estimate",
+    "domain_knowledge",
+    "submodule",
+    "end_func",
+    "extra_edge",
+    "bug_validator",
+)
+
 _STAGE_FUNCTION_FIELDS = {
     "replace_function",
     "input_function",
@@ -56,10 +71,25 @@ class PluginConfig:
     stages: Dict[str, PluginStageConfig] = field(default_factory=dict)
     configure_function: Optional[str] = None
     configure_hook: Optional[Hook] = field(default=None, repr=False)
+    unsupported_options: frozenset[str] = field(default_factory=frozenset)
 
     def get_stage(self, stage_name: str) -> Optional[PluginStageConfig]:
         """Return the stage config for *stage_name*, or None if not configured."""
         return self.stages.get(stage_name)
+
+
+def get_unsupported_plugin_options(
+    plugin_config: PluginConfig,
+    option_names,
+) -> tuple[str, ...]:
+    """Return active options explicitly rejected by a plugin in stable order."""
+    active = set(option_names)
+    return tuple(
+        option_name
+        for option_name in PLUGIN_OPTION_NAMES
+        if option_name in active
+        and option_name in plugin_config.unsupported_options
+    )
 
 
 def _validate_function_name(
@@ -138,6 +168,44 @@ def _validate_stage_fields(
             data.get(field_name),
             stage_name=stage_name,
         )
+
+
+def _validate_unsupported_options(
+    plugin_name: str,
+    value: object,
+) -> frozenset[str]:
+    """Validate and normalize the optional plugin option denylist."""
+    if not isinstance(value, list):
+        raise PluginValidationError(
+            f"Plugin '{plugin_name}' field 'unsupported_options' "
+            "must be a JSON array"
+        )
+
+    invalid_options = [
+        option_name
+        for option_name in value
+        if not isinstance(option_name, str) or not option_name
+    ]
+    if invalid_options:
+        raise PluginValidationError(
+            f"Plugin '{plugin_name}' field 'unsupported_options' "
+            "must contain non-empty strings"
+        )
+
+    if len(value) != len(set(value)):
+        raise PluginValidationError(
+            f"Plugin '{plugin_name}' field 'unsupported_options' "
+            "must not contain duplicates"
+        )
+
+    unknown_options = set(value) - set(PLUGIN_OPTION_NAMES)
+    if unknown_options:
+        raise PluginValidationError(
+            f"Plugin '{plugin_name}' field 'unsupported_options' contains "
+            f"unsupported option(s): {', '.join(sorted(unknown_options))}"
+        )
+
+    return frozenset(value)
 
 
 def _load_plugin_module(
@@ -272,6 +340,7 @@ def _load_and_validate_plugin(plugin_dir: Path) -> PluginConfig:
         "name",
         "version",
         "configure_function",
+        "unsupported_options",
         "stages",
     }
     unknown_top_level_fields = set(data) - allowed_top_level_fields
@@ -280,6 +349,11 @@ def _load_and_validate_plugin(plugin_dir: Path) -> PluginConfig:
             f"Plugin '{plugin_name}' contains unsupported field(s): "
             f"{', '.join(sorted(unknown_top_level_fields))}"
         )
+
+    unsupported_options = _validate_unsupported_options(
+        plugin_name,
+        data.get("unsupported_options", []),
+    )
 
     stages_data = data.get("stages", {})
     if not isinstance(stages_data, dict):
@@ -343,6 +417,7 @@ def _load_and_validate_plugin(plugin_dir: Path) -> PluginConfig:
         version=version,
         root=plugin_dir,
         stages=stages,
+        unsupported_options=unsupported_options,
         configure_function=configure_function,
         configure_hook=configure_hook,
     )

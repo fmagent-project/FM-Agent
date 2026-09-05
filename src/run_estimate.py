@@ -120,7 +120,7 @@ def _count_functions(proj_dir: str, files: Iterable[str]) -> tuple[int, list[str
     total = 0
     uncounted = []
     for rel_path in files:
-        ext = rel_path.rsplit(".", 1)[-1] if "." in rel_path else ""
+        ext = rel_path.rsplit(".", 1)[-1].lower() if "." in rel_path else ""
         language = EXT_TO_LANG.get(ext)
         if not language:
             continue

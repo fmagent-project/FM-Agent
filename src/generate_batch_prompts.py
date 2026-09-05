@@ -11,9 +11,11 @@ try:
     # When imported as part of the src package (e.g. incremental_reasoner).
     from .file_utils import is_file_ready
     from .domain_knowledge import list_staged_domain_knowledge_relpaths
+    from .specification import BatchPromptContext, SOFTWARE_PROFILE, SpecificationProfile
 except ImportError:
     # When run directly from the source tree, file_utils.py sits beside this script.
     from file_utils import is_file_ready
+    from specification import BatchPromptContext, SOFTWARE_PROFILE, SpecificationProfile
 
     def list_staged_domain_knowledge_relpaths(work_dir, prefix="fm_agent"):
         knowledge_dir = Path(work_dir) / "spec_prompts" / "domain_context" / "user_knowledge"
@@ -35,6 +37,8 @@ COMMENT_PREFIX_BY_LANG = {
     "cpp": "//",
     "cxx": "//",
     "cc": "//",
+    "chisel": "//",
+    "verilog": "//",
     "java": "//",
     "go": "//",
     "rust": "//",
@@ -63,17 +67,43 @@ _ERLANG_NAME_RE = re.compile(
 logger = logging.getLogger(__name__)
 
 
+def extension_language_map(
+    languages: Sequence[str],
+    file_extensions: Sequence[str],
+) -> dict[str, str]:
+    """Map phase-plan extensions to languages without silent truncation.
+
+    A single configured language may own multiple extensions, such as Chisel
+    owning scala and sc or Verilog owning v, sv and svh. When more than one
+    language is configured, retain positional mapping but reject ambiguity.
+    """
+    normalized_extensions = [
+        extension.lower().lstrip(".") for extension in file_extensions
+    ]
+    if len(languages) == 1:
+        return {
+            extension: languages[0]
+            for extension in normalized_extensions
+        }
+    if len(languages) > 1 and len(languages) != len(normalized_extensions):
+        raise ValueError(
+            "phases.json languages and file_extensions must have equal lengths "
+            "when more than one language is configured"
+        )
+    return dict(zip(normalized_extensions, languages))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate spec batch prompts for one phase/layer range.")
     parser.add_argument("--phase", type=int, required=True, help="Phase number, e.g. 3")
     parser.add_argument("--layers", required=True, help="Layer index or inclusive range, e.g. 0 or 0-5")
-    parser.add_argument("--batch-size", type=int, default=2, help="Functions per prompt file")
+    parser.add_argument("--batch-size", type=int, default=2, help="Units per prompt file")
     parser.add_argument("--output-dir", default=None, help="Output directory for batch prompt files")
     parser.add_argument("--dry-run", action="store_true", help="Show plan without writing files")
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip functions already specced (file_utils.is_file_ready) when building batches",
+        help="Skip units already specced (file_utils.is_file_ready) when building batches",
     )
     return parser.parse_args()
 
@@ -91,19 +121,19 @@ def parse_layers_spec(layers_spec: str) -> Tuple[int, int]:
     return start, end
 
 
-def _spec_json_path(filepath: Path) -> Path:
+def _spec_json_path(filepath: Path, specification: SpecificationProfile = SOFTWARE_PROFILE) -> Path:
     """Return the spec sidecar next to one extracted function file."""
-    return Path(str(filepath) + ".spec.json")
+    return specification.artifact_paths(filepath).self_spec
 
 
-def _info_json_path(filepath: Path) -> Path:
+def _info_json_path(filepath: Path, specification: SpecificationProfile = SOFTWARE_PROFILE) -> Path:
     """Return the info sidecar next to one extracted function file."""
-    return Path(str(filepath) + ".info.json")
+    return specification.artifact_paths(filepath).dependency_info
 
 
-def extract_spec_block(filepath: Path) -> Optional[str]:
+def extract_spec_block(filepath: Path, specification: SpecificationProfile = SOFTWARE_PROFILE) -> Optional[str]:
     """Read .spec.json and rebuild reasoner-facing spec text."""
-    spec_path = _spec_json_path(filepath)
+    spec_path = _spec_json_path(filepath, specification)
 
     try:
         with spec_path.open("r", encoding="utf-8") as file:
@@ -121,9 +151,9 @@ def extract_spec_block(filepath: Path) -> Optional[str]:
     )
 
 
-def extract_info_block(filepath: Path) -> Optional[dict]:
+def extract_info_block(filepath: Path, specification: SpecificationProfile = SOFTWARE_PROFILE) -> Optional[dict]:
     """Read the adjacent .info.json object when it is usable."""
-    info_path = _info_json_path(filepath)
+    info_path = _info_json_path(filepath, specification)
 
     try:
         with info_path.open("r", encoding="utf-8") as file:
@@ -619,6 +649,17 @@ def chunked(items: List[dict], size: int) -> List[List[dict]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+def _artifact_eligible(function: dict) -> bool:
+    """Return whether a topdown unit should receive standalone artifacts.
+
+    This is an opt-in metadata contract. Existing software topdown files do
+    not contain the field and retain the historical behavior. Hardware
+    plugins may mark Bundle/trait declarations as context-only while keeping
+    them in the dependency graph used to render prompts.
+    """
+    return function.get("artifact_eligible", True) is not False
+
+
 def read_json(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"missing required file: {path}")
@@ -662,17 +703,20 @@ def build_prompt(
     work_dir: Path,
     fm_agent_prefix: str,
     ext_to_lang: Dict[str, str],
+    specification: SpecificationProfile = SOFTWARE_PROFILE,
 ) -> str:
     lines: List[str] = []
     sample_lang = "unknown"
     if functions:
         sample_lang, _ = detect_lang_and_comment(functions[0]["file"], ext_to_lang)
+    self_artifact_name, dependency_artifact_name = specification.example_artifact_names()
 
     lines.append(f"You are generating behavioral specifications for Phase {phase}, Layer {layer_idx}.")
     lines.append("")
     lines.append(
         f"Language: {sample_lang}. "
-        "Write specifications to adjacent .spec.json and .info.json files."
+        f"Write specifications to adjacent {specification.artifacts.self_suffix} "
+        f"and {specification.artifacts.dependency_suffix} files."
     )
     lines.append("")
     lines.append(f"Read {fm_agent_prefix}spec_prompts/system_prompt.md FIRST for the mandatory spec format rules.")
@@ -688,11 +732,37 @@ def build_prompt(
             lines.append(f"- {path}")
     lines.append("")
     lines.append("## KEY RULES")
-    lines.append("- Describe WHAT the function guarantees, NOT HOW it implements it")
+    lines.append("- Describe WHAT each extracted unit guarantees, NOT HOW it implements it")
     lines.append("- Do NOT name internal helper calls, loop structure, or data layout decisions")
     lines.append("- Do NOT enumerate members of sets - describe the GOVERNING RULE")
     lines.append("- Specs describe INTENDED CORRECT behavior per the domain (see domain files)")
     lines.append(f"- ALL files below exist in {fm_agent_prefix}extracted_functions/ - read and process each one")
+
+    context_units: List[Tuple[str, dict]] = []
+    context_seen = set()
+    for fn in functions:
+        for callee_name in fn.get("all_callees", ()):
+            if not isinstance(callee_name, str) or callee_name in context_seen:
+                continue
+            callee_meta = all_funcs.get(callee_name)
+            if callee_meta is None or _artifact_eligible(callee_meta):
+                continue
+            context_seen.add(callee_name)
+            context_units.append((callee_name, callee_meta))
+
+    if context_units:
+        lines.append("")
+        lines.append("## CONTEXT-ONLY DECLARATIONS")
+        lines.append(
+            "These declarations are retained for dependency and interface "
+            "semantics. They are context only and must not receive standalone "
+            "specification artifacts. Read each source file when determining "
+            "the target unit's interface or dependency requirements:"
+        )
+        for context_name, context_meta in sorted(context_units):
+            lines.append(
+                f"- {context_name}: {fm_agent_prefix}{context_meta['file']}"
+            )
 
     caller_specs: List[Tuple[str, str]] = []
     caller_expectations: Dict[str, List[Tuple[str, str]]] = {}
@@ -710,21 +780,15 @@ def build_prompt(
             if not caller_meta:
                 continue
             caller_file = work_dir / caller_meta["file"]
-            spec_block = extract_spec_block(caller_file)
+            spec_block = specification.read_self_spec(caller_file)
             if spec_block and (caller_name, spec_block) not in caller_specs:
                 caller_specs.append((caller_name, spec_block))
-            info_dict = extract_info_block(caller_file)
-            if not info_dict:
-                continue
-            entry = extract_callee_spec_from_info(
-                info_dict, fn_name, info_names_by_caller.get(caller_name, [])
+            entry_text = specification.read_dependency_expectation(
+                caller_file,
+                fn_name,
+                info_names_by_caller.get(caller_name, []),
             )
-            if entry:
-                entry_text = (
-                    f"{entry.get('signature', '')}\n"
-                    f"  Pre-condition: {entry.get('pre_condition', '')}\n"
-                    f"  Post-condition: {entry.get('post_condition', '')}"
-                )
+            if entry_text:
                 caller_expectations.setdefault(fn_name, []).append(
                     (caller_name, entry_text)
                 )
@@ -753,18 +817,18 @@ def build_prompt(
 
     if is_cycle:
         lines.append("## CYCLE LAYER GUIDANCE")
-        lines.append("These functions call each other (mutual recursion / circular dependencies).")
+        lines.append("These units call each other (mutual recursion / circular dependencies).")
         lines.append(
             'Ask: "What is true after this function returns, regardless of which caller invoked it and which code path executed?" '
             "That invariant is your post-condition."
         )
         lines.append("")
-        lines.append("DISPATCH FUNCTION TEST: If your spec has N bullets where N equals the number")
+        lines.append("DISPATCH UNIT TEST: If your spec has N bullets where N equals the number")
         lines.append("of switch arms / dispatch cases, you are transcribing the implementation.")
         lines.append("A dispatch function's contract is the invariant that holds ACROSS ALL cases.")
         lines.append("")
 
-    lines.append(f"## FUNCTIONS ({len(functions)} total - process ALL)")
+    lines.append(f"## UNITS ({len(functions)} total - process ALL)")
     for idx, fn in enumerate(functions, start=1):
         fn_name = fn["name"]
         caller_key = phase_callers_key(fn, phase)
@@ -777,44 +841,14 @@ def build_prompt(
             lines.append("  Earlier-layer callers: (none)")
 
     lines.append("")
-    lines.append("## SPEC FORMAT (write JSON files; do NOT modify source files)")
-    lines.append("")
-    lines.append(
-        "For each function file `<function-file>`, "
-        "write TWO JSON files in the SAME directory. "
-        "`<function-file>` includes its original extension "
-        "(for example, `foo.py` must produce `foo.py.spec.json` "
-        "and `foo.py.info.json`):"
+    lines.extend(
+        specification.prompt_contract.batch_output_section(
+            BatchPromptContext(
+                self_artifact_name=self_artifact_name,
+                dependency_artifact_name=dependency_artifact_name,
+            )
+        )
     )
-    lines.append("")
-    lines.append("`<function-file>.spec.json`:")
-    lines.append("```json")
-    lines.append(
-        '{"signature": "<FunctionName>(<params>) -> <ReturnType>", '
-        '"pre_condition": "...", "post_condition": "..."}'
-    )
-    lines.append("```")
-    lines.append("")
-    lines.append("`<function-file>.info.json`:")
-    lines.append("```json")
-    lines.append(
-        '{"callees": [{"name": "<callee_name>", "signature": "...", '
-        '"pre_condition": "...", "post_condition": "..."}]}'
-    )
-    lines.append("```")
-    lines.append("")
-    lines.append('If the function has no callees: write `{"callees": []}` to the .info.json file.')
-    lines.append("")
-    lines.append("## PROCESS")
-    lines.append("For each function:")
-    lines.append("1. Read the extracted file")
-    lines.append("2. Read caller expectations above - what do callers NEED from this function?")
-    lines.append("3. Write a behavioral spec describing WHAT it guarantees (not HOW)")
-    lines.append(
-        "4. Write the COMPLETE .spec.json and .info.json objects next to the "
-        "UNCHANGED source file"
-    )
-    lines.append("5. Use the Write tool to save both JSON files")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -827,6 +861,7 @@ def generate_batch_prompts(
     output_dir: Optional[Path] = None,
     resume: bool = False,
     dry_run: bool = False,
+    specification: SpecificationProfile = SOFTWARE_PROFILE,
 ) -> dict:
     """Build, persist, and return the batch manifest for a layer range."""
     if batch_size <= 0:
@@ -841,7 +876,7 @@ def generate_batch_prompts(
     project = phases_json["project"]
     languages = phases_json.get("languages", [])
     exts = phases_json.get("file_extensions", [])
-    ext_to_lang = {ext.lower().lstrip("."): lang for ext, lang in zip(exts, languages)}
+    ext_to_lang = extension_language_map(languages, exts)
 
     topdown_path = work_dir / "spec_prompts" / f"phase_{phase:02d}_topdown_layers.json"
     topdown = read_json(topdown_path)
@@ -869,6 +904,7 @@ def generate_batch_prompts(
 
     manifest_batches = []
     total_functions = 0
+    total_context_functions = 0
     skipped_functions = 0
     batch_index = 0
     write_targets: List[Tuple[Path, str]] = []
@@ -876,7 +912,11 @@ def generate_batch_prompts(
 
     for layer_idx in range(start_layer, end_layer + 1):
         layer = layers[layer_idx]
-        layer_functions = layer.get("functions", [])
+        all_layer_functions = layer.get("functions", [])
+        layer_functions = [
+            fn for fn in all_layer_functions if _artifact_eligible(fn)
+        ]
+        total_context_functions += len(all_layer_functions) - len(layer_functions)
         is_cycle = bool(layer.get("cycle_resolution", False))
         tag = "cycle" if is_cycle else "extracted"
         chunks = chunked(layer_functions, batch_size)
@@ -888,7 +928,11 @@ def generate_batch_prompts(
             # done — but the manifest below still records the full batch.
             prompt_funcs = fn_batch
             if resume:
-                prompt_funcs = [fn for fn in fn_batch if not is_file_ready(work_dir / fn["file"])]
+                prompt_funcs = [
+                    fn
+                    for fn in fn_batch
+                    if not is_file_ready(work_dir / fn["file"], specification)
+                ]
                 skipped_functions += len(fn_batch) - len(prompt_funcs)
             out_path = output_dir / filename
             # On resume, a batch whose functions are all already specced has no
@@ -907,6 +951,7 @@ def generate_batch_prompts(
                     work_dir,
                     fm_agent_prefix,
                     ext_to_lang,
+                    specification,
                 )
                 write_targets.append((out_path, content))
             else:
@@ -930,6 +975,7 @@ def generate_batch_prompts(
         "phase": phase,
         "layers": layers_spec,
         "total_functions": total_functions,
+        "total_context_functions": total_context_functions,
         "total_batches": len(manifest_batches),
         "batches": manifest_batches,
     }

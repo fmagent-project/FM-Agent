@@ -681,10 +681,10 @@ def _phase_plan_schema_errors(phases_path):
     return errors
 
 
-def _phase_plan_complete(work_dir):
-    """Return True only if phases.json exists and matches the required schema."""
+def _phase_plan_complete(work_dir, specification=None):
+    """Return True if phases.json is valid and obeys the language filter."""
     phases_path = os.path.join(work_dir, "phases.json")
-    return not _phase_plan_schema_errors(phases_path)
+    return not (_phase_plan_schema_errors(phases_path) + _phase_plan_language_errors(phases_path, specification))
 
 
 def _domain_context_complete(work_dir):
@@ -714,21 +714,61 @@ def _domain_context_complete(work_dir):
     return True
 
 
-def _setup_outputs_complete(work_dir):
+def _setup_outputs_complete(work_dir, specification=None):
     """Return True when both phase plan and domain context are complete."""
-    return _phase_plan_complete(work_dir) and _domain_context_complete(work_dir)
+    return _phase_plan_complete(work_dir, specification) and _domain_context_complete(work_dir)
 
 
-def _collect_project_source_files(proj_dir, submodules=None):
+def _collect_project_source_files(proj_dir, submodules=None, specification=None):
     """Return non-test source files currently present in proj_dir, relative to proj_dir."""
     files = set()
-    for rel in _iter_project_source_files(proj_dir, submodules):
+    for rel in _iter_project_source_files(proj_dir, submodules, specification):
         if not _is_test_file(rel):
             files.add(rel)
     return files
 
 
-def _phases_cover_current_sources(phases_json, proj_dir, submodules=None):
+def _profile_language_allowed(source_file, specification=None):
+    if specification is None or specification.languages is None:
+        return True
+    from src.extract import EXT_TO_LANG  # local import avoids module cycles
+
+    extension = os.path.basename(source_file).rsplit(".", 1)[-1].lower()
+    return specification.allows_language(EXT_TO_LANG.get(extension))
+
+
+def _phase_plan_language_errors(phases_json, specification=None):
+    """Return phase-plan entries that violate a Profile language filter."""
+    if specification is None or specification.languages is None:
+        return []
+    try:
+        with open(phases_json, "r") as file:
+            data = json.load(file)
+    except (OSError, ValueError):
+        return []
+
+    if not isinstance(data, dict) or not isinstance(data.get("phases"), list):
+        return []
+
+    errors = []
+    for phase in data.get("phases", []):
+        if not isinstance(phase, dict) or not isinstance(phase.get("modules"), list):
+            continue
+        for module in phase.get("modules", []):
+            if not isinstance(module, dict) or not isinstance(module.get("source_files"), list):
+                continue
+            for source_file in module.get("source_files", []):
+                if not isinstance(source_file, str):
+                    continue
+                if not _profile_language_allowed(source_file, specification):
+                    errors.append(
+                        "source file "
+                        f"{source_file!r} is outside the Profile language filter"
+                    )
+    return errors
+
+
+def _phases_cover_current_sources(phases_json, proj_dir, submodules=None, specification=None):
     """Return whether phases.json is valid for the current source-file set."""
     try:
         with open(phases_json, "r") as f:
@@ -740,7 +780,11 @@ def _phases_cover_current_sources(phases_json, proj_dir, submodules=None):
     for phase in data.get("phases", []):
         for module in phase.get("modules", []):
             for source_file in module.get("source_files", []):
-                listed.add(source_file.replace("\\", "/"))
+                normalized = source_file.replace("\\", "/")
+                if _profile_language_allowed(normalized, specification):
+                    listed.add(normalized)
+                elif specification is None or specification.languages is None:
+                    listed.add(normalized)
 
     if not listed:
         return False
@@ -748,7 +792,7 @@ def _phases_cover_current_sources(phases_json, proj_dir, submodules=None):
         return False
     if any(not os.path.exists(os.path.join(proj_dir, sf)) for sf in listed):
         return False
-    return _collect_project_source_files(proj_dir, submodules).issubset(listed)
+    return _collect_project_source_files(proj_dir, submodules, specification).issubset(listed)
 
 
 def _filter_phases_to_submodules(phases_json, submodules):
@@ -785,6 +829,43 @@ def _filter_phases_to_submodules(phases_json, submodules):
     if modified_modules:
         with open(phases_json, "w") as f:
             json.dump(data, f, indent=2)
+
+    return {"removed": removed_total, "modified_modules": modified_modules}
+
+
+def _filter_phases_to_languages(phases_json, specification=None):
+    """Remove phase-plan source files outside the active Profile languages."""
+    if specification is None or specification.languages is None:
+        return {"removed": 0, "modified_modules": []}
+
+    with open(phases_json, "r") as file:
+        data = json.load(file)
+
+    removed_total = 0
+    modified_modules = []
+    for phase in sorted(data.get("phases", []), key=lambda p: p.get("phase", 0)):
+        for module in phase.get("modules", []):
+            original = list(module.get("source_files", []))
+            kept = [
+                source_file
+                for source_file in original
+                if _profile_language_allowed(source_file, specification)
+            ]
+            removed = [source_file for source_file in original if source_file not in kept]
+            if not removed:
+                continue
+            module["source_files"] = kept
+            removed_total += len(removed)
+            modified_modules.append({
+                "phase": phase.get("phase"),
+                "module": module.get("name", ""),
+                "removed_files": removed,
+                "source_files": list(kept),
+            })
+
+    if modified_modules:
+        with open(phases_json, "w") as file:
+            json.dump(data, file, indent=2)
 
     return {"removed": removed_total, "modified_modules": modified_modules}
 
@@ -863,15 +944,16 @@ def _ensure_source_files_in_phases(phases_json, required_source_files):
     }
 
 
-def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
+def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename, workflow_source=None):
     """Copy a workflow markdown into ``work_dir`` and rewrite the
     ``source_files`` instruction so it points at the concrete project root,
     telling the agent to record paths relative to it (and not prefixed with the
     project directory name).
     """
-    workflow_src = os.path.join(script_dir, "md", workflow_filename)
+    workflow_src = workflow_source or os.path.join(script_dir, "md", workflow_filename)
     workflow_dst = os.path.join(work_dir, workflow_filename)
-    shutil.copy2(workflow_src, workflow_dst)
+    if os.path.abspath(workflow_src) != os.path.abspath(workflow_dst):
+        shutil.copy2(workflow_src, workflow_dst)
     proj_dir_abs = os.path.abspath(proj_dir)
     proj_dir_name = os.path.basename(proj_dir_abs)
     with open(workflow_dst, "r") as _f:
@@ -901,21 +983,23 @@ def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
 
 
 def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
-                         resume=False, submodules=None):
+                         resume=False, submodules=None, workflow_source=None,
+                         specification=None):
     """Stage 1: generate phase.json — input target code, output phases.json."""
     phases_json = os.path.join(work_dir, "phases.json")
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
 
     phase_plan_errors = (
         _phase_plan_schema_errors(phases_json)
+        + _phase_plan_language_errors(phases_json, specification)
         if os.path.exists(phases_json)
         else []
     )
-    _resume_skip = resume and _phase_plan_complete(work_dir)
+    _resume_skip = resume and _phase_plan_complete(work_dir, specification)
     if _resume_skip:
         print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
-    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
+    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md", workflow_source)
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -935,18 +1019,30 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             f"subdirectories: {allowed}. Do NOT include files outside these "
             "subdirectories in phases.json."
         )
+    language_reminder = ""
+    if specification is not None and specification.languages:
+        language_reminder = (
+            "IMPORTANT: Only include source files whose registered language key is one of: "
+            + ", ".join(specification.languages)
+            + ". Do NOT include source files written in other languages."
+        )
+    language_suffix = f" {language_reminder}" if language_reminder else ""
 
     for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
         if _resume_skip:
             break
         if attempt == 1 and not resume:
-            prompt = f"Follow the instructions in the attached file. {fm_reminder} {submodule_reminder}"
+            prompt = (
+                f"Follow the instructions in the attached file. {fm_reminder} "
+                f"{submodule_reminder}{language_suffix}"
+            )
         else:
             prompt = ("A previous attempt was interrupted and may have already produced some of the "
                       "required output files. Follow the instructions in the attached file, but FIRST "
                       "check the current progress in fm_agent/ (e.g. phases.json). Keep any existing valid "
                       "output as-is and only generate the files that are missing or incomplete — do NOT "
-                      f"regenerate or overwrite work that is already done. {fm_reminder} {submodule_reminder}")
+                      f"regenerate or overwrite work that is already done. {fm_reminder} "
+                      f"{submodule_reminder}{language_suffix}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
         if phase_plan_errors:
@@ -990,6 +1086,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
 
         phase_plan_errors = (
             _phase_plan_schema_errors(phases_json)
+            + _phase_plan_language_errors(phases_json, specification)
             if os.path.exists(phases_json)
             else ["phases.json is missing"]
         )
@@ -998,12 +1095,12 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         if not phase_plan_errors:
             if submodules:
                 phase_plan_ready = _phases_cover_current_sources(
-                    phases_json, proj_dir, submodules
+                    phases_json, proj_dir, submodules, specification
                 )
             elif is_incremental:
                 phase_plan_ready = (
                     os.path.getmtime(phases_json) != prev_mtime
-                    or _phases_cover_current_sources(phases_json, proj_dir)
+                    or _phases_cover_current_sources(phases_json, proj_dir, specification)
                 )
             else:
                 phase_plan_ready = True
@@ -1039,7 +1136,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             sys.exit(1)
 
 def _post_process_phases(proj_dir, work_dir, required_source_files=None,
-                          submodules=None, one_phase=False):
+                          submodules=None, one_phase=False, specification=None):
     """Post-process phases.json: ensure required files, filter submodules,
     deduplicate, update descriptions, and clean empty phases before domain
     context generation.
@@ -1061,10 +1158,18 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
         if removed:
             print(f"[Pipeline] Removed {removed} out-of-scope source file(s) from phases.json.")
 
+    language_changes = _filter_phases_to_languages(phases_json, specification)
+    if specification is not None and specification.languages and language_changes.get("removed"):
+        print(
+            "[Pipeline] Profile language filter: removed "
+            f"{language_changes['removed']} source file(s) outside "
+            "the selected languages."
+        )
+
     dedup_changes = _deduplicate_phases(work_dir)
 
     changed_modules = _collect_changed_modules(
-        ensure_changes, filter_changes, dedup_changes
+        ensure_changes, filter_changes, language_changes, dedup_changes
     )
     _update_module_description(proj_dir, work_dir, changed_modules)
 
@@ -1076,6 +1181,7 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
     phases_modified = bool(
         forced
         or filter_changes.get("removed", 0)
+        or language_changes.get("removed", 0)
         or dedup_changes.get("modified_modules")
         or cleanup_result.get("removed_phases")
         or any(
@@ -1087,7 +1193,7 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
     return phases_modified
 
 
-def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
+def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False, workflow_source=None):
     """Stage 2: generate domain context — input phases.json, output domain context
     files for each phase.
     """
@@ -1095,7 +1201,7 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
     if _resume_skip:
         print("[Pipeline] Stage 2/6: RESUME — domain context files found, skipping domain context generation.")
 
-    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
+    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md", workflow_source)
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -1166,16 +1272,18 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
 
 def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                        resume=False, required_source_files=None,
-                       submodules=None, one_phase=False):
+                       submodules=None, one_phase=False,
+                       phase_workflow_source=None,
+                       domain_workflow_source=None, specification=None):
     """Run generate-phases, post-process, and generate-domain-context stages.
 
     Backward-compatible wrapper that calls the three sub-stages in sequence.
     """
-    _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental, resume, submodules)
-    phases_modified = _post_process_phases(proj_dir, work_dir, required_source_files, submodules, one_phase=one_phase)
-    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume and not phases_modified)
+    _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental, resume, submodules, phase_workflow_source, specification)
+    phases_modified = _post_process_phases(proj_dir, work_dir, required_source_files, submodules, one_phase, specification)
+    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume and not phases_modified, domain_workflow_source)
 
-    if not _setup_outputs_complete(work_dir):
+    if not _setup_outputs_complete(work_dir, specification):
         print(
             "[Pipeline] ERROR: Stage 1/2 outputs are incomplete after "
             "post-processing. Expected fm_agent/phases.json, "

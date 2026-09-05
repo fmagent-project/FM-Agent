@@ -77,6 +77,113 @@ framework does not replace this argument with another internal path.
 `configure_function` is optional. A plugin may configure any subset of the
 supported stages.
 
+### Option compatibility (optional)
+
+Plugins may explicitly reject command-line options they cannot honor:
+
+```json
+{
+  "name": "example_plugin",
+  "version": "V1.0",
+  "unsupported_options": ["resume", "incremental"],
+  "stages": {}
+}
+```
+
+The field is a sparse denylist: an option not listed is treated as supported.
+Names use the argparse destination (`one_phase`, `domain_knowledge`, and so
+on). The currently registered option names are `resume`, `incremental`,
+`isolate`, `one_phase`, `all_bugs`, `only_spec`, `estimate`,
+`domain_knowledge`, `submodule`, `end_func`, `extra_edge`, and
+`bug_validator`. `--knowledge` shares the `domain_knowledge` name, and
+`FM_AGENT_RESUME=1` shares the `resume` name.
+
+FM-Agent checks the denylist before resolving option paths, running the
+environment check, creating an isolated worktree, mutating `fm_agent/`, or
+making LLM calls. This is an additional plugin compatibility check; existing
+global CLI combination rules still apply. The field does not replace the Hook
+contract or make a Profile mandatory.
+
+## Specification Profile (optional)
+
+A plugin may register one `SpecificationProfile` synchronously from `configure`.
+The common Pipeline keeps stage orchestration, LLM scheduling, retries, and
+traces; the Profile supplies two artifacts and four prompt resources. Profiles
+use the standard JSON spec/info contract by default; only non-JSON formats such
+as Markdown may customize `PromptContract`. Example:
+
+```python
+from src.specification import ArtifactPair, PromptBundle, SpecificationProfile, configure_specification
+
+
+def configure(proj_dir: str) -> None:
+    configure_specification(SpecificationProfile(
+        id="markdown", schema_version="V1",
+        artifacts=ArtifactPair(
+            self_suffix="_spec.md", dependency_suffix="_info.md",
+            append_to_filename=False,
+        ),
+        prompts=PromptBundle(
+            phase_plan="prompts/workflow_generate_phases.md",
+            domain_context="prompts/workflow_generate_domain_context.md",
+            system="prompts/system_prompt.md",
+            batch_workflow="prompts/workflow_spec_step4_batch.md",
+        ),
+        prompt_contract=MARKDOWN_PROMPT_CONTRACT,  # implemented by this plugin
+        languages=("python",),
+    ))
+```
+
+Relative `prompts/*` paths resolve against the plugin root. Exactly two artifacts
+are produced (`foo.py` maps to `foo_spec.md` and `foo_info.md` here). Custom
+Profiles default to `enable_reasoning=False`; readiness first requires both
+files to exist and be non-empty, then an optional `validator` may add checks.
+Validator failures use the normal Stage 6 retry path. `languages` only filters
+already registered languages and cannot add a parser. Profiles and Stage Hooks
+may be mixed without extra conflict diagnostics; custom Profiles do not enable
+software reasoning or provide correctness guarantees.
+
+## Built-in chip plugin
+
+The built-in `chip` plugin selects one hardware Profile during `configure` and
+uses the common Stage 1–6 Pipeline. Its manifest adds a Stage 6 modify Hook for
+Chisel artifact eligibility and explicitly rejects options whose current
+semantics are not defined for chip.
+
+```bash
+uv run python main.py <proj_dir> --plugin chip
+```
+
+The Profile is selected from the source scope used by the run:
+
+| Dialect | Extensions | Profile |
+| --- | --- | --- |
+| Chisel | `.scala`, `.sc` | `chip-chisel` |
+| Verilog/SystemVerilog | `.v`, `.sv`, `.svh` | `chip-verilog` |
+
+Chisel wins when both dialects are present, with a warning; otherwise Verilog
+is selected when its extensions are in scope. Use a narrower `proj_dir` or
+`--submodule` scope for a hardware subtree.
+
+Chisel uses source analysis by default and optionally CIRCT via
+`FM_AGENT_CHISEL_CIRCT_INPUT`; Verilog prefers `verible-verilog-syntax` and
+otherwise uses its source fallback. See
+[`tools/chisel-circt/README.md`](../tools/chisel-circt/README.md) for setup.
+
+Each extracted module produces sibling `<Module>_spec.md` and
+`<Module>_info.md` artifacts under `fm_agent/extracted_functions/`. The first
+contains the FG/FC/CK tree and `<FG-API>`; the second contains direct-submodule
+expectations. Missing known dependency coverage is advisory for Chisel and
+blocking for Verilog. Chip Profiles disable software reasoning and bug
+validation.
+
+Chip follows the common option contract for `--resume`/`FM_AGENT_RESUME=1`,
+`--submodule`, `--one-phase`, `--domain-knowledge`/`--knowledge`, `--extra-edge`,
+fresh `--isolate` runs, and `--only-spec`; resume uses the same best-effort
+semantics as the software pipeline. Its manifest explicitly rejects
+`--incremental`, `--end-func`, `--all-bugs`, `--bug-validator`, and `--estimate`;
+these options fail before any workspace or LLM side effect.
+
 ## Execution modes
 
 ### Pass
@@ -136,9 +243,12 @@ When a plugin is active, FM-Agent writes
 
 ```json
 {
-  "extra_edge": null
+  "extra_edge": null, "submodules": ["src"]
 }
 ```
+
+`submodules` is written only for `--submodule` and contains normalized
+project-relative paths.
 
 A configure hook can read it directly:
 
@@ -169,7 +279,8 @@ In isolate mode hooks receive the isolated worktree path. The existing isolate
 workflow copies `fm_agent/` results back to the original project.
 
 Pipeline hooks are supported for full, resume, and isolate runs. Incremental
-pipelines do not receive plugin configuration or execute plugin hooks.
+pipelines do not receive plugin configuration or execute plugin hooks. A plugin
+may reject any of those options with `unsupported_options`.
 
 Entry-point runs automatically activate the bundled `entry_reasoning` plugin.
 `--entry-func` cannot be combined with a separately selected `--plugin`.

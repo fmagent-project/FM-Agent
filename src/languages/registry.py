@@ -13,6 +13,8 @@ from src.languages import javascript as _javascript
 from src.languages import typescript as _typescript
 from src.languages import arkts as _arkts
 from src.languages import erlang as _erlang
+from src.languages import chisel as _chisel
+from src.languages import verilog as _verilog
 
 from src.languages.base import BackendUnavailableError as _BackendUnavailableError
 
@@ -30,7 +32,9 @@ class LanguageHandler:
 
     Each function handles its own backend (e.g. codegraph) internally.
     batch_extract returns ``None`` when a semantic backend cannot safely
-    extract its sources, distinct from a successful empty dict. call_edges
+    extract its sources, distinct from a successful empty dict. A handler may
+    retain ``filepath: []`` entries to mark supported files with no analysis
+    units as handled and prevent a generic fallback. call_edges
     returns an empty dict when its backend is unavailable; function_spans
     returns None so the caller can fall back to the regex extractor for that
     file, or raises BackendUnavailableError for languages where a regex
@@ -65,6 +69,8 @@ REGISTRY: dict = {
     "typescript": LanguageHandler(batch_extract=_typescript.batch_extract, call_edges=_typescript.call_edges, function_spans=_typescript.function_spans, split_blocks=_typescript.split_blocks, remove_comments=_typescript.remove_comments),
     "arkts":      LanguageHandler(batch_extract=_arkts.batch_extract,      call_edges=_arkts.call_edges,      function_spans=_arkts.function_spans, remove_comments=_arkts.remove_comments),
     "erlang":     LanguageHandler(batch_extract=_erlang.batch_extract,     call_edges=_erlang.call_edges,     function_spans=_erlang.function_spans, incremental_source_extract=_erlang.extract_functions_from_sources),
+    "chisel":     LanguageHandler(batch_extract=_chisel.batch_extract,     call_edges=_chisel.call_edges,     function_spans=_chisel.function_spans),
+    "verilog":    LanguageHandler(batch_extract=_verilog.batch_extract,    call_edges=_verilog.call_edges,    function_spans=_verilog.function_spans),
 }
 
 
@@ -79,18 +85,28 @@ def remove_comments_for_function(code: str, language: str | None) -> str | None:
     return handler.remove_comments(code)
 
 
-def batch_extract_all(proj_dir: str, include_unavailable: bool = False) -> tuple:
+def batch_extract_all(proj_dir: str, include_unavailable: bool = False, specification=None) -> tuple:
     """Call batch_extract for every registered language and merge results.
 
-    Returns (funcs, langs) where funcs is {abs_filepath: [(func_name, body)]}
-    and langs is the set of language keys that returned data. When
+    When ``specification`` contains a language filter, only those
+    already-registered language keys are dispatched. Returns (funcs, langs)
+    where funcs is
+    {abs_filepath: [(func_name, body)]} and langs is the set of language keys
+    that returned data. When
     ``include_unavailable`` is true, appends the set of languages whose
     semantic extraction backend failed.
     """
     funcs = {}
     langs = set()
     unavailable = set()
+    selected_languages = (
+        set(specification.languages)
+        if specification is not None and specification.languages is not None
+        else None
+    )
     for lang, handler in REGISTRY.items():
+        if selected_languages is not None and lang not in selected_languages:
+            continue
         result = handler.batch_extract(proj_dir)
         if result is None:
             unavailable.add(lang)
