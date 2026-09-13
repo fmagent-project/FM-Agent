@@ -95,10 +95,21 @@ def _messages_to_anthropic(messages):
     return system_text, out
 
 
+def _openai_reasoning_payload(message):
+    """Return provider-supplied reasoning fields without affecting response text."""
+    extras = getattr(message, "model_extra", None) or {}
+    fields = {}
+    for name in ("reasoning_content", "reasoning", "reasoning_details"):
+        value = extras.get(name, getattr(message, name, None))
+        if value is not None:
+            fields[name] = value
+    return {"provider_format": "openai-compatible", "fields": fields} if fields else None
+
+
 def _anthropic_create(model, messages):
     """Send messages via an Anthropic-native /v1/messages endpoint with prompt caching.
 
-    Returns (text, usage_dict). usage_dict matches anthropic-style:
+    Returns (text, usage_dict, reasoning_payload). usage_dict matches anthropic-style:
       {input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, ...}
     """
     system_text, an_msgs = _messages_to_anthropic(messages)
@@ -146,10 +157,19 @@ def _anthropic_create(model, messages):
         raise RuntimeError(
             f"non-JSON response from relay (HTTP {status}, {len(body_bytes)} bytes): {snippet!r}"
         ) from exc
-    # Anthropic content is a list of blocks; concatenate text blocks.
-    text = "".join(c.get("text", "") for c in data.get("content", []) if c.get("type") == "text")
+    # Keep thinking blocks for the trace, but only text blocks form the response.
+    content = data.get("content", []) or []
+    text = "".join(c.get("text", "") for c in content if c.get("type") == "text")
+    thinking_blocks = [
+        c for c in content
+        if c.get("type") in {"thinking", "redacted_thinking"}
+    ]
     usage = data.get("usage", {}) or {}
-    return text, usage
+    reasoning = (
+        {"provider_format": "anthropic-messages", "blocks": thinking_blocks}
+        if thinking_blocks else None
+    )
+    return text, usage, reasoning
 
 
 def _http_status_from_exc(exc):
@@ -174,7 +194,7 @@ def _read_error_body(exc, limit=800):
 
 
 def _retry_create(client, model, messages):
-    """Call the LLM with retries. Returns (text, usage_dict).
+    """Call the LLM with retries. Returns (text, usage_dict, reasoning_payload).
 
     - Anthropic-family models go via the native /v1/messages endpoint.
     - Other models go through the OpenAI-compat client.
@@ -182,7 +202,8 @@ def _retry_create(client, model, messages):
       third-party relays that support it can keep prompt-cache routing sticky.
     """
     if is_cli_backend_enabled():
-        return run_agent_for_messages(model, messages)
+        text, usage = run_agent_for_messages(model, messages)
+        return text, usage, None
 
     rate_limit_attempts = 0
     transient_attempts = 0
@@ -195,9 +216,10 @@ def _retry_create(client, model, messages):
             if use_anthropic:
                 return _anthropic_create(model, messages)
             response = client.chat.completions.create(model=model, messages=messages, **extra)
-            text = response.choices[0].message.content
+            message = response.choices[0].message
+            text = message.content
             usage = response.usage.model_dump() if response.usage else {}
-            return text, usage
+            return text, usage, _openai_reasoning_payload(message)
         except BadRequestError:
             raise
         except urllib.error.HTTPError as exc:
@@ -304,8 +326,9 @@ def _llm_json_call(client, model, messages, validator, schema_description,
         started = utc_now_iso()
         response = None
         usage = {}
+        reasoning = None
         try:
-            response, usage = _retry_create(client, model, messages)
+            response, usage, reasoning = _retry_create(client, model, messages)
         except Exception as exc:
             event = {
                 "event_id": event_id,
@@ -353,7 +376,7 @@ def _llm_json_call(client, model, messages, validator, schema_description,
                 "parse_error": parse_error,
             },
         }
-        record_llm_exchange(trace_dir, event_id, event, messages, response)
+        record_llm_exchange(trace_dir, event_id, event, messages, response, reasoning)
         if status == "success":
             return result
 

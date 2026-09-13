@@ -43,7 +43,7 @@ def append_event(trace_dir, event):
             f.write(line + "\n")
 
 
-def record_llm_exchange(trace_dir, event_id, event, messages, response=None):
+def record_llm_exchange(trace_dir, event_id, event, messages, response=None, reasoning=None):
     if not trace_dir:
         return
 
@@ -77,6 +77,18 @@ def record_llm_exchange(trace_dir, event_id, event, messages, response=None):
             {
                 "type": "assistant_output",
                 "content_ref": write_payload(trace_dir, event_id, "response.txt", response),
+            }
+        )
+    if reasoning is not None:
+        children.append(
+            {
+                "type": "assistant_reasoning",
+                "content_ref": write_payload(
+                    trace_dir,
+                    event_id,
+                    "reasoning.json",
+                    json.dumps(reasoning, ensure_ascii=False),
+                ),
             }
         )
     metadata.pop("parsed", None)
