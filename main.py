@@ -57,6 +57,7 @@ import time
 import shutil
 import logging
 import contextlib
+import subprocess
 from pathlib import Path
 
 
@@ -169,6 +170,29 @@ def _resolve_bug_validator_path(raw_path):
         ) from exc
 
     return path
+
+
+def _start_dashboard(work_dir):
+    """Start the live dashboard for this run and return its process handle."""
+    dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.py")
+    try:
+        return subprocess.Popen([sys.executable, dashboard_path, work_dir])
+    except Exception as exc:
+        logging.warning("[Pipeline] dashboard failed to start: %s", exc)
+        return None
+
+
+def _stop_dashboard(process):
+    if process is None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
 
 
 def _normalize_submodules(proj_dir, submodules):
@@ -651,6 +675,7 @@ if __name__ == "__main__":
               "[--submodule PATH [PATH ...]] [--entry-func PATH [PATH ...]] "
               "[--end-func PATH ...] [--extra-edge FILE] "
               "[--bug-validator FILE] [--only-spec] [--estimate] "
+              "[--dashboard] "
               "[--list-plugin] [--plugin NAME]",
         description="Run the FM agent pipeline on a project directory.",
     )
@@ -697,6 +722,11 @@ if __name__ == "__main__":
         action="store_true",
         help="scan source scope and print a history-based run estimate without "
         "starting the pipeline or making LLM calls",
+    )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="automatically start the live dashboard for this run",
     )
     parser.add_argument(
         "--domain-knowledge",
@@ -847,13 +877,14 @@ if __name__ == "__main__":
                 args.isolate,
                 args.only_spec,
                 args.all_bugs,
+                args.dashboard,
             ]
         )
         if incompatible:
             parser.error(
                 "--estimate is a standalone preflight and cannot be combined "
                 "with resume, incremental, entry/end functions, isolate, "
-                "only-spec, or all-bugs"
+                "only-spec, all-bugs, or dashboard"
             )
         estimate_work_dir = os.path.join(proj_dir, "fm_agent_estimate")
         estimate = write_preflight_estimate(
@@ -946,6 +977,7 @@ if __name__ == "__main__":
         else None
     )
     with run_ctx as run_dir:
+        dashboard_process = _start_dashboard(run_dir) if args.dashboard else None
         try:
             # Incremental mode requires a recorded commit to diff against; without a
             # version.log from a previous run, fall back to the full pipeline.
@@ -989,6 +1021,7 @@ if __name__ == "__main__":
                     duration_seconds=time.time() - start_time,
                 )
         finally:
+            _stop_dashboard(dashboard_process)
             # With --isolate the pipeline ran against a throwaway snapshot, so its
             # fm_agent/ results live in the snapshot. Copy them back into the real
             # project so they are not lost when the snapshot is discarded — this runs
