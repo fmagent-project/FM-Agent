@@ -8,12 +8,16 @@ To add support for a new language: create src/languages/<lang>.py and add an ent
 REGISTRY in src/languages/registry.py. No other files need to change.
 """
 
+import functools
 import hashlib
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
+import sys
+import urllib.request
 from collections import defaultdict
 
 from config import settings
@@ -548,44 +552,181 @@ class CodeGraphExtractor:
         return result
 
 
-def _codegraph_cmd() -> str:
-    """Return the codegraph executable to invoke.
-
-    ``install.sh`` installs the pinned fork build (from ``fm-agent.toml``'s
-    ``[codegraph]``) into ``bin_dir`` (default ``~/.local/bin``); we invoke it
-    from that same configured location. Invoking it by absolute path — rather than
-    a bare ``codegraph`` resolved via PATH — uses the pinned build even when that
-    directory is not on PATH (the macOS default) and cannot be shadowed by a
-    different/older codegraph earlier on PATH. Falls back to a bare ``codegraph``
-    when the pinned build is absent, so an externally provided one still works; a
-    missing binary then becomes the regex-extractor fallback in the caller.
-    """
-    bin_dir = os.path.expanduser(settings.codegraph.bin_dir)
-    local = os.path.join(bin_dir, "codegraph")
-    return local if os.access(local, os.X_OK) else "codegraph"
+def _pinned_codegraph_version() -> str:
+    """The pinned release without the leading ``v`` — the form ``--version`` uses."""
+    return settings.codegraph.version.strip().removeprefix("v")
 
 
-def _warn_on_codegraph_version_mismatch(cmd: str) -> None:
-    """Warn (never fail) when the codegraph about to run is not the version pinned
-    in ``fm-agent.toml``'s ``[codegraph].version`` — e.g. a stale build shadowing
-    it. install.sh is what guarantees the pinned version; this is a runtime heads-up.
-    """
-    want = settings.codegraph.version.strip().removeprefix("v")
-    if not want:
-        return
+def _fm_codegraph_dir() -> str:
+    """FM-Agent's own bundle dir, kept out of the shared ``~/.codegraph`` because
+    codegraph's installer deletes every other release under its install dir
+    (their issue #1074) and re-points ``~/.local/bin/codegraph``."""
+    return os.path.expanduser(settings.codegraph.install_dir)
+
+
+def _codegraph_version_at(path: str) -> str:
+    """``--version`` of the codegraph at ``path``, or "" when it cannot be run."""
     try:
-        got = subprocess.run(
-            [cmd, "--version"], capture_output=True, text=True, timeout=10
+        return subprocess.run(
+            [path, "--version"], capture_output=True, text=True, timeout=30
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        return
-    if got and got != want:
+        return ""
+
+
+def _codegraph_installed_elsewhere() -> str | None:
+    """A codegraph outside our bundle dir — ``bin_dir`` first, then PATH. The last
+    resort when the pinned build cannot be provisioned."""
+    local = os.path.abspath(
+        os.path.join(os.path.expanduser(settings.codegraph.bin_dir), "codegraph")
+    )
+    if os.access(local, os.X_OK):
+        return local
+    # which() joins the name onto each PATH entry as-is, so a relative entry
+    # ("bin", ".") comes back relative — and try_codegraph_init runs codegraph with
+    # cwd set to the analysed project, not the directory we were launched from.
+    found = shutil.which("codegraph")
+    return os.path.abspath(found) if found else None
+
+
+def _provision_codegraph(want: str, binary: str) -> bool:
+    """Install the pinned codegraph into FM-Agent's bundle dir; return whether
+    ``binary`` is the pinned version afterwards.
+
+    Drives codegraph's own installer through its three documented variables
+    (``CODEGRAPH_VERSION`` / ``CODEGRAPH_INSTALL_DIR`` / ``CODEGRAPH_BIN_DIR``), so
+    this depends on that contract rather than on the layout it produces. Serialised
+    on a lock file: the pipeline runs up to ``max_workers`` processes, and a bumped
+    pin would otherwise start that many downloads of the same archive.
+    """
+    import fcntl  # POSIX-only; keep the module importable without it
+
+    install_dir = _fm_codegraph_dir()
+    try:
+        os.makedirs(install_dir, exist_ok=True)
+        lock = open(os.path.join(install_dir, ".provision.lock"), "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    except OSError as exc:
+        # Unwritable dir, full disk, no flock — the install would fail for the same
+        # reason, so degrade like every other failure here instead of escaping and
+        # taking the pipeline down with it.
         logging.warning(
-            "codegraph %r does not match the pinned %r "
-            "(fm-agent.toml [codegraph].version); re-run install.sh to update.",
-            got,
+            "cannot prepare the codegraph bundle dir %s (%s); not provisioning",
+            install_dir,
+            exc,
+        )
+        return False
+
+    with lock:
+        # Whoever we queued behind has usually just installed it.
+        if _codegraph_version_at(binary) == want:
+            return True
+
+        # stderr: install.sh reads this function's stdout to learn the path.
+        print(
+            f"[Pipeline] installing pinned codegraph v{want} "
+            f"(~55 MB, once per version) into {install_dir}",
+            file=sys.stderr,
+        )
+        # The release tag, not main: this script is piped into sh on the user's
+        # machine, and provisioning now happens on its own, so tracking a branch
+        # would let any push to the codegraph repo run here.
+        url = (
+            f"https://raw.githubusercontent.com/{settings.codegraph.repo}"
+            f"/{settings.codegraph.version}/install.sh"
+        )
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                script = response.read().decode()
+        except (OSError, ValueError, UnicodeError) as exc:
+            logging.warning("could not fetch the codegraph installer %s: %s", url, exc)
+            return False
+
+        env = {
+            **os.environ,
+            "CODEGRAPH_VERSION": settings.codegraph.version,
+            "CODEGRAPH_INSTALL_DIR": install_dir,
+            "CODEGRAPH_BIN_DIR": os.path.dirname(binary),
+        }
+        try:
+            result = subprocess.run(
+                ["sh", "-s"],
+                input=script,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=1800,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logging.warning("the codegraph installer did not complete: %s", exc)
+            return False
+
+        # The version, not "a file appeared": a wrong tag, a partial download or a
+        # changed installer contract would otherwise leave a build we go on to run
+        # as though it were the pinned one.
+        got = _codegraph_version_at(binary)
+        if got != want:
+            logging.warning(
+                "codegraph v%s was not provisioned (got %s); installer exit=%s: %s",
+                want,
+                got or "nothing",
+                result.returncode,
+                (result.stderr or result.stdout)[-300:],
+            )
+            return False
+        print(f"[Pipeline] codegraph v{want} ready.", file=sys.stderr)
+        return True
+
+
+@functools.cache
+def _codegraph_cmd() -> str:
+    """The codegraph to run: the release pinned in ``fm-agent.toml``, installed on
+    demand when the machine does not have it, else whatever else is installed —
+    with a warning, since a different release yields a full index with different
+    call edges. A newer codegraph elsewhere is not preferred: bug reports have to
+    name a version we can reproduce on.
+
+    Cached, so a run cannot switch binaries midway — oh-my-openagent's MCP server
+    writes the same index concurrently (see ``_opencode_env``). The cache holds the
+    path, though, and the bundle holds one release, so a concurrent run on a
+    different pin can provision over it; that needs two runs straddling a bump, and
+    a tree per pin would cost every user a few hundred MB each.
+
+    Always absolute when the answer is a real file: callers embed the value rather
+    than only executing it — install.sh symlinks it, ``_opencode_env`` exports it.
+    """
+    want = _pinned_codegraph_version()
+    binary = os.path.abspath(os.path.join(_fm_codegraph_dir(), "bin", "codegraph"))
+    if not want:
+        # Nothing pinned: no version to provision or to check against.
+        return _codegraph_installed_elsewhere() or "codegraph"
+
+    if _codegraph_version_at(binary) == want:
+        return binary
+    if _provision_codegraph(want, binary):
+        return binary
+
+    other = _codegraph_installed_elsewhere()
+    if other is not None and _codegraph_version_at(other) == want:
+        return other  # the pinned release, just installed somewhere else
+    if other is None:
+        logging.warning(
+            "codegraph v%s (pinned in fm-agent.toml) is not available and no other "
+            "codegraph is installed; extraction falls back to the regex extractor. "
+            "Run ./install.sh once with network access.",
             want,
         )
+        # The bare name raises FileNotFoundError in the caller, which is the
+        # regex fallback.
+        return "codegraph"
+    logging.warning(
+        "codegraph v%s (pinned in fm-agent.toml) is not available; using %s (%s) "
+        "instead. Call edges can differ from the pinned build.",
+        want,
+        other,
+        _codegraph_version_at(other) or "unknown version",
+    )
+    return other
 
 
 def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
@@ -618,14 +759,18 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
         # symlink and ignore_errors=True swallowed the error, so the run reported a
         # rebuild that never happened.
         action = "index"
-        print("[Pipeline] Rebuilding codegraph index for current working tree...")
+        what = "Rebuilding codegraph index for current working tree"
     else:
         # `index` rebuilds an initialized project and errors out otherwise, so the
         # first build still goes through `init`.
         action = "init"
-        print("[Pipeline] Building codegraph index...")
+        what = "Building codegraph index"
+    # Name the version that actually builds this index — a machine can hold
+    # several codegraph installs, and the log is where a call graph's provenance
+    # has to be recoverable from.
     cmd = _codegraph_cmd()
-    _warn_on_codegraph_version_mismatch(cmd)
+    version = _codegraph_version_at(cmd)
+    print(f"[Pipeline] {what} (codegraph {version or 'version unknown'})...")
     try:
         result = subprocess.run(
             [cmd, action], cwd=proj_dir, capture_output=True, text=True

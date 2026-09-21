@@ -84,6 +84,9 @@ _ENV_MAP: dict[str, tuple[str, str]] = {
     "CODEGRAPH_REPO": ("codegraph", "repo"),
     "CODEGRAPH_VERSION": ("codegraph", "version"),
     "CODEGRAPH_BIN_DIR": ("codegraph", "bin_dir"),
+    # Not CODEGRAPH_INSTALL_DIR: that name belongs to codegraph's own installer,
+    # and reusing it would let a value exported for that installer redirect ours.
+    "FM_AGENT_CODEGRAPH_DIR": ("codegraph", "install_dir"),
 }
 
 
@@ -158,7 +161,10 @@ class CodegraphCfg(_Section):
     # fm-agent.toml is the authoritative source; this default is only the fallback
     # when the toml is absent. Keep it in sync when bumping the pinned version.
     version: str = "v1.6.0-fmagent.1"
-    bin_dir: str = "~/.local/bin"  # launcher location; install and run must agree
+    bin_dir: str = "~/.local/bin"  # where install.sh links codegraph for manual use
+    # Our own bundle dir; separate from the shared ~/.codegraph so provisioning
+    # the pin cannot change which codegraph other tools resolve.
+    install_dir: str = "~/.cache/fm-agent/codegraph"
 
 
 class _LayeredSource(PydanticBaseSettingsSource):

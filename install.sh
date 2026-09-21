@@ -176,24 +176,33 @@ else
 fi
 
 # ---------- codegraph (pinned via fm-agent.toml [codegraph]) ----------
-# repo/version/bin_dir were read from config.settings above (env > toml, already
-# ~-expanded); bump [codegraph].version in fm-agent.toml to switch. The pinned fork
-# build fixes an upstream C extraction bug that otherwise drops macro-decorated
-# functions. Empty only if explicitly cleared (e.g. CODEGRAPH_VERSION=""), which
-# can't be installed — treat as a hard error.
+# Provisioning lives in src/languages/codegraph.py; the runtime does it on demand,
+# so this just pre-warms the download rather than carrying a second copy of the
+# install logic. repo/version/bin_dir came from config.settings above; empty only
+# if explicitly cleared (e.g. CODEGRAPH_VERSION=""), which can't be installed.
 [ -n "$CODEGRAPH_REPO" ] && [ -n "$CODEGRAPH_VERSION" ] && [ -n "$codegraph_bin_dir" ] || {
     echo "[!!] [codegraph] repo/version/bin_dir not set in fm-agent.toml"; exit 1; }
 codegraph_want="${CODEGRAPH_VERSION#v}"
-if [ "$("$codegraph_bin_dir/codegraph" --version 2>/dev/null)" = "$codegraph_want" ]; then
-    echo "[ok] codegraph $codegraph_want already installed in $codegraph_bin_dir"
-else
-    echo "[..] installing codegraph $CODEGRAPH_VERSION from $CODEGRAPH_REPO"
-    curl -fsSL "https://raw.githubusercontent.com/$CODEGRAPH_REPO/main/install.sh" \
-      | CODEGRAPH_VERSION="$CODEGRAPH_VERSION" CODEGRAPH_BIN_DIR="$codegraph_bin_dir" sh
-    # Verify the pinned VERSION installed, not just that a binary exists: a bad
-    # version/network failure otherwise leaves a stale build in place silently.
-    [ "$("$codegraph_bin_dir/codegraph" --version 2>/dev/null)" = "$codegraph_want" ] \
-      || { echo "[!!] codegraph $codegraph_want install failed"; exit 1; }
+echo "[..] provisioning codegraph $CODEGRAPH_VERSION from $CODEGRAPH_REPO"
+uv run --no-sync python -c \
+  'from src.languages.codegraph import _codegraph_cmd; _codegraph_cmd()'
+# A second call, so this one's stdout is the path and nothing else.
+codegraph_bin="$(uv run --no-sync python -c \
+  'from src.languages.codegraph import _codegraph_cmd; print(_codegraph_cmd())')"
+# Verify the pinned VERSION, not just that a binary exists: a bad version or a
+# network failure otherwise leaves a stale build in place silently.
+[ "$("$codegraph_bin" --version 2>/dev/null)" = "$codegraph_want" ] \
+  || { echo "[!!] codegraph $codegraph_want install failed"; exit 1; }
+echo "[ok] codegraph $codegraph_want at $codegraph_bin"
+# A launcher on PATH for oh-my-openagent and for running `codegraph` by hand.
+# FM-Agent resolves its own, so this link is the user's to re-point; it targets the
+# bundle's launcher rather than a version directory, so it follows the pin by
+# itself. Skip it when the resolved binary already IS this launcher, which happens
+# when provisioning fell back to an external install of the pinned version:
+# `ln -sf X X` does not fail there — BSD ln unlinks the target first, leaving a
+# symlink to itself, and exits 0 where `set -e` never sees it.
+if [ ! "$codegraph_bin" -ef "$codegraph_bin_dir/codegraph" ]; then
+    mkdir -p "$codegraph_bin_dir" && ln -sf "$codegraph_bin" "$codegraph_bin_dir/codegraph"
 fi
 
 version_ge() {

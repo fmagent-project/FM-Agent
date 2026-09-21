@@ -32,10 +32,12 @@ command   = "elp"   # ELP_COMMAND
 timeout_s = 180     # ELP_TIMEOUT_SECONDS
 
 [codegraph]
-# The pinned codegraph build. install.sh reads these to install it, and the
-# runtime invokes that pinned binary — so this is the single place that decides
-# "which codegraph": bump `version` (and `repo`), then re-run ./install.sh to
-# switch. This maintenance-fork build re-hosts upstream v1.6.0, which carries the
+# The pinned codegraph build — the single place that decides "which codegraph".
+# Bumping `version` is the whole switch: the runtime resolves that exact release
+# and installs it if the machine lacks it, so a `git pull` is enough. A newer
+# codegraph installed elsewhere is not preferred either — call resolution differs
+# between releases, and a bug report has to name a reproducible version.
+# This maintenance-fork build re-hosts upstream v1.6.0, which carries the
 # Rust field-receiver and generic-impl fixes and Erlang per-arity identity, and
 # adds one patch of its own: FM-Agent's work directory is excluded from the index
 # by default, so an analysed project is not indexed with a second copy of every
@@ -43,4 +45,9 @@ timeout_s = 180     # ELP_TIMEOUT_SECONDS
 # the fork, so `codegraph upgrade` won't self-replace it with the upstream build.
 repo    = "fmagent-project/codegraph"   # CODEGRAPH_REPO
 version = "v1.6.0-fmagent.1"            # CODEGRAPH_VERSION
-bin_dir = "~/.local/bin"                # CODEGRAPH_BIN_DIR — where the codegraph launcher is installed and invoked from
+bin_dir = "~/.local/bin"                # CODEGRAPH_BIN_DIR — where install.sh links codegraph for manual command-line use
+# Our own bundle directory, deliberately not the shared ~/.codegraph: codegraph's
+# installer deletes every other release under its install dir and re-points
+# ~/.local/bin/codegraph, so the two would keep overwriting each other. Holds one
+# release at a time (~278 MB); bumping `version` replaces it.
+install_dir    = "~/.cache/fm-agent/codegraph"  # FM_AGENT_CODEGRAPH_DIR
