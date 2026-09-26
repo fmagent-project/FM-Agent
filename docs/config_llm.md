@@ -200,6 +200,27 @@ the `plugin` array are preserved. (The block is injected whenever `LLM_API_KEY`
 and the `[llm]` fields are set — which is the normal case, since the direct
 reasoner needs `LLM_API_KEY` too.)
 
+### Example: Requesty
+
+[Requesty](https://requesty.ai/) is an OpenAI compatible router that also
+serves the Anthropic `/v1/messages` endpoint, so both the OpenCode path and the
+direct reasoner (including its native path for `anthropic/` models) work
+against it. Create a key at <https://app.requesty.ai/api-keys> and enter these
+values in the interactive wizard, or, if `LLM_API_KEY` in `.env` already holds
+the Requesty key, run:
+
+```bash
+uv run python src/configure_llm.py set \
+  --name "anthropic/claude-sonnet-4-6" \
+  --provider requesty \
+  --base-url "https://router.requesty.ai/v1" \
+  --api-style openai
+```
+
+Model ids use the `vendor/model` form, for example `openai/gpt-4o-mini`. For
+EU data residency use `https://router.eu.requesty.ai/v1` as the base URL. See
+<https://docs.requesty.ai> for the model list.
+
 ## Third-party LLM services and cache routing
 
 If you use a third-party LLM service or relay, you may need a stable user id in
