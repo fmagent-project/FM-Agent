@@ -160,7 +160,7 @@ class CodegraphCfg(_Section):
     repo: str = "fmagent-project/codegraph"
     # fm-agent.toml is the authoritative source; this default is only the fallback
     # when the toml is absent. Keep it in sync when bumping the pinned version.
-    version: str = "v1.6.0-fmagent.1"
+    version: str = "v1.6.0-fmagent.6"
     bin_dir: str = "~/.local/bin"  # where install.sh links codegraph for manual use
     # Our own bundle dir; separate from the shared ~/.codegraph so provisioning
     # the pin cannot change which codegraph other tools resolve.
