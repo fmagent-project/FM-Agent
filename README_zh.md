@@ -60,6 +60,7 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 - [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) 插件（通过 `bunx` 安装）
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) 插件 —— 采集 OpenCode 原始 LLM 请求/响应 trace
 - 你所用 provider 的 LLM API 密钥（示例使用 [OpenRouter](https://openrouter.ai/)）
+- [Clang](https://clang.llvm.org/docs/UsersManual.html)——可选；可用时用于生成更准确的 C/C++ 调用图，不可用时回退到 codegraph。FM-Agent 会读取项目根目录或 `build/` 下的 `compile_commands.json`；其他位置可通过 `CLANG_COMPILE_COMMANDS` 指定。
 - [Erlang Language Platform（ELP）](https://whatsapp.github.io/erlang-language-platform/docs/get-started/)——可选，仅分析 Erlang 项目时需要
   - 本 Erlang 集成已在 Ubuntu 的 Erlang/OTP 26 或更高版本上验证；请选择基于兼容 OTP 版本构建的 ELP 发布包。
   - ELP 自动识别包含 `rebar.config` 的项目时，要求 rebar3 3.24.0 或更高版本。
@@ -114,7 +115,7 @@ uv run python src/configure_llm.py set --backend codex-cli
 
 该命令会预览并备份 `fm-agent.toml`，只修改命令中指定的配置项。它还支持 `--name`、`--provider`、`--base-url`、`--effort` 和 `--api-style`；完整语法见 [docs/config_llm.md](docs/config_llm.md)。若 `.env` 中仍有会覆盖本次 TOML 修改的旧值，命令会在写入前给出警告。
 
-上述所有依赖（Ubuntu 和 Python 除外）均可通过以下脚本一键安装：
+上述核心依赖可通过以下脚本一键安装；可选的 Clang 与 Erlang 工具链默认不安装：
 
 ```bash
 ./install.sh
@@ -349,7 +350,7 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 
 1. FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，请确保不存在命名冲突。
 2. `md/` 目录下的 Markdown 文件提供了引导 Agent 推理过程的通用说明。针对项目特定的上下文（如不变量、协议、编码规则、领域术语），优先使用 `--domain-knowledge`。对于项目特定的 Bug 验证流程，请使用 `--bug-validator`，无需直接修改内置提示词；例如，编译器项目的自定义 validator 可以要求 Agent 将输出与 GCC 等参考实现进行对比。
-3. **支持的编程语言**：Rust、C、C++、Python、Java、Go、CUDA、JavaScript、TypeScript、ArkTS、Erlang。Erlang 的函数抽取与调用图需要 ELP；ELP 不可用时会给出警告并跳过 Erlang 文件。
+3. **支持的编程语言**：Rust、C、C++、Python、Java、Go、CUDA、JavaScript、TypeScript、ArkTS、Erlang。C/C++ 调用图在 Clang 可用时使用 Clang，否则回退到 codegraph。Erlang 的函数抽取与调用图需要 ELP；ELP 不可用时会给出警告并跳过 Erlang 文件。
 
 ## 论文引用
 

@@ -61,6 +61,7 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 - [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) plugin (installed via `bunx`)
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) plugin — captures raw OpenCode LLM request/response traces (see [Structured Trace](#structured-trace))
 - An LLM API key for your provider (the examples use [OpenRouter](https://openrouter.ai/))
+- [Clang](https://clang.llvm.org/docs/UsersManual.html) — optional; used for more precise C/C++ call graphs when available, with codegraph as the fallback. FM-Agent reads `compile_commands.json` from the project root or `build/`; set `CLANG_COMPILE_COMMANDS` for another location.
 - [Erlang Language Platform (ELP)](https://whatsapp.github.io/erlang-language-platform/docs/get-started/) — optional; required only when analyzing Erlang projects
   - The Erlang integration has been tested on Ubuntu with Erlang/OTP 26 or newer; select an ELP release binary built for a compatible OTP version.
   - rebar3 3.24.0 or newer is required for ELP to auto-discover projects containing `rebar.config`.
@@ -139,7 +140,7 @@ pass. The command also supports `--name`, `--provider`, `--base-url`,
 the complete syntax. It warns when a legacy `.env` value would still override a
 requested TOML setting.
 
-Then, all of the above dependencies (except Ubuntu and Python) can be installed via the provided script:
+Then, the core dependencies above can be installed via the provided script. The optional Clang and Erlang toolchains are not installed by default:
 
 ```bash
 ./install.sh
@@ -441,7 +442,7 @@ manually with the same command.
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
 2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For project-specific bug-validation procedures, use `--bug-validator` instead of editing the built-in prompt; for example, a compiler-specific validator can instruct the agent to compare outputs against a reference implementation such as GCC.
-3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
+3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. C/C++ call graphs use Clang when available and otherwise fall back to codegraph. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
 
 ## Citation
 
