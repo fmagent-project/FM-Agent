@@ -21,7 +21,7 @@ from src.generate_batch_prompts import (
     build_expected_dependencies_by_file,
     expected_dependencies_for_file,
 )
-from src.file_utils import _is_test_file
+from src.file_utils import _get_phase_files, _is_test_file
 from src.languages.hardware import (
     CHISEL_EXTENSIONS,
     VERILOG_EXTENSIONS,
@@ -194,11 +194,24 @@ def _resolve_work_relative_path(work_dir: Path, raw_path: object) -> tuple[Path,
     return candidate, relpath
 
 
-def _topdown_paths_for_phases(work_dir: Path, phase_numbers: Iterable[int]) -> tuple[Path, ...]:
+def _topdown_paths_for_phases(
+    work_dir: Path,
+    phase_numbers: Iterable[int],
+    phases_data: dict[str, Any],
+    dialect: str,
+) -> tuple[Path, ...]:
     topdown_paths: list[Path] = []
     for phase in phase_numbers:
         path = work_dir / "spec_prompts" / f"phase_{phase:02d}_topdown_layers.json"
         if not path.is_file():
+            extracted_files = _get_phase_files(
+                phases_data,
+                phase,
+                str(work_dir / "extracted_functions"),
+                PROFILES[dialect],
+            )
+            if not extracted_files:
+                continue
             raise FileNotFoundError(
                 f"missing current phase topdown graph for design-document generation: {path}"
             )
@@ -362,7 +375,9 @@ def _collect_inputs(proj_dir: str) -> tuple[DesignDocumentInputs, dict[str, dict
     phases_data = _read_json_object(phases_path)
     phase_numbers = _phase_numbers(phases_data)
     dialect = _dialect_from_phases(phases_data)
-    topdown_paths = _topdown_paths_for_phases(work_dir, phase_numbers)
+    topdown_paths = _topdown_paths_for_phases(
+        work_dir, phase_numbers, phases_data, dialect
+    )
     units, topdown_data = _read_units(topdown_paths, work_dir)
     eligible_units = tuple(unit for unit in units if unit.artifact_eligible)
     if dialect == "chisel":
@@ -462,7 +477,7 @@ def _source_inventory(inputs: DesignDocumentInputs) -> dict[str, Any]:
 
     chisel_sources: list[str] = []
     rtl_sources: list[str] = []
-    project_root = inputs.project_root.resolve()
+    project_root = inputs.project_root
     seen: set[str] = set()
     for scan_root in scan_roots:
         for current_root, dirnames, filenames in os.walk(scan_root):
@@ -476,7 +491,7 @@ def _source_inventory(inputs: DesignDocumentInputs) -> dict[str, Any]:
                 suffix = path.suffix.lower()
                 if suffix not in CHISEL_EXTENSIONS | VERILOG_EXTENSIONS:
                     continue
-                relative = path.resolve().relative_to(project_root).as_posix()
+                relative = path.relative_to(project_root).as_posix()
                 if relative in seen or _is_test_file(relative):
                     continue
                 seen.add(relative)
