@@ -2,9 +2,10 @@
 
 [English](README.md) | [中文](README_zh.md)
 
-内置 `chip` 插件为 Chisel 和 Verilog/SystemVerilog module 生成面向验证的行为规约。
-源码范围、阶段规划、提取、依赖排序、LLM 调度、校验、重试和 trace 均复用公共 Stage 1–6
-Pipeline。chip 运行在规约生成后结束，不执行 software reasoning 和 bug validation。
+内置 `chip` 插件为 Chisel 和 Verilog/SystemVerilog module 生成面向验证的行为规约，随后为
+选定的 root DUT 生成中文《设计与功能检测点文档》。源码范围、阶段规划、提取、依赖排序、
+LLM 调度、校验、重试和 trace 均复用公共 Stage 1–6 Pipeline。chip 运行不执行 software
+reasoning 和 bug validation。
 
 ## 快速开始
 
@@ -128,11 +129,24 @@ fm_agent/extracted_functions/<unit>/
 缺失时，Chisel 给出 advisory，Verilog 则阻塞通过。无效产物通过公共 Stage 6 retry 路径
 重新生成。运行元数据和诊断保存在 `fm_agent/trace/`；提取出的源码副本不会写回原 RTL 文件。
 
+所有 module artifact ready 后，chip plugin 还会生成：
+
+```text
+fm_agent/chip/design_document.md
+```
+
+该中文《设计与功能检测点文档》采用内置 v4.0.0 模板，结合 module specs/info 与源码上下文。
+生成时要求恰好一个 artifact-eligible root DUT，必要时可用 `--submodule` 收窄分析范围。
+
+选定目录决定文档目标，agent 可探索仓库其他位置的相关 caller、接口和配置。
+无法确认的配置与证据保留 OPEN。每次 Stage 6 完成后均重新生成文档，包括 `--resume`。
+
 ## 命令行兼容性
 
 chip plugin 支持 `--resume`、`--submodule`、`--one-phase`、
 `--domain-knowledge`/`--knowledge`、`--extra-edge`、fresh `--isolate` 和
-`--only-spec` 的公共契约。chip Profile 本身已在规约生成后结束，因此 `--only-spec` 可省略。
+`--only-spec` 的公共契约。chip Profile 不进入后续 software reasoning 阶段，因此
+`--only-spec` 可省略；两种模式均生成设计文档。
 
 插件拒绝 `--incremental`、`--end-func`、`--all-bugs`、`--bug-validator` 和
 `--estimate`。不支持的组合会在创建或修改运行工作区以及调用 LLM 之前失败。
@@ -140,7 +154,7 @@ chip plugin 支持 `--resume`、`--submodule`、`--one-phase`、
 ## 当前限制
 
 - 一次运行只选择一种方言，不会合并分析 Chisel 和 Verilog。
-- chip Profile 只生成规约，不执行 software reasoning 和 Bug Validation。
+- chip Profile 生成 module 规约和最终设计文档，不执行 software reasoning 和 Bug Validation。
 - Chisel source fallback 无法保证完整解析动态依赖或仅在 elaboration 后出现的依赖。
 - Verilog source fallback 是备用 parser，不是完整的 preprocessing 和 elaboration。
 - CIRCT 输入由目标项目的 Chisel 构建产生；FM-Agent 只消费 elaborated `.fir` 或 `.mlir`，

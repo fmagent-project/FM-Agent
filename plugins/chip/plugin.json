@@ -12,7 +12,8 @@
   "stages": {
     "generate_specs_and_verification": {
       "type": "modify",
-      "input_function": "prepare_spec_generation"
+      "input_function": "prepare_spec_generation",
+      "output_function": "generate_design_document"
     }
   }
 }
