@@ -304,9 +304,8 @@ left unchanged. Only `fm_agent/` is copied back; trimmed sources are discarded.
 ## Built-in chip plugin
 
 The built-in `chip` plugin selects one hardware Profile during `configure` and
-uses the common Stage 1–6 Pipeline. Its manifest adds a Stage 6 modify Hook for
-Chisel artifact eligibility and explicitly rejects options whose current
-semantics are not defined for chip.
+uses the common Stage 1–6 Pipeline. Its manifest adds a Stage 6 modify Hook and
+explicitly rejects options whose current semantics are not defined for chip.
 
 ```bash
 uv run python main.py <proj_dir> --plugin chip
@@ -315,9 +314,9 @@ uv run python main.py <proj_dir> --plugin chip
 The plugin registers either the `chip-chisel` or `chip-verilog` Profile from
 the selected source scope. Its Profiles own the hardware prompts, paired
 Markdown artifacts, readers, and validation policy while the public Pipeline
-retains orchestration and LLM execution. The Stage 6 input Hook marks Chisel
-declarations as artifact-producing modules or context-only declarations without
-removing them from the dependency graph.
+retains orchestration and LLM execution. The modify Hook classifies Chisel
+declarations for artifact eligibility while preserving the dependency graph,
+and generates the root DUT's design document from ready module artifacts.
 
 For installation, backend selection, commands, outputs, supported options, and
 known limitations, see the [chip plugin guide](../plugins/chip/README.md).

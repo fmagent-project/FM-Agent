@@ -284,8 +284,8 @@ Hook 发布正常结果；若后续 Stage 失败，CLI 会复制已有的部分�
 ## 内置 chip 插件
 
 内置 `chip` 插件在 `configure` 中选择一个硬件 Profile，随后使用公共 Stage 1–6
-Pipeline。它的 manifest 额外声明 Stage 6 modify Hook，用于 Chisel 产物 eligibility，并
-显式拒绝当前对 chip 尚未定义语义的选项。
+Pipeline。它的 manifest 额外声明 Stage 6 modify Hook，并显式拒绝当前对 chip
+尚未定义语义的选项。
 
 ```bash
 uv run python main.py <proj_dir> --plugin chip
@@ -293,8 +293,8 @@ uv run python main.py <proj_dir> --plugin chip
 
 插件根据选定源码范围注册 `chip-chisel` 或 `chip-verilog` Profile。硬件 prompt、成对的
 Markdown 产物、reader 和 validation policy 由 Profile 提供，公共 Pipeline 继续负责阶段
-编排与 LLM 执行。Stage 6 input Hook 将 Chisel 声明标记为需要生成产物的 module 或仅作
-上下文的声明，但不会将后者从依赖图删除。
+编排与 LLM 执行。modify Hook 对 Chisel 声明进行产物 eligibility 分类并保留依赖图，
+随后从 ready module artifacts 生成 root DUT 的设计文档。
 
 安装方式、backend 选择、运行命令、输出、支持的选项和已知限制见
 [chip 插件指南](../plugins/chip/README_zh.md)。

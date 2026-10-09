@@ -3,10 +3,11 @@
 [English](README.md) | [中文](README_zh.md)
 
 The built-in `chip` plugin generates verification-oriented behavioral
-specifications for Chisel and Verilog/SystemVerilog modules. It reuses the
-public Stage 1–6 Pipeline for source scoping, planning, extraction, dependency
-ordering, LLM scheduling, validation, retries, and traces. A chip run ends after
-specification generation; it does not run software reasoning or bug validation.
+specifications for Chisel and Verilog/SystemVerilog modules, then writes a
+Chinese design and functional-checkpoint document for the selected root DUT.
+It reuses the public Stage 1–6 Pipeline for source scoping, planning,
+extraction, dependency ordering, LLM scheduling, validation, retries, and
+traces. A chip run does not run software reasoning or bug validation.
 
 ## Quick start
 
@@ -147,12 +148,29 @@ for Verilog. Invalid artifacts are regenerated through the public Stage 6 retry
 path. Run metadata and diagnostics remain under `fm_agent/trace/`; generated
 source copies are never written back to the original RTL files.
 
+After the module artifacts are ready, the chip plugin also generates:
+
+```text
+fm_agent/chip/design_document.md
+```
+
+This Chinese design and functional-checkpoint document follows the bundled
+v4.0.0 template and combines module specs/info with source context. Generation
+requires exactly one artifact-eligible root DUT; use `--submodule` to narrow
+the analysis scope when necessary.
+
+The selected directories define the document target. The agent may explore
+related callers, interfaces, and configuration elsewhere in the repository.
+Unresolved configuration and evidence remain OPEN. The document is regenerated
+each time Stage 6 completes, including on `--resume`.
+
 ## Command-line compatibility
 
 The chip plugin supports the common contracts for `--resume`, `--submodule`,
 `--one-phase`, `--domain-knowledge`/`--knowledge`, `--extra-edge`, fresh
-`--isolate` runs, and `--only-spec`. Because chip Profiles already stop after
-specification generation, `--only-spec` is optional.
+`--isolate` runs, and `--only-spec`. Because chip Profiles do not enter the
+later software reasoning stages, `--only-spec` is optional; the design document
+is generated in either mode.
 
 The plugin rejects `--incremental`, `--end-func`, `--all-bugs`,
 `--bug-validator`, and `--estimate`. Rejected combinations fail before creating
@@ -162,8 +180,8 @@ or modifying the run workspace and before invoking an LLM.
 
 - One run selects one dialect; mixed Chisel and Verilog analysis is not
   combined.
-- Chip Profiles generate specifications only. They do not perform the software
-  reasoning and bug-validation stages.
+- Chip Profiles generate module specifications and the final design document.
+  They do not perform the software reasoning and bug-validation stages.
 - Chisel source analysis cannot guarantee complete resolution of dynamic or
   elaboration-only dependencies.
 - Verilog source analysis is a fallback parser, not full preprocessing and
