@@ -1,7 +1,7 @@
 import re
 
+from src.languages.clang import call_edges as clang_call_edges
 from src.languages.codegraph import CodeGraphExtractor
-
 
 _LINE_PREFIX = re.compile(r"^Line \d+: ?")
 
@@ -120,9 +120,12 @@ def batch_extract(proj_dir: str) -> dict:
 
 
 def call_edges(proj_dir: str) -> dict:
-    """Return {(caller_stem, caller_module): {callee_stems}} for C."""
+    """Return Clang call edges for C, with codegraph as fallback."""
     cg = CodeGraphExtractor.from_proj_dir(proj_dir)
-    return cg.get_call_edges("c") if cg else None
+    if cg is None:
+        return None
+    edges = clang_call_edges(proj_dir, "c", cg)
+    return edges if edges is not None else cg.get_call_edges("c")
 
 
 def function_spans(proj_dir: str, filepath: str):

@@ -21,5 +21,8 @@ FM-Agent 的配置项都在 [`fm-agent.toml`](../fm-agent.toml) 里（每一项�
 | `MAX_SPC_ITER` | `5` | FM-Agent 直接调用 LLM 进行验证（后置条件与规约检查）时的最大重试/迭代次数 |
 | `OPENCODE_MAX_RETRIES` | `5` | OpenCode 流水线某一阶段失败时的最大重试次数 |
 | `OPENCODE_TIMEOUT_SECONDS` | `1800` | 单个 `opencode run` 子进程的硬超时时间（秒）；超时后子进程会被终止并重试该调用 |
+| `CLANG_COMMAND` | `clang` / `clang++` | 用于 C/C++ 调用图分析的 Clang driver；默认值按语言自动选择 |
+| `CLANG_COMPILE_COMMANDS` | unset | 可选的 `compile_commands.json` 文件或所在目录；未设置时检查项目根目录和 `build/` |
+| `CLANG_TIMEOUT_SECONDS` | `120` | 每个 Clang 翻译单元导出 AST 的超时时间（秒）；超时后回退到 codegraph |
 | `ELP_COMMAND` | `elp` | 用于 Erlang 函数抽取与调用图分析的 ELP 可执行文件或命令 |
 | `ELP_TIMEOUT_SECONDS` | `180` | ELP 初始化、索引及单次 LSP 请求的超时时间（秒） |
