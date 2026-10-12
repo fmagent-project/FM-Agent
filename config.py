@@ -174,7 +174,7 @@ class _LayeredSource(PydanticBaseSettingsSource):
         super().__init__(settings_cls)
         data: dict = {}
         if path.is_file():
-            data = tomllib.loads(path.read_text())
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
         else:
             # A missing default fm-agent.toml is tolerated (built-in defaults are
             # kept identical to it), but warn: it usually means a broken checkout

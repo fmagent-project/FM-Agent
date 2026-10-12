@@ -7,6 +7,22 @@ can be overridden by the environment variable of the same name, which takes
 precedence over the toml. See [config_llm.md](config_llm.md) for LLM provider and
 OpenCode setup.
 
+CodeGraph is provisioned automatically at the release pinned in `fm-agent.toml`.
+On Windows x64 and ARM64, FM-Agent downloads the native release ZIP, checks its
+SHA-256 and launcher version, and installs it under
+`~/.cache/fm-agent/codegraph/current`. It uses a Windows file lock to serialize
+concurrent installers and does not change the user's persistent PATH. Failed
+downloads or version checks preserve an existing bundle. POSIX systems continue
+to use the pinned `install.sh` and `flock`.
+
+Set `FM_AGENT_CODEGRAPH_DIR` (or `[codegraph].install_dir`) to change the private
+cache. If provisioning fails, FM-Agent tries `[codegraph].bin_dir` and PATH,
+then falls back to regex extraction with a warning. Windows manual installations
+can provide `codegraph.cmd`, `codegraph.exe`, or `codegraph.bat` in `bin_dir`.
+Qualified methods use nested output directories on Windows, preserving the
+same fully qualified function names as the flat POSIX layout. Incremental
+matching and cleanup use this layout too.
+
 | Parameter                       | Default                        | Description                                                  |
 | ------------------------------- | ------------------------------ | ------------------------------------------------------------ |
 | `LLM_MODEL`                     | `anthropic/claude-sonnet-4.6`  | Default model used as the fallback for all task-specific model settings |

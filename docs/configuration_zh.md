@@ -1,5 +1,18 @@
 # 配置参考
 
+CodeGraph 会自动安装 `fm-agent.toml` 中固定的版本。在 Windows x64 和 ARM64
+上，FM-Agent 下载原生 ZIP 包，校验 SHA-256 和启动器版本，安装到
+`~/.cache/fm-agent/codegraph/current`。Windows 文件锁用于串行化并发安装，
+不会修改用户的持久 PATH。下载或版本检查失败时保留已有安装；POSIX 系统仍使用
+固定版本的 `install.sh` 和 `flock`。
+
+可通过 `FM_AGENT_CODEGRAPH_DIR` 或 `[codegraph].install_dir` 修改独立缓存目录。
+安装失败时先查找 `[codegraph].bin_dir` 和 PATH，再警告并回退到正则抽取。
+Windows 手动安装可在 `bin_dir` 中提供 `codegraph.cmd`、`codegraph.exe`
+或 `codegraph.bat`。
+Windows 将类方法的限定名表示为输出目录层级，与 POSIX 的平面文件布局生成相同的
+完整函数名；增量匹配与清理也使用这一布局。
+
 FM-Agent 的配置项都在 [`fm-agent.toml`](../fm-agent.toml) 里（每一项都有就近注释和对应的环境变量名）。下表是完整参考：每个参数、默认值及其作用。任何配置项都可用同名环境变量覆盖，其优先级高于 toml。LLM provider 与 OpenCode 的配置见 [config_llm.md](config_llm.md)。
 
 | 参数 | 默认值 | 描述 |

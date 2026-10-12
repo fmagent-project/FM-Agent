@@ -23,6 +23,7 @@ from .extract import (
     EXT_TO_LANG,
     LANG_CONFIG,
     _function_spans,
+    _function_output_path,
     extract_functions_from_file,
     run_extraction,
 )
@@ -686,9 +687,11 @@ def _extracted_files_by_method(func_dir):
             # Flat layout: the filename stem is the full identifier, keeping any
             # "::" ("LocalStorage::Flush"). Register it under both the full
             # identifier and the bare tail ("Flush") so both codegraph's qualified
-            # names and the regex detector's bare names resolve. (os.walk still
-            # tolerates a legacy nested file, whose stem is already bare.)
-            stem = fn[: fn.rfind(".")] if "." in fn else fn
+            # names and the regex detector's bare names resolve. Include qualifier
+            # directories on Windows; flat and nested names produce the same
+            # qualified identifier.
+            relative = os.path.relpath(abs_path, func_dir)
+            stem = "::".join(Path(os.path.splitext(relative)[0]).parts)
             index[stem].append(abs_path)
             bare = stem.split("::")[-1]
             if bare != stem:
@@ -767,8 +770,8 @@ def _reconcile_extracted_dir(proj_dir, abs_src):
             return False
         for ident, _s, _e in spans:
             # ident is the class-qualified, deduped identifier written by
-            # run_extraction as a flat file that keeps the "::" in its name.
-            path = os.path.join(func_dir, ident) + (f".{ext}" if ext else "")
+            # run_extraction using the platform's qualified output layout.
+            path = _function_output_path(func_dir, ident, ext)
             function_path = os.path.abspath(path)
             valid.add(function_path)
             valid.add(f"{function_path}.spec.json")

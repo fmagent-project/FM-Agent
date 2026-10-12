@@ -209,6 +209,17 @@ def _safe_filename(name: str, ext: str) -> str:
     return f"{safe}.{ext}"
 
 
+def _function_output_path(out_dir: str, name: str, ext: str) -> str:
+    """Keep qualified identities while avoiding Windows ':' filenames."""
+    if sys.platform == "win32" and "::" in name:
+        parts = name.split("::")
+        return os.path.join(
+            out_dir, *[part.replace("/", "_") for part in parts[:-1]],
+            _safe_filename(parts[-1], ext),
+        )
+    return os.path.join(out_dir, _safe_filename(name, ext))
+
+
 def _strip_angle_brackets(text):
     """Remove balanced <...> segments from text (for template parameters)."""
     result = []
@@ -814,10 +825,11 @@ def run_extraction(
             # already inside the filename yields "...-cpp::LocalStorage::Flush",
             # matching the call-edge FQNs. A bare name (free function, or the regex
             # fallback which cannot know classes) has no "::" and is written the same
-            # way. ":" is a legal filename character on Linux/macOS (this pipeline
-            # does not target Windows extraction). _safe_filename keeps the "::",
-            # maps "/" -> "_", and falls back to "_function" for empty names.
-            out_file = os.path.join(out_dir, _safe_filename(func_name, ext))
+            # way. Windows forbids ":" in filenames, so represent qualifiers as
+            # directories there: LocalStorage/Flush.ext yields the SAME FQN.
+            # Existing recursive phase collection handles both layouts.
+            out_file = _function_output_path(out_dir, func_name, ext)
+            os.makedirs(os.path.dirname(out_file), exist_ok=True)
 
             # Skip only when the extracted file already has both valid
             # Profile-defined artifacts.
@@ -831,7 +843,7 @@ def run_extraction(
                 skipped += 1
                 continue
 
-            with open(out_file, 'w') as f:
+            with open(out_file, 'w', encoding="utf-8") as f:
                 f.write(func_source)
             written += 1
             if verbose:

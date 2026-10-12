@@ -8,17 +8,26 @@ To add support for a new language: create src/languages/<lang>.py and add an ent
 REGISTRY in src/languages/registry.py. No other files need to change.
 """
 
+import errno
 import functools
 import hashlib
 import logging
 import os
+import platform
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.request
+import uuid
+import zipfile
 from collections import defaultdict
+from contextlib import contextmanager
+from pathlib import Path
 
 from config import settings
 
@@ -330,7 +339,7 @@ class CodeGraphExtractor:
         for file_path, funcs in by_file.items():
             abs_path = os.path.join(proj_dir, file_path) if proj_dir else file_path
             try:
-                with open(abs_path, "r", errors="replace") as f:
+                with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
                     all_lines = f.readlines()
             except OSError:
                 continue
@@ -383,7 +392,7 @@ class CodeGraphExtractor:
         # codegraph stores file paths relative to the project root, which is the
         # parent of the .codegraph/ directory holding the database.
         root = os.path.dirname(os.path.dirname(os.path.abspath(self._db)))
-        rel = os.path.relpath(os.path.abspath(abs_filepath), root)
+        rel = os.path.relpath(os.path.abspath(abs_filepath), root).replace(os.sep, "/")
 
         conn = sqlite3.connect(self._db)
         cur = conn.cursor()
@@ -568,7 +577,8 @@ def _codegraph_version_at(path: str) -> str:
     """``--version`` of the codegraph at ``path``, or "" when it cannot be run."""
     try:
         return subprocess.run(
-            [path, "--version"], capture_output=True, text=True, timeout=30
+            [path, "--version"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -577,11 +587,16 @@ def _codegraph_version_at(path: str) -> str:
 def _codegraph_installed_elsewhere() -> str | None:
     """A codegraph outside our bundle dir — ``bin_dir`` first, then PATH. The last
     resort when the pinned build cannot be provisioned."""
-    local = os.path.abspath(
-        os.path.join(os.path.expanduser(settings.codegraph.bin_dir), "codegraph")
+    names = (
+        ("codegraph.cmd", "codegraph.exe", "codegraph.bat", "codegraph")
+        if sys.platform == "win32" else ("codegraph",)
     )
-    if os.access(local, os.X_OK):
-        return local
+    for name in names:
+        local = os.path.abspath(
+            os.path.join(os.path.expanduser(settings.codegraph.bin_dir), name)
+        )
+        if os.path.isfile(local) and os.access(local, os.X_OK):
+            return local
     # which() joins the name onto each PATH entry as-is, so a relative entry
     # ("bin", ".") comes back relative — and try_codegraph_init runs codegraph with
     # cwd set to the analysed project, not the directory we were launched from.
@@ -589,93 +604,220 @@ def _codegraph_installed_elsewhere() -> str | None:
     return os.path.abspath(found) if found else None
 
 
+def _codegraph_bundle_binary() -> str:
+    """The native launcher in FM-Agent's private bundle."""
+    parts = (
+        ("current", "bin", "codegraph.cmd")
+        if sys.platform == "win32" else ("bin", "codegraph")
+    )
+    return os.path.abspath(os.path.join(_fm_codegraph_dir(), *parts))
+
+
+@contextmanager
+def _codegraph_install_lock(install_dir: str):
+    """Serialize installers across processes; closing the file releases the lock."""
+    os.makedirs(install_dir, exist_ok=True)
+    # Do not truncate a file another Windows process has locked.
+    with open(os.path.join(install_dir, ".provision.lock"), "a+b") as lock:
+        if sys.platform == "win32":
+            import msvcrt
+
+            if os.fstat(lock.fileno()).st_size == 0:
+                lock.write(b"\0")
+                lock.flush()
+            lock.seek(0)
+            # LK_LOCK gives up after ten one-second retries. A download can take
+            # much longer, so retry the non-blocking lock until its owner exits.
+            while True:
+                try:
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        raise
+                    time.sleep(0.1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _checked_install_path(path: Path, install_dir: Path) -> Path:
+    """Require bundle mutations and recursive cleanup to stay under the cache."""
+    resolved = path.resolve()
+    root = install_dir.resolve()
+    if resolved == root or not resolved.is_relative_to(root):
+        raise ValueError(f"codegraph bundle path escapes its install directory: {path}")
+    return resolved
+
+
+def _install_windows_codegraph(want: str, install_dir: str) -> None:
+    """Stage a pinned native release without modifying the user's PATH.
+
+    The PowerShell installer adds its launcher to the user's persistent PATH and
+    removes the old bundle before downloading. Use its release layout directly
+    so a failed download/version check leaves FM-Agent's existing bundle intact.
+    """
+    architectures = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}
+    arch = architectures.get(platform.machine().lower())
+    if arch is None:
+        raise OSError(f"unsupported Windows architecture: {platform.machine()}")
+    package = f"codegraph-win32-{arch}"
+    asset = f"{package}.zip"
+    base = f"https://github.com/{settings.codegraph.repo}/releases/download/{settings.codegraph.version}"
+    root = Path(install_dir).resolve()
+    with tempfile.TemporaryDirectory(prefix=".provision-", dir=root) as temporary:
+        staging = _checked_install_path(Path(temporary), root)
+        archive_path = staging / asset
+        with urllib.request.urlopen(f"{base}/{asset}", timeout=60) as response:
+            with archive_path.open("wb") as output:
+                shutil.copyfileobj(response, output)
+        with urllib.request.urlopen(f"{base}/SHA256SUMS", timeout=60) as response:
+            checksums = response.read().decode("utf-8")
+        expected = next(
+            (fields[0] for line in checksums.splitlines()
+             if len(fields := line.split()) == 2 and fields[1].lstrip("*") == asset),
+            None,
+        )
+        with archive_path.open("rb") as downloaded:
+            actual = hashlib.file_digest(downloaded, "sha256").hexdigest()
+        if expected is None or actual != expected:
+            raise ValueError(f"codegraph archive checksum mismatch: {asset}")
+        with zipfile.ZipFile(archive_path) as archive:
+            for member in archive.infolist():
+                parts = member.filename.split("/")
+                if (parts[0] != package or "\\" in member.filename
+                        or any(part in (".", "..") or ":" in part for part in parts)
+                        or stat.S_ISLNK(member.external_attr >> 16)):
+                    raise ValueError(f"unsafe codegraph archive member: {member.filename}")
+                _checked_install_path(staging / member.filename, staging)
+            archive.extractall(staging)
+        bundle = _checked_install_path(staging / package, root)
+        launcher = bundle / "bin" / "codegraph.cmd"
+        got = _codegraph_version_at(str(launcher))
+        if not launcher.is_file() or got != want:
+            raise ValueError(f"codegraph v{want} archive contains version {got or 'nothing'}")
+
+        current = root / "current"
+        _checked_install_path(current, root)
+        if current.is_symlink() or current.is_junction():
+            raise ValueError(f"codegraph bundle directory is a link: {current}")
+        previous = _checked_install_path(root / f".previous-{uuid.uuid4().hex}", root)
+        had_current = current.exists()
+        if had_current:
+            os.replace(current, previous)
+        try:
+            os.replace(bundle, current)
+        except OSError:
+            # The backup lives outside TemporaryDirectory: even if restoration
+            # fails (e.g. a file was locked), cleanup cannot delete the old copy.
+            if had_current:
+                try:
+                    os.replace(previous, current)
+                except OSError as exc:
+                    logging.warning("old codegraph bundle preserved at %s: %s", previous, exc)
+            raise
+        if had_current:
+            try:
+                shutil.rmtree(_checked_install_path(previous, root))
+            except OSError as exc:
+                logging.warning("old codegraph bundle left at %s: %s", previous, exc)
+
+
 def _provision_codegraph(want: str, binary: str) -> bool:
     """Install the pinned codegraph into FM-Agent's bundle dir; return whether
     ``binary`` is the pinned version afterwards.
 
-    Drives codegraph's own installer through its three documented variables
-    (``CODEGRAPH_VERSION`` / ``CODEGRAPH_INSTALL_DIR`` / ``CODEGRAPH_BIN_DIR``), so
-    this depends on that contract rather than on the layout it produces. Serialised
-    on a lock file: the pipeline runs up to ``max_workers`` processes, and a bumped
-    pin would otherwise start that many downloads of the same archive.
+    Uses the pinned POSIX installer or a native Windows release archive. Both
+    stay in our private bundle directory. Serialized on a lock file: the pipeline
+    runs up to ``max_workers`` processes, and a bumped pin would otherwise start
+    that many downloads of the same archive.
     """
-    import fcntl  # POSIX-only; keep the module importable without it
-
     install_dir = _fm_codegraph_dir()
     try:
-        os.makedirs(install_dir, exist_ok=True)
-        lock = open(os.path.join(install_dir, ".provision.lock"), "w")
-        fcntl.flock(lock, fcntl.LOCK_EX)
-    except OSError as exc:
-        # Unwritable dir, full disk, no flock — the install would fail for the same
-        # reason, so degrade like every other failure here instead of escaping and
-        # taking the pipeline down with it.
+        with _codegraph_install_lock(install_dir):
+            return _provision_codegraph_locked(want, binary, install_dir)
+    except (OSError, ImportError) as exc:
         logging.warning(
-            "cannot prepare the codegraph bundle dir %s (%s); not provisioning",
+            "cannot provision the codegraph bundle dir %s (%s)",
             install_dir,
             exc,
         )
         return False
 
-    with lock:
-        # Whoever we queued behind has usually just installed it.
-        if _codegraph_version_at(binary) == want:
-            return True
 
-        # stderr: install.sh reads this function's stdout to learn the path.
-        print(
-            f"[Pipeline] installing pinned codegraph v{want} "
-            f"(~55 MB, once per version) into {install_dir}",
-            file=sys.stderr,
-        )
-        # The release tag, not main: this script is piped into sh on the user's
-        # machine, and provisioning now happens on its own, so tracking a branch
-        # would let any push to the codegraph repo run here.
-        url = (
-            f"https://raw.githubusercontent.com/{settings.codegraph.repo}"
-            f"/{settings.codegraph.version}/install.sh"
-        )
+def _provision_codegraph_locked(want: str, binary: str, install_dir: str) -> bool:
+    """Provision only after acquiring the cross-process installation lock."""
+    # Whoever we queued behind has usually just installed it.
+    if _codegraph_version_at(binary) == want:
+        return True
+
+    # stderr: install.sh reads this function's stdout to learn the path.
+    print(
+        f"[Pipeline] installing pinned codegraph v{want} "
+        f"(~55 MB, once per version) into {install_dir}",
+        file=sys.stderr,
+    )
+    if sys.platform == "win32":
         try:
-            with urllib.request.urlopen(url, timeout=60) as response:
-                script = response.read().decode()
-        except (OSError, ValueError, UnicodeError) as exc:
-            logging.warning("could not fetch the codegraph installer %s: %s", url, exc)
+            _install_windows_codegraph(want, install_dir)
+        except (OSError, ValueError, zipfile.BadZipFile, subprocess.SubprocessError) as exc:
+            logging.warning("the Windows codegraph installer did not complete: %s", exc)
             return False
-
-        env = {
-            **os.environ,
-            "CODEGRAPH_VERSION": settings.codegraph.version,
-            "CODEGRAPH_INSTALL_DIR": install_dir,
-            "CODEGRAPH_BIN_DIR": os.path.dirname(binary),
-        }
-        try:
-            result = subprocess.run(
-                ["sh", "-s"],
-                input=script,
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=1800,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            logging.warning("the codegraph installer did not complete: %s", exc)
-            return False
-
-        # The version, not "a file appeared": a wrong tag, a partial download or a
-        # changed installer contract would otherwise leave a build we go on to run
-        # as though it were the pinned one.
-        got = _codegraph_version_at(binary)
-        if got != want:
-            logging.warning(
-                "codegraph v%s was not provisioned (got %s); installer exit=%s: %s",
-                want,
-                got or "nothing",
-                result.returncode,
-                (result.stderr or result.stdout)[-300:],
-            )
+        if _codegraph_version_at(binary) != want:
+            logging.warning("codegraph v%s was not provisioned at %s", want, binary)
             return False
         print(f"[Pipeline] codegraph v{want} ready.", file=sys.stderr)
         return True
+    # The release tag, not main: this script is piped into sh on the user's
+    # machine, and provisioning now happens on its own, so tracking a branch
+    # would let any push to the codegraph repo run here.
+    url = (
+        f"https://raw.githubusercontent.com/{settings.codegraph.repo}"
+        f"/{settings.codegraph.version}/install.sh"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            script = response.read().decode()
+    except (OSError, ValueError, UnicodeError) as exc:
+        logging.warning("could not fetch the codegraph installer %s: %s", url, exc)
+        return False
+
+    env = {
+        **os.environ,
+        "CODEGRAPH_VERSION": settings.codegraph.version,
+        "CODEGRAPH_INSTALL_DIR": install_dir,
+        "CODEGRAPH_BIN_DIR": os.path.dirname(binary),
+    }
+    try:
+        result = subprocess.run(
+            ["sh", "-s"],
+            input=script,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=1800,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logging.warning("the codegraph installer did not complete: %s", exc)
+        return False
+
+    # The version, not "a file appeared": a wrong tag, a partial download or a
+    # changed installer contract would otherwise leave a build we go on to run
+    # as though it were the pinned one.
+    got = _codegraph_version_at(binary)
+    if got != want:
+        logging.warning(
+            "codegraph v%s was not provisioned (got %s); installer exit=%s: %s",
+            want,
+            got or "nothing",
+            result.returncode,
+            (result.stderr or result.stdout)[-300:],
+        )
+        return False
+    print(f"[Pipeline] codegraph v{want} ready.", file=sys.stderr)
+    return True
 
 
 @functools.cache
@@ -696,7 +838,7 @@ def _codegraph_cmd() -> str:
     than only executing it — install.sh symlinks it, ``_opencode_env`` exports it.
     """
     want = _pinned_codegraph_version()
-    binary = os.path.abspath(os.path.join(_fm_codegraph_dir(), "bin", "codegraph"))
+    binary = _codegraph_bundle_binary()
     if not want:
         # Nothing pinned: no version to provision or to check against.
         return _codegraph_installed_elsewhere() or "codegraph"
@@ -713,7 +855,7 @@ def _codegraph_cmd() -> str:
         logging.warning(
             "codegraph v%s (pinned in fm-agent.toml) is not available and no other "
             "codegraph is installed; extraction falls back to the regex extractor. "
-            "Run ./install.sh once with network access.",
+            "Retry with network access, or set codegraph.bin_dir to a manual installation.",
             want,
         )
         # The bare name raises FileNotFoundError in the caller, which is the
@@ -773,7 +915,8 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     print(f"[Pipeline] {what} (codegraph {version or 'version unknown'})...")
     try:
         result = subprocess.run(
-            [cmd, action], cwd=proj_dir, capture_output=True, text=True
+            [cmd, action], cwd=proj_dir, capture_output=True, text=True,
+            encoding="utf-8", errors="replace"
         )
     except FileNotFoundError:
         return  # codegraph not installed

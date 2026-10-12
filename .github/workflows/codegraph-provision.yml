@@ -1,0 +1,37 @@
+name: CodeGraph provisioning
+
+on:
+  pull_request:
+    paths:
+      - 'src/languages/codegraph.py'
+      - 'src/extract.py'
+      - 'src/incremental_reasoner.py'
+      - 'config.py'
+      - 'tests/test_codegraph_provision.py'
+      - '.github/workflows/codegraph-provision.yml'
+  push:
+    paths:
+      - 'src/languages/codegraph.py'
+      - 'src/extract.py'
+      - 'src/incremental_reasoner.py'
+      - 'config.py'
+      - 'tests/test_codegraph_provision.py'
+      - '.github/workflows/codegraph-provision.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  provisioning:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install python-dotenv pydantic-settings openai==2.15.0
+      - run: python -m unittest discover -s tests -v
