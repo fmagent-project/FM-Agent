@@ -421,7 +421,7 @@ def _constructor_declaration_key(node):
     return name.split("<", 1)[0].strip(), signature
 
 
-def _call_site(node, caller, root, directory, inherited_file, source_cache):
+def _call_site(node, caller, root, directory, inherited_file, source_cache, depth):
     node_range = node.get("range", {})
     begin = node_range.get("begin", {})
     end = node_range.get("end", {})
@@ -438,6 +438,7 @@ def _call_site(node, caller, root, directory, inherited_file, source_cache):
         start_column,
         end_line if end_file == call_file else None,
         end_column if end_file == call_file else None,
+        depth,
     )
 
 
@@ -451,7 +452,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
     covered_fqns = set()
     source_cache = {}
 
-    def walk(node, task_index, directory, inherited_file, caller_fqn):
+    def walk(node, task_index, directory, inherited_file, caller_fqn, depth):
         if not isinstance(node, dict):
             return inherited_file
         kind = node.get("kind")
@@ -495,6 +496,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                     directory,
                     node_file,
                     source_cache,
+                    depth,
                 )
             )
             target = _call_target_id(node)
@@ -524,6 +526,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                     directory,
                     node_file,
                     source_cache,
+                    depth,
                 )
             )
             constructor = _constructor_key(node)
@@ -554,12 +557,13 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                     directory,
                     sibling_file,
                     active_caller,
+                    depth + 1,
                 )
         return node_file if is_function else sibling_file
 
     for task_index, (ast, source, directory) in enumerate(asts):
         relative = _canonical_relative(source, root)
-        walk(ast, task_index, directory, relative, None)
+        walk(ast, task_index, directory, relative, None, 0)
         del ast
 
     output = []
@@ -615,7 +619,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
 
 
 def _site_contains(site, edge) -> bool:
-    caller, file_path, start_line, start_column, end_line, end_column, _ = site
+    caller, file_path, start_line, start_column, end_line, end_column, _, _ = site
     if edge.get("caller") != caller:
         return False
     span = edge.get("span", {})
@@ -656,6 +660,7 @@ def _innermost_call_site(edge, call_sites):
             -site[3],
             site[4],
             site[5],
+            -site[6],
         ),
     )
 
@@ -692,6 +697,8 @@ def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
         if edge.get("caller") not in covered_fqns:
             output.append(edge)
             seen.add(identity)
+            continue
+        if edge.get("kind") == "constructor" and edge.get("coordinate_fallback"):
             continue
         edge_file = span.get("file")
         location = (

@@ -526,7 +526,7 @@ class CodeGraphExtractor:
                     key = (caller, callee, "constructor", file_path,
                            "no-coord", ctor_seq)
                     ctor_seq += 1
-                result.append({
+                edge = {
                     "caller": caller,
                     "callee": callee,
                     "kind": "constructor",
@@ -535,7 +535,10 @@ class CodeGraphExtractor:
                         "start_line": start_line,
                         "start_column": start_col,
                     },
-                })
+                }
+                if coord_fallback:
+                    edge["coordinate_fallback"] = True
+                result.append(edge)
 
         conn.close()
 
