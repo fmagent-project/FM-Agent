@@ -666,53 +666,51 @@ def _innermost_call_site(edge, call_sites):
 
 
 def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
-    """Prefer resolved Clang call sites and retain codegraph elsewhere."""
+    """Prefer Clang and retain safe CodeGraph ordinary-call fallbacks."""
     output = list(clang_edges)
-    seen = {
-        (
+
+    def edge_identity(edge):
+        span = edge.get("span", {})
+        start_line = span.get("start_line")
+        if not isinstance(start_line, int) or start_line <= 0:
+            return None
+        return (
             edge.get("caller"),
             edge.get("callee"),
-            edge.get("span", {}).get("file"),
-            edge.get("span", {}).get("start_line"),
-            edge.get("span", {}).get("start_column"),
+            span.get("file"),
+            start_line,
+            span.get("start_column"),
         )
+
+    seen = {
+        identity
         for edge in output
+        if (identity := edge_identity(edge)) is not None
     }
-    clang_pairs = {(edge.get("caller"), edge.get("callee")) for edge in clang_edges}
     sites_by_location = defaultdict(list)
     for site in call_sites:
         if isinstance(site[1], str):
             sites_by_location[(site[0], site[1].replace("\\", "/"))].append(site)
     for edge in codegraph_edges:
-        span = edge.get("span", {})
-        identity = (
-            edge.get("caller"),
-            edge.get("callee"),
-            span.get("file"),
-            span.get("start_line"),
-            span.get("start_column"),
-        )
-        if identity in seen:
-            continue
         if edge.get("caller") not in covered_fqns:
             output.append(edge)
-            seen.add(identity)
             continue
-        if edge.get("kind") == "constructor" and edge.get("coordinate_fallback"):
+        identity = edge_identity(edge)
+        if identity is not None and identity in seen:
             continue
+        if edge.get("kind") == "constructor":
+            continue
+        span = edge.get("span", {})
         edge_file = span.get("file")
         location = (
             edge.get("caller"),
             edge_file.replace("\\", "/") if isinstance(edge_file, str) else None,
         )
         site = _innermost_call_site(edge, sites_by_location.get(location, ()))
-        if site is not None:
-            if not site[-1]:
-                output.append(edge)
-                seen.add(identity)
-        elif (edge.get("caller"), edge.get("callee")) not in clang_pairs:
+        if site is None or not site[-1]:
             output.append(edge)
-            seen.add(identity)
+            if identity is not None:
+                seen.add(identity)
     output.sort(
         key=lambda edge: (
             edge.get("span", {}).get("file") or "",
