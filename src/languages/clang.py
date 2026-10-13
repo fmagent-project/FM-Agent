@@ -374,7 +374,10 @@ def _symbol_key(node, relative: str | None):
         if not isinstance(name, str) or not name:
             return None
         symbol = f"{name}\0{function_type or ''}"
-    internal = node.get("storageClass") == "static" or "_GLOBAL__N_" in symbol
+    internal = (
+        node.get("kind") == "FunctionDecl"
+        and node.get("storageClass") == "static"
+    ) or "_GLOBAL__N_" in symbol
     return symbol, relative if internal else None
 
 
@@ -418,12 +421,33 @@ def _constructor_declaration_key(node):
     return name.split("<", 1)[0].strip(), signature
 
 
+def _call_site(node, caller, root, directory, inherited_file, source_cache):
+    node_range = node.get("range", {})
+    begin = node_range.get("begin", {})
+    end = node_range.get("end", {})
+    call_file = _location_file(begin, root, directory, inherited_file)
+    end_file = _location_file(end, root, directory, call_file)
+    start_line, start_column = _location_position(
+        begin, root, call_file, source_cache
+    )
+    end_line, end_column = _location_position(end, root, end_file, source_cache)
+    return (
+        caller,
+        call_file,
+        start_line,
+        start_column,
+        end_line if end_file == call_file else None,
+        end_column if end_file == call_file else None,
+    )
+
+
 def _clang_edges_from_asts(asts, root: Path, functions):
     declaration_symbols = {}
     declaration_fqns = {}
     symbol_fqns = defaultdict(set)
     constructor_fqns = defaultdict(set)
     calls = []
+    call_sites = []
     covered_fqns = set()
     source_cache = {}
 
@@ -462,15 +486,46 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                         constructor_fqns[constructor_key].add(match[4])
 
         if kind in _CALL_KINDS and active_caller:
+            site_index = len(call_sites)
+            call_sites.append(
+                _call_site(
+                    node,
+                    active_caller,
+                    root,
+                    directory,
+                    node_file,
+                    source_cache,
+                )
+            )
             target = _call_target_id(node)
             if target is not None:
                 begin = node.get("range", {}).get("begin", {})
                 call_file = _location_file(begin, root, directory, node_file)
                 line, column = _location_position(begin, root, call_file, source_cache)
                 calls.append(
-                    (task_index, active_caller, "call", target, call_file, line, column)
+                    (
+                        task_index,
+                        active_caller,
+                        "call",
+                        target,
+                        call_file,
+                        line,
+                        column,
+                        site_index,
+                    )
                 )
         elif kind in _CONSTRUCT_KINDS and active_caller:
+            site_index = len(call_sites)
+            call_sites.append(
+                _call_site(
+                    node,
+                    active_caller,
+                    root,
+                    directory,
+                    node_file,
+                    source_cache,
+                )
+            )
             constructor = _constructor_key(node)
             if constructor is not None:
                 begin = node.get("range", {}).get("begin", {})
@@ -485,6 +540,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                         call_file,
                         line,
                         column,
+                        site_index,
                     )
                 )
 
@@ -508,7 +564,8 @@ def _clang_edges_from_asts(asts, root: Path, functions):
 
     output = []
     seen = set()
-    for task_index, caller, kind, target, call_file, line, column in calls:
+    resolved_sites = set()
+    for task_index, caller, kind, target, call_file, line, column, site_index in calls:
         if kind == "constructor":
             constructor_key, constructed = target
             candidates = constructor_fqns.get(constructor_key, ())
@@ -526,7 +583,10 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                 candidates = symbol_fqns.get(symbol, ())
                 if len(candidates) == 1:
                     callee = next(iter(candidates))
-        if callee is None or callee == caller:
+        if callee is None:
+            continue
+        resolved_sites.add(site_index)
+        if callee == caller:
             continue
         edge = {
             "caller": caller,
@@ -549,17 +609,103 @@ def _clang_edges_from_asts(asts, root: Path, functions):
             edge["span"]["start_column"] or 0,
         )
     )
-    return output, covered_fqns
+    return output, covered_fqns, [
+        (*site, index in resolved_sites) for index, site in enumerate(call_sites)
+    ]
 
 
-def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns):
-    """Use Clang for matched callers and codegraph for all other callers."""
-    output = list(clang_edges)
-    output.extend(
-        edge
-        for edge in codegraph_edges
-        if edge.get("caller") not in covered_fqns
+def _site_contains(site, edge) -> bool:
+    caller, file_path, start_line, start_column, end_line, end_column, _ = site
+    if edge.get("caller") != caller:
+        return False
+    span = edge.get("span", {})
+    edge_file = span.get("file")
+    if not isinstance(edge_file, str) or not isinstance(file_path, str):
+        return False
+    if edge_file.replace("\\", "/") != file_path.replace("\\", "/"):
+        return False
+    line = span.get("start_line")
+    column = span.get("start_column")
+    if not all(isinstance(value, int) for value in (line, column)):
+        return False
+    if not all(
+        isinstance(value, int)
+        for value in (start_line, start_column, end_line, end_column)
+    ):
+        return False
+    for candidate_column in (column, column + 1):
+        after_start = line > start_line or (
+            line == start_line and candidate_column >= start_column
+        )
+        before_end = line < end_line or (
+            line == end_line and candidate_column <= end_column
+        )
+        if after_start and before_end:
+            return True
+    return False
+
+
+def _innermost_call_site(edge, call_sites):
+    matches = [site for site in call_sites if _site_contains(site, edge)]
+    if not matches:
+        return None
+    return min(
+        matches,
+        key=lambda site: (
+            -site[2],
+            -site[3],
+            site[4],
+            site[5],
+        ),
     )
+
+
+def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
+    """Prefer resolved Clang call sites and retain codegraph elsewhere."""
+    output = list(clang_edges)
+    seen = {
+        (
+            edge.get("caller"),
+            edge.get("callee"),
+            edge.get("span", {}).get("file"),
+            edge.get("span", {}).get("start_line"),
+            edge.get("span", {}).get("start_column"),
+        )
+        for edge in output
+    }
+    clang_pairs = {(edge.get("caller"), edge.get("callee")) for edge in clang_edges}
+    sites_by_location = defaultdict(list)
+    for site in call_sites:
+        if isinstance(site[1], str):
+            sites_by_location[(site[0], site[1].replace("\\", "/"))].append(site)
+    for edge in codegraph_edges:
+        span = edge.get("span", {})
+        identity = (
+            edge.get("caller"),
+            edge.get("callee"),
+            span.get("file"),
+            span.get("start_line"),
+            span.get("start_column"),
+        )
+        if identity in seen:
+            continue
+        if edge.get("caller") not in covered_fqns:
+            output.append(edge)
+            seen.add(identity)
+            continue
+        edge_file = span.get("file")
+        location = (
+            edge.get("caller"),
+            edge_file.replace("\\", "/") if isinstance(edge_file, str) else None,
+        )
+        site = _innermost_call_site(edge, sites_by_location.get(location, ()))
+        if site is not None:
+            if not site[-1]:
+                output.append(edge)
+                seen.add(identity)
+        elif (edge.get("caller"), edge.get("callee")) not in clang_pairs:
+            output.append(edge)
+            seen.add(identity)
     output.sort(
         key=lambda edge: (
             edge.get("span", {}).get("file") or "",
@@ -627,12 +773,12 @@ def call_edges(proj_dir: str, language: str, extractor):
                     yield ast, task[0], task[1]
                     del ast
 
-            clang_edges, covered_fqns = _clang_edges_from_asts(
+            clang_edges, covered_fqns, call_sites = _clang_edges_from_asts(
                 parsed_asts(), root, functions
             )
             codegraph_edges = extractor.get_call_edges(language)
             result = _merge_call_edges(
-                clang_edges, codegraph_edges, covered_fqns
+                clang_edges, codegraph_edges, covered_fqns, call_sites
             )
             print(
                 f"[Clang] {language}: covered {len(covered_fqns)}/"
