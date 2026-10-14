@@ -5,8 +5,12 @@ echo "=== fm-agent: installing required software ==="
 
 INSTALL_ERLANG_SUPPORT=0
 INSTALL_CHISEL_SUPPORT=0
+INSTALL_DSH=0
 for arg in "$@"; do
     case "$arg" in
+        --with-dsh)
+            INSTALL_DSH=1
+            ;;
         --with-erlang)
             INSTALL_ERLANG_SUPPORT=1
             ;;
@@ -14,14 +18,15 @@ for arg in "$@"; do
             INSTALL_CHISEL_SUPPORT=1
             ;;
         -h|--help)
-            echo "Usage: ./install.sh [--with-erlang] [--with-chisel]"
+            echo "Usage: ./install.sh [--with-dsh] [--with-erlang] [--with-chisel]"
+            echo "  --with-dsh     Install DeepSeek Harness as the agent backend"
             echo "  --with-erlang  Install/verify Erlang/OTP 26+, rebar3 3.24.0+, and ELP"
             echo "  --with-chisel  Install/verify CIRCT firtool and the FM-Agent Chisel pass plugin"
             exit 0
             ;;
         *)
             echo "[!!] unknown option: $arg"
-            echo "Usage: ./install.sh [--with-erlang] [--with-chisel]"
+            echo "Usage: ./install.sh [--with-dsh] [--with-erlang] [--with-chisel]"
             exit 1
             ;;
     esac
@@ -108,6 +113,9 @@ FM_AGENT_MODEL_BACKEND="$(printf '%s\n' "$_fmcfg" | sed -n 1p | tr '[:upper:]' '
 CODEGRAPH_REPO="$(printf '%s\n' "$_fmcfg" | sed -n 2p)"
 CODEGRAPH_VERSION="$(printf '%s\n' "$_fmcfg" | sed -n 3p)"
 codegraph_bin_dir="$(printf '%s\n' "$_fmcfg" | sed -n 4p)"
+if [[ "$INSTALL_DSH" -eq 1 ]]; then
+    FM_AGENT_MODEL_BACKEND=dsh
+fi
 
 # Decide whether to set up a local CLI backend or OpenCode. config.py keeps
 # `backend` a free string, so the installer still owns the allow-list of values
@@ -117,7 +125,7 @@ case "$FM_AGENT_MODEL_BACKEND" in
     ""|0|false|no|off|opencode|open-code)
         USE_LOCAL_CLI_BACKEND=0
         ;;
-    auto|codex|codex-cli|claude|claude-cli)
+    auto|codex|codex-cli|claude|claude-cli|dsh|deepseek-harness)
         USE_LOCAL_CLI_BACKEND=1
         ;;
     *)
@@ -136,7 +144,17 @@ fi
 
 if [[ "$USE_LOCAL_CLI_BACKEND" -eq 1 ]]; then
     echo "[ok] local CLI backend enabled: $FM_AGENT_MODEL_BACKEND"
-    if [[ "$FM_AGENT_MODEL_BACKEND" == "claude" || "$FM_AGENT_MODEL_BACKEND" == "claude-cli" ]]; then
+    if [[ "$FM_AGENT_MODEL_BACKEND" == "dsh" || "$FM_AGENT_MODEL_BACKEND" == "deepseek-harness" ]]; then
+        command -v node &>/dev/null && command -v npm &>/dev/null || {
+            echo "[!!] Node.js and npm are required for DeepSeek Harness."; exit 1;
+        }
+        if ! command -v dsh &>/dev/null; then
+            echo "[..] installing DeepSeek Harness"
+            npm install --global @deepseek-ai/dsh@0.2.0-rc.2
+        fi
+        echo "[ok] dsh found: $(dsh --version)"
+        dsh --profile headless --help >/dev/null
+    elif [[ "$FM_AGENT_MODEL_BACKEND" == "claude" || "$FM_AGENT_MODEL_BACKEND" == "claude-cli" ]]; then
         command -v claude &>/dev/null || { echo "[!!] claude CLI not found"; exit 1; }
         echo "[ok] claude found: $(claude --version 2>/dev/null || echo 'unknown version')"
     elif [[ "$FM_AGENT_MODEL_BACKEND" == "codex" || "$FM_AGENT_MODEL_BACKEND" == "codex-cli" ]]; then

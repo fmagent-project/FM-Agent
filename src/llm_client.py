@@ -14,7 +14,10 @@ from .trace_writer import (
     utc_now_iso,
 )
 
-_openrouter_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE_URL)
+_openrouter_client = (
+    None if is_cli_backend_enabled()
+    else OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE_URL)
+)
 _llm_provider_client = _openrouter_client
 
 _MAX_RATE_LIMIT_RETRIES = 20
@@ -26,19 +29,7 @@ _ANTHROPIC_MAX_TOKENS = 8192
 
 
 def build_llm_cli_command(model, prompt, cwd, files=None):
-    """Build the configured CLI command for a file-oriented LLM task.
-
-    The pipeline supports the configurable Codex/Claude agent backends as well
-    as the legacy ``opencode run`` backend. Keeping that choice here ensures
-    every caller passes files and prompts with the same command-line shape.
-    """
-    if is_cli_backend_enabled():
-        return build_agent_command(model=model, prompt=prompt, cwd=cwd, files=files)
-
-    command = ["opencode", "run", "--model", f"{OPENCODE_MODEL_PROVIDER}/{model}"]
-    for file_path in files or []:
-        command.extend(["--file", file_path])
-    return command + ["--", prompt]
+    return build_agent_command(model=model, prompt=prompt, cwd=cwd, files=files)
 
 
 def _is_anthropic_model(model):

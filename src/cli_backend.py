@@ -1,7 +1,11 @@
 import os
+import hashlib
+import json
 import shlex
 import subprocess
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from config import settings
@@ -14,6 +18,8 @@ _BACKEND_ALIASES = {
     "claude-cli": "claude-cli",
     "opencode": "opencode",
     "open-code": "opencode",
+    "dsh": "dsh",
+    "deepseek-harness": "dsh",
 }
 
 
@@ -22,6 +28,7 @@ class AgentCommand:
     argv: list[str]
     stdin: Optional[str] = None
     backend: str = "opencode"
+    env: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 def _normalize_backend(value):
@@ -36,6 +43,8 @@ def _normalize_backend(value):
 def resolve_model_backend():
     backend = _normalize_backend(settings.llm.backend)
     if backend != "auto":
+        if backend not in _BACKEND_ALIASES.values():
+            raise ValueError(f"unsupported CLI backend: {backend}")
         return backend
 
     host_hint = (os.environ.get("FM_AGENT_HOST") or os.environ.get("FM_AGENT_CLIENT") or "").lower()
@@ -56,7 +65,7 @@ def resolve_model_backend():
 
 
 def is_cli_backend_enabled():
-    return resolve_model_backend() in {"codex-cli", "claude-cli"}
+    return resolve_model_backend() in {"codex-cli", "claude-cli", "dsh"}
 
 
 def cli_effort():
@@ -78,13 +87,31 @@ def build_agent_command(model, prompt, cwd, files=None, backend=None, effort=Non
     resolved = _normalize_backend(backend) if backend else resolve_model_backend()
     if resolved == "auto":
         resolved = resolve_model_backend()
-    if resolved not in {"codex-cli", "claude-cli"}:
+    if resolved not in _BACKEND_ALIASES.values():
         raise ValueError(f"unsupported CLI backend: {resolved}")
 
     cwd = os.path.abspath(cwd)
     stdin = _compose_stdin(prompt, files or [])
     model = (model or "").strip()
     effort = (effort if effort is not None else cli_effort()).strip()
+
+    if resolved == "opencode":
+        argv = ["opencode", "run", "--model", f"{settings.llm.provider}/{model}"]
+        for path in files or []:
+            argv.extend(["--file", os.fspath(path)])
+        return AgentCommand(argv=argv + ["--", prompt], backend=resolved)
+
+    if resolved == "dsh":
+        if not model:
+            raise ValueError("DSH requires llm.name (LLM_MODEL)")
+        return AgentCommand(
+            argv=["dsh", "--profile", "headless", "--patch", _dsh_model_patch(cwd, model, effort), "-"],
+            stdin=stdin,
+            backend=resolved,
+            env={
+                "DSH_PERMISSION_MODE": os.environ.get("DSH_PERMISSION_MODE", "danger-full-access"),
+            },
+        )
 
     if resolved == "codex-cli":
         argv = [
@@ -123,6 +150,26 @@ def build_agent_command(model, prompt, cwd, files=None, backend=None, effort=Non
     return AgentCommand(argv=argv, stdin=stdin, backend=resolved)
 
 
+def _dsh_model_patch(cwd, model, effort):
+    selection = {"provider": "deepseek-official", "model": model}
+    if effort:
+        selection["reasoningEffort"] = effort
+    content = json.dumps([
+        {"id": "agent-default-model", "config": selection},
+        {"id": "session-persistence-jsonl", "config": {
+            "root": str(Path(cwd) / "fm_agent" / "trace" / "dsh"),
+        }},
+    ])
+    directory = Path(cwd) / "fm_agent" / "agent_config"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"dsh-{hashlib.sha256(content.encode()).hexdigest()[:16]}.json"
+    if not path.exists():
+        with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False, encoding="utf-8") as temporary:
+            temporary.write(content)
+        os.replace(temporary.name, path)
+    return str(path)
+
+
 def command_argv(command):
     if isinstance(command, AgentCommand):
         return command.argv
@@ -133,6 +180,18 @@ def command_stdin(command):
     if isinstance(command, AgentCommand):
         return command.stdin
     return None
+
+
+def command_backend(command):
+    return command.backend if isinstance(command, AgentCommand) else "opencode"
+
+
+def command_env(command, cwd, base=None):
+    env = dict(os.environ if base is None else base)
+    env["PWD"] = os.path.abspath(cwd)
+    if isinstance(command, AgentCommand):
+        env.update(command.env)
+    return env
 
 
 def command_display(command):
@@ -170,12 +229,13 @@ def run_agent_for_messages(model, messages):
         command.argv,
         input=command.stdin,
         cwd=cwd,
+        env=command_env(command, cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=1800,
+        timeout=settings.runtime.opencode_timeout_s,
         check=False,
     )
     if result.returncode != 0:

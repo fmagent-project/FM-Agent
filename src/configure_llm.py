@@ -48,8 +48,8 @@ class ConfigWizardError(RuntimeError):
 
 
 ApiStyle = Literal["openai", "anthropic"]
-_BACKENDS = ("opencode", "auto", "codex-cli", "claude-cli")
-_EFFORTS = ("", "low", "medium", "high")
+_BACKENDS = ("opencode", "auto", "codex-cli", "claude-cli", "dsh", "deepseek-harness")
+_EFFORTS = ("", "off", "low", "medium", "high", "max")
 _LLM_TOML_KEYS = ("name", "provider", "base_url", "backend", "effort", "api_style")
 _TOML_KEY_BY_ENV_KEY = {
     "LLM_API_BASE_URL": "base_url",
@@ -856,17 +856,19 @@ def _prompt_backend() -> str:
     print("  2. Auto-detect local Codex or Claude CLI")
     print("  3. Codex CLI")
     print("  4. Claude CLI")
+    print("  5. DeepSeek Harness")
     selected = _prompt("Select", "1")
     backends = {
         "1": "opencode",
         "2": "auto",
         "3": "codex-cli",
         "4": "claude-cli",
+        "5": "dsh",
     }
     try:
         return backends[selected]
     except KeyError as exc:
-        raise ConfigWizardError("Backend selection must be 1, 2, 3, or 4.") from exc
+        raise ConfigWizardError("Backend selection must be 1, 2, 3, 4, or 5.") from exc
 
 
 def prompt_for_config() -> tuple[LLMConfigInput, bool]:
@@ -910,10 +912,13 @@ def run_wizard(project_root: Path) -> int:
     backend = _prompt_backend()
     if backend != "opencode":
         print()
-        print(
-            "Local CLI backends use their own authentication; no API key or OpenCode "
-            "provider configuration is required."
-        )
+        if backend == "dsh":
+            print("Set DEEPSEEK_API_KEY in .env and select a DeepSeek model with --name.")
+        else:
+            print(
+                "Local CLI backends use their own authentication; no API key or OpenCode "
+                "provider configuration is required."
+            )
         return run_local_backend_configuration(project_root, backend)
 
     paths = default_paths(project_root)
@@ -1138,12 +1143,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     set_parser.add_argument(
         "--backend",
         choices=_BACKENDS,
-        help="model backend: opencode, auto, codex-cli, or claude-cli",
+        help="model backend: opencode, auto, codex-cli, claude-cli, or dsh (deepseek-harness)",
     )
     set_parser.add_argument(
         "--effort",
         choices=_EFFORTS,
-        help="reasoning effort: empty, low, medium, or high",
+        help="reasoning effort supported by the selected backend (DSH: off, low, high, max)",
     )
     set_parser.add_argument(
         "--api-style",

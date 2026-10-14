@@ -8,6 +8,7 @@ import os
 import json
 import sys
 import logging
+import shutil
 
 OH_MY_OPENAGENT_CONFIG = os.path.expanduser("~/.config/opencode/oh-my-openagent.json")
 
@@ -81,7 +82,11 @@ def is_interactive():
 
 def run(proj_dir, config):
     """Run all env checks.  Return True to proceed, False to abort."""
-    from src.cli_backend import is_cli_backend_enabled
+    from src.cli_backend import is_cli_backend_enabled, resolve_model_backend
+
+    if resolve_model_backend() == "dsh" and shutil.which("dsh") is None:
+        logging.error("DSH executable not found. Run ./install.sh --with-dsh and ensure dsh is on PATH.")
+        return False
 
     work_dir = os.path.join(proj_dir, "fm_agent")
     os.makedirs(work_dir, exist_ok=True)
