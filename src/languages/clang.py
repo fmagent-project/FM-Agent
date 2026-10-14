@@ -385,11 +385,23 @@ def _call_target_id(node) -> str | None:
     inner = node.get("inner")
     if not isinstance(inner, list) or not inner:
         return None
-    stack = [inner[0]]
-    while stack:
-        current = stack.pop()
-        if not isinstance(current, dict):
-            continue
+    current = inner[0]
+    transparent = {
+        "CStyleCastExpr",
+        "CXXBindTemporaryExpr",
+        "CXXFunctionalCastExpr",
+        "CXXAddrspaceCastExpr",
+        "CXXConstCastExpr",
+        "CXXDynamicCastExpr",
+        "CXXReinterpretCastExpr",
+        "CXXStaticCastExpr",
+        "ConstantExpr",
+        "ExprWithCleanups",
+        "ImplicitCastExpr",
+        "MaterializeTemporaryExpr",
+        "ParenExpr",
+    }
+    while isinstance(current, dict):
         referenced = current.get("referencedDecl")
         if isinstance(referenced, dict) and referenced.get("kind") in _FUNCTION_KINDS:
             identifier = referenced.get("id")
@@ -397,9 +409,12 @@ def _call_target_id(node) -> str | None:
         member = current.get("referencedMemberDecl")
         if member is not None:
             return str(member)
+        if current.get("kind") not in transparent:
+            return None
         children = current.get("inner")
-        if isinstance(children, list):
-            stack.extend(reversed(children))
+        if not isinstance(children, list) or len(children) != 1:
+            return None
+        current = children[0]
     return None
 
 
@@ -589,9 +604,9 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                     callee = next(iter(candidates))
         if callee is None:
             continue
-        resolved_sites.add(site_index)
         if callee == caller:
             continue
+        resolved_sites.add(site_index)
         edge = {
             "caller": caller,
             "callee": callee,
@@ -650,19 +665,24 @@ def _site_contains(site, edge) -> bool:
 
 
 def _innermost_call_site(edge, call_sites):
+    matches = _innermost_call_sites(edge, call_sites)
+    return matches[0] if matches else None
+
+
+def _innermost_call_sites(edge, call_sites):
     matches = [site for site in call_sites if _site_contains(site, edge)]
     if not matches:
-        return None
-    return min(
-        matches,
-        key=lambda site: (
+        return []
+    def rank(site):
+        return (
             -site[2],
             -site[3],
             site[4],
             site[5],
             -site[6],
-        ),
-    )
+        )
+    best_rank = min(rank(site) for site in matches)
+    return [site for site in matches if rank(site) == best_rank]
 
 
 def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
@@ -706,8 +726,8 @@ def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
             edge.get("caller"),
             edge_file.replace("\\", "/") if isinstance(edge_file, str) else None,
         )
-        site = _innermost_call_site(edge, sites_by_location.get(location, ()))
-        if site is None or not site[-1]:
+        sites = _innermost_call_sites(edge, sites_by_location.get(location, ()))
+        if not sites or any(not site[-1] for site in sites):
             output.append(edge)
             if identity is not None:
                 seen.add(identity)
