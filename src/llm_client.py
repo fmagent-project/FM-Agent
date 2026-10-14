@@ -5,6 +5,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import logging
+from pathlib import Path
 from config import *
 from .cli_backend import build_agent_command, is_cli_backend_enabled, run_agent_for_messages
 from openai import OpenAI, RateLimitError, BadRequestError
@@ -184,7 +185,7 @@ def _read_error_body(exc, limit=800):
     return text[:limit] + ("…" if len(text) > limit else "")
 
 
-def _retry_create(client, model, messages):
+def _retry_create(client, model, messages, trace_dir=None):
     """Call the LLM with retries. Returns (text, usage_dict, reasoning_payload).
 
     - Anthropic-family models go via the native /v1/messages endpoint.
@@ -193,7 +194,8 @@ def _retry_create(client, model, messages):
       third-party relays that support it can keep prompt-cache routing sticky.
     """
     if is_cli_backend_enabled():
-        text, usage = run_agent_for_messages(model, messages)
+        work_dir = Path(trace_dir).resolve().parent if trace_dir is not None else None
+        text, usage = run_agent_for_messages(model, messages, work_dir=work_dir)
         return text, usage, None
 
     rate_limit_attempts = 0
@@ -319,7 +321,7 @@ def _llm_json_call(client, model, messages, validator, schema_description,
         usage = {}
         reasoning = None
         try:
-            response, usage, reasoning = _retry_create(client, model, messages)
+            response, usage, reasoning = _retry_create(client, model, messages, trace_dir=trace_dir)
         except Exception as exc:
             event = {
                 "event_id": event_id,

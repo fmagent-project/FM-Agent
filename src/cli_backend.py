@@ -84,7 +84,7 @@ def _compose_stdin(prompt, files):
     )
 
 
-def build_agent_command(model, prompt, cwd, files=None, backend=None, effort=None):
+def build_agent_command(model, prompt, cwd, files=None, backend=None, effort=None, work_dir=None):
     resolved = _normalize_backend(backend) if backend else resolve_model_backend()
     if resolved == "auto":
         resolved = resolve_model_backend()
@@ -105,8 +105,9 @@ def build_agent_command(model, prompt, cwd, files=None, backend=None, effort=Non
     if resolved == "dsh":
         if not model:
             raise ValueError("DSH requires llm.name (LLM_MODEL)")
+        work_dir = Path(work_dir).resolve() if work_dir is not None else Path(cwd) / "fm_agent"
         return AgentCommand(
-            argv=["dsh", "--profile", "headless", "--patch", _dsh_model_patch(cwd, model, effort), "--json", "-"],
+            argv=["dsh", "--profile", "headless", "--patch", _dsh_model_patch(work_dir, model, effort), "--json", "-"],
             stdin=stdin,
             backend=resolved,
             env={
@@ -151,17 +152,17 @@ def build_agent_command(model, prompt, cwd, files=None, backend=None, effort=Non
     return AgentCommand(argv=argv, stdin=stdin, backend=resolved)
 
 
-def _dsh_model_patch(cwd, model, effort):
+def _dsh_model_patch(work_dir, model, effort):
     selection = {"provider": "deepseek-official", "model": model}
     if effort:
         selection["reasoningEffort"] = effort
     content = json.dumps([
         {"id": "agent-default-model", "config": selection},
         {"id": "session-persistence-jsonl", "config": {
-            "root": str(Path(cwd) / "fm_agent" / "trace" / "dsh"),
+            "root": str(work_dir / "trace" / "dsh"),
         }},
     ])
-    directory = Path(cwd) / "fm_agent" / "agent_config"
+    directory = work_dir / "agent_config"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"dsh-{hashlib.sha256(content.encode()).hexdigest()[:16]}.json"
     if not path.exists():
@@ -216,15 +217,16 @@ def messages_to_prompt(messages):
     return "\n\n".join(parts)
 
 
-def run_agent_for_messages(model, messages):
+def run_agent_for_messages(model, messages, work_dir=None):
     prompt = (
         "Answer the following conversation directly. Preserve any requested output tags "
         "exactly and do not add unrelated commentary.\n\n"
         f"{messages_to_prompt(messages)}"
     )
-    cwd = os.path.abspath(os.getcwd())
-    command = build_agent_command(model=model, prompt=prompt, cwd=cwd)
-    # stderr 单独保留，避免诊断信息混入最终回复或 DSH 的 JSON 输出。
+    work_dir = Path(work_dir).resolve() if work_dir is not None else Path.cwd() / "fm_agent"
+    cwd = str(work_dir.parent)
+    command = build_agent_command(model=model, prompt=prompt, cwd=cwd, work_dir=work_dir)
+    # Keep diagnostics separate from the final response or DSH JSON output.
     result = subprocess.run(
         command.argv,
         input=command.stdin,
@@ -250,7 +252,7 @@ def run_agent_for_messages(model, messages):
     if command.backend == "dsh":
         events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
         session_id = next(event["sessionId"] for event in events if event["type"] == "session")
-        records = list(DshTraceReader(Path(cwd) / "fm_agent/trace/dsh").read_new(session_id))
+        records = list(DshTraceReader(work_dir / "trace" / "dsh").read_new(session_id))
         if not records:
             raise RuntimeError(f"DSH usage trace missing for {session_id}")
         usage = {key: sum(record["usage"][key] for record in records) for key in records[0]["usage"]}
