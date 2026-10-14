@@ -589,7 +589,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
 
     output = []
     seen = set()
-    resolved_sites = set()
+    sites_with_edges = set()
     for task_index, caller, kind, target, call_file, line, column, site_index in calls:
         if kind == "constructor":
             constructor_key, constructed = target
@@ -612,7 +612,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
             continue
         if callee == caller:
             continue
-        resolved_sites.add(site_index)
+        sites_with_edges.add(site_index)
         edge = {
             "caller": caller,
             "callee": callee,
@@ -635,7 +635,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
         )
     )
     return output, covered_fqns, [
-        (*site, index in resolved_sites) for index, site in enumerate(call_sites)
+        (*site, index in sites_with_edges) for index, site in enumerate(call_sites)
     ]
 
 
@@ -692,7 +692,7 @@ def _innermost_call_sites(edge, call_sites):
 
 
 def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
-    """Prefer Clang and retain safe CodeGraph ordinary-call fallbacks."""
+    """For covered callers, keep CodeGraph edges only at unresolved sites."""
     output = list(clang_edges)
 
     def edge_identity(edge):
@@ -733,7 +733,9 @@ def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
             edge_file.replace("\\", "/") if isinstance(edge_file, str) else None,
         )
         sites = _innermost_call_sites(edge, sites_by_location.get(location, ()))
-        if not sites or any(not site[-1] for site in sites):
+        # A covered caller may use CodeGraph only where Clang saw the call
+        # expression but did not produce an edge for it.
+        if sites and any(not site[-1] for site in sites):
             output.append(edge)
             if identity is not None:
                 seen.add(identity)
