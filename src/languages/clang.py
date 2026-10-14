@@ -400,6 +400,7 @@ def _call_target_id(node) -> str | None:
         "ImplicitCastExpr",
         "MaterializeTemporaryExpr",
         "ParenExpr",
+        "SubstNonTypeTemplateParmExpr",
         "UnaryOperator",
     }
     while isinstance(current, dict):
@@ -418,6 +419,19 @@ def _call_target_id(node) -> str | None:
         if current.get("kind") not in transparent:
             return None
         children = current.get("inner")
+        if current.get("kind") == "SubstNonTypeTemplateParmExpr":
+            if not isinstance(children, list):
+                return None
+            replacements = [
+                child
+                for child in children
+                if isinstance(child, dict)
+                and child.get("kind") != "NonTypeTemplateParmDecl"
+            ]
+            if len(replacements) != 1:
+                return None
+            current = replacements[0]
+            continue
         if not isinstance(children, list) or len(children) != 1:
             return None
         current = children[0]
@@ -589,7 +603,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
 
     output = []
     seen = set()
-    sites_with_edges = set()
+    handled_sites = set()
     for task_index, caller, kind, target, call_file, line, column, site_index in calls:
         if kind == "constructor":
             constructor_key, constructed = target
@@ -610,9 +624,9 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                     callee = next(iter(candidates))
         if callee is None:
             continue
+        handled_sites.add(site_index)
         if callee == caller:
             continue
-        sites_with_edges.add(site_index)
         edge = {
             "caller": caller,
             "callee": callee,
@@ -635,7 +649,7 @@ def _clang_edges_from_asts(asts, root: Path, functions):
         )
     )
     return output, covered_fqns, [
-        (*site, index in sites_with_edges) for index, site in enumerate(call_sites)
+        (*site, index in handled_sites) for index, site in enumerate(call_sites)
     ]
 
 
@@ -721,6 +735,8 @@ def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
         if edge.get("caller") not in covered_fqns:
             output.append(edge)
             continue
+        if edge.get("callee") == edge.get("caller"):
+            continue
         identity = edge_identity(edge)
         if identity is not None and identity in seen:
             continue
@@ -734,7 +750,7 @@ def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, call_sites):
         )
         sites = _innermost_call_sites(edge, sites_by_location.get(location, ()))
         # A covered caller may use CodeGraph only where Clang saw the call
-        # expression but did not produce an edge for it.
+        # expression but could neither resolve nor deliberately handle it.
         if sites and any(not site[-1] for site in sites):
             output.append(edge)
             if identity is not None:
