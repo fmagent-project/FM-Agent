@@ -247,6 +247,7 @@ class State:
         self.agent_costs = defaultdict(float)
         self.agent_calls = defaultdict(int)
         self.agent_unknown_cost = set()
+        self.dsh_usage_complete = True
         self._opencode_requests = {}                                # (filename, id) → request metadata
 
         # Verification verdicts
@@ -320,7 +321,7 @@ class State:
             if model and not self.model_seen:
                 self.model_seen = model
             usage = md.get("usage") or {}
-            if usage:
+            if usage and not usage.get("dsh_session_id"):
                 # Anthropic-native shape (from new llm_client)
                 inp = usage.get("input_tokens", 0) or 0
                 out = usage.get("output_tokens", 0) or 0
@@ -535,10 +536,14 @@ class State:
 
     def tail_dsh(self):
         for record in self.dsh_trace.read_new():
+            self.dsh_usage_complete &= record["usage_complete"]
             self._record_agent_usage("dsh", record["model"], record["usage"])
+            if not record["usage_complete"]:
+                self.agent_unknown_cost.add("dsh")
             self._push_llm_status(
-                ts=record["time"], source="dsh", label="assistant response",
-                status="success", model=record["model"], code="OK",
+                ts=record["time"], source="dsh", label=record["type"],
+                status="success" if record["usage_complete"] else "error", model=record["model"],
+                code="OK" if record["usage_complete"] else "USAGE_MISSING",
             )
 
     def total_tokens(self):
@@ -751,8 +756,11 @@ def render_tokens(state):
     table.add_row(*row("verification", state.totals), _fmt_cost(state.cost_native))
     for backend in sorted(state.agent_calls):
         cost = None if backend in state.agent_unknown_cost else state.agent_costs[backend]
+        label = f"{backend} ({state.agent_calls[backend]})"
+        if backend == "dsh" and not state.dsh_usage_complete:
+            label += " ≥ (usage incomplete)"
         table.add_row(
-            *row(f"{backend} ({state.agent_calls[backend]})", state.agent_tokens[backend]),
+            *row(label, state.agent_tokens[backend]),
             _fmt_cost(cost),
         )
     sums = state.total_tokens()

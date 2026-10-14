@@ -11,9 +11,10 @@ class DshTraceReader:
         self._revisions = {}
         self._seen = set()
 
-    def read_new(self):
+    def read_new(self, session_id=None):
         records = []
-        for path in sorted(self.root.rglob("session.v4.jsonl*")):
+        pattern = f"{session_id}/session.v4.jsonl*" if session_id else "session.v4.jsonl*"
+        for path in sorted(self.root.rglob(pattern)):
             if path.name not in {"session.v4.jsonl", "session.v4.jsonl.zstd"}:
                 continue
             stat = path.stat()
@@ -37,15 +38,18 @@ class DshTraceReader:
                         key = (header["id"], record["seq"])
                         if seeded or key in self._seen:
                             continue
-                        if record.get("type") != "assistant/message":
+                        if record.get("type") not in {"assistant/message", "assistant/attempt", "session/title-llm-request"}:
                             continue
                         data = record["data"]
-                        usage = data.get("usage")
-                        if not usage:
-                            continue
+                        usage = data.get("usage") or next((
+                            entry["chunk"]["usage"] for entry in reversed(data.get("stream", []))
+                            if entry.get("type") == "chunk" and entry["chunk"].get("type") == "usage"
+                        ), {})
                         self._seen.add(key)
                         source = data.get("message", {}).get("source", {})
                         records.append({
+                            "session_id": header["id"], "trace_path": str(path),
+                            "type": record["type"], "usage_complete": bool(usage),
                             "model": source.get("model"),
                             "time": datetime.fromtimestamp(record["time"] / 1000, timezone.utc),
                             "usage": {

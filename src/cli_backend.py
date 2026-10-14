@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import settings
+from .dsh_trace import DshTraceReader
 
 
 _BACKEND_ALIASES = {
@@ -105,7 +106,7 @@ def build_agent_command(model, prompt, cwd, files=None, backend=None, effort=Non
         if not model:
             raise ValueError("DSH requires llm.name (LLM_MODEL)")
         return AgentCommand(
-            argv=["dsh", "--profile", "headless", "--patch", _dsh_model_patch(cwd, model, effort), "-"],
+            argv=["dsh", "--profile", "headless", "--patch", _dsh_model_patch(cwd, model, effort), "--json", "-"],
             stdin=stdin,
             backend=resolved,
             env={
@@ -223,8 +224,7 @@ def run_agent_for_messages(model, messages):
     )
     cwd = os.path.abspath(os.getcwd())
     command = build_agent_command(model=model, prompt=prompt, cwd=cwd)
-    # Agent CLIs write the final response to stdout and diagnostics/transcripts
-    # to stderr; keep them separate so echoed JSON never reaches the parser.
+    # stderr 单独保留，避免诊断信息混入最终回复或 DSH 的 JSON 输出。
     result = subprocess.run(
         command.argv,
         input=command.stdin,
@@ -247,4 +247,14 @@ def run_agent_for_messages(model, messages):
         raise RuntimeError(
             f"{command.backend} exited with code {result.returncode}: {output}"
         )
+    if command.backend == "dsh":
+        events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+        session_id = next(event["sessionId"] for event in events if event["type"] == "session")
+        records = list(DshTraceReader(Path(cwd) / "fm_agent/trace/dsh").read_new(session_id))
+        if not records:
+            raise RuntimeError(f"DSH usage trace missing for {session_id}")
+        usage = {key: sum(record["usage"][key] for record in records) for key in records[0]["usage"]}
+        usage.update(dsh_session_id=session_id, dsh_trace_path=records[0]["trace_path"],
+                     usage_complete=all(record["usage_complete"] for record in records))
+        return next(event["text"] for event in reversed(events) if event["type"] == "final"), usage
     return (result.stdout or "").strip(), {}
