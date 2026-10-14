@@ -400,6 +400,7 @@ def _call_target_id(node) -> str | None:
         "ImplicitCastExpr",
         "MaterializeTemporaryExpr",
         "ParenExpr",
+        "UnaryOperator",
     }
     while isinstance(current, dict):
         referenced = current.get("referencedDecl")
@@ -409,6 +410,11 @@ def _call_target_id(node) -> str | None:
         member = current.get("referencedMemberDecl")
         if member is not None:
             return str(member)
+        if (
+            current.get("kind") == "UnaryOperator"
+            and current.get("opcode") not in {"&", "*"}
+        ):
+            return None
         if current.get("kind") not in transparent:
             return None
         children = current.get("inner")
