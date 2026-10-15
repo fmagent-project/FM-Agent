@@ -1,5 +1,6 @@
 """Clang-backed call edges for C and C++ with codegraph-compatible FQNs."""
 
+import hashlib
 import json
 import logging
 import math
@@ -8,6 +9,7 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import threading
 from collections import defaultdict
 from pathlib import Path
 
@@ -16,6 +18,8 @@ from src.languages.codegraph import _node_fqn_map
 logger = logging.getLogger(__name__)
 
 _CLANG_CACHE = {}
+_COMPILE_DATABASE_CACHE = {}
+_COMPILE_DATABASE_LOCK = threading.Lock()
 _FUNCTION_KINDS = {
     "FunctionDecl",
     "CXXMethodDecl",
@@ -33,17 +37,6 @@ _CALL_KINDS = {
 _CONSTRUCT_KINDS = {"CXXConstructExpr", "CXXTemporaryObjectExpr"}
 _C_EXTENSIONS = {".c"}
 _CPP_EXTENSIONS = {".cc", ".cp", ".cpp", ".cxx", ".c++", ".C"}
-_SOURCE_EXTENSIONS = (
-    _C_EXTENSIONS
-    | _CPP_EXTENSIONS
-    | {
-        ".h",
-        ".hh",
-        ".hpp",
-        ".hxx",
-        ".h++",
-    }
-)
 
 
 def _clang_command(language: str) -> list[str] | None:
@@ -67,6 +60,21 @@ def _clang_timeout() -> float:
     except (TypeError, ValueError, OverflowError):
         return 120.0
     return timeout if math.isfinite(timeout) and timeout > 0 else 120.0
+
+
+def _compile_database_timeout() -> float:
+    try:
+        timeout = float(
+            os.environ.get("CLANG_COMPILE_COMMANDS_TIMEOUT_SECONDS", "300")
+        )
+    except (TypeError, ValueError, OverflowError):
+        return 300.0
+    return timeout if math.isfinite(timeout) and timeout > 0 else 300.0
+
+
+def _auto_compile_database_enabled() -> bool:
+    value = os.environ.get("CLANG_GENERATE_COMPILE_COMMANDS", "1")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _canonical_relative(path, root: Path, directory: Path | None = None) -> str | None:
@@ -143,20 +151,106 @@ def _function_at(entries, line: int, column: int | None = None):
     )
 
 
-def _compile_database_path(root: Path) -> Path | None:
+def _configured_compile_database(root: Path) -> tuple[Path | None, bool]:
     configured = os.environ.get("CLANG_COMPILE_COMMANDS", "").strip()
     if configured:
         candidate = Path(configured).expanduser()
         if candidate.is_dir():
             candidate /= "compile_commands.json"
-        return candidate.resolve() if candidate.is_file() else None
+        return (candidate.resolve() if candidate.is_file() else None), True
     for candidate in (
         root / "compile_commands.json",
         root / "build" / "compile_commands.json",
     ):
         if candidate.is_file():
-            return candidate.resolve()
-    return None
+            return candidate.resolve(), False
+    return None, False
+
+
+def _generate_cmake_compile_database(root: Path) -> Path | None:
+    """Configure a CMake project and return its generated compilation database."""
+    cmake_file = root / "CMakeLists.txt"
+    if not cmake_file.is_file() or not _auto_compile_database_enabled():
+        return None
+    cmake = shutil.which("cmake")
+    ninja = shutil.which("ninja")
+    if cmake is None or ninja is None:
+        logger.info(
+            "Cannot generate compile_commands.json: cmake or ninja is unavailable"
+        )
+        return None
+
+    try:
+        stat = cmake_file.stat()
+    except OSError:
+        return None
+    cache_key = (str(root), stat.st_mtime_ns, stat.st_size, cmake, ninja)
+    with _COMPILE_DATABASE_LOCK:
+        if cache_key in _COMPILE_DATABASE_CACHE:
+            return _COMPILE_DATABASE_CACHE[cache_key]
+
+        root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
+        build_dir = root / "fm_agent" / "clang_build" / root_id
+        database_path = build_dir / "compile_commands.json"
+        try:
+            build_dir.mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                [
+                    cmake,
+                    "-S",
+                    str(root),
+                    "-B",
+                    str(build_dir),
+                    "-G",
+                    "Ninja",
+                    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=_compile_database_timeout(),
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            result = None
+
+        generated = (
+            database_path.resolve()
+            if result is not None
+            and result.returncode == 0
+            and database_path.is_file()
+            else None
+        )
+        if generated is None:
+            detail = ""
+            if result is not None:
+                lines = [
+                    line.strip()
+                    for line in (result.stderr or result.stdout).splitlines()
+                    if line.strip()
+                ]
+                detail = f": {' | '.join(lines[-3:])}" if lines else ""
+            logger.info("CMake compilation database generation failed%s", detail)
+        else:
+            print(f"[Clang] Generated compilation database at {generated}")
+
+        for old_key in list(_COMPILE_DATABASE_CACHE):
+            if old_key[0] == str(root) and old_key != cache_key:
+                del _COMPILE_DATABASE_CACHE[old_key]
+        _COMPILE_DATABASE_CACHE[cache_key] = generated
+        return generated
+
+
+def _compile_database_path(root: Path) -> Path | None:
+    existing, explicitly_configured = _configured_compile_database(root)
+    if existing is not None:
+        return existing
+    if explicitly_configured:
+        logger.info("Configured CLANG_COMPILE_COMMANDS path does not exist")
+        return None
+    return _generate_cmake_compile_database(root)
 
 
 def _read_compile_database(path: Path | None):
@@ -206,6 +300,8 @@ def _entry_language(path: Path, arguments: list[str]) -> str | None:
 
 
 def _clang_tasks(root: Path, language: str, functions, database_path: Path | None):
+    if database_path is None:
+        return None
     database = _read_compile_database(database_path)
     if database is None:
         return None
@@ -234,21 +330,6 @@ def _clang_tasks(root: Path, language: str, functions, database_path: Path | Non
         seen.add(source)
         tasks.append((source, directory.resolve(), arguments))
 
-    if tasks:
-        return tasks
-
-    for relative in functions:
-        source = root / relative
-        if source.suffix not in _SOURCE_EXTENSIONS:
-            continue
-        try:
-            source = source.resolve()
-        except OSError:
-            continue
-        if source in seen or not source.is_file():
-            continue
-        seen.add(source)
-        tasks.append((source, root, []))
     return tasks
 
 
@@ -552,24 +633,6 @@ def _clang_edges_from_asts(asts, root: Path, functions):
     return output, covered_fqns
 
 
-def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns):
-    """Use Clang for matched callers and codegraph for all other callers."""
-    output = list(clang_edges)
-    output.extend(
-        edge
-        for edge in codegraph_edges
-        if edge.get("caller") not in covered_fqns
-    )
-    output.sort(
-        key=lambda edge: (
-            edge.get("span", {}).get("file") or "",
-            edge.get("span", {}).get("start_line") or 0,
-            edge.get("span", {}).get("start_column") or 0,
-        )
-    )
-    return output
-
-
 def _cache_key(root: Path, extractor, language: str, command, database_path):
     try:
         database_stat = os.stat(extractor._db)
@@ -589,7 +652,7 @@ def _cache_key(root: Path, extractor, language: str, command, database_path):
 
 
 def call_edges(proj_dir: str, language: str, extractor):
-    """Return per-function Clang edges with codegraph fallback."""
+    """Return a pure Clang call graph, or request codegraph fallback."""
     root = Path(extractor._db).resolve().parent.parent
     command = _clang_command(language)
     if command is None:
@@ -630,15 +693,15 @@ def call_edges(proj_dir: str, language: str, extractor):
             clang_edges, covered_fqns = _clang_edges_from_asts(
                 parsed_asts(), root, functions
             )
-            codegraph_edges = extractor.get_call_edges(language)
-            result = _merge_call_edges(
-                clang_edges, codegraph_edges, covered_fqns
+            successful = (
+                task_stats["succeeded"] == len(tasks) and bool(covered_fqns)
             )
+            result = clang_edges if successful else None
+            backend = "using Clang only" if successful else "using codegraph only"
             print(
                 f"[Clang] {language}: covered {len(covered_fqns)}/"
                 f"{len(all_fqns)} functions from {task_stats['succeeded']}/"
-                f"{len(tasks)} translation units; codegraph covered "
-                f"{len(all_fqns - covered_fqns)} functions."
+                f"{len(tasks)} translation units; {backend}."
             )
 
     if cache_key is not None:

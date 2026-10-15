@@ -27,7 +27,9 @@ OpenCode setup.
 | `OPENCODE_MAX_RETRIES`          | `5`                            | Maximum retry attempts for a failed OpenCode pipeline stage |
 | `OPENCODE_TIMEOUT_SECONDS`      | `1800`                         | Hard timeout (in seconds) for a single `opencode run` subprocess; on expiry the child is killed and the call is retried |
 | `CLANG_COMMAND`                 | `clang` / `clang++`            | Clang driver used for C/C++ call-graph analysis; the language-specific default is selected automatically |
-| `CLANG_COMPILE_COMMANDS`        | unset                          | Optional path to `compile_commands.json` or its directory; otherwise the project root and `build/` are checked |
-| `CLANG_TIMEOUT_SECONDS`         | `120`                          | Timeout for each Clang translation-unit AST export; functions not covered by successful exports use codegraph |
+| `CLANG_COMPILE_COMMANDS`        | unset                          | Optional path to `compile_commands.json` or its directory; otherwise the project root and `build/` are checked before CMake generation is attempted |
+| `CLANG_GENERATE_COMPILE_COMMANDS` | `1`                          | Configure CMake projects with the bundled CMake/Ninja tools and generate a database under `fm_agent/clang_build/`; set to `0` to disable |
+| `CLANG_COMPILE_COMMANDS_TIMEOUT_SECONDS` | `300`                 | Timeout for automatic CMake configuration and compilation-database generation |
+| `CLANG_TIMEOUT_SECONDS`         | `120`                          | Timeout for each Clang translation-unit AST export; if any database entry for a language fails, that whole language uses codegraph |
 | `ELP_COMMAND`                   | `elp`                          | ELP executable or command used for Erlang function and call-graph analysis |
 | `ELP_TIMEOUT_SECONDS`           | `180`                          | Timeout for ELP initialization, indexing, and individual LSP requests |

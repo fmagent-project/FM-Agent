@@ -5,6 +5,8 @@ description = "Scaling formal methods to large systems via LLM-based Hoare-style
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cmake>=3.20,<4",
+    "ninja>=1.11,<2",
     "openai==2.15.0",
     "python-dotenv>=1.0.0",
     "rich>=13.7.0",

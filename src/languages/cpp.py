@@ -129,7 +129,7 @@ def batch_extract(proj_dir: str) -> dict:
 
 
 def call_edges(proj_dir: str) -> dict:
-    """Return Clang call edges for C++, with codegraph as fallback."""
+    """Return a pure Clang C++ call graph, or use codegraph as fallback."""
     cg = CodeGraphExtractor.from_proj_dir(proj_dir)
     if cg is None:
         return None
