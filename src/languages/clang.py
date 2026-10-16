@@ -73,8 +73,35 @@ def _compile_database_timeout() -> float:
 
 
 def _auto_compile_database_enabled() -> bool:
-    value = os.environ.get("CLANG_GENERATE_COMPILE_COMMANDS", "1")
-    return value.strip().lower() not in {"0", "false", "no", "off"}
+    value = os.environ.get("CLANG_GENERATE_COMPILE_COMMANDS", "0")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _bear_build_command(root: Path) -> list[str] | None:
+    configured = os.environ.get("CLANG_BEAR_BUILD_COMMAND", "").strip()
+    if configured:
+        try:
+            command = shlex.split(configured)
+        except ValueError:
+            return None
+        return command or None
+    if any((root / name).is_file() for name in ("GNUmakefile", "Makefile", "makefile")):
+        make = shutil.which("make")
+        return [make, "-B"] if make is not None else None
+    return None
+
+
+def _analysis_environment() -> dict[str, str]:
+    """Return a build environment without FM-Agent's LLM credentials."""
+    environment = os.environ.copy()
+    for key in (
+        "LLM_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+    ):
+        environment.pop(key, None)
+    return environment
 
 
 def _canonical_relative(path, root: Path, directory: Path | None = None) -> str | None:
@@ -184,7 +211,7 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
         stat = cmake_file.stat()
     except OSError:
         return None
-    cache_key = (str(root), stat.st_mtime_ns, stat.st_size, cmake, ninja)
+    cache_key = ("cmake", str(root), stat.st_mtime_ns, stat.st_size, cmake, ninja)
     with _COMPILE_DATABASE_LOCK:
         if cache_key in _COMPILE_DATABASE_CACHE:
             return _COMPILE_DATABASE_CACHE[cache_key]
@@ -194,6 +221,7 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
         database_path = build_dir / "compile_commands.json"
         try:
             build_dir.mkdir(parents=True, exist_ok=True)
+            database_path.unlink(missing_ok=True)
             result = subprocess.run(
                 [
                     cmake,
@@ -206,6 +234,7 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
                     "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
                 ],
                 cwd=root,
+                env=_analysis_environment(),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -237,7 +266,69 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
             print(f"[Clang] Generated compilation database at {generated}")
 
         for old_key in list(_COMPILE_DATABASE_CACHE):
-            if old_key[0] == str(root) and old_key != cache_key:
+            if old_key[1] == str(root) and old_key != cache_key:
+                del _COMPILE_DATABASE_CACHE[old_key]
+        _COMPILE_DATABASE_CACHE[cache_key] = generated
+        return generated
+
+
+def _generate_bear_compile_database(root: Path) -> Path | None:
+    """Run a detected or configured build through Bear and return its database."""
+    build_command = _bear_build_command(root)
+    if build_command is None or not _auto_compile_database_enabled():
+        return None
+    bear = shutil.which("bear")
+    if bear is None:
+        logger.info("Cannot generate compile_commands.json: bear is unavailable")
+        return None
+
+    cache_key = ("bear", str(root), bear, tuple(build_command))
+    with _COMPILE_DATABASE_LOCK:
+        if cache_key in _COMPILE_DATABASE_CACHE:
+            return _COMPILE_DATABASE_CACHE[cache_key]
+
+        root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
+        build_dir = root / "fm_agent" / "clang_build" / root_id
+        database_path = build_dir / "compile_commands.json"
+        try:
+            build_dir.mkdir(parents=True, exist_ok=True)
+            database_path.unlink(missing_ok=True)
+            result = subprocess.run(
+                [bear, "--output", str(database_path), "--", *build_command],
+                cwd=root,
+                env=_analysis_environment(),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=_compile_database_timeout(),
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            result = None
+
+        generated = (
+            database_path.resolve()
+            if result is not None
+            and result.returncode == 0
+            and database_path.is_file()
+            else None
+        )
+        if generated is None:
+            detail = ""
+            if result is not None:
+                lines = [
+                    line.strip()
+                    for line in (result.stderr or result.stdout).splitlines()
+                    if line.strip()
+                ]
+                detail = f": {' | '.join(lines[-3:])}" if lines else ""
+            logger.info("Bear compilation database generation failed%s", detail)
+        else:
+            print(f"[Clang] Generated compilation database with Bear at {generated}")
+
+        for old_key in list(_COMPILE_DATABASE_CACHE):
+            if old_key[1] == str(root) and old_key != cache_key:
                 del _COMPILE_DATABASE_CACHE[old_key]
         _COMPILE_DATABASE_CACHE[cache_key] = generated
         return generated
@@ -250,7 +341,11 @@ def _compile_database_path(root: Path) -> Path | None:
     if explicitly_configured:
         logger.info("Configured CLANG_COMPILE_COMMANDS path does not exist")
         return None
-    return _generate_cmake_compile_database(root)
+    if not _auto_compile_database_enabled():
+        return None
+    if (root / "CMakeLists.txt").is_file():
+        return _generate_cmake_compile_database(root)
+    return _generate_bear_compile_database(root)
 
 
 def _read_compile_database(path: Path | None):
@@ -694,7 +789,8 @@ def call_edges(proj_dir: str, language: str, extractor):
                 parsed_asts(), root, functions
             )
             successful = (
-                task_stats["succeeded"] == len(tasks) and bool(covered_fqns)
+                task_stats["succeeded"] == len(tasks)
+                and covered_fqns == all_fqns
             )
             result = clang_edges if successful else None
             backend = "using Clang only" if successful else "using codegraph only"

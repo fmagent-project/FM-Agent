@@ -61,7 +61,7 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 - [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) plugin (installed via `bunx`)
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) plugin — captures raw OpenCode LLM request/response traces (see [Structured Trace](#structured-trace))
 - An LLM API key for your provider (the examples use [OpenRouter](https://openrouter.ai/))
-- [Clang](https://clang.llvm.org/docs/UsersManual.html) — optional; used for more precise C/C++ call graphs when every translation unit for that language in `compile_commands.json` parses successfully. FM-Agent reads the database from the project root or `build/`, or configures CMake projects with the bundled CMake/Ninja tools to generate one under `fm_agent/clang_build/`. Otherwise that language uses codegraph only. Set `CLANG_COMPILE_COMMANDS` for another location or `CLANG_GENERATE_COMPILE_COMMANDS=0` to disable generation.
+- [Clang](https://clang.llvm.org/docs/UsersManual.html) — optional; used for more precise C/C++ call graphs when Clang successfully covers every function indexed for that language. FM-Agent first reads `compile_commands.json` from the project root or `build/`; set `CLANG_COMPILE_COMMANDS` for another location. Automatic generation is disabled by default because it executes repository-controlled configuration or build logic. For trusted repositories, set `CLANG_GENERATE_COMPILE_COMMANDS=1`: CMake projects are configured with the bundled CMake/Ninja tools, while non-CMake projects with a makefile use [Bear](https://github.com/rizsotto/Bear) and `make -B`. Set `CLANG_BEAR_BUILD_COMMAND` to override that command for another build system. Otherwise that language uses codegraph only.
 - [Erlang Language Platform (ELP)](https://whatsapp.github.io/erlang-language-platform/docs/get-started/) — optional; required only when analyzing Erlang projects
   - The Erlang integration has been tested on Ubuntu with Erlang/OTP 26 or newer; select an ELP release binary built for a compatible OTP version.
   - rebar3 3.24.0 or newer is required for ELP to auto-discover projects containing `rebar.config`.
@@ -153,6 +153,14 @@ Erlang support is optional because its toolchain is not needed for other languag
 ```
 
 The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
+
+Clang support is also optional. To install or verify Clang and Bear on Ubuntu or macOS, run:
+
+```bash
+./install.sh --with-clang
+```
+
+Bear runs `make -B` for a detected `GNUmakefile`, `Makefile`, or `makefile`, or the command supplied in `CLANG_BEAR_BUILD_COMMAND`, and may create normal build artifacts. Automatic CMake and Bear generation should therefore be enabled only for trusted repositories.
 
 FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so
 you do not need to hand-edit `~/.config/opencode/opencode.json` for the model
@@ -442,7 +450,7 @@ manually with the same command.
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
 2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For project-specific bug-validation procedures, use `--bug-validator` instead of editing the built-in prompt; for example, a compiler-specific validator can instruct the agent to compare outputs against a reference implementation such as GCC.
-3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. C and C++ independently use a pure Clang call graph when their configured translation units parse successfully; otherwise the entire language uses codegraph, without mixing edges from both backends. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
+3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. C and C++ independently use a pure Clang call graph when every configured translation unit parses and Clang covers every indexed function for that language; otherwise the entire language uses codegraph, without mixing edges from both backends. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
 
 ## Citation
 
