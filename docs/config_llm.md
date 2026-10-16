@@ -15,7 +15,7 @@ uv run python src/configure_llm.py
 
 The wizard prompts for:
 
-- model backend (`opencode`, `auto`, `codex-cli`, or `claude-cli`)
+- model backend (`opencode`, `auto`, `codex-cli`, `claude-cli`, or `dsh`)
 - provider id
 - provider display name
 - API protocol (`openai`-compatible or `anthropic`-compatible)
@@ -32,15 +32,15 @@ It then:
 - merges the matching provider entry into the detected OpenCode config file
 - previews the target files, requests confirmation, backs up existing files, and writes atomically
 
-When you select `auto`, `codex-cli`, or `claude-cli`, the wizard updates
-`backend` in the active FM-Agent TOML file and removes non-secret legacy LLM
-overrides from the project `.env`. Before removal, any `.env` `LLM_MODEL` and
-`LLM_EFFORT` values are migrated to the TOML so the selected local backend keeps
-using the same model and reasoning-effort preference. This prevents an old
-`FM_AGENT_MODEL_BACKEND=opencode` (including `export` form) from taking
-precedence over the selected local backend. These local CLI backends use their
-own authentication, so the wizard does not ask for an API key or modify the
-private key file or OpenCode configuration.
+When you select `auto`, `codex-cli`, `claude-cli`, or `dsh`, the wizard asks for
+a model ID and updates `backend` and `name` in the active FM-Agent TOML file.
+It removes non-secret legacy LLM overrides from the project `.env`. The selected
+model replaces any old `LLM_MODEL`; `LLM_EFFORT` is migrated to TOML before removal.
+This prevents an old `FM_AGENT_MODEL_BACKEND=opencode` (including `export` form)
+from taking precedence over the selected local backend. Codex and Claude use
+their own authentication; DSH requires `DEEPSEEK_API_KEY` and optionally
+`DEEPSEEK_BASE_URL` for a gateway. The wizard does not ask for an API key or
+modify the private key file or OpenCode configuration.
 
 ## Change one setting without rerunning the wizard
 
@@ -73,8 +73,8 @@ uv run python src/configure_llm.py set \
 
 Any subset of those flags is valid. Add `--yes` for non-interactive use after
 you have reviewed the values. The accepted backend values are `opencode`,
-`auto`, `codex-cli`, and `claude-cli`; accepted API styles are `openai` and
-`anthropic`; effort is empty, `low`, `medium`, or `high`.
+`auto`, `codex-cli`, `claude-cli`, `dsh`, and its alias `deepseek-harness`; accepted API styles are `openai` and
+`anthropic`; effort is empty, `off`, `low`, `medium`, `high`, or `max` (DSH: `off`, `low`, `high`, `max`).
 
 Backups of `.env`, prior OpenCode key files, and OpenCode configuration files
 are placed in a user-private backup directory, since an existing OpenCode
@@ -101,7 +101,7 @@ semantics as `config.py`; otherwise they update the repository's
 name     = "anthropic/claude-sonnet-4.6"    # override: LLM_MODEL — default model, same as upstream FM-Agent
 provider = "openrouter"                       # override: OPENCODE_MODEL_PROVIDER — an OpenCode provider id
 base_url = "https://openrouter.ai/api/v1"     # override: LLM_API_BASE_URL — endpoint for FM-Agent's direct reasoner calls
-backend  = "opencode"                         # override: FM_AGENT_MODEL_BACKEND — opencode, auto, codex-cli, or claude-cli
+backend  = "opencode"                         # override: FM_AGENT_MODEL_BACKEND — opencode, auto, codex-cli, claude-cli, or dsh
 api_style = "openai"                          # override: LLM_API_STYLE — endpoint style for OpenCode adapter selection
 effort   = ""                                 # override: LLM_EFFORT — optional local CLI reasoning effort
 ```
@@ -131,9 +131,9 @@ It calls the model two ways:
 - **OpenCode** (setup / spec / bug validation): `opencode run --model "$OPENCODE_MODEL_PROVIDER/$LLM_MODEL"`; FM-Agent supplies the matching OpenCode provider automatically (below), so no manual OpenCode config is needed.
 - **Direct** (reasoner): hits `$LLM_API_BASE_URL` itself, authenticating with `$LLM_API_KEY`.
 
-When `FM_AGENT_MODEL_BACKEND` is set to `auto`, `codex-cli`, or `claude-cli`,
-FM-Agent bypasses both of those paths and uses local CLI authentication for all
-model calls:
+When `FM_AGENT_MODEL_BACKEND` is set to `auto`, `codex-cli`, `claude-cli`, or `dsh`,
+FM-Agent uses the selected CLI for all model calls. Codex and Claude use local
+CLI authentication; DSH uses `DEEPSEEK_API_KEY` and optionally `DEEPSEEK_BASE_URL`:
 
 - Codex sessions use `codex exec` with full filesystem access, plus `--model "$LLM_MODEL"` when set and `model_reasoning_effort="$LLM_EFFORT"` when non-empty.
 - Claude Code sessions use `claude -p --dangerously-skip-permissions`, plus `--model "$LLM_MODEL"` when set and `--effort "$LLM_EFFORT"` when non-empty.
