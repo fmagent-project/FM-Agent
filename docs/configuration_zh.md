@@ -25,7 +25,7 @@ FM-Agent 的配置项都在 [`fm-agent.toml`](../fm-agent.toml) 里（每一项�
 | `CLANG_COMPILE_COMMANDS` | unset | 可选的 `compile_commands.json` 文件或所在目录；未设置时先检查项目根目录和 `build/`，再考虑可选的自动生成 |
 | `CLANG_GENERATE_COMPILE_COMMANDS` | `0` | 设为 `1` 后才允许为可信仓库自动生成 compilation database；该过程会执行 CMake 配置或 Bear 构建命令 |
 | `CLANG_BEAR_BUILD_COMMAND` | unset | 非 CMake 项目交给 Bear 执行的可选构建命令参数（不经过 shell）；存在 makefile 时默认执行 `make -B`，设置此项可覆盖默认命令 |
-| `CLANG_COMPILE_COMMANDS_TIMEOUT_SECONDS` | `300` | 自动执行 CMake 配置或 Bear 生成 compilation database 的超时时间（秒） |
+| `CLANG_COMPILE_COMMANDS_TIMEOUT_SECONDS` | `300` | 自动执行 CMake 配置或 Bear 生成 compilation database 的超时时间（秒）；超时会终止生成器的整个进程组 |
 | `CLANG_TIMEOUT_SECONDS` | `120` | 每个 Clang 翻译单元导出 AST 的超时时间（秒）；任一任务失败或 Clang 未覆盖该语言的全部已索引函数时，整种语言使用 codegraph |
 | `ELP_COMMAND` | `elp` | 用于 Erlang 函数抽取与调用图分析的 ELP 可执行文件或命令 |
 | `ELP_TIMEOUT_SECONDS` | `180` | ELP 初始化、索引及单次 LSP 请求的超时时间（秒） |

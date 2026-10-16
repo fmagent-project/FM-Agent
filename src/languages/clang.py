@@ -7,6 +7,7 @@ import math
 import os
 import shlex
 import shutil
+import signal
 import sqlite3
 import subprocess
 import threading
@@ -104,6 +105,50 @@ def _analysis_environment() -> dict[str, str]:
     return environment
 
 
+def _run_generation_command(
+    argv: list[str], root: Path
+) -> subprocess.CompletedProcess[str] | None:
+    """Run one generator in its own process group and stop the group on timeout."""
+    try:
+        process = subprocess.Popen(
+            argv,
+            cwd=root,
+            env=_analysis_environment(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,
+        )
+    except OSError:
+        return None
+
+    try:
+        stdout, stderr = process.communicate(timeout=_compile_database_timeout())
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        process.wait()
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
+        return None
+
+    return subprocess.CompletedProcess(
+        argv,
+        process.returncode,
+        stdout,
+        stderr,
+    )
+
+
 def _canonical_relative(path, root: Path, directory: Path | None = None) -> str | None:
     if not isinstance(path, (str, os.PathLike)) or not str(path):
         return None
@@ -114,6 +159,18 @@ def _canonical_relative(path, root: Path, directory: Path | None = None) -> str 
         return candidate.resolve().relative_to(root).as_posix()
     except (OSError, ValueError):
         return None
+
+
+def _is_owned_analysis_path(path, root: Path, directory: Path) -> bool:
+    """Return whether the logical path belongs to FM-Agent's workspace tree."""
+    try:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = directory / candidate
+        relative = Path(os.path.abspath(candidate)).relative_to(root)
+    except (OSError, ValueError):
+        return False
+    return bool(relative.parts) and relative.parts[0] == "fm_agent"
 
 
 def _clang_function_fqns(extractor, root: Path, language: str):
@@ -222,7 +279,7 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
         try:
             build_dir.mkdir(parents=True, exist_ok=True)
             database_path.unlink(missing_ok=True)
-            result = subprocess.run(
+            result = _run_generation_command(
                 [
                     cmake,
                     "-S",
@@ -233,16 +290,9 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
                     "Ninja",
                     "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
                 ],
-                cwd=root,
-                env=_analysis_environment(),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=_compile_database_timeout(),
-                check=False,
+                root,
             )
-        except (OSError, subprocess.SubprocessError):
+        except OSError:
             result = None
 
         generated = (
@@ -293,18 +343,11 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
         try:
             build_dir.mkdir(parents=True, exist_ok=True)
             database_path.unlink(missing_ok=True)
-            result = subprocess.run(
+            result = _run_generation_command(
                 [bear, "--output", str(database_path), "--", *build_command],
-                cwd=root,
-                env=_analysis_environment(),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=_compile_database_timeout(),
-                check=False,
+                root,
             )
-        except (OSError, subprocess.SubprocessError):
+        except OSError:
             result = None
 
         generated = (
@@ -415,12 +458,19 @@ def _clang_tasks(root: Path, language: str, functions, database_path: Path | Non
         arguments = _entry_arguments(entry)
         if arguments is None or _entry_language(source, arguments) != language:
             continue
+        if _is_owned_analysis_path(source, root, directory):
+            continue
         try:
             source = source.resolve()
         except OSError:
             continue
         relative = _canonical_relative(source, root)
-        if relative is None or source in seen:
+        if (
+            relative is None
+            or relative == "fm_agent"
+            or relative.startswith("fm_agent/")
+            or source in seen
+        ):
             continue
         seen.add(source)
         tasks.append((source, directory.resolve(), arguments))
