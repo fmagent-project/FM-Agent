@@ -5,6 +5,7 @@ echo "=== fm-agent: installing required software ==="
 
 INSTALL_ERLANG_SUPPORT=0
 INSTALL_CHISEL_SUPPORT=0
+INSTALL_CLANG_SUPPORT=0
 for arg in "$@"; do
     case "$arg" in
         --with-erlang)
@@ -13,15 +14,19 @@ for arg in "$@"; do
         --with-chisel)
             INSTALL_CHISEL_SUPPORT=1
             ;;
+        --with-clang)
+            INSTALL_CLANG_SUPPORT=1
+            ;;
         -h|--help)
-            echo "Usage: ./install.sh [--with-erlang] [--with-chisel]"
+            echo "Usage: ./install.sh [--with-erlang] [--with-chisel] [--with-clang]"
             echo "  --with-erlang  Install/verify Erlang/OTP 26+, rebar3 3.24.0+, and ELP"
             echo "  --with-chisel  Install/verify CIRCT firtool and the FM-Agent Chisel pass plugin"
+            echo "  --with-clang   Install/verify Clang and Bear for C/C++ call-graph analysis"
             exit 0
             ;;
         *)
             echo "[!!] unknown option: $arg"
-            echo "Usage: ./install.sh [--with-erlang] [--with-chisel]"
+            echo "Usage: ./install.sh [--with-erlang] [--with-chisel] [--with-clang]"
             exit 1
             ;;
     esac
@@ -413,6 +418,42 @@ if [[ "$INSTALL_ERLANG_SUPPORT" -eq 1 ]]; then
     echo "[ok] Erlang/OTP $installed_otp"
     echo "[ok] rebar3 $installed_rebar"
     echo "[ok] $(elp version)"
+fi
+
+if [[ "$INSTALL_CLANG_SUPPORT" -eq 1 ]]; then
+    echo "[..] installing/verifying optional Clang support"
+    os_name="$(uname -s)"
+    if [[ "$os_name" == "Darwin" ]]; then
+        command -v brew &>/dev/null || {
+            echo "[!!] Homebrew is required to install Bear on macOS."
+            exit 1
+        }
+        brew install bear
+    elif [[ "$os_name" == "Linux" ]]; then
+        if ! command -v clang &>/dev/null || ! command -v clang++ &>/dev/null || ! command -v bear &>/dev/null; then
+            if [[ ! -f /etc/os-release ]]; then
+                echo "[!!] automatic Clang/Bear installation is supported only on Ubuntu."
+                exit 1
+            fi
+            # shellcheck disable=SC1091
+            source /etc/os-release
+            if [[ "${ID:-}" != "ubuntu" ]]; then
+                echo "[!!] automatic Clang/Bear installation is supported only on Ubuntu; found ${ID:-unknown}."
+                exit 1
+            fi
+            sudo apt-get update -y
+            sudo apt-get install -y clang bear
+        fi
+    else
+        echo "[!!] automatic Clang/Bear installation is not available on $os_name."
+        exit 1
+    fi
+
+    command -v clang &>/dev/null || { echo "[!!] clang was not installed"; exit 1; }
+    command -v clang++ &>/dev/null || { echo "[!!] clang++ was not installed"; exit 1; }
+    command -v bear &>/dev/null || { echo "[!!] Bear was not installed"; exit 1; }
+    echo "[ok] $(clang --version | head -n1)"
+    echo "[ok] $(bear --version | head -n1)"
 fi
 
 if [[ "$INSTALL_CHISEL_SUPPORT" -eq 1 ]]; then
