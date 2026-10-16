@@ -11,6 +11,7 @@ Reads:
     <workdir>/estimate.json              (scope and history-based estimates)
     <workdir>/trace/events.jsonl          (FM-Agent native events)
     <workdir>/trace/opencode/*.jsonl      (lucentia opencode-trace records)
+    <workdir>/trace/dsh/**/session.v4.jsonl.zstd (DSH session usage)
     <workdir>/bug_validation/*.result.json (bug validation verdicts)
 
 Standalone — run in a second terminal while main.py is going.
@@ -42,6 +43,7 @@ from rich.progress_bar import ProgressBar
 from rich.align import Align
 
 from src.run_estimate import SCHEMA_VERSION, write_preflight_estimate
+from src.dsh_trace import DshTraceReader
 
 
 STAGES = ["init", "generate_phases_json", "generate_domain_context", "spec_generation", "verification", "bug_validation"]
@@ -211,7 +213,7 @@ def _has_preflight_manifest(path):
 class State:
     """Aggregated trace state. Mutated by tail_* methods on each refresh."""
 
-    def __init__(self, proj_dir, workdir=None):
+    def __init__(self, proj_dir, workdir=None, dsh_sessions=None):
         self.proj_dir = Path(proj_dir).resolve()
         self.workdir = (
             Path(workdir).resolve()
@@ -221,6 +223,7 @@ class State:
         self.trace_dir = self.workdir / "trace"
         self.events_path = self.trace_dir / "events.jsonl"
         self.opencode_dir = self.trace_dir / "opencode"
+        self.dsh_trace = DshTraceReader(Path(dsh_sessions) if dsh_sessions is not None else self.trace_dir / "dsh")
         self.bug_dir = self.workdir / "bug_validation"
         self.estimate_path = self.workdir / "estimate.json"
 
@@ -240,9 +243,11 @@ class State:
         self.cache_window = deque(maxlen=CACHE_WINDOW)              # recent (cache_read, total_input) tuples
         self.llm_statuses = deque(maxlen=LLM_STATUS_WINDOW)         # recent LLM call status records
         self.recent_events = deque(maxlen=40)                       # (time, stage, status, summary)
-        self.opencode_token_totals = defaultdict(int)               # stage → tokens
-        self.opencode_cost = 0.0
-        self.opencode_calls = 0
+        self.agent_tokens = defaultdict(lambda: defaultdict(int))
+        self.agent_costs = defaultdict(float)
+        self.agent_calls = defaultdict(int)
+        self.agent_unknown_cost = set()
+        self.dsh_usage_complete = True
         self._opencode_requests = {}                                # (filename, id) → request metadata
 
         # Verification verdicts
@@ -316,7 +321,7 @@ class State:
             if model and not self.model_seen:
                 self.model_seen = model
             usage = md.get("usage") or {}
-            if usage:
+            if usage and not usage.get("dsh_session_id"):
                 # Anthropic-native shape (from new llm_client)
                 inp = usage.get("input_tokens", 0) or 0
                 out = usage.get("output_tokens", 0) or 0
@@ -361,7 +366,11 @@ class State:
             )
 
         elif et == "opencode_call":
-            summary = ev.get("summary") or "opencode_call"
+            backend = ev.get("metadata", {}).get("backend", "opencode")
+            self.agent_calls.setdefault(backend, 0)
+            summary = ev.get("summary") or f"{backend} call"
+            if backend != "opencode":
+                summary = summary.replace("OpenCode", backend)
             self._push_recent(end or start, stage, status, summary)
 
     def _push_recent(self, ts, stage, status, summary):
@@ -484,7 +493,6 @@ class State:
             model=rec.get("model") or req.get("model"),
             code="200",
         )
-        self.opencode_calls += 1
         # DeepSeek (openai-compat) reports cache as flat top-level fields, and
         # prompt_tokens is the TOTAL (hit + miss). Split it into the disjoint
         # in:new / in:read the rest of the dashboard assumes — otherwise the
@@ -501,18 +509,51 @@ class State:
         cw = (usage.get("cache_creation_input_tokens")
               or usage.get("claude_cache_creation_5_m_tokens")
               or 0)
-        self.opencode_token_totals["input"] += inp
-        self.opencode_token_totals["output"] += out
-        self.opencode_token_totals["cache_read"] += cr
-        self.opencode_token_totals["cache_write"] += cw
-        model = rec.get("model")
-        self.opencode_cost += _cost_from_usage(model, {
+        model = rec.get("model") or req.get("model")
+        self._record_agent_usage("opencode", model, {
             "input_tokens": inp, "output_tokens": out,
             "cache_read_input_tokens": cr, "cache_creation_input_tokens": cw,
         })
+
+    def _record_agent_usage(self, backend, model, usage):
+        inp = usage.get("input_tokens", 0) or 0
+        out = usage.get("output_tokens", 0) or 0
+        cr = usage.get("cache_read_input_tokens", 0) or 0
+        cw = usage.get("cache_creation_input_tokens", 0) or 0
+        self.agent_calls[backend] += 1
+        totals = self.agent_tokens[backend]
+        for key, value in (("input", inp), ("output", out), ("cache_read", cr), ("cache_write", cw)):
+            totals[key] += value
+        if model and not self.model_seen:
+            self.model_seen = model
+        if _price_for(model):
+            self.agent_costs[backend] += _cost_from_usage(model, usage)
+        else:
+            self.agent_unknown_cost.add(backend)
         total_in = inp + cr + cw
         if total_in > 0:
             self.cache_window.append((cr, total_in))
+
+    def tail_dsh(self):
+        for record in self.dsh_trace.read_new():
+            self.dsh_usage_complete &= record["usage_complete"]
+            self._record_agent_usage("dsh", record["model"], record["usage"])
+            if not record["usage_complete"]:
+                self.agent_unknown_cost.add("dsh")
+            self._push_llm_status(
+                ts=record["time"], source="dsh", label=record["type"],
+                status="success" if record["usage_complete"] else "error", model=record["model"],
+                code="OK" if record["usage_complete"] else "USAGE_MISSING",
+            )
+
+    def total_tokens(self):
+        return {
+            key: self.totals.get(key, 0) + sum(tokens.get(key, 0) for tokens in self.agent_tokens.values())
+            for key in ("input", "output", "cache_read", "cache_write")
+        }
+
+    def total_cost(self):
+        return self.cost_native + sum(self.agent_costs.values())
 
     # ---------- bug_validation/*.result.json ----------
     def scan_bugs(self):
@@ -713,13 +754,16 @@ def render_tokens(state):
         ]
 
     table.add_row(*row("verification", state.totals), _fmt_cost(state.cost_native))
-    table.add_row(
-        *row(f"opencode ({state.opencode_calls})", state.opencode_token_totals),
-        _fmt_cost(state.opencode_cost),
-    )
-    # TOTAL — sum across both sources; also expose total input in the label
-    sums = {k: state.totals.get(k, 0) + state.opencode_token_totals.get(k, 0)
-            for k in ("input", "cache_read", "cache_write", "output")}
+    for backend in sorted(state.agent_calls):
+        cost = None if backend in state.agent_unknown_cost else state.agent_costs[backend]
+        label = f"{backend} ({state.agent_calls[backend]})"
+        if backend == "dsh" and not state.dsh_usage_complete:
+            label += " ≥ (usage incomplete)"
+        table.add_row(
+            *row(label, state.agent_tokens[backend]),
+            _fmt_cost(cost),
+        )
+    sums = state.total_tokens()
     in_total = sums["input"] + sums["cache_read"] + sums["cache_write"]
     table.add_row(
         f"[bold]TOTAL[/] [dim](in={_fmt_tokens(in_total)})[/]",
@@ -727,9 +771,9 @@ def render_tokens(state):
         _fmt_tokens(sums["cache_read"]),
         _fmt_tokens(sums["cache_write"]),
         _fmt_tokens(sums["output"]),
-        f"[bold]{_fmt_cost(state.cost_native + state.opencode_cost)}[/]",
+        f"[bold]{'≥' if state.agent_unknown_cost else ''}{_fmt_cost(state.total_cost())}[/]",
     )
-    return Panel(table, title="Tokens & Cost", border_style="green")
+    return Panel(table, title="Tokens & Estimated Cost", border_style="green")
 
 
 def render_cache(state):
@@ -747,13 +791,9 @@ def render_cache(state):
             f"[dim]{_fmt_tokens(cr)} / {_fmt_tokens(tot)}[/]"
         )
 
-    n_cr = state.totals.get("cache_read", 0)
-    n_in = state.totals.get("input", 0) + state.totals.get("cache_write", 0)
-    o_cr = state.opencode_token_totals.get("cache_read", 0)
-    o_in = (state.opencode_token_totals.get("input", 0)
-            + state.opencode_token_totals.get("cache_write", 0))
-    total_cr = n_cr + o_cr
-    total_input = n_in + o_in
+    totals = state.total_tokens()
+    total_cr = totals["cache_read"]
+    total_input = totals["input"] + totals["cache_write"]
     rows = list(state.cache_window)
 
     lines = [
@@ -771,7 +811,7 @@ def render_cache(state):
         cr_per = p.get("cache_read_input_token_cost") or 0
         if in_per > 0 and total_cr > 0:
             saved = total_cr * (in_per - cr_per)
-            actual = state.cost_native + state.opencode_cost
+            actual = state.total_cost()
             if saved > 0:
                 pct = saved / (actual + saved) * 100 if actual + saved > 0 else 0
                 lines.append(
@@ -898,6 +938,10 @@ def main():
                           "or a workspace directly (any dir containing a trace/ subdir)"))
     ap.add_argument("--refresh", type=float, default=1.5, help="Refresh seconds (default 1.5)")
     ap.add_argument(
+        "--dsh-sessions", type=Path,
+        help="DSH session directory for this run, when stored outside the workspace",
+    )
+    ap.add_argument(
         "--estimate",
         action="store_true",
         help="generate and display a one-shot pre-run estimate without LLM calls",
@@ -921,7 +965,7 @@ def main():
             submodules=args.submodule,
         )
 
-    state = State(args.proj_dir, workdir=estimate_workdir)
+    state = State(args.proj_dir, workdir=estimate_workdir, dsh_sessions=args.dsh_sessions)
     if args.estimate:
         Console().print(render_preflight(state))
         return
@@ -938,6 +982,7 @@ def main():
                 state.load_estimate()
                 state.tail_events()
                 state.tail_opencode()
+                state.tail_dsh()
                 state.scan_bugs()
                 live.update(build_layout(state))
                 time.sleep(args.refresh)

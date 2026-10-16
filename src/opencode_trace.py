@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 
 from config import OPENCODE_TIMEOUT_SECONDS, settings
-from .cli_backend import command_argv, command_display, command_stdin
+from .cli_backend import command_argv, command_backend, command_display, command_env, command_stdin
 from .trace_writer import (
     new_event_id,
     record_trace_event,
@@ -201,10 +201,11 @@ def _write_command_stdin(stream, text):
 
 def _start_opencode_process(proj_dir, work_dir, event_id, command, trace_log_path):
     stdin_text = command_stdin(command)
+    base_env = _opencode_env(work_dir, event_id) if command_backend(command) == "opencode" else None
     proc = subprocess.Popen(
         command_argv(command),
         cwd=proj_dir,
-        env=_opencode_env(work_dir, event_id),
+        env=command_env(command, proj_dir, base_env),
         stdin=subprocess.PIPE if stdin_text is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -237,8 +238,8 @@ def _wait_opencode_process(proc, command, stage, timeout_seconds=OPENCODE_TIMEOU
         # leaves opencode waiting forever. Kill it so callers' retry paths can
         # take over instead of the whole pipeline hanging.
         logging.warning(
-            "opencode %s timed out after %ss, killing: %s",
-            stage, timeout_seconds, command_display(command),
+            "%s %s timed out after %ss, killing: %s",
+            command_backend(command), stage, timeout_seconds, command_display(command),
         )
         proc.terminate()
         try:
@@ -277,7 +278,7 @@ def record_opencode_call(
         children.append(
             {
                 "type": "tool_output",
-                "label": "opencode-stdout",
+                "label": f"{command_backend(command)}-stdout",
                 "path": opencode_log_ref,
                 "content_ref": opencode_log_ref,
             }
@@ -299,7 +300,7 @@ def record_opencode_call(
         "status": status,
         "start_time": started,
         "end_time": ended,
-        "summary": summary or f"OpenCode {stage}",
+        "summary": summary or f"{command_backend(command)} {stage}",
         "function_ids": function_ids or [],
         "children": children,
         "metadata": {
@@ -310,6 +311,7 @@ def record_opencode_call(
             "error": error,
             **(metadata or {}),
             "command_display": command_display(command),
+            "backend": command_backend(command),
         },
     })
 
@@ -348,6 +350,10 @@ def run_opencode_traced(
     except subprocess.CalledProcessError as exc:
         exit_code = exc.returncode
         error = error or str(exc)
+        raise
+    except OSError as exc:
+        exit_code = -1
+        error = str(exc)
         raise
     finally:
         if log_thread and log_thread.is_alive():

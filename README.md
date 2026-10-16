@@ -96,10 +96,11 @@ TOML file, stores
 the API key in `.env` plus a private local key file for standalone OpenCode, and syncs the matching OpenCode provider entry in
 `~/.config/opencode/opencode.json` (or the platform-equivalent config path)
 without requiring you to hand-edit JSON.
-If you choose `auto`, `codex-cli`, or `claude-cli` in the wizard, it updates the
-backend in the active FM-Agent TOML file and clears stale non-secret LLM
-overrides from the project `.env`. Any model and effort values found there are
-first retained in the TOML; no API key or OpenCode provider setup is needed.
+If you choose `auto`, `codex-cli`, `claude-cli`, or `dsh`, the wizard asks for a
+model ID, saves the backend and selected model in the active FM-Agent TOML,
+and clears stale non-secret LLM overrides from `.env`, retaining effort in TOML.
+Codex and Claude use their own CLI authentication; DSH requires `DEEPSEEK_API_KEY`
+and optionally `DEEPSEEK_BASE_URL` for a gateway.
 
 If you prefer to edit files manually, put your API key in `.env` (gitignored,
 loaded automatically via python-dotenv); every other setting has a committed

@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .dsh_trace import DshTraceReader
 from .extract import EXT_TO_LANG, LANG_CONFIG, extract_functions_from_file
 from .file_utils import (
     _is_test_file,
@@ -303,6 +304,7 @@ def summarize_completed_run(work_dir: str | Path, require_complete=True):
     tokens = 0
     total_cost = 0.0
     cost_known = True
+    usage_complete = True
     model = None
 
     for line in events_path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -318,9 +320,11 @@ def summarize_completed_run(work_dir: str | Path, require_complete=True):
             ends.append(end)
         if event.get("type") != "llm_call":
             continue
-        llm_calls += 1
         metadata = event.get("metadata") or {}
         usage = metadata.get("usage") or {}
+        if usage.get("dsh_session_id") or (not usage and (work_dir / "trace/dsh").is_dir()):
+            continue
+        llm_calls += 1
         event_model = metadata.get("model")
         model = model or event_model
         numbers = _usage_numbers(usage)
@@ -374,6 +378,15 @@ def summarize_completed_run(work_dir: str | Path, require_complete=True):
             else:
                 total_cost += cost
 
+    for record in DshTraceReader(work_dir / "trace/dsh").read_new():
+        llm_calls += 1
+        tokens += sum(_usage_numbers(record["usage"]).values())
+        usage_complete &= record["usage_complete"]
+        model = model or record["model"]
+        cost = _usage_cost(record["model"], record["usage"])
+        cost_known &= cost is not None and record["usage_complete"]
+        total_cost += cost or 0
+
     if not starts or not ends:
         return None
     scope = _infer_scope_from_workdir(work_dir)
@@ -395,7 +408,9 @@ def summarize_completed_run(work_dir: str | Path, require_complete=True):
         "function_count": int(scope.get("function_count") or 0),
         "duration_seconds": duration,
         "llm_calls": llm_calls,
-        "tokens": tokens,
+        "tokens": tokens if usage_complete else None,
+        "observed_tokens": tokens,
+        "usage_complete": usage_complete,
         "cost_usd": total_cost if cost_known else None,
         "model": model,
     }
