@@ -13,6 +13,7 @@ from src.generate_topdown_layers import (
     _file_to_fqn,
 )
 from src.extract import EXT_TO_LANG, _function_spans, run_extraction
+from src.languages.clang import prepare_compile_database
 from src.languages.codegraph import try_codegraph_init
 from src.file_utils import (
     _is_test_file,
@@ -105,8 +106,8 @@ def prepare_entry_scope(proj_dir: str) -> None:
         _end_funcs,
         extra_call_edges=extra_call_edges,
     )
-    try_codegraph_init(proj_dir)
     _trim_project_in_place(proj_dir, all_by_source, keep_by_source)
+    try_codegraph_init(proj_dir)
     marker_path = os.path.join(proj_dir, "fm_agent", _READY_MARKER)
     with open(marker_path, "w", encoding="utf-8") as file:
         file.write("ready\n")
@@ -453,6 +454,15 @@ def _select_functions_by_source(proj_dir, entry_funcs, end_funcs, extra_call_edg
     work_dir = os.path.join(sel_dir, "fm_agent")
     _make_run_copy(proj_dir, sel_dir)
     try:
+        # The copy may include a previous fm_agent workspace. Clear it before an
+        # opted-in Bear build, then prepare generated sources before phase
+        # enumeration and extraction, exactly as the main pipeline does.
+        shutil.rmtree(work_dir, ignore_errors=True)
+        os.makedirs(work_dir, exist_ok=True)
+        try_codegraph_init(sel_dir)
+        if prepare_compile_database(sel_dir):
+            try_codegraph_init(sel_dir)
+
         source_files = _enumerate_source_files(sel_dir)
         if not source_files:
             raise ValueError(f"no extractable source files found under {proj_dir!r}")
@@ -461,14 +471,9 @@ def _select_functions_by_source(proj_dir, entry_funcs, end_funcs, extra_call_edg
         # span the entire project (every reachable callee is retained).
         phase = {"phase": 0, "name": "all",
                  "modules": [{"name": "all", "source_files": source_files}]}
-        # _make_run_copy brings along any existing fm_agent/; start the selection
-        # extraction from a clean slate so no stale extracted_functions leak in.
-        shutil.rmtree(work_dir, ignore_errors=True)
-        os.makedirs(work_dir, exist_ok=True)
         with open(os.path.join(work_dir, "phases.json"), "w") as f:
             json.dump({"phases": [phase]}, f)
 
-        try_codegraph_init(sel_dir)
         run_extraction(sel_dir, work_dir=work_dir, force=True)
 
         phase_files = _collect_phase_files(work_dir, phase)
