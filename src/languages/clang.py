@@ -1318,11 +1318,13 @@ def _llvm_call_edges(root: Path, language: str, extractor):
                 for caller_symbol, callee_symbol in pairs:
                     caller_candidates = symbol_fqns.get(caller_symbol, ())
                     callee_candidates = symbol_fqns.get(callee_symbol, ())
-                    if len(caller_candidates) != 1 or len(callee_candidates) != 1:
-                        if (
-                            caller_symbol in defined_symbols
-                            or callee_symbol in defined_symbols
-                        ):
+                    if len(caller_candidates) != 1:
+                        if caller_symbol in defined_symbols:
+                            result = None
+                            break
+                        continue
+                    if len(callee_candidates) != 1:
+                        if callee_symbol in defined_symbols:
                             result = None
                             break
                         continue
