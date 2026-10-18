@@ -965,6 +965,12 @@ def run_incremental_pipeline(
     if removed_artifacts:
         logging.info("  -> removed %d stale scope-selection artifact(s) from %s.", removed_artifacts, work_dir)
 
+    # Refresh the source index and opted-in native build before regenerating any
+    # source-derived phase metadata. Bear may create or rewrite project sources.
+    try_codegraph_init(proj_dir)
+    if prepare_compile_database(proj_dir):
+        try_codegraph_init(proj_dir)
+
     # 3. Re-generate the phases.json
     logging.info("[Stage 3/10] Generating new phases.json based on current working tree...")
     _run_setup_extract(
@@ -977,14 +983,6 @@ def run_incremental_pipeline(
     # 4. Update functions under fm_agent/extracted_functions/. Re-extraction replaces
     #    only source files; adjacent .spec.json and .info.json sidecars are retained.
     logging.info("[Stage 4/10] Re-extracting function source files...")
-    # Rebuild the codegraph index before re-extraction. The index still reflects the code as
-    # of the previous full run, but the working tree has changed since then; run_extraction
-    # (and the downstream scope ranking) read function bodies and spans from codegraph, so a
-    # stale index would yield boundaries for the old code. try_codegraph_init rebuilds by
-    # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
-    try_codegraph_init(proj_dir)
-    if prepare_compile_database(proj_dir):
-        try_codegraph_init(proj_dir)
     _written, _skipped, stage4_unavailable_backends = run_extraction(
         proj_dir,
         work_dir=work_dir,

@@ -429,8 +429,8 @@ if [[ "$INSTALL_CLANG_SUPPORT" -eq 1 ]]; then
             echo "[!!] Homebrew is required to install Bear on macOS."
             exit 1
         }
-        brew install bear llvm
-        homebrew_llvm_bin="$(brew --prefix llvm)/bin"
+        brew install bear llvm@15
+        homebrew_llvm_bin="$(brew --prefix llvm@15)/bin"
     elif [[ "$os_name" == "Linux" ]]; then
         if ! command -v clang-15 &>/dev/null || ! command -v clang++-15 &>/dev/null \
             || ! command -v llvm-link-15 &>/dev/null || ! command -v llvm-dis-15 &>/dev/null \

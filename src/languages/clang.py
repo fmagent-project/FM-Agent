@@ -41,7 +41,6 @@ _CONSTRUCT_KINDS = {"CXXConstructExpr", "CXXTemporaryObjectExpr"}
 _C_EXTENSIONS = {".c"}
 _CPP_EXTENSIONS = {".cc", ".cp", ".cpp", ".cxx", ".c++", ".C"}
 _SOURCE_EXTENSIONS_LOWER = {extension.lower() for extension in _C_EXTENSIONS | _CPP_EXTENSIONS}
-_CLANG_EXTRACTED_EXTENSIONS = _C_EXTENSIONS | _CPP_EXTENSIONS | {".h", ".hpp"}
 _HEADER_EXTENSIONS = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp"}
 
 
@@ -52,7 +51,7 @@ def _homebrew_llvm_bin() -> Path | None:
         return None
     try:
         result = subprocess.run(
-            [brew, "--prefix", "llvm"],
+            [brew, "--prefix", "llvm@15"],
             check=False,
             capture_output=True,
             text=True,
@@ -62,10 +61,8 @@ def _homebrew_llvm_bin() -> Path | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
     llvm_bin = Path(result.stdout.strip()) / "bin"
-    return llvm_bin if llvm_bin.is_dir() else None
+    return llvm_bin if result.returncode == 0 and llvm_bin.is_dir() else None
 
 
 def _default_llvm_tool(name: str) -> str:
@@ -451,25 +448,6 @@ def _generated_compile_database(root: Path) -> Path | None:
     )
 
 
-def _has_extracted_clang_sources(root: Path) -> bool:
-    """Return whether extraction already emitted files a native build may consume."""
-    extracted = root / "fm_agent" / "extracted_functions"
-    if not extracted.exists():
-        return False
-    if not extracted.is_dir():
-        return True
-    scan_errors = []
-    for _directory, _subdirectories, filenames in os.walk(
-        extracted, onerror=scan_errors.append
-    ):
-        if any(
-            Path(filename).suffix in _CLANG_EXTRACTED_EXTENSIONS
-            for filename in filenames
-        ):
-            return True
-    return bool(scan_errors)
-
-
 def _generate_cmake_compile_database(root: Path) -> Path | None:
     """Configure a CMake project and return its generated compilation database."""
     cmake_file = root / "CMakeLists.txt"
@@ -561,10 +539,10 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
     existing = _generated_compile_database(root)
     if existing is not None:
         return existing
-    if _has_extracted_clang_sources(root):
+    if (root / "fm_agent" / "extracted_functions").exists():
         logger.info(
-            "Skipping Bear compilation database generation after function "
-            "extraction; using codegraph"
+            "Skipping Bear compilation database refresh in a retained workspace; "
+            "using codegraph"
         )
         return None
     bear = shutil.which("bear")
@@ -634,11 +612,11 @@ def _compile_database_path(root: Path) -> Path | None:
         return None
     if not _auto_compile_database_enabled():
         return None
+    if (root / "CMakeLists.txt").is_file():
+        return _generate_cmake_compile_database(root)
     generated = _generated_compile_database(root)
     if generated is not None:
         return generated
-    if (root / "CMakeLists.txt").is_file():
-        return _generate_cmake_compile_database(root)
     return _generate_bear_compile_database(root)
 
 
@@ -675,7 +653,7 @@ def _has_indexed_clang_functions(proj_dir: str) -> bool:
 
 
 def _project_source_state(root: Path) -> bytes:
-    """Fingerprint source paths and stats while excluding FM-Agent artifacts."""
+    """Fingerprint C/C++ source paths and stats outside FM-Agent artifacts."""
     fingerprint = hashlib.sha256()
     errors = []
     for directory, subdirectories, filenames in os.walk(root, onerror=errors.append):
@@ -689,7 +667,9 @@ def _project_source_state(root: Path) -> bytes:
         subdirectories.sort()
         for filename in sorted(filenames):
             path = Path(directory) / filename
-            if path.suffix.lower() not in _SOURCE_EXTENSIONS_LOWER:
+            if path.suffix.lower() not in (
+                _SOURCE_EXTENSIONS_LOWER | _HEADER_EXTENSIONS
+            ):
                 continue
             try:
                 stat = path.stat()
