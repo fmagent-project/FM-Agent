@@ -423,13 +423,14 @@ fi
 if [[ "$INSTALL_CLANG_SUPPORT" -eq 1 ]]; then
     echo "[..] installing/verifying optional Clang support"
     os_name="$(uname -s)"
+    homebrew_llvm_bin=""
     if [[ "$os_name" == "Darwin" ]]; then
         command -v brew &>/dev/null || {
             echo "[!!] Homebrew is required to install Bear on macOS."
             exit 1
         }
         brew install bear llvm
-        export PATH="$(brew --prefix llvm)/bin:$PATH"
+        homebrew_llvm_bin="$(brew --prefix llvm)/bin"
     elif [[ "$os_name" == "Linux" ]]; then
         if ! command -v clang-15 &>/dev/null || ! command -v clang++-15 &>/dev/null \
             || ! command -v llvm-link-15 &>/dev/null || ! command -v llvm-dis-15 &>/dev/null \
@@ -452,13 +453,22 @@ if [[ "$INSTALL_CLANG_SUPPORT" -eq 1 ]]; then
         exit 1
     fi
 
-    command -v clang-15 &>/dev/null || command -v clang &>/dev/null || { echo "[!!] clang was not installed"; exit 1; }
-    command -v clang++-15 &>/dev/null || command -v clang++ &>/dev/null || { echo "[!!] clang++ was not installed"; exit 1; }
-    command -v llvm-link-15 &>/dev/null || command -v llvm-link &>/dev/null || { echo "[!!] llvm-link was not installed"; exit 1; }
-    command -v llvm-dis-15 &>/dev/null || command -v llvm-dis &>/dev/null || { echo "[!!] llvm-dis was not installed"; exit 1; }
+    if [[ -n "$homebrew_llvm_bin" ]]; then
+        clang_probe="$homebrew_llvm_bin/clang"
+        clangxx_probe="$homebrew_llvm_bin/clang++"
+        llvm_link_probe="$homebrew_llvm_bin/llvm-link"
+        llvm_dis_probe="$homebrew_llvm_bin/llvm-dis"
+    else
+        clang_probe="$(command -v clang-15 || command -v clang || true)"
+        clangxx_probe="$(command -v clang++-15 || command -v clang++ || true)"
+        llvm_link_probe="$(command -v llvm-link-15 || command -v llvm-link || true)"
+        llvm_dis_probe="$(command -v llvm-dis-15 || command -v llvm-dis || true)"
+    fi
+    [[ -x "$clang_probe" ]] || { echo "[!!] clang was not installed"; exit 1; }
+    [[ -x "$clangxx_probe" ]] || { echo "[!!] clang++ was not installed"; exit 1; }
+    [[ -x "$llvm_link_probe" ]] || { echo "[!!] llvm-link was not installed"; exit 1; }
+    [[ -x "$llvm_dis_probe" ]] || { echo "[!!] llvm-dis was not installed"; exit 1; }
     command -v bear &>/dev/null || { echo "[!!] Bear was not installed"; exit 1; }
-    clang_probe="$(command -v clang-15 || command -v clang)"
-    llvm_link_probe="$(command -v llvm-link-15 || command -v llvm-link)"
     echo "[ok] $($clang_probe --version | head -n1)"
     echo "[ok] $($llvm_link_probe --version | head -n1)"
     echo "[ok] $(bear --version | head -n1)"

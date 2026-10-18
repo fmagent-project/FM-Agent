@@ -1,5 +1,6 @@
 """Clang-backed call edges for C and C++ with codegraph-compatible FQNs."""
 
+import functools
 import hashlib
 import json
 import logging
@@ -40,6 +41,46 @@ _CONSTRUCT_KINDS = {"CXXConstructExpr", "CXXTemporaryObjectExpr"}
 _C_EXTENSIONS = {".c"}
 _CPP_EXTENSIONS = {".cc", ".cp", ".cpp", ".cxx", ".c++", ".C"}
 _CLANG_EXTRACTED_EXTENSIONS = _C_EXTENSIONS | _CPP_EXTENSIONS | {".h", ".hpp"}
+_HEADER_EXTENSIONS = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp"}
+
+
+@functools.cache
+def _homebrew_llvm_bin() -> Path | None:
+    brew = shutil.which("brew")
+    if brew is None:
+        return None
+    try:
+        result = subprocess.run(
+            [brew, "--prefix", "llvm"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    llvm_bin = Path(result.stdout.strip()) / "bin"
+    return llvm_bin if llvm_bin.is_dir() else None
+
+
+def _default_llvm_tool(name: str) -> str:
+    """Prefer LLVM 15, including Homebrew's keg-only LLVM installation."""
+    homebrew_bin = _homebrew_llvm_bin()
+    candidates = [f"{name}-15"]
+    if homebrew_bin is not None:
+        candidates.append(str(homebrew_bin / name))
+    candidates.extend(
+        [
+            f"/opt/homebrew/opt/llvm/bin/{name}",
+            f"/usr/local/opt/llvm/bin/{name}",
+            name,
+        ]
+    )
+    return next((candidate for candidate in candidates if shutil.which(candidate)), name)
 
 
 def _configured_tool(name: str, default: str) -> list[str] | None:
@@ -56,13 +97,11 @@ def _configured_tool(name: str, default: str) -> list[str] | None:
 
 
 def _llvm_link_command() -> list[str] | None:
-    default = "llvm-link-15" if shutil.which("llvm-link-15") else "llvm-link"
-    return _configured_tool("LLVM_LINK_COMMAND", default)
+    return _configured_tool("LLVM_LINK_COMMAND", _default_llvm_tool("llvm-link"))
 
 
 def _llvm_dis_command() -> list[str] | None:
-    default = "llvm-dis-15" if shutil.which("llvm-dis-15") else "llvm-dis"
-    return _configured_tool("LLVM_DIS_COMMAND", default)
+    return _configured_tool("LLVM_DIS_COMMAND", _default_llvm_tool("llvm-dis"))
 
 
 def _phasar_command() -> list[str] | None:
@@ -71,10 +110,7 @@ def _phasar_command() -> list[str] | None:
 
 def _clang_command(language: str) -> list[str] | None:
     """Return the configured Clang driver, or request codegraph fallback."""
-    default_name = "clang-15" if language == "c" else "clang++-15"
-    default = default_name if shutil.which(default_name) else (
-        "clang" if language == "c" else "clang++"
-    )
+    default = _default_llvm_tool("clang" if language == "c" else "clang++")
     configured = os.environ.get("CLANG_COMMAND", default).strip()
     if not configured:
         return None
@@ -756,6 +792,45 @@ def _phasar_llvm_major() -> int | None:
     return major if major > 0 else None
 
 
+def _project_header_fingerprint(root: Path) -> bytes:
+    """Fingerprint project and generated headers that can affect LLVM modules."""
+    fingerprint = hashlib.sha256()
+    errors = []
+    for directory, subdirectories, filenames in os.walk(root, onerror=errors.append):
+        relative_directory = Path(directory).relative_to(root)
+        if not relative_directory.parts:
+            subdirectories[:] = [
+                name
+                for name in subdirectories
+                if name not in {".git", ".codegraph"}
+            ]
+        elif relative_directory.parts == ("fm_agent",):
+            subdirectories[:] = [
+                name for name in subdirectories if name == "clang_build"
+            ]
+        subdirectories.sort()
+        for filename in sorted(filenames):
+            path = Path(directory) / filename
+            if path.suffix.lower() not in _HEADER_EXTENSIONS:
+                continue
+            try:
+                stat = path.stat()
+                relative = path.relative_to(root).as_posix()
+                fingerprint.update(relative.encode("utf-8", errors="surrogateescape"))
+                fingerprint.update(
+                    f"\0{stat.st_mtime_ns}:{stat.st_size}\0".encode("ascii")
+                )
+                with path.open("rb") as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        fingerprint.update(chunk)
+            except (OSError, ValueError):
+                fingerprint.update(str(path).encode("utf-8", errors="surrogateescape"))
+                fingerprint.update(b"\0unreadable\0")
+    for error in errors:
+        fingerprint.update(str(error).encode("utf-8", errors="replace"))
+    return fingerprint.digest()
+
+
 def _llvm_cache_directory(
     root: Path,
     database_path: Path,
@@ -770,6 +845,7 @@ def _llvm_cache_directory(
         fingerprint.update(str(database_path.stat().st_mtime_ns).encode("ascii"))
     except OSError:
         return root / "fm_agent" / "clang_build" / root_id / "llvm" / "invalid"
+    fingerprint.update(_project_header_fingerprint(root))
     for source, _directory, arguments in tasks:
         fingerprint.update(str(source).encode("utf-8"))
         fingerprint.update("\0".join(arguments).encode("utf-8"))
@@ -892,7 +968,7 @@ def _fqn_matches_debug_name(fqn: str, name: str) -> bool:
 
 
 def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout):
-    """Map linked LLVM symbols to extracted FQNs through debug locations."""
+    """Map defined LLVM symbols to extracted FQNs through debug locations."""
     result = _run_tool([*disassembler, str(module), "-o", "-"], timeout=timeout)
     if result is None or result.returncode != 0:
         return None
@@ -920,6 +996,7 @@ def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout
                 name,
             )
     symbols = defaultdict(set)
+    defined_symbols = set()
     definition = re.compile(
         r'(?m)^define\b.*?@((?:"(?:\\.|[^"\\])*")|[-$._A-Za-z0-9]+)\s*\(.*?!dbg !(\d+)\s*\{'
     )
@@ -927,6 +1004,7 @@ def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout
         symbol = match.group(1)
         if symbol.startswith('"'):
             symbol = _llvm_unescape(symbol[1:-1])
+        defined_symbols.add(symbol)
         relative, line, name = subprograms.get(match.group(2), (None, None, None))
         if relative is None or line is None:
             continue
@@ -941,15 +1019,16 @@ def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout
         function = _function_at(candidates, line)
         if function is not None:
             symbols[symbol].add(function[4])
-    return symbols
+    return symbols, defined_symbols
 
 
 def _phasar_module_edges(
     phasar,
-    disassembler,
     module: Path,
-    root: Path,
-    functions,
+    local_symbols,
+    local_definitions,
+    global_symbols,
+    global_definitions,
     timeout: float,
 ):
     """Analyze one translation unit when project-wide linking is impossible."""
@@ -957,15 +1036,22 @@ def _phasar_module_edges(
     if not dot.is_file() and not _run_phasar(phasar, module, dot, timeout):
         return None
     pairs = _parse_phasar_dot(dot)
-    symbols = _llvm_symbol_fqns(disassembler, module, root, functions, timeout)
-    if pairs is None or symbols is None:
+    if pairs is None:
         return None
     edges = []
     seen = set()
     for caller_symbol, callee_symbol in pairs:
-        callers = symbols.get(caller_symbol, ())
-        callees = symbols.get(callee_symbol, ())
-        if len(callers) != 1 or len(callees) != 1:
+        callers = local_symbols.get(caller_symbol, ())
+        if len(callers) != 1:
+            if caller_symbol in local_definitions:
+                return None
+            continue
+        callees = local_symbols.get(callee_symbol, ())
+        if not callees:
+            callees = global_symbols.get(callee_symbol, ())
+        if len(callees) != 1:
+            if callee_symbol in global_definitions:
+                return None
             continue
         caller = next(iter(callers))
         callee = next(iter(callees))
@@ -1090,13 +1176,32 @@ def _llvm_call_edges(root: Path, language: str, extractor):
             if link is None or link.returncode != 0 or not linked.is_file():
                 per_module_edges = []
                 per_module_failed = False
+                module_symbol_data = []
+                global_symbols = defaultdict(set)
+                global_definitions = set()
                 for module in modules:
+                    symbol_data = _llvm_symbol_fqns(
+                        disassembler, module, root, functions, _clang_timeout()
+                    )
+                    if symbol_data is None:
+                        per_module_failed = True
+                        break
+                    local_symbols, local_definitions = symbol_data
+                    module_symbol_data.append((local_symbols, local_definitions))
+                    global_definitions.update(local_definitions)
+                    for symbol, fqns in local_symbols.items():
+                        global_symbols[symbol].update(fqns)
+                for module, symbol_data in zip(modules, module_symbol_data):
+                    if per_module_failed:
+                        break
+                    local_symbols, local_definitions = symbol_data
                     module_edges = _phasar_module_edges(
                         phasar,
-                        disassembler,
                         module,
-                        root,
-                        functions,
+                        local_symbols,
+                        local_definitions,
+                        global_symbols,
+                        global_definitions,
                         _clang_timeout(),
                     )
                     if module_edges is None:
@@ -1126,18 +1231,25 @@ def _llvm_call_edges(root: Path, language: str, extractor):
                 result = None
         if result is True:
             pairs = _parse_phasar_dot(dot)
-            symbol_fqns = _llvm_symbol_fqns(
+            symbol_data = _llvm_symbol_fqns(
                 disassembler, linked, root, functions, _clang_timeout()
             )
-            if pairs is None or symbol_fqns is None:
+            if pairs is None or symbol_data is None:
                 result = None
             else:
+                symbol_fqns, defined_symbols = symbol_data
                 edges = []
                 seen = set()
                 for caller_symbol, callee_symbol in pairs:
                     caller_candidates = symbol_fqns.get(caller_symbol, ())
                     callee_candidates = symbol_fqns.get(callee_symbol, ())
                     if len(caller_candidates) != 1 or len(callee_candidates) != 1:
+                        if (
+                            caller_symbol in defined_symbols
+                            or callee_symbol in defined_symbols
+                        ):
+                            result = None
+                            break
                         continue
                     caller = next(iter(caller_candidates))
                     callee = next(iter(callee_candidates))
@@ -1148,8 +1260,9 @@ def _llvm_call_edges(root: Path, language: str, extractor):
                     if key not in seen:
                         seen.add(key)
                         edges.append(edge)
-                mapped = set().union(*symbol_fqns.values()) if symbol_fqns else set()
-                result = edges if mapped.intersection(all_fqns) else None
+                else:
+                    mapped = set().union(*symbol_fqns.values()) if symbol_fqns else set()
+                    result = edges if mapped.intersection(all_fqns) else None
                 if result is not None:
                     print(
                         f"[Clang] {language}: PhASAR mapped {len(mapped & all_fqns)}/"
