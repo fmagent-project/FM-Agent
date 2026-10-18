@@ -21,6 +21,7 @@ from src.languages.codegraph import CodeGraphExtractor, _node_fqn_map, canonical
 logger = logging.getLogger(__name__)
 
 _LLVM_CACHE = {}
+_LLVM_CACHE_SCHEMA_VERSION = 3
 _COMPILE_DATABASE_CACHE = {}
 _COMPILE_DATABASE_LOCK = threading.Lock()
 _FUNCTION_KINDS = {
@@ -917,6 +918,7 @@ def _llvm_cache_directory(
 ) -> Path:
     root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
     fingerprint = hashlib.sha256()
+    fingerprint.update(str(_LLVM_CACHE_SCHEMA_VERSION).encode("ascii"))
     fingerprint.update(str(database_path).encode("utf-8"))
     try:
         fingerprint.update(str(database_path.stat().st_mtime_ns).encode("ascii"))
@@ -1044,6 +1046,23 @@ def _fqn_matches_debug_name(fqn: str, name: str) -> bool:
     return tail.startswith(prefix) and tail[len(prefix) :].isdigit()
 
 
+def _unique_innermost_function(matches, line: int):
+    """Choose a uniquely closest enclosing function without guessing ties."""
+    if not matches:
+        return None
+    ranked = sorted(
+        matches,
+        key=lambda entry: (entry[1] - entry[0], line - entry[0]),
+    )
+    best_rank = (ranked[0][1] - ranked[0][0], line - ranked[0][0])
+    best = [
+        entry
+        for entry in ranked
+        if (entry[1] - entry[0], line - entry[0]) == best_rank
+    ]
+    return best[0] if len(best) == 1 else None
+
+
 def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout):
     """Map defined LLVM symbols to extracted FQNs through debug locations."""
     result = _run_tool([*disassembler, str(module), "-o", "-"], timeout=timeout)
@@ -1096,12 +1115,12 @@ def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout
         exact = [entry for entry in matches if entry[0] == line]
         if exact:
             matches = exact
-        if len(matches) > 1:
-            return None
-        if not matches:
+        if matches:
+            defined_symbols.add(symbol)
+        mapped = _unique_innermost_function(matches, line)
+        if mapped is None:
             continue
-        symbols[symbol].add(matches[0][4])
-        defined_symbols.add(symbol)
+        symbols[symbol].add(mapped[4])
     return symbols, defined_symbols
 
 
@@ -1110,8 +1129,6 @@ def _phasar_module_edges(
     module: Path,
     local_symbols,
     local_definitions,
-    global_symbols,
-    global_definitions,
     timeout: float,
 ):
     """Analyze one translation unit when project-wide linking is impossible."""
@@ -1123,18 +1140,17 @@ def _phasar_module_edges(
         return None
     edges = []
     seen = set()
+    unresolved_edges = 0
     for caller_symbol, callee_symbol in pairs:
         callers = local_symbols.get(caller_symbol, ())
         if len(callers) != 1:
             if caller_symbol in local_definitions:
-                return None
+                unresolved_edges += 1
             continue
         callees = local_symbols.get(callee_symbol, ())
-        if not callees:
-            callees = global_symbols.get(callee_symbol, ())
         if len(callees) != 1:
-            if callee_symbol in global_definitions:
-                return None
+            if callee_symbol in local_definitions:
+                unresolved_edges += 1
             continue
         caller = next(iter(callers))
         callee = next(iter(callees))
@@ -1142,7 +1158,7 @@ def _phasar_module_edges(
             continue
         seen.add((caller, callee))
         edges.append({"caller": caller, "callee": callee, "kind": "call"})
-    return edges
+    return edges, unresolved_edges
 
 
 def _ast_symbol_fqns(asts, root: Path, functions):
@@ -1251,62 +1267,67 @@ def _llvm_call_edges(root: Path, language: str, extractor):
         modules.append(module)
     else:
         linked = work_dir / "project.bc"
-        if not linked.is_file():
+        linked_ok = len(modules) == 1 and linked.is_file()
+        if len(modules) == 1 and not linked_ok:
             link = _run_tool(
                 [*linker, *map(str, modules), "-o", str(linked)],
                 timeout=_clang_timeout(),
             )
-            if link is None or link.returncode != 0 or not linked.is_file():
-                per_module_edges = []
-                per_module_failed = False
-                module_symbol_data = []
-                global_symbols = defaultdict(set)
-                global_definitions = set()
-                for module in modules:
-                    symbol_data = _llvm_symbol_fqns(
-                        disassembler, module, root, functions, _clang_timeout()
-                    )
-                    if symbol_data is None:
-                        per_module_failed = True
-                        break
-                    local_symbols, local_definitions = symbol_data
-                    module_symbol_data.append((local_symbols, local_definitions))
-                    global_definitions.update(local_definitions)
-                    for symbol, fqns in local_symbols.items():
-                        global_symbols[symbol].update(fqns)
-                for module, symbol_data in zip(modules, module_symbol_data):
-                    if per_module_failed:
-                        break
-                    local_symbols, local_definitions = symbol_data
-                    module_edges = _phasar_module_edges(
-                        phasar,
-                        module,
-                        local_symbols,
-                        local_definitions,
-                        global_symbols,
-                        global_definitions,
-                        _clang_timeout(),
-                    )
-                    if module_edges is None:
-                        per_module_failed = True
-                        break
-                    per_module_edges.extend(module_edges)
-                mapped = (
-                    set().union(*global_symbols.values()) if global_symbols else set()
+            linked_ok = (
+                link is not None and link.returncode == 0 and linked.is_file()
+            )
+        if not linked_ok:
+            per_module_edges = []
+            unresolved_edges = 0
+            per_module_failed = False
+            module_symbol_data = []
+            global_symbols = defaultdict(set)
+            for module in modules:
+                symbol_data = _llvm_symbol_fqns(
+                    disassembler, module, root, functions, _clang_timeout()
                 )
-                if per_module_failed or not mapped.intersection(indexed_fqns):
-                    result = None
-                else:
-                    result = {}
-                    seen = set()
-                    for edge in per_module_edges:
-                        key = (edge["caller"], edge["callee"])
-                        if key not in seen:
-                            seen.add(key)
-                            result.setdefault("edges", []).append(edge)
-                    result = result.get("edges", [])
+                if symbol_data is None:
+                    per_module_failed = True
+                    break
+                local_symbols, local_definitions = symbol_data
+                module_symbol_data.append((local_symbols, local_definitions))
+                for symbol, fqns in local_symbols.items():
+                    global_symbols[symbol].update(fqns)
+            for module, symbol_data in zip(modules, module_symbol_data):
+                if per_module_failed:
+                    break
+                local_symbols, local_definitions = symbol_data
+                module_edges = _phasar_module_edges(
+                    phasar,
+                    module,
+                    local_symbols,
+                    local_definitions,
+                    _clang_timeout(),
+                )
+                if module_edges is None:
+                    per_module_failed = True
+                    break
+                edges, skipped = module_edges
+                per_module_edges.extend(edges)
+                unresolved_edges += skipped
+            mapped = set().union(*global_symbols.values()) if global_symbols else set()
+            if per_module_failed or not mapped.intersection(indexed_fqns):
+                result = None
             else:
-                result = True
+                result = {}
+                seen = set()
+                for edge in per_module_edges:
+                    key = (edge["caller"], edge["callee"])
+                    if key not in seen:
+                        seen.add(key)
+                        result.setdefault("edges", []).append(edge)
+                result = result.get("edges", [])
+                print(
+                    f"[Clang] {language}: PhASAR mapped {len(mapped)} indexed "
+                    f"functions from {len(tasks)} compilation-database "
+                    f"translation units; skipped {unresolved_edges} ambiguous "
+                    "project edges."
+                )
         else:
             result = True
         if result is True:
@@ -1326,18 +1347,17 @@ def _llvm_call_edges(root: Path, language: str, extractor):
                 symbol_fqns, defined_symbols = symbol_data
                 edges = []
                 seen = set()
+                unresolved_edges = 0
                 for caller_symbol, callee_symbol in pairs:
                     caller_candidates = symbol_fqns.get(caller_symbol, ())
                     callee_candidates = symbol_fqns.get(callee_symbol, ())
                     if len(caller_candidates) != 1:
                         if caller_symbol in defined_symbols:
-                            result = None
-                            break
+                            unresolved_edges += 1
                         continue
                     if len(callee_candidates) != 1:
                         if callee_symbol in defined_symbols:
-                            result = None
-                            break
+                            unresolved_edges += 1
                         continue
                     caller = next(iter(caller_candidates))
                     callee = next(iter(callee_candidates))
@@ -1348,14 +1368,14 @@ def _llvm_call_edges(root: Path, language: str, extractor):
                     if key not in seen:
                         seen.add(key)
                         edges.append(edge)
-                else:
-                    mapped = set().union(*symbol_fqns.values()) if symbol_fqns else set()
-                    result = edges if mapped else None
+                mapped = set().union(*symbol_fqns.values()) if symbol_fqns else set()
+                result = edges if mapped else None
                 if result is not None:
                     print(
                         f"[Clang] {language}: PhASAR mapped {len(mapped)} indexed "
                         f"functions from {len(tasks)} compilation-database "
-                        "translation units."
+                        f"translation units; skipped {unresolved_edges} ambiguous "
+                        "project edges."
                     )
     if cache_key is not None:
         _LLVM_CACHE[cache_key] = result
