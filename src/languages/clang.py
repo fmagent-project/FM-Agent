@@ -377,6 +377,10 @@ def _build_configuration_fingerprint(root: Path, generator: str) -> str:
     fingerprint = hashlib.sha256(generator.encode("ascii"))
     for key in ("CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS"):
         fingerprint.update(f"\0{key}={os.environ.get(key, '')}".encode())
+    if generator == "bear":
+        build_command = _bear_build_command(root) or []
+        fingerprint.update(b"\0build-command\0")
+        fingerprint.update("\0".join(build_command).encode())
     build_names = {"CMakeLists.txt", "CMakePresets.json"}
     make_names = {"GNUmakefile", "Makefile", "makefile"}
     errors = []
@@ -503,6 +507,8 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
             build_dir.mkdir(parents=True, exist_ok=True)
             database_path.unlink(missing_ok=True)
             metadata_path.unlink(missing_ok=True)
+            (build_dir / "CMakeCache.txt").unlink(missing_ok=True)
+            shutil.rmtree(build_dir / "CMakeFiles", ignore_errors=True)
             result = _run_generation_command(
                 [
                     cmake,
@@ -668,17 +674,52 @@ def _has_indexed_clang_functions(proj_dir: str) -> bool:
             connection.close()
 
 
+def _project_source_state(root: Path) -> bytes:
+    """Fingerprint source paths and stats while excluding FM-Agent artifacts."""
+    fingerprint = hashlib.sha256()
+    errors = []
+    for directory, subdirectories, filenames in os.walk(root, onerror=errors.append):
+        relative_directory = Path(directory).relative_to(root)
+        if not relative_directory.parts:
+            subdirectories[:] = [
+                name
+                for name in subdirectories
+                if name not in {".git", ".codegraph", "fm_agent"}
+            ]
+        subdirectories.sort()
+        for filename in sorted(filenames):
+            path = Path(directory) / filename
+            if path.suffix.lower() not in _SOURCE_EXTENSIONS_LOWER:
+                continue
+            try:
+                stat = path.stat()
+                relative = path.relative_to(root).as_posix()
+                fingerprint.update(relative.encode("utf-8", errors="surrogateescape"))
+                fingerprint.update(
+                    f"\0{stat.st_mtime_ns}:{stat.st_size}\0".encode("ascii")
+                )
+            except (OSError, ValueError):
+                fingerprint.update(str(path).encode("utf-8", errors="surrogateescape"))
+                fingerprint.update(b"\0unreadable\0")
+    for error in errors:
+        fingerprint.update(str(error).encode("utf-8", errors="replace"))
+    return fingerprint.digest()
+
+
 def prepare_compile_database(
     proj_dir: str, languages: tuple[str, ...] | None = None
-) -> Path | None:
-    """Prepare an opted-in database before extraction writes source fragments."""
+) -> bool:
+    """Prepare an opted-in database and report whether project sources changed."""
     if not _auto_compile_database_enabled():
-        return None
+        return False
     if languages is not None and {"c", "cpp"}.isdisjoint(languages):
-        return None
+        return False
     if not _has_indexed_clang_functions(proj_dir):
-        return None
-    return _compile_database_path(Path(proj_dir).resolve())
+        return False
+    root = Path(proj_dir).resolve()
+    before = _project_source_state(root)
+    _compile_database_path(root)
+    return before != _project_source_state(root)
 
 
 def _entry_arguments(entry) -> list[str] | None:

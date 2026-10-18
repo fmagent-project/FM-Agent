@@ -54,6 +54,7 @@ from .opencode_trace import run_opencode_traced
 from .llm_client import _llm_provider_client, _llm_json_call, build_llm_cli_command
 from .scope import _parse_issue_signals, rank_functions_in_file
 from .languages.codegraph import CodeGraphExtractor, try_codegraph_init
+from .languages.clang import prepare_compile_database
 from .languages.registry import (
     extract_incremental_sources,
     supports_incremental_source_extraction,
@@ -982,6 +983,8 @@ def run_incremental_pipeline(
     # stale index would yield boundaries for the old code. try_codegraph_init rebuilds by
     # default; no-op when codegraph is uninstalled (extraction then falls back to regex).
     try_codegraph_init(proj_dir)
+    if prepare_compile_database(proj_dir):
+        try_codegraph_init(proj_dir)
     _written, _skipped, stage4_unavailable_backends = run_extraction(
         proj_dir,
         work_dir=work_dir,

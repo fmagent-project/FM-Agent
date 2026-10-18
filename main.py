@@ -456,9 +456,11 @@ def run_pipeline(
     # Bear executes the project's real build. Prepare its compilation database
     # before extraction writes same-suffix function fragments under fm_agent/;
     # recursive Makefiles must never discover or compile those generated files.
-    # Keep this after codegraph indexing so CMake's compiler-ID sources cannot
-    # enter codegraph's project index.
-    prepare_compile_database(proj_dir, specification.languages)
+    # Keep this after the initial index so CMake's compiler-ID sources cannot
+    # enter codegraph. If the build regenerated project sources, rebuild the
+    # index once so extraction sees their current bodies and ranges.
+    if prepare_compile_database(proj_dir, specification.languages):
+        try_codegraph_init(proj_dir)
 
     # Run function extraction using extract.py
     # force=False on resume preserves already-specced extracted files; on a fresh
