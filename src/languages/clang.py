@@ -556,6 +556,14 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
         else:
             print(f"[Clang] Generated compilation database with Bear at {generated}")
 
+        configuration_fingerprint = _build_cache_fingerprint(root, "bear")
+        cache_key = (
+            "bear",
+            str(root),
+            configuration_fingerprint,
+            bear,
+            tuple(build_command),
+        )
         for old_key in list(_COMPILE_DATABASE_CACHE):
             if old_key[1] == str(root) and old_key != cache_key:
                 del _COMPILE_DATABASE_CACHE[old_key]
