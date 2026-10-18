@@ -21,11 +21,15 @@ FM-Agent 的配置项都在 [`fm-agent.toml`](../fm-agent.toml) 里（每一项�
 | `MAX_SPC_ITER` | `5` | FM-Agent 直接调用 LLM 进行验证（后置条件与规约检查）时的最大重试/迭代次数 |
 | `OPENCODE_MAX_RETRIES` | `5` | OpenCode 流水线某一阶段失败时的最大重试次数 |
 | `OPENCODE_TIMEOUT_SECONDS` | `1800` | 单个 `opencode run` 子进程的硬超时时间（秒）；超时后子进程会被终止并重试该调用 |
-| `CLANG_COMMAND` | `clang` / `clang++` | 用于 C/C++ 调用图分析的 Clang driver；默认值按语言自动选择 |
+| `CLANG_COMMAND` | 可用时为 `clang-15` / `clang++-15` | 用于生成 LLVM IR 的 Clang driver；默认值按语言自动选择 |
+| `LLVM_LINK_COMMAND` | 可用时为 `llvm-link-15` | 合并 C/C++ 翻译单元 bitcode 的 LLVM linker |
+| `LLVM_DIS_COMMAND` | 可用时为 `llvm-dis-15` | 根据 LLVM 调试元数据映射索引函数 |
+| `PHASAR_CALL_GRAPH_COMMAND` | `phasar-cli` | 生成整种语言 OTF+CFLAnders 调用图的 PhASAR CLI；不在 `PATH` 时设置绝对路径 |
+| `PHASAR_LLVM_VERSION` | `15` | 构建 PhASAR 使用的 LLVM 主版本，必须与 Clang、llvm-link、llvm-dis 一致 |
 | `CLANG_COMPILE_COMMANDS` | unset | 可选的 `compile_commands.json` 文件或所在目录；未设置时先检查项目根目录和 `build/`，再考虑可选的自动生成 |
-| `CLANG_GENERATE_COMPILE_COMMANDS` | `0` | 设为 `1` 后才允许为可信仓库自动生成 compilation database；该过程会执行 CMake 配置或 Bear 构建命令 |
+| `CLANG_GENERATE_COMPILE_COMMANDS` | `0` | 设为 `1` 后才允许为可信仓库自动生成 compilation database；该过程会在函数抽取前执行 CMake 配置或 Bear 构建命令 |
 | `CLANG_BEAR_BUILD_COMMAND` | unset | 非 CMake 项目交给 Bear 执行的可选构建命令参数（不经过 shell）；存在 makefile 时默认执行 `make -B`，设置此项可覆盖默认命令 |
 | `CLANG_COMPILE_COMMANDS_TIMEOUT_SECONDS` | `300` | 自动执行 CMake 配置或 Bear 生成 compilation database 的超时时间（秒）；超时会终止生成器的整个进程组 |
-| `CLANG_TIMEOUT_SECONDS` | `120` | 每个 Clang 翻译单元导出 AST 的超时时间（秒）；任一任务失败或 Clang 未覆盖该语言的全部已索引函数时，整种语言使用 codegraph |
+| `CLANG_TIMEOUT_SECONDS` | `120` | LLVM 翻译单元导出、链接和 PhASAR 分析的超时时间（秒）；任一步失败，整种语言完全使用 codegraph |
 | `ELP_COMMAND` | `elp` | 用于 Erlang 函数抽取与调用图分析的 ELP 可执行文件或命令 |
 | `ELP_TIMEOUT_SECONDS` | `180` | ELP 初始化、索引及单次 LSP 请求的超时时间（秒） |

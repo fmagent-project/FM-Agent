@@ -61,7 +61,7 @@ The [website](http://fm-agent.ai/) of FM-Agent provides an online service for re
 - [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) plugin (installed via `bunx`)
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) plugin — captures raw OpenCode LLM request/response traces (see [Structured Trace](#structured-trace))
 - An LLM API key for your provider (the examples use [OpenRouter](https://openrouter.ai/))
-- [Clang](https://clang.llvm.org/docs/UsersManual.html) — optional; used for more precise C/C++ call graphs when Clang successfully covers every function indexed for that language. FM-Agent first reads `compile_commands.json` from the project root or `build/`; set `CLANG_COMPILE_COMMANDS` for another location. Automatic generation is disabled by default because it executes repository-controlled configuration or build logic. For trusted repositories, set `CLANG_GENERATE_COMPILE_COMMANDS=1`: CMake projects are configured with the bundled CMake/Ninja tools, while non-CMake projects with a makefile use [Bear](https://github.com/rizsotto/Bear) and `make -B`. Set `CLANG_BEAR_BUILD_COMMAND` to override that command for another build system. Otherwise that language uses codegraph only.
+- [Clang/LLVM 15](https://clang.llvm.org/docs/UsersManual.html) and [PhASAR v2510](https://github.com/secure-software-engineering/phasar/releases/tag/v2510) — optional; FM-Agent emits LLVM bitcode from `compile_commands.json`, links it, and asks `phasar-cli` for a whole-language OTF+CFLAnders call graph. If independent executables contain duplicate global definitions and cannot be linked into one module, FM-Agent analyzes their translation units independently with PhASAR instead. The result is used as a complete backend or the language falls back entirely to CodeGraph; edges are never mixed. Install matching LLVM tools and PhASAR v2510 (or set `PHASAR_CALL_GRAPH_COMMAND` to its `phasar-cli` path). FM-Agent first reads `compile_commands.json` from the project root or `build/`; set `CLANG_COMPILE_COMMANDS` for another location. Automatic generation is disabled by default because it executes repository-controlled configuration or build logic. For trusted repositories, set `CLANG_GENERATE_COMPILE_COMMANDS=1`: CMake projects use CMake/Ninja, while non-CMake projects with a makefile use [Bear](https://github.com/rizsotto/Bear) and `make -B`.
 - [Erlang Language Platform (ELP)](https://whatsapp.github.io/erlang-language-platform/docs/get-started/) — optional; required only when analyzing Erlang projects
   - The Erlang integration has been tested on Ubuntu with Erlang/OTP 26 or newer; select an ELP release binary built for a compatible OTP version.
   - rebar3 3.24.0 or newer is required for ELP to auto-discover projects containing `rebar.config`.
@@ -154,13 +154,13 @@ Erlang support is optional because its toolchain is not needed for other languag
 
 The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
 
-Clang support is also optional. To install or verify Clang and Bear on Ubuntu or macOS, run:
+Clang/LLVM and PhASAR support is optional. To install or verify the LLVM tools and Bear on Ubuntu or macOS, run:
 
 ```bash
 ./install.sh --with-clang
 ```
 
-Bear runs `make -B` for a detected `GNUmakefile`, `Makefile`, or `makefile`, or the command supplied in `CLANG_BEAR_BUILD_COMMAND`, and may create normal build artifacts. Automatic CMake and Bear generation should therefore be enabled only for trusted repositories.
+The installer verifies Clang, LLVM linker tools, and Bear. Build PhASAR v2510 with LLVM 15 using its [official build instructions](https://github.com/secure-software-engineering/phasar/blob/v2510/BUILD.md), then put `phasar-cli` on `PATH` or set `PHASAR_CALL_GRAPH_COMMAND`. Bear runs `make -B` for a detected `GNUmakefile`, `Makefile`, or `makefile`, or the command supplied in `CLANG_BEAR_BUILD_COMMAND`, and may create normal build artifacts. Automatic CMake and Bear generation should therefore be enabled only for trusted repositories.
 
 FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so
 you do not need to hand-edit `~/.config/opencode/opencode.json` for the model

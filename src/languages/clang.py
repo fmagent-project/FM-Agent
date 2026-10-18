@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -14,11 +15,11 @@ import threading
 from collections import defaultdict
 from pathlib import Path
 
-from src.languages.codegraph import _node_fqn_map
+from src.languages.codegraph import CodeGraphExtractor, _node_fqn_map, canonicalize
 
 logger = logging.getLogger(__name__)
 
-_CLANG_CACHE = {}
+_LLVM_CACHE = {}
 _COMPILE_DATABASE_CACHE = {}
 _COMPILE_DATABASE_LOCK = threading.Lock()
 _FUNCTION_KINDS = {
@@ -38,11 +39,42 @@ _CALL_KINDS = {
 _CONSTRUCT_KINDS = {"CXXConstructExpr", "CXXTemporaryObjectExpr"}
 _C_EXTENSIONS = {".c"}
 _CPP_EXTENSIONS = {".cc", ".cp", ".cpp", ".cxx", ".c++", ".C"}
+_CLANG_EXTRACTED_EXTENSIONS = _C_EXTENSIONS | _CPP_EXTENSIONS | {".h", ".hpp"}
+
+
+def _configured_tool(name: str, default: str) -> list[str] | None:
+    configured = os.environ.get(name, default).strip()
+    if not configured:
+        return None
+    try:
+        command = shlex.split(configured)
+    except ValueError:
+        return None
+    if not command or shutil.which(command[0]) is None:
+        return None
+    return command
+
+
+def _llvm_link_command() -> list[str] | None:
+    default = "llvm-link-15" if shutil.which("llvm-link-15") else "llvm-link"
+    return _configured_tool("LLVM_LINK_COMMAND", default)
+
+
+def _llvm_dis_command() -> list[str] | None:
+    default = "llvm-dis-15" if shutil.which("llvm-dis-15") else "llvm-dis"
+    return _configured_tool("LLVM_DIS_COMMAND", default)
+
+
+def _phasar_command() -> list[str] | None:
+    return _configured_tool("PHASAR_CALL_GRAPH_COMMAND", "phasar-cli")
 
 
 def _clang_command(language: str) -> list[str] | None:
     """Return the configured Clang driver, or request codegraph fallback."""
-    default = "clang" if language == "c" else "clang++"
+    default_name = "clang-15" if language == "c" else "clang++-15"
+    default = default_name if shutil.which(default_name) else (
+        "clang" if language == "c" else "clang++"
+    )
     configured = os.environ.get("CLANG_COMMAND", default).strip()
     if not configured:
         return None
@@ -119,7 +151,7 @@ def _run_generation_command(
             text=True,
             encoding="utf-8",
             errors="replace",
-            start_new_session=True,
+            start_new_session=os.name != "nt",
         )
     except OSError:
         return None
@@ -128,12 +160,12 @@ def _run_generation_command(
         stdout, stderr = process.communicate(timeout=_compile_database_timeout())
     except subprocess.TimeoutExpired:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except OSError:
-            try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
                 process.kill()
-            except OSError:
-                pass
+        except OSError:
+            pass
         process.wait()
         if process.stdout is not None:
             process.stdout.close()
@@ -147,6 +179,42 @@ def _run_generation_command(
         stdout,
         stderr,
     )
+
+
+def _run_tool(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run an analysis tool and terminate its process tree on timeout."""
+    try:
+        process = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=_analysis_environment(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=os.name != "nt",
+        )
+    except OSError:
+        return None
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except OSError:
+            pass
+        process.wait()
+        return None
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
 
 
 def _canonical_relative(path, root: Path, directory: Path | None = None) -> str | None:
@@ -251,6 +319,48 @@ def _configured_compile_database(root: Path) -> tuple[Path | None, bool]:
     return None, False
 
 
+def _read_compile_database(path: Path | None):
+    if path is None:
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, list) else None
+
+
+def _generated_compile_database(root: Path) -> Path | None:
+    """Return FM-Agent's persisted generated database when it is readable."""
+    root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
+    database_path = (
+        root / "fm_agent" / "clang_build" / root_id / "compile_commands.json"
+    )
+    return (
+        database_path.resolve()
+        if database_path.is_file() and _read_compile_database(database_path) is not None
+        else None
+    )
+
+
+def _has_extracted_clang_sources(root: Path) -> bool:
+    """Return whether extraction already emitted files a native build may consume."""
+    extracted = root / "fm_agent" / "extracted_functions"
+    if not extracted.exists():
+        return False
+    if not extracted.is_dir():
+        return True
+    scan_errors = []
+    for _directory, _subdirectories, filenames in os.walk(
+        extracted, onerror=scan_errors.append
+    ):
+        if any(
+            Path(filename).suffix in _CLANG_EXTRACTED_EXTENSIONS
+            for filename in filenames
+        ):
+            return True
+    return bool(scan_errors)
+
+
 def _generate_cmake_compile_database(root: Path) -> Path | None:
     """Configure a CMake project and return its generated compilation database."""
     cmake_file = root / "CMakeLists.txt"
@@ -327,6 +437,15 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
     build_command = _bear_build_command(root)
     if build_command is None or not _auto_compile_database_enabled():
         return None
+    existing = _generated_compile_database(root)
+    if existing is not None:
+        return existing
+    if _has_extracted_clang_sources(root):
+        logger.info(
+            "Skipping Bear compilation database generation after function "
+            "extraction; using codegraph"
+        )
+        return None
     bear = shutil.which("bear")
     if bear is None:
         logger.info("Cannot generate compile_commands.json: bear is unavailable")
@@ -386,19 +505,57 @@ def _compile_database_path(root: Path) -> Path | None:
         return None
     if not _auto_compile_database_enabled():
         return None
+    generated = _generated_compile_database(root)
+    if generated is not None:
+        return generated
     if (root / "CMakeLists.txt").is_file():
         return _generate_cmake_compile_database(root)
     return _generate_bear_compile_database(root)
 
 
-def _read_compile_database(path: Path | None):
-    if path is None:
-        return []
+def _has_indexed_clang_functions(proj_dir: str) -> bool:
+    """Return whether Clang can contribute to the current codegraph index."""
+    extractor = CodeGraphExtractor.from_proj_dir(proj_dir)
+    if extractor is None:
+        return False
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        expected_database = (Path(proj_dir) / ".codegraph" / "codegraph.db").resolve()
+        if Path(extractor._db).resolve() != expected_database:
+            return False
+    except OSError:
+        return False
+    connection = None
+    try:
+        connection = sqlite3.connect(extractor._db)
+        return (
+            connection.execute(
+                """
+                SELECT 1 FROM nodes
+                WHERE kind IN ('function', 'method')
+                  AND language IN ('c', 'cpp')
+                LIMIT 1
+                """
+            ).fetchone()
+            is not None
+        )
+    except sqlite3.Error:
+        return False
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def prepare_compile_database(
+    proj_dir: str, languages: tuple[str, ...] | None = None
+) -> Path | None:
+    """Prepare an opted-in database before extraction writes source fragments."""
+    if not _auto_compile_database_enabled():
         return None
-    return data if isinstance(data, list) else None
+    if languages is not None and {"c", "cpp"}.isdisjoint(languages):
+        return None
+    if not _has_indexed_clang_functions(proj_dir):
+        return None
+    return _compile_database_path(Path(proj_dir).resolve())
 
 
 def _entry_arguments(entry) -> list[str] | None:
@@ -518,6 +675,489 @@ def _clang_arguments(
     result.extend(
         ["-Wno-error", "-fsyntax-only", "-Xclang", "-ast-dump=json", str(source)]
     )
+    return result
+
+
+def _llvm_arguments(
+    arguments: list[str],
+    source: Path,
+    directory: Path,
+    language: str,
+    output: Path,
+):
+    """Turn one compilation-database command into a relocatable LLVM build."""
+    result = []
+    skip_next = False
+    drop_with_value = {
+        "-o",
+        "-MF",
+        "-MT",
+        "-MQ",
+        "-MJ",
+        "--serialize-diagnostics",
+    }
+    drop_exact = {
+        "-c",
+        "-S",
+        "-E",
+        "-M",
+        "-MM",
+        "-MD",
+        "-MMD",
+        "-emit-llvm",
+    }
+    wrappers = {"ccache", "sccache", "distcc"}
+    start = 1
+    if arguments and Path(arguments[0]).stem.lower() in wrappers:
+        start = 2
+    for argument in arguments[start:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if argument in drop_with_value:
+            skip_next = True
+            continue
+        if argument in drop_exact or _same_path(argument, source, directory):
+            continue
+        if any(argument.startswith(prefix) for prefix in ("-MF", "-MT", "-MQ", "-MJ")):
+            continue
+        result.append(argument)
+    if not any(argument == "-x" or argument.startswith("-x") for argument in result):
+        result.extend(["-x", "c" if language == "c" else "c++"])
+    result.extend(
+        [
+            "-Wno-error",
+            "-O0",
+            "-g",
+            "-emit-llvm",
+            "-c",
+            "-o",
+            str(output),
+            str(source),
+        ]
+    )
+    return result
+
+
+def _tool_major(command: list[str], version_arg: str = "--version") -> int | None:
+    result = _run_tool(command + [version_arg], timeout=10.0)
+    if result is None or result.returncode != 0:
+        return None
+    match = re.search(r"(?:version|LLVM version|clang version)\s+(\d+)", result.stdout)
+    return int(match.group(1)) if match else None
+
+
+def _phasar_llvm_major() -> int | None:
+    value = os.environ.get("PHASAR_LLVM_VERSION", "15").strip()
+    try:
+        major = int(value)
+    except ValueError:
+        return None
+    return major if major > 0 else None
+
+
+def _llvm_cache_directory(
+    root: Path,
+    database_path: Path,
+    language: str,
+    tasks,
+    commands: list[list[str]],
+) -> Path:
+    root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
+    fingerprint = hashlib.sha256()
+    fingerprint.update(str(database_path).encode("utf-8"))
+    try:
+        fingerprint.update(str(database_path.stat().st_mtime_ns).encode("ascii"))
+    except OSError:
+        return root / "fm_agent" / "clang_build" / root_id / "llvm" / "invalid"
+    for source, _directory, arguments in tasks:
+        fingerprint.update(str(source).encode("utf-8"))
+        fingerprint.update("\0".join(arguments).encode("utf-8"))
+        try:
+            stat = source.stat()
+            fingerprint.update(f"{stat.st_mtime_ns}:{stat.st_size}".encode("ascii"))
+        except OSError:
+            fingerprint.update(b"missing")
+    for command in commands:
+        fingerprint.update("\0".join(command).encode("utf-8"))
+    database_id = fingerprint.hexdigest()[:16]
+    return root / "fm_agent" / "clang_build" / root_id / "llvm" / language / database_id
+
+
+def _run_llvm_compile(command, task, language: str, output: Path, timeout: float):
+    source, directory, arguments = task
+    argv = [
+        *command,
+        *_llvm_arguments(arguments, source, directory, language, output),
+    ]
+    result = _run_tool(argv, cwd=directory, timeout=timeout)
+    if result is None:
+        return False
+    if result.returncode != 0 or not output.is_file():
+        logger.debug("LLVM IR generation failed for %s: %s", source, result.stderr)
+        return False
+    return True
+
+
+def _run_phasar(command, module: Path, output: Path, timeout: float):
+    output_dir = output.with_suffix(".phasar")
+    try:
+        if output_dir.exists():
+            for child in output_dir.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output.unlink(missing_ok=True)
+    except OSError:
+        return False
+    argv = [
+        *command,
+        "--silent",
+        "--module",
+        str(module),
+        "--entry-points",
+        "__ALL__",
+        "--call-graph-analysis",
+        "otf",
+        "--alias-analysis",
+        "cflanders",
+        "--emit-cg-as-dot",
+        "--out",
+        str(output_dir),
+    ]
+    result = _run_tool(argv, timeout=timeout)
+    if result is None:
+        return False
+    candidates = list(output_dir.rglob("psr-cg.txt"))
+    if result.returncode != 0 or not candidates:
+        logger.debug("PhASAR call graph failed: %s", result.stderr)
+        return False
+    try:
+        shutil.copyfile(max(candidates, key=lambda path: path.stat().st_mtime_ns), output)
+    except OSError:
+        return False
+    return True
+
+
+def _parse_phasar_dot(path: Path):
+    """Read PhASAR's stable DOT call-graph representation."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    if not re.search(r"\bdigraph\s+CallGraph\s*\{", text):
+        return None
+    nodes = {}
+    for match in re.finditer(
+        r'(?m)^\s*(\d+)\s*\[label="((?:\\.|[^"\\])*)"\]\s*;', text
+    ):
+        label = match.group(2).replace(r'\"', '"').replace(r'\\', '\\')
+        nodes[match.group(1)] = label
+    if not nodes:
+        return None
+    edges = []
+    for match in re.finditer(
+        r"(?m)^\s*(\d+)\s*->\s*(\d+)\s*\[label=", text
+    ):
+        caller = nodes.get(match.group(1))
+        callee = nodes.get(match.group(2))
+        if caller and callee:
+            edges.append((caller, callee))
+    return edges
+
+
+def _llvm_unescape(value: str) -> str:
+    return re.sub(
+        r"\\([0-9A-Fa-f]{2})",
+        lambda match: bytes([int(match.group(1), 16)]).decode("latin-1"),
+        value,
+    ).replace(r"\\", "\\").replace(r'\"', '"')
+
+
+def _metadata_string(record: str, field: str) -> str | None:
+    match = re.search(rf'\b{re.escape(field)}:\s*"((?:\\.|[^"\\])*)"', record)
+    return _llvm_unescape(match.group(1)) if match else None
+
+
+def _fqn_matches_debug_name(fqn: str, name: str) -> bool:
+    """Match an LLVM source name to an extracted FQN's optional dedup suffix."""
+    tail = fqn.rsplit("::", 1)[-1]
+    expected = canonicalize(name)
+    if tail == expected:
+        return True
+    prefix = f"{expected}_"
+    return tail.startswith(prefix) and tail[len(prefix) :].isdigit()
+
+
+def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout):
+    """Map linked LLVM symbols to extracted FQNs through debug locations."""
+    result = _run_tool([*disassembler, str(module), "-o", "-"], timeout=timeout)
+    if result is None or result.returncode != 0:
+        return None
+    text = result.stdout
+    files = {}
+    for match in re.finditer(r"(?m)^!(\d+) = !DIFile\((.*)\)$", text):
+        filename = _metadata_string(match.group(2), "filename")
+        directory = _metadata_string(match.group(2), "directory") or ""
+        if filename:
+            files[match.group(1)] = _canonical_relative(
+                filename, root, Path(directory) if directory else root
+            )
+    subprograms = {}
+    for match in re.finditer(
+        r"(?m)^!(\d+) = (?:distinct )?!DISubprogram\((.*)\)$", text
+    ):
+        record = match.group(2)
+        file_match = re.search(r"\bfile:\s*!(\d+)", record)
+        line_match = re.search(r"\bline:\s*(\d+)", record)
+        name = _metadata_string(record, "name")
+        if file_match and line_match:
+            subprograms[match.group(1)] = (
+                files.get(file_match.group(1)),
+                int(line_match.group(1)),
+                name,
+            )
+    symbols = defaultdict(set)
+    definition = re.compile(
+        r'(?m)^define\b.*?@((?:"(?:\\.|[^"\\])*")|[-$._A-Za-z0-9]+)\s*\(.*?!dbg !(\d+)\s*\{'
+    )
+    for match in definition.finditer(text):
+        symbol = match.group(1)
+        if symbol.startswith('"'):
+            symbol = _llvm_unescape(symbol[1:-1])
+        relative, line, name = subprograms.get(match.group(2), (None, None, None))
+        if relative is None or line is None:
+            continue
+        candidates = functions.get(relative, ())
+        if name:
+            named = [
+                entry
+                for entry in candidates
+                if _fqn_matches_debug_name(entry[4], name)
+            ]
+            candidates = named or candidates
+        function = _function_at(candidates, line)
+        if function is not None:
+            symbols[symbol].add(function[4])
+    return symbols
+
+
+def _phasar_module_edges(
+    phasar,
+    disassembler,
+    module: Path,
+    root: Path,
+    functions,
+    timeout: float,
+):
+    """Analyze one translation unit when project-wide linking is impossible."""
+    dot = module.with_suffix(".phasar.dot")
+    if not dot.is_file() and not _run_phasar(phasar, module, dot, timeout):
+        return None
+    pairs = _parse_phasar_dot(dot)
+    symbols = _llvm_symbol_fqns(disassembler, module, root, functions, timeout)
+    if pairs is None or symbols is None:
+        return None
+    edges = []
+    seen = set()
+    for caller_symbol, callee_symbol in pairs:
+        callers = symbols.get(caller_symbol, ())
+        callees = symbols.get(callee_symbol, ())
+        if len(callers) != 1 or len(callees) != 1:
+            continue
+        caller = next(iter(callers))
+        callee = next(iter(callees))
+        if caller == callee or (caller, callee) in seen:
+            continue
+        seen.add((caller, callee))
+        edges.append({"caller": caller, "callee": callee, "kind": "call"})
+    return edges
+
+
+def _ast_symbol_fqns(asts, root: Path, functions):
+    """Collect Clang symbol identities as a fallback for sparse debug metadata."""
+    symbols = defaultdict(set)
+
+    def walk(node, directory, inherited_file):
+        if not isinstance(node, dict):
+            return inherited_file
+        location = node.get("loc", {})
+        node_file = _location_file(location, root, directory, inherited_file)
+        if node.get("kind") in _FUNCTION_KINDS and not node.get("isImplicit", False):
+            line, column = _location_position(location, root, node_file, {})
+            match = (
+                _function_at(functions.get(node_file, ()), line, column)
+                if line is not None
+                else None
+            )
+            symbol = _symbol_key(node, node_file)
+            if match is not None and symbol is not None:
+                symbols[symbol[0]].add(match[4])
+        child_file = node_file
+        children = node.get("inner")
+        if isinstance(children, list):
+            for child in children:
+                child_file = walk(child, directory, child_file)
+        return node_file if node.get("kind") in _FUNCTION_KINDS else child_file
+
+    for ast, _source, directory in asts:
+        walk(ast, directory, None)
+        del ast
+    return symbols
+
+
+def _llvm_call_edges(root: Path, language: str, extractor):
+    """Build a whole-language call graph with LLVM IR and PhASAR only."""
+    compiler = _clang_command(language)
+    linker = _llvm_link_command()
+    disassembler = _llvm_dis_command()
+    phasar = _phasar_command()
+    if compiler is None or linker is None or disassembler is None or phasar is None:
+        return None
+    compiler_major = _tool_major(compiler)
+    linker_major = _tool_major(linker)
+    disassembler_major = _tool_major(disassembler)
+    expected_phasar_major = _phasar_llvm_major()
+    if (
+        compiler_major is None
+        or linker_major is None
+        or disassembler_major is None
+        or compiler_major != linker_major
+        or compiler_major != disassembler_major
+        or expected_phasar_major != compiler_major
+    ):
+        logger.info(
+            "LLVM toolchain mismatch for %s "
+            "(clang=%s llvm-link=%s llvm-dis=%s phasar=%s)",
+            language,
+            compiler_major,
+            linker_major,
+            disassembler_major,
+            expected_phasar_major,
+        )
+        return None
+    database_path = _compile_database_path(root)
+    indexed = _clang_function_fqns(extractor, root, language)
+    if indexed is None:
+        return None
+    functions, all_fqns = indexed
+    tasks = _clang_tasks(root, language, functions, database_path)
+    if not all_fqns or not tasks:
+        return None
+    work_dir = _llvm_cache_directory(
+        root,
+        database_path,
+        language,
+        tasks,
+        [compiler, linker, disassembler, phasar],
+    )
+    try:
+        work_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    cache_key = (
+        language,
+        str(root),
+        str(work_dir),
+        tuple(compiler),
+        tuple(linker),
+        tuple(disassembler),
+        tuple(phasar),
+    )
+    if cache_key in _LLVM_CACHE:
+        return _LLVM_CACHE[cache_key]
+    modules = []
+    for index, task in enumerate(tasks):
+        task_id = hashlib.sha256(
+            (str(task[0]) + "\0" + "\0".join(task[2])).encode("utf-8")
+        ).hexdigest()[:16]
+        module = work_dir / f"tu-{index}-{task_id}.bc"
+        if not module.is_file() and not _run_llvm_compile(
+            compiler, task, language, module, _clang_timeout()
+        ):
+            result = None
+            break
+        modules.append(module)
+    else:
+        linked = work_dir / "project.bc"
+        if not linked.is_file():
+            link = _run_tool(
+                [*linker, *map(str, modules), "-o", str(linked)],
+                timeout=_clang_timeout(),
+            )
+            if link is None or link.returncode != 0 or not linked.is_file():
+                per_module_edges = []
+                per_module_failed = False
+                for module in modules:
+                    module_edges = _phasar_module_edges(
+                        phasar,
+                        disassembler,
+                        module,
+                        root,
+                        functions,
+                        _clang_timeout(),
+                    )
+                    if module_edges is None:
+                        per_module_failed = True
+                        break
+                    per_module_edges.extend(module_edges)
+                if per_module_failed or not per_module_edges:
+                    result = None
+                else:
+                    result = {}
+                    seen = set()
+                    for edge in per_module_edges:
+                        key = (edge["caller"], edge["callee"])
+                        if key not in seen:
+                            seen.add(key)
+                            result.setdefault("edges", []).append(edge)
+                    result = result.get("edges", [])
+            else:
+                result = True
+        else:
+            result = True
+        if result is True:
+            dot = work_dir / "phasar-callgraph.dot"
+            if not dot.is_file() and not _run_phasar(
+                phasar, linked, dot, _clang_timeout()
+            ):
+                result = None
+        if result is True:
+            pairs = _parse_phasar_dot(dot)
+            symbol_fqns = _llvm_symbol_fqns(
+                disassembler, linked, root, functions, _clang_timeout()
+            )
+            if pairs is None or symbol_fqns is None:
+                result = None
+            else:
+                edges = []
+                seen = set()
+                for caller_symbol, callee_symbol in pairs:
+                    caller_candidates = symbol_fqns.get(caller_symbol, ())
+                    callee_candidates = symbol_fqns.get(callee_symbol, ())
+                    if len(caller_candidates) != 1 or len(callee_candidates) != 1:
+                        continue
+                    caller = next(iter(caller_candidates))
+                    callee = next(iter(callee_candidates))
+                    if caller == callee:
+                        continue
+                    edge = {"caller": caller, "callee": callee, "kind": "call"}
+                    key = (caller, callee)
+                    if key not in seen:
+                        seen.add(key)
+                        edges.append(edge)
+                mapped = set().union(*symbol_fqns.values()) if symbol_fqns else set()
+                result = edges if mapped.intersection(all_fqns) else None
+                if result is not None:
+                    print(
+                        f"[Clang] {language}: PhASAR mapped {len(mapped & all_fqns)}/"
+                        f"{len(all_fqns)} indexed functions from {len(tasks)} "
+                        "translation units."
+                    )
+    if cache_key is not None:
+        _LLVM_CACHE[cache_key] = result
     return result
 
 
@@ -694,7 +1334,15 @@ def _clang_edges_from_asts(asts, root: Path, functions):
                 call_file = _location_file(begin, root, directory, node_file)
                 line, column = _location_position(begin, root, call_file, source_cache)
                 calls.append(
-                    (task_index, active_caller, "call", target, call_file, line, column)
+                    (
+                        task_index,
+                        active_caller,
+                        "call",
+                        target,
+                        call_file,
+                        line,
+                        column,
+                    )
                 )
         elif kind in _CONSTRUCT_KINDS and active_caller:
             constructor = _constructor_key(node)
@@ -797,62 +1445,11 @@ def _cache_key(root: Path, extractor, language: str, command, database_path):
 
 
 def call_edges(proj_dir: str, language: str, extractor):
-    """Return a pure Clang call graph, or request codegraph fallback."""
+    """Return a pure LLVM/PhASAR call graph, or request CodeGraph fallback."""
     root = Path(extractor._db).resolve().parent.parent
-    command = _clang_command(language)
-    if command is None:
-        logger.info("Clang unavailable for %s; using codegraph", language)
-        return None
-    database_path = _compile_database_path(root)
-    cache_key = _cache_key(root, extractor, language, command, database_path)
-    if cache_key is not None and cache_key in _CLANG_CACHE:
-        return _CLANG_CACHE[cache_key]
-
-    indexed = _clang_function_fqns(extractor, root, language)
-    if indexed is None:
-        logger.info("Cannot read indexed %s functions; using codegraph", language)
-        result = None
+    result = _llvm_call_edges(root, language, extractor)
+    if result is None:
+        logger.info("LLVM/PhASAR unavailable for %s; using codegraph", language)
     else:
-        functions, all_fqns = indexed
-        tasks = _clang_tasks(root, language, functions, database_path)
-        if tasks is None or (all_fqns and not tasks):
-            logger.info("Cannot prepare Clang %s tasks; using codegraph", language)
-            result = None
-        elif not all_fqns:
-            result = []
-        else:
-            timeout = _clang_timeout()
-            task_stats = {"succeeded": 0, "failed": 0}
-
-            def parsed_asts():
-                for task in tasks:
-                    ast = _run_clang_ast(command, task, language, timeout)
-                    if ast is None:
-                        task_stats["failed"] += 1
-                        logger.debug("Clang failed to parse %s", task[0])
-                        continue
-                    task_stats["succeeded"] += 1
-                    yield ast, task[0], task[1]
-                    del ast
-
-            clang_edges, covered_fqns = _clang_edges_from_asts(
-                parsed_asts(), root, functions
-            )
-            successful = (
-                task_stats["succeeded"] == len(tasks)
-                and covered_fqns == all_fqns
-            )
-            result = clang_edges if successful else None
-            backend = "using Clang only" if successful else "using codegraph only"
-            print(
-                f"[Clang] {language}: covered {len(covered_fqns)}/"
-                f"{len(all_fqns)} functions from {task_stats['succeeded']}/"
-                f"{len(tasks)} translation units; {backend}."
-            )
-
-    if cache_key is not None:
-        for old_key in list(_CLANG_CACHE):
-            if old_key[:2] == cache_key[:2] and old_key != cache_key:
-                del _CLANG_CACHE[old_key]
-        _CLANG_CACHE[cache_key] = result
+        print(f"[Clang] {language}: using LLVM/PhASAR call graph only.")
     return result

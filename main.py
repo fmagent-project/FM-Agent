@@ -24,6 +24,7 @@ from src.git import (
     _get_head_commit,
     _record_version,
 )
+from src.languages.clang import prepare_compile_database
 from src.languages.codegraph import try_codegraph_init
 from src.plugin import PLUGIN_OPTION_NAMES, get_unsupported_plugin_options, run_plugin_hook
 from src.pipeline_setup import (
@@ -451,6 +452,13 @@ def run_pipeline(
     # index matches the current tree, while a resume reuses the existing index
     # (same tree as the interrupted run — rebuilding would just be wasted work).
     try_codegraph_init(proj_dir, force=not resume)
+
+    # Bear executes the project's real build. Prepare its compilation database
+    # before extraction writes same-suffix function fragments under fm_agent/;
+    # recursive Makefiles must never discover or compile those generated files.
+    # Keep this after codegraph indexing so CMake's compiler-ID sources cannot
+    # enter codegraph's project index.
+    prepare_compile_database(proj_dir, specification.languages)
 
     # Run function extraction using extract.py
     # force=False on resume preserves already-specced extracted files; on a fresh

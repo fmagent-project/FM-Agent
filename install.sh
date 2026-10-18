@@ -21,7 +21,7 @@ for arg in "$@"; do
             echo "Usage: ./install.sh [--with-erlang] [--with-chisel] [--with-clang]"
             echo "  --with-erlang  Install/verify Erlang/OTP 26+, rebar3 3.24.0+, and ELP"
             echo "  --with-chisel  Install/verify CIRCT firtool and the FM-Agent Chisel pass plugin"
-            echo "  --with-clang   Install/verify Clang and Bear for C/C++ call-graph analysis"
+            echo "  --with-clang   Install/verify LLVM/Clang, llvm-link, Bear, and optional PhASAR"
             exit 0
             ;;
         *)
@@ -428,9 +428,12 @@ if [[ "$INSTALL_CLANG_SUPPORT" -eq 1 ]]; then
             echo "[!!] Homebrew is required to install Bear on macOS."
             exit 1
         }
-        brew install bear
+        brew install bear llvm
+        export PATH="$(brew --prefix llvm)/bin:$PATH"
     elif [[ "$os_name" == "Linux" ]]; then
-        if ! command -v clang &>/dev/null || ! command -v clang++ &>/dev/null || ! command -v bear &>/dev/null; then
+        if ! command -v clang-15 &>/dev/null || ! command -v clang++-15 &>/dev/null \
+            || ! command -v llvm-link-15 &>/dev/null || ! command -v llvm-dis-15 &>/dev/null \
+            || ! command -v bear &>/dev/null; then
             if [[ ! -f /etc/os-release ]]; then
                 echo "[!!] automatic Clang/Bear installation is supported only on Ubuntu."
                 exit 1
@@ -442,18 +445,31 @@ if [[ "$INSTALL_CLANG_SUPPORT" -eq 1 ]]; then
                 exit 1
             fi
             sudo apt-get update -y
-            sudo apt-get install -y clang bear
+            sudo apt-get install -y clang-15 llvm-15 llvm-15-tools bear
         fi
     else
         echo "[!!] automatic Clang/Bear installation is not available on $os_name."
         exit 1
     fi
 
-    command -v clang &>/dev/null || { echo "[!!] clang was not installed"; exit 1; }
-    command -v clang++ &>/dev/null || { echo "[!!] clang++ was not installed"; exit 1; }
+    command -v clang-15 &>/dev/null || command -v clang &>/dev/null || { echo "[!!] clang was not installed"; exit 1; }
+    command -v clang++-15 &>/dev/null || command -v clang++ &>/dev/null || { echo "[!!] clang++ was not installed"; exit 1; }
+    command -v llvm-link-15 &>/dev/null || command -v llvm-link &>/dev/null || { echo "[!!] llvm-link was not installed"; exit 1; }
+    command -v llvm-dis-15 &>/dev/null || command -v llvm-dis &>/dev/null || { echo "[!!] llvm-dis was not installed"; exit 1; }
     command -v bear &>/dev/null || { echo "[!!] Bear was not installed"; exit 1; }
-    echo "[ok] $(clang --version | head -n1)"
+    clang_probe="$(command -v clang-15 || command -v clang)"
+    llvm_link_probe="$(command -v llvm-link-15 || command -v llvm-link)"
+    echo "[ok] $($clang_probe --version | head -n1)"
+    echo "[ok] $($llvm_link_probe --version | head -n1)"
     echo "[ok] $(bear --version | head -n1)"
+    if [[ -n "${PHASAR_CALL_GRAPH_COMMAND:-}" ]]; then
+        phasar_probe="${PHASAR_CALL_GRAPH_COMMAND%% *}"
+        command -v "$phasar_probe" &>/dev/null \
+            || { echo "[!!] configured PhASAR call-graph command was not found: $PHASAR_CALL_GRAPH_COMMAND"; exit 1; }
+        echo "[ok] PhASAR call-graph command: $PHASAR_CALL_GRAPH_COMMAND"
+    else
+        echo "[!!] PhASAR v2510 is not installed; build it with LLVM 15 and configure PHASAR_CALL_GRAPH_COMMAND or put phasar-cli on PATH"
+    fi
 fi
 
 if [[ "$INSTALL_CHISEL_SUPPORT" -eq 1 ]]; then
