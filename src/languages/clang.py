@@ -363,14 +363,14 @@ def _read_compile_database(path: Path | None):
     return data if isinstance(data, list) else None
 
 
-def _compile_database_artifacts(root: Path) -> tuple[Path, Path]:
+def _generated_compile_database_path(root: Path) -> Path:
     root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
     build_dir = root / "fm_agent" / "clang_build" / root_id
-    return build_dir / "compile_commands.json", build_dir / "generation.json"
+    return build_dir / "compile_commands.json"
 
 
-def _build_configuration_fingerprint(root: Path, generator: str) -> str:
-    """Fingerprint inputs that determine an automatically generated database."""
+def _build_cache_fingerprint(root: Path, generator: str) -> str:
+    """Fingerprint build inputs for reuse within the current pipeline process."""
     fingerprint = hashlib.sha256(generator.encode("ascii"))
     for key in ("CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS"):
         fingerprint.update(f"\0{key}={os.environ.get(key, '')}".encode())
@@ -415,39 +415,6 @@ def _build_configuration_fingerprint(root: Path, generator: str) -> str:
     return fingerprint.hexdigest()
 
 
-def _write_generation_metadata(root: Path, generator: str) -> bool:
-    _database_path, metadata_path = _compile_database_artifacts(root)
-    metadata = {
-        "generator": generator,
-        "fingerprint": _build_configuration_fingerprint(root, generator),
-    }
-    try:
-        metadata_path.write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
-    except OSError:
-        return False
-    return True
-
-
-def _generated_compile_database(root: Path) -> Path | None:
-    """Return a readable generated database whose build inputs are unchanged."""
-    database_path, metadata_path = _compile_database_artifacts(root)
-    if not database_path.is_file() or _read_compile_database(database_path) is None:
-        return None
-    try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    generator = metadata.get("generator") if isinstance(metadata, dict) else None
-    if generator not in {"cmake", "bear"}:
-        return None
-    expected = _build_configuration_fingerprint(root, generator)
-    return (
-        database_path.resolve()
-        if metadata.get("fingerprint") == expected
-        else None
-    )
-
-
 def _generate_cmake_compile_database(root: Path) -> Path | None:
     """Configure a CMake project and return its generated compilation database."""
     cmake_file = root / "CMakeLists.txt"
@@ -465,7 +432,7 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
         stat = cmake_file.stat()
     except OSError:
         return None
-    configuration_fingerprint = _build_configuration_fingerprint(root, "cmake")
+    configuration_fingerprint = _build_cache_fingerprint(root, "cmake")
     cache_key = (
         "cmake",
         str(root),
@@ -479,12 +446,11 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
         if cache_key in _COMPILE_DATABASE_CACHE:
             return _COMPILE_DATABASE_CACHE[cache_key]
 
-        database_path, metadata_path = _compile_database_artifacts(root)
+        database_path = _generated_compile_database_path(root)
         build_dir = database_path.parent
         try:
             build_dir.mkdir(parents=True, exist_ok=True)
             database_path.unlink(missing_ok=True)
-            metadata_path.unlink(missing_ok=True)
             (build_dir / "CMakeCache.txt").unlink(missing_ok=True)
             shutil.rmtree(build_dir / "CMakeFiles", ignore_errors=True)
             result = _run_generation_command(
@@ -521,7 +487,6 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
                 detail = f": {' | '.join(lines[-3:])}" if lines else ""
             logger.info("CMake compilation database generation failed%s", detail)
         else:
-            _write_generation_metadata(root, "cmake")
             print(f"[Clang] Generated compilation database at {generated}")
 
         for old_key in list(_COMPILE_DATABASE_CACHE):
@@ -536,21 +501,12 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
     build_command = _bear_build_command(root)
     if build_command is None or not _auto_compile_database_enabled():
         return None
-    existing = _generated_compile_database(root)
-    if existing is not None:
-        return existing
-    if (root / "fm_agent" / "extracted_functions").exists():
-        logger.info(
-            "Skipping Bear compilation database refresh in a retained workspace; "
-            "using codegraph"
-        )
-        return None
     bear = shutil.which("bear")
     if bear is None:
         logger.info("Cannot generate compile_commands.json: bear is unavailable")
         return None
 
-    configuration_fingerprint = _build_configuration_fingerprint(root, "bear")
+    configuration_fingerprint = _build_cache_fingerprint(root, "bear")
     cache_key = (
         "bear",
         str(root),
@@ -561,13 +517,18 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
     with _COMPILE_DATABASE_LOCK:
         if cache_key in _COMPILE_DATABASE_CACHE:
             return _COMPILE_DATABASE_CACHE[cache_key]
+        if (root / "fm_agent" / "extracted_functions").exists():
+            raise RuntimeError(
+                "Bear cannot safely refresh an automatically generated compilation "
+                "database while extracted functions are retained; run FM-Agent "
+                "without --resume/--incremental or provide CLANG_COMPILE_COMMANDS"
+            )
 
-        database_path, metadata_path = _compile_database_artifacts(root)
+        database_path = _generated_compile_database_path(root)
         build_dir = database_path.parent
         try:
             build_dir.mkdir(parents=True, exist_ok=True)
             database_path.unlink(missing_ok=True)
-            metadata_path.unlink(missing_ok=True)
             result = _run_generation_command(
                 [bear, "--output", str(database_path), "--", *build_command],
                 root,
@@ -593,7 +554,6 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
                 detail = f": {' | '.join(lines[-3:])}" if lines else ""
             logger.info("Bear compilation database generation failed%s", detail)
         else:
-            _write_generation_metadata(root, "bear")
             print(f"[Clang] Generated compilation database with Bear at {generated}")
 
         for old_key in list(_COMPILE_DATABASE_CACHE):
@@ -614,9 +574,6 @@ def _compile_database_path(root: Path) -> Path | None:
         return None
     if (root / "CMakeLists.txt").is_file():
         return _generate_cmake_compile_database(root)
-    generated = _generated_compile_database(root)
-    if generated is not None:
-        return generated
     return _generate_bear_compile_database(root)
 
 
@@ -694,9 +651,13 @@ def prepare_compile_database(
         return False
     if languages is not None and {"c", "cpp"}.isdisjoint(languages):
         return False
-    if not _has_indexed_clang_functions(proj_dir):
-        return False
     root = Path(proj_dir).resolve()
+    if (
+        languages is None
+        and (root / "fm_agent" / "extracted_functions").exists()
+        and not _has_indexed_clang_functions(proj_dir)
+    ):
+        return False
     before = _project_source_state(root)
     _compile_database_path(root)
     return before != _project_source_state(root)
@@ -1123,10 +1084,16 @@ def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout
                 if _fqn_matches_debug_name(entry[4], name)
             ]
             candidates = named or candidates
-        function = _function_at(candidates, line)
-        if function is not None:
-            symbols[symbol].add(function[4])
-            defined_symbols.add(symbol)
+        matches = [entry for entry in candidates if entry[0] <= line <= entry[1]]
+        exact = [entry for entry in matches if entry[0] == line]
+        if exact:
+            matches = exact
+        if len(matches) > 1:
+            return None
+        if not matches:
+            continue
+        symbols[symbol].add(matches[0][4])
+        defined_symbols.add(symbol)
     return symbols, defined_symbols
 
 

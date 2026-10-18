@@ -357,6 +357,11 @@ def run_pipeline(
     build_sources_changed = prepare_compile_database(
         proj_dir, specification.languages
     )
+    if resume and build_sources_changed:
+        raise RuntimeError(
+            "The native build changed C/C++ sources while --resume was active; "
+            "rerun without --resume so extracted functions and specs are rebuilt"
+        )
     if build_sources_changed:
         try_codegraph_init(proj_dir)
 
