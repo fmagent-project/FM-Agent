@@ -40,6 +40,7 @@ _CALL_KINDS = {
 _CONSTRUCT_KINDS = {"CXXConstructExpr", "CXXTemporaryObjectExpr"}
 _C_EXTENSIONS = {".c"}
 _CPP_EXTENSIONS = {".cc", ".cp", ".cpp", ".cxx", ".c++", ".C"}
+_SOURCE_EXTENSIONS_LOWER = {extension.lower() for extension in _C_EXTENSIONS | _CPP_EXTENSIONS}
 _CLANG_EXTRACTED_EXTENSIONS = _C_EXTENSIONS | _CPP_EXTENSIONS | {".h", ".hpp"}
 _HEADER_EXTENSIONS = {".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp"}
 
@@ -365,15 +366,83 @@ def _read_compile_database(path: Path | None):
     return data if isinstance(data, list) else None
 
 
-def _generated_compile_database(root: Path) -> Path | None:
-    """Return FM-Agent's persisted generated database when it is readable."""
+def _compile_database_artifacts(root: Path) -> tuple[Path, Path]:
     root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
-    database_path = (
-        root / "fm_agent" / "clang_build" / root_id / "compile_commands.json"
-    )
+    build_dir = root / "fm_agent" / "clang_build" / root_id
+    return build_dir / "compile_commands.json", build_dir / "generation.json"
+
+
+def _build_configuration_fingerprint(root: Path, generator: str) -> str:
+    """Fingerprint inputs that determine an automatically generated database."""
+    fingerprint = hashlib.sha256(generator.encode("ascii"))
+    for key in ("CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS"):
+        fingerprint.update(f"\0{key}={os.environ.get(key, '')}".encode())
+    build_names = {"CMakeLists.txt", "CMakePresets.json"}
+    make_names = {"GNUmakefile", "Makefile", "makefile"}
+    errors = []
+    for directory, subdirectories, filenames in os.walk(root, onerror=errors.append):
+        relative_directory = Path(directory).relative_to(root)
+        if not relative_directory.parts:
+            subdirectories[:] = [
+                name
+                for name in subdirectories
+                if name not in {".git", ".codegraph", "fm_agent"}
+            ]
+        subdirectories.sort()
+        for filename in sorted(filenames):
+            path = Path(directory) / filename
+            suffix = path.suffix.lower()
+            is_source = suffix in _SOURCE_EXTENSIONS_LOWER
+            is_build_input = (
+                generator == "cmake"
+                and (filename in build_names or suffix == ".cmake")
+            ) or (
+                generator == "bear"
+                and (filename in make_names or suffix == ".mk")
+            )
+            if not is_source and not is_build_input:
+                continue
+            relative = path.relative_to(root).as_posix()
+            fingerprint.update(relative.encode("utf-8", errors="surrogateescape"))
+            if is_build_input:
+                try:
+                    fingerprint.update(path.read_bytes())
+                except OSError:
+                    fingerprint.update(b"\0unreadable\0")
+    for error in errors:
+        fingerprint.update(str(error).encode("utf-8", errors="replace"))
+    return fingerprint.hexdigest()
+
+
+def _write_generation_metadata(root: Path, generator: str) -> bool:
+    _database_path, metadata_path = _compile_database_artifacts(root)
+    metadata = {
+        "generator": generator,
+        "fingerprint": _build_configuration_fingerprint(root, generator),
+    }
+    try:
+        metadata_path.write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def _generated_compile_database(root: Path) -> Path | None:
+    """Return a readable generated database whose build inputs are unchanged."""
+    database_path, metadata_path = _compile_database_artifacts(root)
+    if not database_path.is_file() or _read_compile_database(database_path) is None:
+        return None
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    generator = metadata.get("generator") if isinstance(metadata, dict) else None
+    if generator not in {"cmake", "bear"}:
+        return None
+    expected = _build_configuration_fingerprint(root, generator)
     return (
         database_path.resolve()
-        if database_path.is_file() and _read_compile_database(database_path) is not None
+        if metadata.get("fingerprint") == expected
         else None
     )
 
@@ -414,17 +483,26 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
         stat = cmake_file.stat()
     except OSError:
         return None
-    cache_key = ("cmake", str(root), stat.st_mtime_ns, stat.st_size, cmake, ninja)
+    configuration_fingerprint = _build_configuration_fingerprint(root, "cmake")
+    cache_key = (
+        "cmake",
+        str(root),
+        stat.st_mtime_ns,
+        stat.st_size,
+        configuration_fingerprint,
+        cmake,
+        ninja,
+    )
     with _COMPILE_DATABASE_LOCK:
         if cache_key in _COMPILE_DATABASE_CACHE:
             return _COMPILE_DATABASE_CACHE[cache_key]
 
-        root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
-        build_dir = root / "fm_agent" / "clang_build" / root_id
-        database_path = build_dir / "compile_commands.json"
+        database_path, metadata_path = _compile_database_artifacts(root)
+        build_dir = database_path.parent
         try:
             build_dir.mkdir(parents=True, exist_ok=True)
             database_path.unlink(missing_ok=True)
+            metadata_path.unlink(missing_ok=True)
             result = _run_generation_command(
                 [
                     cmake,
@@ -459,6 +537,7 @@ def _generate_cmake_compile_database(root: Path) -> Path | None:
                 detail = f": {' | '.join(lines[-3:])}" if lines else ""
             logger.info("CMake compilation database generation failed%s", detail)
         else:
+            _write_generation_metadata(root, "cmake")
             print(f"[Clang] Generated compilation database at {generated}")
 
         for old_key in list(_COMPILE_DATABASE_CACHE):
@@ -487,17 +566,24 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
         logger.info("Cannot generate compile_commands.json: bear is unavailable")
         return None
 
-    cache_key = ("bear", str(root), bear, tuple(build_command))
+    configuration_fingerprint = _build_configuration_fingerprint(root, "bear")
+    cache_key = (
+        "bear",
+        str(root),
+        configuration_fingerprint,
+        bear,
+        tuple(build_command),
+    )
     with _COMPILE_DATABASE_LOCK:
         if cache_key in _COMPILE_DATABASE_CACHE:
             return _COMPILE_DATABASE_CACHE[cache_key]
 
-        root_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
-        build_dir = root / "fm_agent" / "clang_build" / root_id
-        database_path = build_dir / "compile_commands.json"
+        database_path, metadata_path = _compile_database_artifacts(root)
+        build_dir = database_path.parent
         try:
             build_dir.mkdir(parents=True, exist_ok=True)
             database_path.unlink(missing_ok=True)
+            metadata_path.unlink(missing_ok=True)
             result = _run_generation_command(
                 [bear, "--output", str(database_path), "--", *build_command],
                 root,
@@ -523,6 +609,7 @@ def _generate_bear_compile_database(root: Path) -> Path | None:
                 detail = f": {' | '.join(lines[-3:])}" if lines else ""
             logger.info("Bear compilation database generation failed%s", detail)
         else:
+            _write_generation_metadata(root, "bear")
             print(f"[Clang] Generated compilation database with Bear at {generated}")
 
         for old_key in list(_COMPILE_DATABASE_CACHE):
@@ -1004,7 +1091,6 @@ def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout
         symbol = match.group(1)
         if symbol.startswith('"'):
             symbol = _llvm_unescape(symbol[1:-1])
-        defined_symbols.add(symbol)
         relative, line, name = subprograms.get(match.group(2), (None, None, None))
         if relative is None or line is None:
             continue
@@ -1019,6 +1105,7 @@ def _llvm_symbol_fqns(disassembler, module: Path, root: Path, functions, timeout
         function = _function_at(candidates, line)
         if function is not None:
             symbols[symbol].add(function[4])
+            defined_symbols.add(symbol)
     return symbols, defined_symbols
 
 
