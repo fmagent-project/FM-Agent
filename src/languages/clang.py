@@ -1211,9 +1211,9 @@ def _llvm_call_edges(root: Path, language: str, extractor):
     indexed = _clang_function_fqns(extractor, root, language)
     if indexed is None:
         return None
-    functions, all_fqns = indexed
+    functions, indexed_fqns = indexed
     tasks = _clang_tasks(root, language, functions, database_path)
-    if not all_fqns or not tasks:
+    if not indexed_fqns or not tasks:
         return None
     work_dir = _llvm_cache_directory(
         root,
@@ -1291,7 +1291,10 @@ def _llvm_call_edges(root: Path, language: str, extractor):
                         per_module_failed = True
                         break
                     per_module_edges.extend(module_edges)
-                if per_module_failed or not per_module_edges:
+                mapped = (
+                    set().union(*global_symbols.values()) if global_symbols else set()
+                )
+                if per_module_failed or not mapped.intersection(indexed_fqns):
                     result = None
                 else:
                     result = {}
@@ -1347,11 +1350,11 @@ def _llvm_call_edges(root: Path, language: str, extractor):
                         edges.append(edge)
                 else:
                     mapped = set().union(*symbol_fqns.values()) if symbol_fqns else set()
-                    result = edges if mapped.intersection(all_fqns) else None
+                    result = edges if mapped else None
                 if result is not None:
                     print(
-                        f"[Clang] {language}: PhASAR mapped {len(mapped & all_fqns)}/"
-                        f"{len(all_fqns)} indexed functions from {len(tasks)} "
+                        f"[Clang] {language}: PhASAR mapped {len(mapped)} indexed "
+                        f"functions from {len(tasks)} compilation-database "
                         "translation units."
                     )
     if cache_key is not None:
