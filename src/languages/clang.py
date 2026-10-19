@@ -974,6 +974,7 @@ def _run_phasar(command, module: Path, output: Path, timeout: float):
         str(module),
         "--entry-points",
         "__ALL__",
+        "--auto-globals=false",
         "--call-graph-analysis",
         "otf",
         "--alias-analysis",
@@ -1130,8 +1131,11 @@ def _phasar_module_edges(
     local_symbols,
     local_definitions,
     timeout: float,
+    global_symbols=None,
 ):
-    """Analyze one translation unit when project-wide linking is impossible."""
+    """Analyze one TU, resolving only globally unique project callees."""
+    if global_symbols is None:
+        global_symbols = {}
     dot = module.with_suffix(".phasar.dot")
     if not dot.is_file() and not _run_phasar(phasar, module, dot, timeout):
         return None
@@ -1148,8 +1152,14 @@ def _phasar_module_edges(
                 unresolved_edges += 1
             continue
         callees = local_symbols.get(callee_symbol, ())
+        if not callees:
+            candidates = global_symbols.get(callee_symbol, ())
+            if len(candidates) == 1:
+                callees = candidates
         if len(callees) != 1:
-            if callee_symbol in local_definitions:
+            if callee_symbol in local_definitions or global_symbols.get(
+                callee_symbol
+            ):
                 unresolved_edges += 1
             continue
         caller = next(iter(callers))
@@ -1303,6 +1313,7 @@ def _llvm_call_edges(root: Path, language: str, extractor):
                     local_symbols,
                     local_definitions,
                     _clang_timeout(),
+                    global_symbols,
                 )
                 if module_edges is None:
                     per_module_failed = True
