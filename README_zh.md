@@ -91,7 +91,7 @@ uv run python src/configure_llm.py
 ```
 
 该向导会先展示预览、备份已有文件，然后更新当前生效的 FM-Agent TOML、把 API 密钥写入 `.env` 和供独立 OpenCode 使用的私有本地密钥文件，并同步对应的 OpenCode provider 到 `~/.config/opencode/opencode.json`（或当前平台上的等价路径），无需手写 JSON。
-若在向导中选择 `auto`、`codex-cli` 或 `claude-cli`，则会更新当前生效的 FM-Agent TOML 中的 backend，并清除项目 `.env` 里残留的非密钥 LLM 覆盖项；其中模型和 effort 的值会先迁移到 TOML。本地 CLI 使用自身认证，不需要 API 密钥或 OpenCode provider 配置。
+若在向导中选择 `auto`、`codex-cli`、`claude-cli` 或 `dsh`，则会询问模型 ID，将后端和所选模型写入当前生效的 FM-Agent TOML，并清除项目 `.env` 中残留的非密钥 LLM 覆盖项，保留 effort 到 TOML。Codex 和 Claude 使用各自 CLI 的认证；DSH 需要 `DEEPSEEK_API_KEY`，使用网关时再设置 `DEEPSEEK_BASE_URL`。
 
 如果你更希望手动编辑文件，可以复制模板：
 

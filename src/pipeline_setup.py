@@ -1088,7 +1088,7 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                 output_files=[
                     "fm_agent/phases.json",
                 ],
-                summary=f"OpenCode generate phases.json attempt {attempt}",
+                summary=f"{command.backend} generate phases.json attempt {attempt}",
                 metadata={"attempt": attempt},
             )
         except subprocess.CalledProcessError as e:
@@ -1254,7 +1254,7 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False, w
                 output_files=[
                     "fm_agent/spec_prompts/domain_context/engine_overview.txt",
                 ],
-                summary=f"OpenCode generate domain context attempt {attempt}",
+                summary=f"{command.backend} generate domain context attempt {attempt}",
                 metadata={"attempt": attempt},
             )
         except subprocess.CalledProcessError as e:

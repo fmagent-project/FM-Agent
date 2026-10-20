@@ -9,7 +9,7 @@
 name      = "anthropic/claude-sonnet-4.6"    # LLM_MODEL
 provider  = "openrouter"                       # OPENCODE_MODEL_PROVIDER — the OpenCode provider id FM-Agent generates
 base_url  = "https://openrouter.ai/api/v1"     # LLM_API_BASE_URL
-backend   = "opencode"                         # FM_AGENT_MODEL_BACKEND — opencode | auto | codex-cli | claude-cli
+backend   = "opencode"                         # FM_AGENT_MODEL_BACKEND — opencode | dsh | auto | codex-cli | claude-cli
 effort    = ""                                 # LLM_EFFORT — reasoning-effort hint ("", low, medium, high)
 api_style = "openai"                            # LLM_API_STYLE — endpoint style for the OpenCode adapter: openai | anthropic
 
@@ -19,7 +19,7 @@ max_spec_iter              = 5     # MAX_SPC_ITER
 granularity                = 40    # GRANULARITY
 opencode_max_retries       = 5     # OPENCODE_MAX_RETRIES
 bug_validation_max_retries = 1     # BUG_VALIDATION_MAX_RETRIES
-opencode_timeout_s         = 1800  # OPENCODE_TIMEOUT_SECONDS — hard cap on one `opencode run`
+opencode_timeout_s         = 1800  # OPENCODE_TIMEOUT_SECONDS — hard cap on one agent subprocess
 
 [scope]
 top_k                    = 5    # SCOPE_TOP_K

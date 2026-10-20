@@ -150,7 +150,7 @@ def _run_spec_generation_batch(
                 str(specification.artifact_paths(Path(function_file)).dependency_info)
                 for function_file in function_files
             ],
-            summary=f"OpenCode spec generation for {batch_file}",
+            summary=f"{command.backend} spec generation for {batch_file}",
             metadata={
                 "attempt": attempt,
                 "phase": phase_num,

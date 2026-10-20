@@ -300,7 +300,7 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
         reasoning = None
         try:
             response, usage, reasoning = _retry_create(
-                _llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages
+                _llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages, trace_dir=trace_dir
             )
         except Exception as exc:
             event = {

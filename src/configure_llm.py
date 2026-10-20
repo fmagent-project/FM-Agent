@@ -48,8 +48,8 @@ class ConfigWizardError(RuntimeError):
 
 
 ApiStyle = Literal["openai", "anthropic"]
-_BACKENDS = ("opencode", "auto", "codex-cli", "claude-cli")
-_EFFORTS = ("", "low", "medium", "high")
+_BACKENDS = ("opencode", "auto", "codex-cli", "claude-cli", "dsh", "deepseek-harness")
+_EFFORTS = ("", "off", "low", "medium", "high", "max")
 _LLM_TOML_KEYS = ("name", "provider", "base_url", "backend", "effort", "api_style")
 _TOML_KEY_BY_ENV_KEY = {
     "LLM_API_BASE_URL": "base_url",
@@ -559,15 +559,17 @@ def remove_legacy_llm_env_overrides(text: str) -> tuple[str, tuple[str, ...]]:
     return "".join(new_lines), tuple(removed)
 
 
-def local_backend_toml_updates(env_path: Path, backend: str) -> dict[str, str]:
-    """Keep local CLI model choices when migrating dotenv settings into TOML."""
+def local_backend_toml_updates(env_path: Path, backend: str, model_id: str) -> dict[str, str]:
+    """Save the selected model and retain legacy reasoning effort in TOML."""
     validate_llm_setting("backend", backend)
+    model_id = model_id.strip()
+    if not model_id:
+        raise ConfigWizardError("Model ID must not be empty.")
     dotenv_settings = dotenv_values(env_path)
-    updates = {"backend": backend}
-    for env_key, toml_key in (("LLM_MODEL", "name"), ("LLM_EFFORT", "effort")):
-        value = dotenv_settings.get(env_key)
-        if value is not None:
-            updates[toml_key] = value
+    updates = {"backend": backend, "name": model_id}
+    effort = dotenv_settings.get("LLM_EFFORT")
+    if effort is not None:
+        updates["effort"] = effort
     for key, value in updates.items():
         validate_llm_setting(key, value)
     return updates
@@ -856,17 +858,19 @@ def _prompt_backend() -> str:
     print("  2. Auto-detect local Codex or Claude CLI")
     print("  3. Codex CLI")
     print("  4. Claude CLI")
+    print("  5. DeepSeek Harness")
     selected = _prompt("Select", "1")
     backends = {
         "1": "opencode",
         "2": "auto",
         "3": "codex-cli",
         "4": "claude-cli",
+        "5": "dsh",
     }
     try:
         return backends[selected]
     except KeyError as exc:
-        raise ConfigWizardError("Backend selection must be 1, 2, 3, or 4.") from exc
+        raise ConfigWizardError("Backend selection must be 1, 2, 3, 4, or 5.") from exc
 
 
 def prompt_for_config() -> tuple[LLMConfigInput, bool]:
@@ -910,10 +914,13 @@ def run_wizard(project_root: Path) -> int:
     backend = _prompt_backend()
     if backend != "opencode":
         print()
-        print(
-            "Local CLI backends use their own authentication; no API key or OpenCode "
-            "provider configuration is required."
-        )
+        if backend == "dsh":
+            print("Set DEEPSEEK_API_KEY in .env. For a gateway, also set DEEPSEEK_BASE_URL.")
+        else:
+            print(
+                "Local CLI backends use their own authentication; no API key or OpenCode "
+                "provider configuration is required."
+            )
         return run_local_backend_configuration(project_root, backend)
 
     paths = default_paths(project_root)
@@ -951,6 +958,7 @@ def _preview_local_backend_configuration(
         "FM-Agent local CLI backend configuration",
         "",
         f"Backend: {backend}",
+        f"Model ID: {toml_updates['name']}",
         "",
         "The following files will be updated:",
         f"  - {paths.toml_path}",
@@ -967,13 +975,13 @@ def _preview_local_backend_configuration(
         migrated = [
             f"{key}: {value!r}"
             for key, value in toml_updates.items()
-            if key in {"name", "effort"}
+            if key == "effort"
         ]
         if migrated:
             lines.extend(
                 [
                     "",
-                    "The local CLI model settings retained from .env will be written to TOML:",
+                    "The reasoning-effort setting retained from .env will be written to TOML:",
                     *[f"  - {item}" for item in migrated],
                 ]
             )
@@ -996,13 +1004,14 @@ def _preview_local_backend_configuration(
 def apply_local_backend_configuration(
     backend: str,
     paths: WizardPaths,
+    model_id: str,
 ) -> tuple[list[tuple[Path, Path | None]], tuple[str, ...]]:
     if not paths.toml_path.is_file():
         raise ConfigWizardError(
             f"fm-agent.toml not found at {paths.toml_path}; refusing to guess a new project config."
         )
     toml_text = _read_text_if_exists(paths.toml_path)
-    toml_updates = local_backend_toml_updates(paths.env_path, backend)
+    toml_updates = local_backend_toml_updates(paths.env_path, backend, model_id)
     updated_toml = update_llm_settings_toml_text(toml_text, toml_updates)
     try:
         tomllib.loads(updated_toml)
@@ -1024,10 +1033,11 @@ def apply_local_backend_configuration(
 
 def run_local_backend_configuration(project_root: Path, backend: str) -> int:
     paths = default_paths(project_root)
+    model_id = _prompt(f"Model ID for {backend}").strip()
     _updated_env, removed_overrides = remove_legacy_llm_env_overrides(
         _read_text_if_exists(paths.env_path)
     )
-    toml_updates = local_backend_toml_updates(paths.env_path, backend)
+    toml_updates = local_backend_toml_updates(paths.env_path, backend, model_id)
     print(
         _preview_local_backend_configuration(
             backend,
@@ -1044,7 +1054,7 @@ def run_local_backend_configuration(project_root: Path, backend: str) -> int:
         print("Aborted.")
         return 1
 
-    backups, removed_overrides = apply_local_backend_configuration(backend, paths)
+    backups, removed_overrides = apply_local_backend_configuration(backend, paths, model_id)
     print(f"Updated {paths.toml_path}")
     if removed_overrides:
         print(f"Removed legacy LLM overrides from {paths.env_path}")
@@ -1138,12 +1148,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     set_parser.add_argument(
         "--backend",
         choices=_BACKENDS,
-        help="model backend: opencode, auto, codex-cli, or claude-cli",
+        help="model backend: opencode, auto, codex-cli, claude-cli, or dsh (deepseek-harness)",
     )
     set_parser.add_argument(
         "--effort",
         choices=_EFFORTS,
-        help="reasoning effort: empty, low, medium, or high",
+        help="reasoning effort supported by the selected backend (DSH: off, low, high, max)",
     )
     set_parser.add_argument(
         "--api-style",
