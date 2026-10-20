@@ -164,6 +164,7 @@ def _analysis_environment() -> dict[str, str]:
     environment = os.environ.copy()
     for key in (
         "LLM_API_KEY",
+        "DEEPSEEK_API_KEY",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
         "OPENROUTER_API_KEY",
@@ -708,6 +709,22 @@ def _entry_language(path: Path, arguments: list[str]) -> str | None:
     return None
 
 
+def _is_precompiled_header_task(arguments: list[str]) -> bool:
+    """Return whether a compile command emits a precompiled header."""
+    language_mode = None
+    for index, argument in enumerate(arguments):
+        if argument == "-x":
+            if index + 1 >= len(arguments):
+                continue
+            language_mode = arguments[index + 1]
+        elif argument.startswith("-x") and len(argument) > 2:
+            language_mode = argument[2:].lstrip("=")
+    return language_mode is not None and language_mode.lower() in {
+        "c-header",
+        "c++-header",
+    }
+
+
 def _clang_tasks(root: Path, language: str, functions, database_path: Path | None):
     if database_path is None:
         return None
@@ -727,7 +744,11 @@ def _clang_tasks(root: Path, language: str, functions, database_path: Path | Non
         if not source.is_absolute():
             source = directory / source
         arguments = _entry_arguments(entry)
-        if arguments is None or _entry_language(source, arguments) != language:
+        if (
+            arguments is None
+            or _is_precompiled_header_task(arguments)
+            or _entry_language(source, arguments) != language
+        ):
             continue
         if _is_owned_analysis_path(source, root, directory):
             continue
