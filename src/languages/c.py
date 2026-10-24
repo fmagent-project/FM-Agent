@@ -1,5 +1,6 @@
 import re
 
+from src.languages.c_indirect import analyze as analyze_indirect_calls
 from src.languages.clang import call_edges as clang_call_edges
 from src.languages.codegraph import CodeGraphExtractor
 
@@ -126,6 +127,12 @@ def call_edges(proj_dir: str) -> dict:
         return None
     edges = clang_call_edges(proj_dir, "c", cg)
     return edges if edges is not None else cg.get_call_edges("c")
+
+
+def indirect_calls(proj_dir: str) -> list:
+    """Return C calls through function pointers, resolved with Clang."""
+    cg = CodeGraphExtractor.from_proj_dir(proj_dir)
+    return analyze_indirect_calls(cg) if cg else []
 
 
 def function_spans(proj_dir: str, filepath: str):

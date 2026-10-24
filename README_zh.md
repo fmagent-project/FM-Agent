@@ -350,7 +350,7 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 
 1. FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，请确保不存在命名冲突。
 2. `md/` 目录下的 Markdown 文件提供了引导 Agent 推理过程的通用说明。针对项目特定的上下文（如不变量、协议、编码规则、领域术语），优先使用 `--domain-knowledge`。对于项目特定的 Bug 验证流程，请使用 `--bug-validator`，无需直接修改内置提示词；例如，编译器项目的自定义 validator 可以要求 Agent 将输出与 GCC 等参考实现进行对比。
-3. **支持的编程语言**：Rust、C、C++、Python、Java、Go、CUDA、JavaScript、TypeScript、ArkTS、Erlang。C/C++ 调用图对 Clang 分析成功的函数使用 Clang，其余函数使用 codegraph。Erlang 的函数抽取与调用图需要 ELP；ELP 不可用时会给出警告并跳过 Erlang 文件。
+3. **支持的编程语言**：Rust、C、C++、Python、Java、Go、CUDA、JavaScript、TypeScript、ArkTS、Erlang。C/C++ 调用图对 Clang 分析成功的函数使用 Clang，其余函数使用 codegraph。Clang 可用时，C 语言经函数指针的调用（回调表、登记的处理函数、经结构体字段分发）会连到所有可能存进该指针的函数；设置 `FM_AGENT_INDIRECT_CALLS=0` 可关闭。`--incremental` 模式暂不使用。Erlang 的函数抽取与调用图需要 ELP；ELP 不可用时会给出警告并跳过 Erlang 文件。
 
 ## 论文引用
 

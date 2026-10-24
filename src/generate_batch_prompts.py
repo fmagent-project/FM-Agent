@@ -233,6 +233,56 @@ def detect_lang_and_comment(file_rel: str, ext_to_lang: Dict[str, str]) -> Tuple
     return lang, comment
 
 
+def _indirect_call_lines(functions: List[dict], fm_agent_prefix: str) -> List[str]:
+    """Prompt section for calls through function pointers.
+
+    Each call site gets one shared expectation in the caller's .info.json,
+    named by the site's label; supplemental edges carry that label to every
+    target as an info name, so each target sees the expectation.
+    """
+    # Calls with the same label and targets in one caller (the same macro used
+    # several times) are listed once with all their lines.
+    grouped = {}
+    for fn in functions:
+        for call in fn.get("indirect_calls", ()):
+            key = (fn["name"], call["label"], tuple(call["targets"]))
+            if key in grouped:
+                grouped[key][1].append(call["line"])
+            else:
+                grouped[key] = (call, [call["line"]])
+    if not grouped:
+        return []
+    lines = [
+        "## INDIRECT CALLS",
+        "These units call functions through pointers. Each call may reach any of "
+        "its listed targets.",
+        "",
+    ]
+    for (caller_name, _, _), (call, call_lines) in grouped.items():
+        where = ", ".join(str(line) for line in call_lines)
+        noun = "line" if len(call_lines) == 1 else "lines"
+        head = f"- {caller_name}, source {noun} {where}: `{call['label']}`"
+        if call.get("index"):
+            lines.append(
+                f"{head} -> {call['count']} possible targets, listed in "
+                f"{fm_agent_prefix}{call['index']}"
+            )
+        else:
+            targets = ", ".join(target.split("::")[-1] for target in call["targets"])
+            lines.append(f"{head} -> {targets}")
+    lines.extend([
+        "",
+        "For each indirect call above, write exactly ONE callee entry in the caller's "
+        ".info.json, with `name` set to the label shown in backticks; calls with the "
+        "same label share one entry. Describe what the caller requires from whichever "
+        "target is invoked - the contract every target must honor - not each target "
+        "separately. Open the index file or a target's extracted file only when you "
+        "need its details.",
+        "",
+    ])
+    return lines
+
+
 def build_prompt(
     phase: int,
     layer_idx: int,
@@ -367,6 +417,8 @@ def build_prompt(
         lines.append("of switch arms / dispatch cases, you are transcribing the implementation.")
         lines.append("A dispatch function's contract is the invariant that holds ACROSS ALL cases.")
         lines.append("")
+
+    lines.extend(_indirect_call_lines(functions, fm_agent_prefix))
 
     lines.append(f"## UNITS ({len(functions)} total - process ALL)")
     for idx, fn in enumerate(functions, start=1):

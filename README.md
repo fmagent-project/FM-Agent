@@ -443,7 +443,7 @@ manually with the same command.
 
 1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
 2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For project-specific bug-validation procedures, use `--bug-validator` instead of editing the built-in prompt; for example, a compiler-specific validator can instruct the agent to compare outputs against a reference implementation such as GCC.
-3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. C/C++ call graphs use Clang where analysis succeeds and codegraph for the remaining functions. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
+3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. C/C++ call graphs use Clang where analysis succeeds and codegraph for the remaining functions. When Clang is available, C calls through function pointers (callback tables, registered handlers, dispatch through struct fields) are linked to every function that can be stored in the called pointer; set `FM_AGENT_INDIRECT_CALLS=0` to turn this off. It is not used in `--incremental` mode yet. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
 
 ## Citation
 

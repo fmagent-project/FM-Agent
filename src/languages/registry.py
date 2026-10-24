@@ -29,6 +29,7 @@ class LanguageHandler:
         -> {abs_filepath: [(func_name, body)]} | None
     split_blocks(func, granularity)      -> [chunk, ...] | None
     remove_comments(code)               -> str | None
+    indirect_calls(proj_dir)            -> [IndirectSite]
 
     Each function handles its own backend (e.g. codegraph) internally.
     batch_extract returns ``None`` when a semantic backend cannot safely
@@ -40,12 +41,14 @@ class LanguageHandler:
     file, or raises BackendUnavailableError for languages where a regex
     fallback is unsafe (e.g. Erlang/ELP) — callers that are about to delete
     extracted-function artifacts should catch it and skip the file instead of
-    trusting an empty regex result.
+    trusting an empty regex result. indirect_calls resolves calls through
+    function pointers, whose callee the source does not name; it returns an
+    empty list when it has nothing to add.
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
          function_spans, and optionally incremental_source_extract / split_blocks /
-         remove_comments
+         remove_comments / indirect_calls
       2. Import it here and add one entry to REGISTRY
     No other files need to change.
     """
@@ -55,13 +58,14 @@ class LanguageHandler:
     incremental_source_extract: Callable | None = None
     split_blocks: Callable | None = None
     remove_comments: Callable | None = None
+    indirect_calls: Callable | None = None
 
 BackendUnavailableError = _BackendUnavailableError
 
 REGISTRY: dict = {
     "python":     LanguageHandler(batch_extract=_python.batch_extract,     call_edges=_python.call_edges,     function_spans=_python.function_spans, remove_comments=_python.remove_comments),
     "go":         LanguageHandler(batch_extract=_go.batch_extract,         call_edges=_go.call_edges,         function_spans=_go.function_spans, remove_comments=_go.remove_comments),
-    "c":          LanguageHandler(batch_extract=_c.batch_extract,          call_edges=_c.call_edges,          function_spans=_c.function_spans, split_blocks=_c.split_blocks, remove_comments=_c.remove_comments),
+    "c":          LanguageHandler(batch_extract=_c.batch_extract,          call_edges=_c.call_edges,          function_spans=_c.function_spans, split_blocks=_c.split_blocks, remove_comments=_c.remove_comments, indirect_calls=_c.indirect_calls),
     "cpp":        LanguageHandler(batch_extract=_cpp.batch_extract,        call_edges=_cpp.call_edges,        function_spans=_cpp.function_spans, split_blocks=_cpp.split_blocks, remove_comments=_cpp.remove_comments),
     "java":       LanguageHandler(batch_extract=_java.batch_extract,       call_edges=_java.call_edges,       function_spans=_java.function_spans, split_blocks=_java.split_blocks, remove_comments=_java.remove_comments),
     "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans, split_blocks=_rust.split_blocks, remove_comments=_rust.remove_comments),
@@ -346,3 +350,17 @@ def call_edges_all(proj_dir: str, lang_keys) -> tuple:
             seen.add(key)
             edges.append(edge)
     return edges, langs
+
+
+def indirect_call_sites_all(proj_dir: str) -> list:
+    """Return the calls through function pointers that every backend resolves.
+
+    Each item is an IndirectSite. All backends are asked rather than those of
+    one phase's files, since a C caller may sit in a header, which counts as
+    C++ by extension.
+    """
+    sites = []
+    for handler in REGISTRY.values():
+        if handler.indirect_calls is not None:
+            sites.extend(handler.indirect_calls(proj_dir))
+    return sites

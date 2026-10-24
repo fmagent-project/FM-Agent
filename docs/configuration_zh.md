@@ -37,6 +37,7 @@ FM-Agent 的配置项都在 [`fm-agent.toml`](../fm-agent.toml) 里（每一项�
 | `CLANG_COMMAND` | `clang` / `clang++` | 用于 C/C++ 调用图分析的 Clang driver；默认值按语言自动选择 |
 | `CLANG_COMPILE_COMMANDS` | unset | 可选的 `compile_commands.json` 文件或所在目录；未设置时检查项目根目录和 `build/` |
 | `CLANG_TIMEOUT_SECONDS` | `120` | 每个 Clang 翻译单元导出 AST 的超时时间（秒）；未被成功导出覆盖的函数使用 codegraph |
+| `FM_AGENT_INDIRECT_CALLS` | `1` | 设为 `0` 时关闭用 Clang 解析 C 语言经函数指针的调用（`--incremental` 模式下也不启用）；没有编译数据库时会把所有头文件目录作为 `-I` 传给 Clang |
 | `ELP_COMMAND` | `elp` | 用于 Erlang 函数抽取与调用图分析的 ELP 可执行文件或命令 |
 | `ELP_TIMEOUT_SECONDS` | `180` | ELP 初始化、索引及单次 LSP 请求的超时时间（秒） |
 
