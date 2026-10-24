@@ -24,6 +24,7 @@ from src.git import (
     _get_head_commit,
     _record_version,
 )
+from src.languages.clang import prepare_compile_database
 from src.languages.codegraph import try_codegraph_init
 from src.plugin import PLUGIN_OPTION_NAMES, get_unsupported_plugin_options, run_plugin_hook
 from src.pipeline_setup import (
@@ -349,6 +350,21 @@ def run_pipeline(
             f"{len(domain_knowledge_relpaths)} markdown file(s)."
         )
 
+    # Build (or rebuild) the codegraph index before any source-derived metadata.
+    # An opted-in Bear build may regenerate project sources, so prepare its
+    # compilation database now and rebuild the index if the source tree changed.
+    try_codegraph_init(proj_dir, force=not resume)
+    build_sources_changed = prepare_compile_database(
+        proj_dir, specification.languages
+    )
+    if resume and build_sources_changed:
+        raise RuntimeError(
+            "The native build changed C/C++ sources while --resume was active; "
+            "rerun without --resume so extracted functions and specs are rebuilt"
+        )
+    if build_sources_changed:
+        try_codegraph_init(proj_dir)
+
     # Stage 1: generate phase.json (input: target code → phases.json)
     # Stage 2: generate domain context (input: phases.json → domain context files)
     phase_stage = plugin_config.get_stage("generate_phase_plan") if plugin_config else None
@@ -381,7 +397,10 @@ def run_pipeline(
                 proj_dir,
             )
         _run_generate_phases(
-            proj_dir, work_dir, script_dir, resume=resume,
+            proj_dir,
+            work_dir,
+            script_dir,
+            resume=resume and not build_sources_changed,
             submodules=submodules,
             workflow_source=specification.prompts.phase_plan,
             specification=specification,
@@ -405,6 +424,7 @@ def run_pipeline(
         one_phase=one_phase,
         specification=specification,
     )
+    phases_modified = phases_modified or build_sources_changed
 
     print("[Pipeline] Stage 2/6: Generating domain context...")
     if context_stage is not None and context_stage.type == "pass":
@@ -444,13 +464,6 @@ def run_pipeline(
                 context_stage.output_hook,
                 proj_dir,
             )
-
-    # Build (or rebuild) the codegraph index if codegraph is installed. Both
-    # run_extraction (Stage 3) and generate_topdown_layers (Stage 5) read from it.
-    # force=not resume mirrors run_extraction below: a fresh run rebuilds so the
-    # index matches the current tree, while a resume reuses the existing index
-    # (same tree as the interrupted run — rebuilding would just be wasted work).
-    try_codegraph_init(proj_dir, force=not resume)
 
     # Run function extraction using extract.py
     # force=False on resume preserves already-specced extracted files; on a fresh

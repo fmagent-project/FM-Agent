@@ -5,6 +5,7 @@ echo "=== fm-agent: installing required software ==="
 
 INSTALL_ERLANG_SUPPORT=0
 INSTALL_CHISEL_SUPPORT=0
+INSTALL_CLANG_SUPPORT=0
 INSTALL_DSH=0
 for arg in "$@"; do
     case "$arg" in
@@ -17,16 +18,20 @@ for arg in "$@"; do
         --with-chisel)
             INSTALL_CHISEL_SUPPORT=1
             ;;
+        --with-clang)
+            INSTALL_CLANG_SUPPORT=1
+            ;;
         -h|--help)
-            echo "Usage: ./install.sh [--with-dsh] [--with-erlang] [--with-chisel]"
+            echo "Usage: ./install.sh [--with-dsh] [--with-erlang] [--with-chisel] [--with-clang]"
             echo "  --with-dsh     Install DeepSeek Harness as the agent backend"
             echo "  --with-erlang  Install/verify Erlang/OTP 26+, rebar3 3.24.0+, and ELP"
             echo "  --with-chisel  Install/verify CIRCT firtool and the FM-Agent Chisel pass plugin"
+            echo "  --with-clang   Install/verify LLVM/Clang, llvm-link, Bear, and optional PhASAR"
             exit 0
             ;;
         *)
             echo "[!!] unknown option: $arg"
-            echo "Usage: ./install.sh [--with-dsh] [--with-erlang] [--with-chisel]"
+            echo "Usage: ./install.sh [--with-dsh] [--with-erlang] [--with-chisel] [--with-clang]"
             exit 1
             ;;
     esac
@@ -431,6 +436,68 @@ if [[ "$INSTALL_ERLANG_SUPPORT" -eq 1 ]]; then
     echo "[ok] Erlang/OTP $installed_otp"
     echo "[ok] rebar3 $installed_rebar"
     echo "[ok] $(elp version)"
+fi
+
+if [[ "$INSTALL_CLANG_SUPPORT" -eq 1 ]]; then
+    echo "[..] installing/verifying optional Clang support"
+    os_name="$(uname -s)"
+    homebrew_llvm_bin=""
+    if [[ "$os_name" == "Darwin" ]]; then
+        command -v brew &>/dev/null || {
+            echo "[!!] Homebrew is required to install Bear on macOS."
+            exit 1
+        }
+        brew install bear llvm@15
+        homebrew_llvm_bin="$(brew --prefix llvm@15)/bin"
+    elif [[ "$os_name" == "Linux" ]]; then
+        if ! command -v clang-15 &>/dev/null || ! command -v clang++-15 &>/dev/null \
+            || ! command -v llvm-link-15 &>/dev/null || ! command -v llvm-dis-15 &>/dev/null \
+            || ! command -v bear &>/dev/null; then
+            if [[ ! -f /etc/os-release ]]; then
+                echo "[!!] automatic Clang/Bear installation is supported only on Ubuntu."
+                exit 1
+            fi
+            # shellcheck disable=SC1091
+            source /etc/os-release
+            if [[ "${ID:-}" != "ubuntu" ]]; then
+                echo "[!!] automatic Clang/Bear installation is supported only on Ubuntu; found ${ID:-unknown}."
+                exit 1
+            fi
+            sudo apt-get update -y
+            sudo apt-get install -y clang-15 llvm-15 llvm-15-tools bear
+        fi
+    else
+        echo "[!!] automatic Clang/Bear installation is not available on $os_name."
+        exit 1
+    fi
+
+    if [[ -n "$homebrew_llvm_bin" ]]; then
+        clang_probe="$homebrew_llvm_bin/clang"
+        clangxx_probe="$homebrew_llvm_bin/clang++"
+        llvm_link_probe="$homebrew_llvm_bin/llvm-link"
+        llvm_dis_probe="$homebrew_llvm_bin/llvm-dis"
+    else
+        clang_probe="$(command -v clang-15 || command -v clang || true)"
+        clangxx_probe="$(command -v clang++-15 || command -v clang++ || true)"
+        llvm_link_probe="$(command -v llvm-link-15 || command -v llvm-link || true)"
+        llvm_dis_probe="$(command -v llvm-dis-15 || command -v llvm-dis || true)"
+    fi
+    [[ -x "$clang_probe" ]] || { echo "[!!] clang was not installed"; exit 1; }
+    [[ -x "$clangxx_probe" ]] || { echo "[!!] clang++ was not installed"; exit 1; }
+    [[ -x "$llvm_link_probe" ]] || { echo "[!!] llvm-link was not installed"; exit 1; }
+    [[ -x "$llvm_dis_probe" ]] || { echo "[!!] llvm-dis was not installed"; exit 1; }
+    command -v bear &>/dev/null || { echo "[!!] Bear was not installed"; exit 1; }
+    echo "[ok] $($clang_probe --version | head -n1)"
+    echo "[ok] $($llvm_link_probe --version | head -n1)"
+    echo "[ok] $(bear --version | head -n1)"
+    if [[ -n "${PHASAR_CALL_GRAPH_COMMAND:-}" ]]; then
+        phasar_probe="${PHASAR_CALL_GRAPH_COMMAND%% *}"
+        command -v "$phasar_probe" &>/dev/null \
+            || { echo "[!!] configured PhASAR call-graph command was not found: $PHASAR_CALL_GRAPH_COMMAND"; exit 1; }
+        echo "[ok] PhASAR call-graph command: $PHASAR_CALL_GRAPH_COMMAND"
+    else
+        echo "[!!] PhASAR v2510 is not installed; build it with LLVM 15 and configure PHASAR_CALL_GRAPH_COMMAND or put phasar-cli on PATH"
+    fi
 fi
 
 if [[ "$INSTALL_CHISEL_SUPPORT" -eq 1 ]]; then

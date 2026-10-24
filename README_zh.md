@@ -60,7 +60,7 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 - [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) 插件（通过 `bunx` 安装）
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) 插件 —— 采集 OpenCode 原始 LLM 请求/响应 trace
 - 你所用 provider 的 LLM API 密钥（示例使用 [OpenRouter](https://openrouter.ai/)）
-- [Clang](https://clang.llvm.org/docs/UsersManual.html)——可选；可用时用于生成更准确的 C/C++ 调用图，Clang 无法分析的函数会逐函数回退到 codegraph。FM-Agent 会读取项目根目录或 `build/` 下的 `compile_commands.json`；其他位置可通过 `CLANG_COMPILE_COMMANDS` 指定。
+- [Clang/LLVM 15](https://clang.llvm.org/docs/UsersManual.html) 和 [PhASAR v2510](https://github.com/secure-software-engineering/phasar/releases/tag/v2510)——可选；FM-Agent 从 `compile_commands.json` 生成 LLVM bitcode，链接后让 `phasar-cli` 生成整种语言的 OTF+CFLAnders 调用图。如果不同可执行目标含有重复的全局定义而无法链接为一个模块，FM-Agent 会改为对各翻译单元分别运行 PhASAR。结果要么完整使用该后端，要么整种语言完全回退到 CodeGraph，不混合两种后端的边。请安装匹配的 LLVM 工具和 PhASAR v2510（或将 `PHASAR_CALL_GRAPH_COMMAND` 设置为 `phasar-cli` 路径）。FM-Agent 会先读取项目根目录或 `build/` 下的 `compile_commands.json`，其他位置可通过 `CLANG_COMPILE_COMMANDS` 指定。自动生成默认关闭，因为该过程会执行目标仓库控制的配置或构建逻辑。对于可信仓库，可设置 `CLANG_GENERATE_COMPILE_COMMANDS=1`：CMake 项目使用 CMake/Ninja，带 makefile 的非 CMake 项目通过 [Bear](https://github.com/rizsotto/Bear) 执行 `make -B`。
 - [Erlang Language Platform（ELP）](https://whatsapp.github.io/erlang-language-platform/docs/get-started/)——可选，仅分析 Erlang 项目时需要
   - 本 Erlang 集成已在 Ubuntu 的 Erlang/OTP 26 或更高版本上验证；请选择基于兼容 OTP 版本构建的 ELP 发布包。
   - ELP 自动识别包含 `rebar.config` 的项目时，要求 rebar3 3.24.0 或更高版本。
@@ -128,6 +128,14 @@ Erlang 工具链不影响其他语言，因此默认不安装。如需自动安�
 ```
 
 该选项在 macOS 上使用 Homebrew；在 Ubuntu 上，当系统 OTP 缺失或版本过低时使用 RabbitMQ Team Erlang PPA。Ubuntu 配置已使用 Erlang/OTP 26+ 验证；macOS Erlang 配置尚未测试，将使用 Homebrew 选择的当前公式版本。Linux 下的 rebar3 和 ELP 会安装到 `~/.local/bin`，请确保新终端的 `PATH` 包含该目录。你也可以手动安装这些工具，确认 `rebar3 version` 和 `elp version` 可执行，并在需要时将 `ELP_COMMAND` 设置为 ELP 的绝对路径。
+
+Clang/LLVM 与 PhASAR 支持同样是可选项。在 Ubuntu 或 macOS 上安装或检查 LLVM 工具与 Bear，可运行：
+
+```bash
+./install.sh --with-clang
+```
+
+安装脚本会检查 Clang、LLVM linker 工具和 Bear。请按照 [PhASAR 官方构建说明](https://github.com/secure-software-engineering/phasar/blob/v2510/BUILD.md) 使用 LLVM 15 构建 PhASAR v2510，然后将 `phasar-cli` 放入 `PATH`，或设置 `PHASAR_CALL_GRAPH_COMMAND`。Bear 会对检测到的 `GNUmakefile`、`Makefile` 或 `makefile` 执行 `make -B`，也可执行 `CLANG_BEAR_BUILD_COMMAND` 指定的命令，并可能产生正常的构建产物。因此，只有分析可信仓库时才应启用自动 CMake/Bear 生成。
 
 FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无需手动编辑 `~/.config/opencode/opencode.json` 来设置模型或密钥。上面的配置向导仍然可以把该文件同步好，并把 API 密钥写入用户状态/配置目录下按 provider 区分的私有本地文件，方便独立使用 OpenCode（见 [docs/config_llm.md](docs/config_llm.md)）。
 如果你已经设置了 `OPENCODE_CONFIG`，向导会优先更新那个文件，而不是默认的全局路径。若未设置该变量但设置了 `OPENCODE_CONFIG_DIR`，向导会更新该目录中的 `opencode.jsonc`（存在时）或 `opencode.json`。
@@ -350,7 +358,7 @@ FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，主要输出内容�
 
 1. FM-Agent 会在代码库目录下创建 `fm_agent/` 目录，请确保不存在命名冲突。
 2. `md/` 目录下的 Markdown 文件提供了引导 Agent 推理过程的通用说明。针对项目特定的上下文（如不变量、协议、编码规则、领域术语），优先使用 `--domain-knowledge`。对于项目特定的 Bug 验证流程，请使用 `--bug-validator`，无需直接修改内置提示词；例如，编译器项目的自定义 validator 可以要求 Agent 将输出与 GCC 等参考实现进行对比。
-3. **支持的编程语言**：Rust、C、C++、Python、Java、Go、CUDA、JavaScript、TypeScript、ArkTS、Erlang。C/C++ 调用图对 Clang 分析成功的函数使用 Clang，其余函数使用 codegraph。Erlang 的函数抽取与调用图需要 ELP；ELP 不可用时会给出警告并跳过 Erlang 文件。
+3. **支持的编程语言**：Rust、C、C++、Python、Java、Go、CUDA、JavaScript、TypeScript、ArkTS、Erlang。C 和 C++ 分别在已配置的翻译单元均能被 Clang 成功解析，且 Clang 覆盖该语言全部已索引函数时使用纯 Clang 调用图；否则整种语言使用 codegraph，不混合两个后端的边。Erlang 的函数抽取与调用图需要 ELP；ELP 不可用时会给出警告并跳过 Erlang 文件。
 
 ## 论文引用
 
