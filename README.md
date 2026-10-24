@@ -17,7 +17,7 @@ It contains three steps:
 
 The [website](http://fm-agent.ai/) of FM-Agent provides an online service for reasoning about codebases. You can try it easily!
 
-> **⚠️ Warning**: The effectiveness of this framework is heavily influenced by the capability of the underlying model. Weaker models may produce hallucinations, leading to incorrect reasoning conclusions. We recommend using models with strong reasoning abilities (Claude Opus 4.6/4.7, Claude Sonnet 4.6) for more reliable results.
+> **⚠️ Warning**: The effectiveness of this framework is heavily influenced by the capability of the underlying model. Weaker models may produce hallucinations, leading to incorrect reasoning conclusions. Choose a model with strong reasoning abilities for more reliable results.
 
 ## Table of Contents
 

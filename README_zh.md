@@ -17,7 +17,7 @@ FM-Agent 是首个实现大规模系统正确性全自动推理的框架，支�
 
 FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服务，欢迎体验！
 
-> **⚠️ 注意**：本框架的推理效果受所使用模型的能力影响较大。使用能力较弱的模型时，可能出现幻觉（hallucination），导致错误的推理结论。建议使用推理能力较强的模型(例如Claude Sonnet 4.6)以获得更可靠的结果。
+> **⚠️ 注意**：本框架的推理效果受所使用模型的能力影响较大。使用能力较弱的模型时，可能出现幻觉（hallucination），导致错误的推理结论。建议选择推理能力较强的模型，以获得更可靠的结果。
 
 ## 目录
 
@@ -138,7 +138,7 @@ FM-Agent 会从 `fm-agent.toml` 自动配置 OpenCode 的 provider，因此无�
 
 配置项都在 [`fm-agent.toml`](fm-agent.toml) 里（每一项都有就近注释），也可用对应的环境变量覆盖。完整参数、默认值与描述的参考表见 [docs/configuration_zh.md](docs/configuration_zh.md)。
 
-**重要说明：** 强烈建议使用 Claude Sonnet 4.6 等能力较强的模型，其他模型可能推理能力，无法有效发现 Bug。此外，请使用有权限访问 Claude 模型的 API 密钥，因为 FM-Agent 调用的 OpenCode 可能会使用 Claude 模型。
+**重要说明：** 建议选择推理能力较强的模型，以提高发现 Bug 的可靠性。请确保 API 密钥有权访问所选模型。
 
 （可选）FM-Agent 使用 oh-my-openagent 插件增强 OpenCode。该插件内置的 comment-checker 钩子应当禁用，否则它会拦截 FM-Agent 写入的每一个注释块（这些注释是函数的正确性规约），并迫使 Agent 消耗大量 Token 去论证注释的必要性或将其删除。
 请打开 oh-my-openagent 配置文件（通常位于 `~/.config/opencode/oh-my-openagent.json`），添加 `disabled_hooks`：
