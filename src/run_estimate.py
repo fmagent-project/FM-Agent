@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 import json
 import math
 import os
@@ -11,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .dsh_trace import DshTraceReader
+from .run_workspace import archive_root
 from .extract import EXT_TO_LANG, LANG_CONFIG, extract_functions_from_file
 from .file_utils import (
     _is_test_file,
@@ -482,7 +482,11 @@ def record_completed_run(work_dir: str | Path, duration_seconds=None):
 def collect_history_samples(proj_dir: str, work_dir: str | Path) -> list[dict]:
     """Collect persisted history plus completed archived workspaces."""
     records = read_history(work_dir)
-    for candidate in glob.glob(os.path.join(os.path.abspath(proj_dir), "fm_agent*")):
+    candidates = [
+        *Path(proj_dir).absolute().glob("fm_agent*"),
+        *archive_root(proj_dir).glob("*"),
+    ]
+    for candidate in candidates:
         candidate_path = Path(candidate)
         if not candidate_path.is_dir() or candidate_path.name == "fm_agent_estimate":
             continue

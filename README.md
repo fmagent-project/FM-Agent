@@ -212,6 +212,7 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 | --------------------------- | ----------------------------------------------------------------------------------------------- |
 | `proj_dir`                  | Directory of codebase that you want to check correctness                                        |
 | `--resume`                  | Continue a previous, interrupted run instead of starting over                                   |
+| `--resume-from WORKSPACE`   | Restore and resume an archived run, preserving both the archive and the current run. Repeat the original analysis options. |
 | `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
 | `--all-bugs`                | Continue reasoning after a mismatch and report every candidate. Full and incremental modes validate each candidate. |
 | `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
@@ -313,7 +314,60 @@ validations that do not yet have a terminal result. If reasoning stopped partway
 through, FM-Agent clears that function's intermediate candidates and validations
 and reruns the function without disturbing completed functions.
 
-By default, every invocation wipes the existing `fm_agent/` directory and restarts from scratch, so an interrupted run loses all prior progress. Pass `--resume` (or set the environment variable `FM_AGENT_RESUME=1`) to continue where the previous run left off. In resume mode FM-Agent keeps the existing `fm_agent/` directory and only does the remaining work. Resume with the same reasoning mode: an all-bugs workspace requires `--resume --all-bugs`; default-mode resume rejects it so existing candidates and validation records are not mixed with legacy output.
+By default, a fresh full run moves the existing analysis artifacts in `fm_agent/` to
+`<proj_dir>.fm_agent_runs/<UTC-timestamp>_<unique-id>/` before starting. Reports,
+traces, specifications, validation evidence, and checkpoints are retained. The
+current run remains at `<proj_dir>/fm_agent/`; both paths are printed on the CLI.
+Archives live beside the project so CodeGraph and project agents do not scan
+old code or reports.
+Empty workspaces and workspaces containing only `.env_check_memory` are not
+archived. This warning-ignore preference file stays in the current workspace
+across fresh runs; restoring an archive or copying results back also preserves
+the current preferences. Environment checks only create the workspace when
+saving an explicit warning-ignore preference.
+If archiving fails, analysis stops and the original workspace is left intact.
+Archived runs are never automatically deleted; remove unwanted archive
+directories explicitly when you no longer need them. This also applies to fresh
+`--isolate` and `--entry-func` runs; their result copy-back preserves the previous
+workspace before installing the new one.
+
+Archiving and result publication use same-filesystem renames. The project's
+parent directory must be writable, and the project, archive, and temporary
+publication directory must be on the same filesystem. A project that is itself
+a separate mount point may not meet this requirement; a failed operation
+preserves the existing results. Publication stages copies in
+`.<project-name>.fm_agent_publish_*/` beside the project, so remnants after a
+forced termination stay outside the analysis scope.
+
+Pass `--resume` (or set `FM_AGENT_RESUME=1`) to keep the current workspace and do
+only the remaining work. If you accidentally started a new run, restore the
+earlier workspace with `--resume-from`:
+
+```bash
+uv run python main.py <proj_dir> --resume
+uv run python main.py <proj_dir> --resume-from <proj_dir>.fm_agent_runs/<archive-id>
+uv run python report.py <proj_dir>.fm_agent_runs/<archive-id>
+```
+
+Restoration copies the selected archive, archives the current workspace, then
+resumes at `fm_agent/`. The selected archive remains available for comparison.
+Use the same source checkout and analysis options as the interrupted run;
+restoring artifacts does not check out or revert source code. In particular, an
+all-bugs workspace requires `--all-bugs`; incompatible reasoning modes are
+rejected. `--resume-from` cannot be combined with `--resume`, `--incremental`, or
+`--estimate`.
+
+`--resume-from WORKSPACE` accepts absolute paths, relative paths, and `~`.
+Relative paths are resolved from the directory where the command is launched.
+
+New runs write `fm_agent/run.json` before analysis, recording a stable run ID,
+timestamp, project path, Git HEAD and whether the checkout has uncommitted
+changes. The HTML report displays the ID and revision. Open the archived
+`report.html` to view its saved report, or use the command above to regenerate it
+from archived evidence (source previews on regeneration depend on source
+availability). Older workspaces without `run.json` are also preserved and can
+be resumed. Historical estimates include completed archived runs. Incremental
+mode continues to update its existing workspace in place.
 
 Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces adjacent `.spec.json` and `.info.json` metadata files for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
 

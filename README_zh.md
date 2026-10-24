@@ -160,6 +160,7 @@ uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FIL
 |---|---|
 | `proj_dir` | 待检测代码库的目录路径 |
 | `--resume` | 续跑上一次中断的运行，而非从头开始 |
+| `--resume-from WORKSPACE` | 从归档恢复并续跑，同时保留所选归档和当前运行；需重复原分析选项 |
 | `--incremental INTENT_FILE` | 以增量模式运行，参数值为描述本次修改目标的意图文件路径。 |
 | `--all-bugs` | 在发现不匹配后继续推理并报告每个候选 Bug。完整和增量模式会逐个验证。 |
 | `--domain-knowledge FILE [FILE ...]` | 将额外的 Markdown 领域知识文件复制到本次运行中，并提供给 setup、规约生成和 Bug 验证 Agent。别名：`--knowledge`；可重复传入。 |
@@ -198,7 +199,7 @@ uv run python main.py <proj_dir> --estimate --submodule src/core src/runtime
 
 预检会展示纳入和排除的目录、纳入/排除的源文件数量、通过本地抽取得到的近似函数数量，以及六个分析阶段。当存在已完成的历史运行时，FM-Agent 会按本次函数数量（缺失时退化为文件数量）缩放历史运行的实际耗时、LLM 调用次数、Token 用量和费用，并给出区间。所有预测值都会明确标注为 **ESTIMATE（估算）**；没有完整历史样本时会显示无法估算，而不会编造数值。
 
-成功运行的摘要会保存在 `fm_agent/history.jsonl`，并在全新运行清理工作目录时继续保留。正常运行也会在第一次 LLM 调用前生成 `fm_agent/estimate.json`，实时 Dashboard 会同时展示该预检和实际用量。
+成功运行的摘要会保存在 `fm_agent/history.jsonl`，并在全新运行归档旧工作目录时继续保留；估算也会读取已完成的归档运行。正常运行会在第一次 LLM 调用前生成 `fm_agent/estimate.json`，实时 Dashboard 会同时展示该预检和实际用量。
 
 如需在不修改 FM-Agent 内置提示词的情况下提供项目特定领域知识，可传入一个或多个 Markdown 文件：
 
@@ -236,7 +237,23 @@ uv run python main.py <proj_dir> --incremental intent.md --all-bugs
 
 若主结果为 `path/to/function.json`，all-bugs 候选会写在同一目录下，依次命名为 `path/to/function.bug-001.json`、`bug-002.json` 等。主结果通过 `bug_count` 和 `reasoning_complete` 记录候选数量及推理是否完整。续跑时，完整的主结果就是 reasoning 阶段的检查点，只补跑尚未产生终态结果的候选验证；若 reasoning 中途停止，则只清理并重跑该函数的中间候选和验证，不影响其他已完成函数。
 
-默认情况下，每次运行都会清空已有的 `fm_agent/` 目录并从头开始，因此一旦运行中断，之前的所有进度都会丢失。可通过 `--resume` 参数（或设置环境变量 `FM_AGENT_RESUME=1`）从上一次中断处继续。在续跑模式下，FM-Agent 会保留已有的 `fm_agent/` 目录，只执行剩余的工作。续跑时必须保持相同的推理模式：all-bugs 工作区需要使用 `--resume --all-bugs`；默认模式会拒绝恢复该工作区，避免已有候选及其验证记录与 legacy 输出混合。
+默认情况下，全新完整分析会先将旧 `fm_agent/` 中的分析产物移至 `<proj_dir>.fm_agent_runs/<UTC时间戳>_<唯一ID>/`，保留报告、trace、规约、验证证据及续跑检查点。当前运行仍位于 `<proj_dir>/fm_agent/`，CLI 会输出当前路径和归档路径。归档位于项目旁边，避免 CodeGraph 和项目 Agent 扫描旧代码及报告。空工作区或只有 `.env_check_memory` 的工作区不归档；该文件保存的忽略警告设置留在当前工作区，恢复归档和回写结果时也保留当前设置。环境检查仅在保存用户选择的忽略警告设置时创建工作区。归档失败时停止分析，保留原目录。历史归档不会自动删除，仅在你不再需要时自行显式删除。全新的 `--isolate` 和 `--entry-func` 运行也遵循这一规则；它们复制结果回原项目时同样会先保留旧工作区。
+
+归档和结果回写使用同一文件系统内的重命名操作，需要项目的父目录可写，且项目、归档和复制暂存目录位于同一文件系统。如果项目本身是独立挂载点，可能不满足这一条件；操作失败时会保留已有结果。复制暂存目录位于项目旁边的 `.<项目名>.fm_agent_publish_*/`，强制终止后即使有残留，也不会进入项目的分析范围。
+
+使用 `--resume`（或环境变量 `FM_AGENT_RESUME=1`）可保留当前工作区并继续剩余工作。若中断后误启动了新运行，可通过 `--resume-from` 恢复之前的归档：
+
+```bash
+uv run python main.py <proj_dir> --resume
+uv run python main.py <proj_dir> --resume-from <proj_dir>.fm_agent_runs/<归档ID>
+uv run python report.py <proj_dir>.fm_agent_runs/<归档ID>
+```
+
+恢复过程会复制所选归档、归档当前工作区，再从 `fm_agent/` 续跑；所选归档仍保留，便于比较。续跑需使用中断时的源代码版本和分析选项，恢复产物不会自动切换或回退源代码。尤其是 all-bugs 工作区必须带 `--all-bugs`，不兼容的推理模式会被拒绝。`--resume-from` 不可与 `--resume`、`--incremental` 或 `--estimate` 同时使用。
+
+`--resume-from WORKSPACE` 支持绝对路径、相对路径和 `~`；相对路径以启动命令时的当前目录为基准。
+
+新运行在分析开始前写入 `fm_agent/run.json`，记录稳定的运行 ID、时间、项目路径、Git HEAD 和是否存在未提交修改；HTML 报告也显示运行 ID 和版本。可以直接打开归档中的 `report.html` 查看已保存的报告，或用上述命令依据归档证据重新生成（重新生成时的源代码预览取决于源代码是否仍可访问）。没有 `run.json` 的旧版工作区也可保留和恢复。历史估算会使用已完成的归档运行。增量模式继续在原工作区中更新结果。
 
 使用 `--only-spec` 可以在生成行为规约后即停止，跳过推理与 Bug 验证阶段。它会为每个函数生成相邻的 `.spec.json` 和 `.info.json` 元数据文件，而不在验证上花费时间，适用于只需要规约、或希望先审阅规约再运行完整分析的场景。该参数不能与 `--incremental` 一起使用，因为增量模式本质上是一个推理/Bug 验证流程。
 

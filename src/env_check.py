@@ -70,6 +70,7 @@ def _load_ignored(work_dir):
 
 
 def _save_ignored(work_dir, ignored):
+    os.makedirs(work_dir, exist_ok=True)
     path = _memory_path(work_dir)
     with open(path, "w") as f:
         for item in sorted(ignored):
@@ -89,7 +90,6 @@ def run(proj_dir, config):
         return False
 
     work_dir = os.path.join(proj_dir, "fm_agent")
-    os.makedirs(work_dir, exist_ok=True)
     ignored = _load_ignored(work_dir)
 
     checks = []

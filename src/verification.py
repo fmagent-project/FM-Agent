@@ -356,6 +356,9 @@ def streaming_reasoner(
             except Exception as exc:
                 logging.error(f"Error for {fpath}: {exc}")
         logging.info("Done.")
+        # Let the pipeline finalize the partial workspace and stop. Returning
+        # normally here would start the next call-graph layer after Ctrl+C.
+        raise
 
     # Generate a validation summary only when bug validation was enabled.
     if proj_dir is not None and validate_bugs:

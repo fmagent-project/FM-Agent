@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sys
+from html import escape
 
 
 # No-dot extension -> language table, copied from src/extract.py so this module
@@ -97,9 +98,9 @@ def _locate_workdir(proj_dir):
     p = os.path.abspath(proj_dir)
     markers = ("trace", "bug_validation", "logic_verification_results")
     cand = os.path.join(p, "fm_agent")
-    if any(os.path.isdir(os.path.join(cand, m)) for m in markers):
+    if os.path.isfile(os.path.join(cand, "run.json")) or any(os.path.isdir(os.path.join(cand, m)) for m in markers):
         return cand
-    if any(os.path.isdir(os.path.join(p, m)) for m in markers):
+    if os.path.isfile(os.path.join(p, "run.json")) or any(os.path.isdir(os.path.join(p, m)) for m in markers):
         return p
     return cand  # directory may not exist yet; caller validates
 
@@ -368,22 +369,37 @@ def _match_span(spans, fn):
     return ""
 
 
+def _source_project_root(work_dir):
+    """Locate sources even when a workspace has moved to the external archive."""
+    try:
+        with open(os.path.join(work_dir, "run.json"), encoding="utf-8") as file:
+            metadata = json.load(file)
+        if isinstance(metadata, dict):
+            for key in ("analysis_dir", "project_dir"):
+                root = metadata.get(key)
+                if isinstance(root, str) and os.path.isdir(root):
+                    return root
+    except (OSError, ValueError):
+        pass
+    return os.path.dirname(os.path.abspath(work_dir))
+
+
 def _enrich_locations(work_dir, items):
     """Best-effort fill ``location`` from the codegraph index, when available.
 
     The codegraph database lives in the project root (``.codegraph/codegraph.db``),
-    found via ``CodeGraphExtractor.from_proj_dir`` (checks the workdir and its
-    parent). Any failure — missing db, unsupported language, unindexed file —
-    leaves ``location`` empty and the page renders "—".
+    found using the source directory recorded in run.json, or the workspace's
+    parent for older runs. Any failure — missing db, unsupported language,
+    unindexed file — leaves ``location`` empty and the page renders "—".
     """
     try:
         from src.languages.codegraph import CodeGraphExtractor
-        extractor = CodeGraphExtractor.from_proj_dir(work_dir)
+        extractor = CodeGraphExtractor.from_proj_dir(_source_project_root(work_dir))
     except Exception:
         return items
     if extractor is None:
         return items
-    proj_root = os.path.dirname(os.path.abspath(work_dir))
+    proj_root = _source_project_root(work_dir)
     for item in items:
         src = item.get("source_file") or ""
         fn = item.get("function_name") or ""
@@ -406,14 +422,11 @@ def _enrich_locations(work_dir, items):
 def _attach_source_href(work_dir, items):
     """Best-effort add ``source_href``: report.html → original source file.
 
-    report.html lives in ``work_dir``; the original source tree sits next to it
-    at the project root (``os.path.dirname(work_dir)``, the same heuristic
-    ``_enrich_locations`` uses). The href is a pure function of the paths — no
-    filesystem reads — so regeneration stays byte-deterministic, and the link
-    resolves whenever the project directory is found alongside the report.
+    Use the source directory recorded in run.json, falling back to the parent
+    for older runs. The link resolves while that source tree remains available.
     """
     work_dir_abs = os.path.abspath(work_dir)
-    proj_root = os.path.dirname(work_dir_abs)
+    proj_root = _source_project_root(work_dir)
     for item in items:
         src = item.get("source_file") or ""
         if not src or src.startswith("/") or ".." in src.split("/"):
@@ -1246,14 +1259,13 @@ setup();
 def _embed_sources(work_dir, items):
     """Embed the original source of every referenced file, deduplicated.
 
-    Reads the real source tree next to the workspace (the same heuristic
-    ``_attach_source_href`` uses) so the expanded view can show the function
-    under the report with GitHub-style syntax highlighting. Each unique
+    Reads the source tree located by ``_source_project_root`` so the expanded
+    view can show the function with GitHub-style syntax highlighting. Each unique
     ``source_file`` is read once; a missing or unreadable file is skipped (the
     page then shows a muted note). The read happens at generation time, so the
     output stays byte-deterministic as long as the sources are unchanged.
     """
-    proj_root = os.path.dirname(os.path.abspath(work_dir))
+    proj_root = _source_project_root(work_dir)
     sources = {}
     for item in items:
         src = item.get("source_file") or ""
@@ -1290,7 +1302,7 @@ def _embed_detail_full(work_dir, items):
     return items
 
 
-def _render_html(items, sources):
+def _render_html(items, sources, run_metadata=None):
     """Render a self-contained HTML page embedding items and source files."""
     ordered = sorted(
         items,
@@ -1316,6 +1328,12 @@ def _render_html(items, sources):
     # (which may contain __DATA__) is ever re-scanned as a substitution target.
     pre, _, mid = _HTML_TEMPLATE.partition("__DATA__")
     mid, _, post = mid.partition("__SOURCES__")
+    if run_metadata:
+        identity = f"Run: {run_metadata.get('run_id', 'unknown')} | HEAD: {run_metadata.get('git_head') or 'unknown'}"
+        if run_metadata.get("git_dirty"):
+            identity += " (uncommitted changes)"
+        pre = pre.replace("<div id=\"stats\"></div>",
+                          f"<p>{escape(identity)}</p><div id=\"stats\"></div>", 1)
     return pre + payload + mid + src_payload + post
 
 
@@ -1337,7 +1355,14 @@ def generate_report(work_dir):
     _attach_source_href(work_dir, items)
     _embed_detail_full(work_dir, items)
     sources = _embed_sources(work_dir, items)
-    html = _render_html(items, sources)
+    try:
+        with open(os.path.join(work_dir, "run.json"), encoding="utf-8") as file:
+            run_metadata = json.load(file)
+        if not isinstance(run_metadata, dict):
+            run_metadata = None
+    except (OSError, ValueError):
+        run_metadata = None
+    html = _render_html(items, sources, run_metadata)
 
     out = os.path.join(work_dir, "report.html")
     tmp = out + ".tmp"

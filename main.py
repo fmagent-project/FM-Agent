@@ -11,6 +11,7 @@ from src.file_utils import (
     _json_file_is_valid,
     _is_under_submodules,
     _ensure_resume_mode_compatible,
+    ResumeModeMismatchError,
     clear_test_file_exemptions,
 )
 from src.verification import _generate_all_bugs_validation_summary
@@ -37,10 +38,18 @@ from src.domain_knowledge import (
     stage_domain_knowledge_files,
 )
 from src.run_estimate import (
+    collect_history_samples,
     preserve_history_before_clean,
     record_completed_run,
     write_history,
     write_preflight_estimate,
+)
+from src.run_workspace import (
+    archive_workspace,
+    publish_workspace,
+    record_run_metadata,
+    restore_workspace,
+    validate_resume_source,
 )
 from src.specification import (
     SOFTWARE_PROFILE,
@@ -59,12 +68,6 @@ import logging
 import contextlib
 import subprocess
 from pathlib import Path
-
-
-def _clean_previous_run(work_dir):
-    """Remove the fm_agent working directory from the previous pipeline run."""
-    if os.path.isdir(work_dir):
-        shutil.rmtree(work_dir)
 
 
 def _print_preflight_summary(estimate, output_path):
@@ -138,13 +141,12 @@ def _finalize_failed_entry_run(original_proj_dir, entry_run_dir):
         return
 
     run_work_dir = os.path.join(entry_run_dir, "fm_agent")
-    ready_marker = os.path.join(run_work_dir, ".entry_scope_ready")
     original_work_dir = os.path.join(original_proj_dir, "fm_agent")
-    if os.path.isfile(ready_marker) and os.path.isdir(run_work_dir):
-        os.remove(ready_marker)
-        if os.path.isdir(original_work_dir):
-            shutil.rmtree(original_work_dir)
-        shutil.copytree(run_work_dir, original_work_dir, symlinks=True)
+    if os.path.isdir(run_work_dir):
+        publish_workspace(run_work_dir, original_work_dir)
+        published_marker = os.path.join(original_work_dir, ".entry_scope_ready")
+        if os.path.isfile(published_marker):
+            os.remove(published_marker)
         print(f"[EntryPlugin] Copied partial fm_agent/ to {original_work_dir}.")
     shutil.rmtree(entry_run_dir, ignore_errors=True)
 
@@ -276,6 +278,7 @@ def run_pipeline(
     plugin_context=None,
     all_bugs=False,
     specification: SpecificationProfile | None = None,
+    source_project_dir=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -297,7 +300,7 @@ def run_pipeline(
         default_prompt_root=Path(script_dir),
     )
 
-    # Clean files from the previous run — unless resuming, where we keep all
+    # Archive the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
     # only do the remaining work.
     preserved_history = list(initial_history or [])
@@ -310,8 +313,10 @@ def run_pipeline(
     else:
         if initial_history is None:
             preserved_history = preserve_history_before_clean(work_dir)
-        _clean_previous_run(work_dir)
+        archive_workspace(work_dir)
     os.makedirs(work_dir, exist_ok=True)
+    metadata = record_run_metadata(work_dir, source_project_dir or proj_dir)
+    print(f"[Pipeline] Current run: {os.path.abspath(work_dir)} (ID: {metadata['run_id']})")
     if preserved_history:
         write_history(work_dir, preserved_history)
     estimate_path = os.path.join(work_dir, "estimate.json")
@@ -454,7 +459,7 @@ def run_pipeline(
 
     # Run function extraction using extract.py
     # force=False on resume preserves already-specced extracted files; on a fresh
-    # run fm_agent/ was just wiped so it is equivalent to force=True.
+    # run fm_agent/ is new so it is equivalent to force=True.
     print("[Pipeline] Stage 3/6: Extracting functions from source files...")
     if extraction_stage is not None and extraction_stage.type == "pass":
         print(
@@ -669,7 +674,7 @@ def run_pipeline(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
+        usage="python3 main.py <proj_dir> [--resume | --resume-from WORKSPACE] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--all-bugs] "
               "[--submodule PATH [PATH ...]] [--entry-func PATH [PATH ...]] "
@@ -680,13 +685,21 @@ if __name__ == "__main__":
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", nargs="?", help="path to the project directory")
-    parser.add_argument(
+    resume_options = parser.add_mutually_exclusive_group()
+    resume_options.add_argument(
         "--resume",
         action="store_true",
-        help="continue a previous run in <proj_dir>/fm_agent instead of wiping it: "
+        help="continue the current run in <proj_dir>/fm_agent instead of archiving it: "
              "keeps phases.json, generated specs, and existing verification results; "
              "only does the remaining work. Repeat --all-bugs when resuming an "
              "all-bugs run.",
+    )
+    resume_options.add_argument(
+        "--resume-from",
+        metavar="WORKSPACE",
+        help="restore an archived workspace to fm_agent/ and resume it; "
+             "archives the current workspace and retains the selected archive. "
+             "Repeat the original run's options (including --all-bugs).",
     )
     parser.add_argument(
         "--incremental",
@@ -829,7 +842,7 @@ if __name__ == "__main__":
     if not args.proj_dir:
         parser.error("the following arguments are required: proj_dir")
 
-    resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
+    resume = bool(args.resume or args.resume_from or os.environ.get("FM_AGENT_RESUME") == "1")
     if plugin_config is not None:
         _validate_plugin_options(parser, plugin_config, args, resume)
     proj_dir = os.path.abspath(args.proj_dir)
@@ -866,6 +879,19 @@ if __name__ == "__main__":
             "--only-spec cannot be combined with --incremental "
             "(incremental mode is inherently a reasoning/bug-validation flow)."
         )
+
+    resume_source = None
+    if args.resume_from:
+        if args.incremental:
+            parser.error("--resume-from cannot be combined with --incremental")
+        try:
+            resume_source = validate_resume_source(args.resume_from, os.path.join(proj_dir, "fm_agent"))
+            if not args.only_spec:
+                _ensure_resume_mode_compatible(
+                    str(resume_source / "logic_verification_results"), args.all_bugs
+                )
+        except (ValueError, ResumeModeMismatchError) as exc:
+            parser.error(str(exc))
 
     if args.estimate:
         incompatible = any(
@@ -910,21 +936,6 @@ if __name__ == "__main__":
     entry_run_dir = None
     required_source_files = None
     validate_bugs = True
-    if is_entry:
-        entry_run_dir = original_proj_dir + ".fm-entry-run"
-        _make_run_copy(original_proj_dir, entry_run_dir)
-        required_source_files = list(dict.fromkeys(
-            _entry_func_source_rel(entry) for entry in args.entry_func
-        ))
-        validate_bugs = False
-        plugin_context.update({
-            "original_proj_dir": original_proj_dir,
-            "entry_run_dir": entry_run_dir,
-            "entry_funcs": args.entry_func,
-            "end_funcs": args.end_func or [],
-            "all_bugs": args.all_bugs,
-        })
-
     # Incremental mode diffs against the commit recorded by a previous run, and
     # --isolate snapshots the repo via a git worktree, so both require a git repo.
     # A non-git project can only run the full pipeline against the project directory
@@ -933,6 +944,9 @@ if __name__ == "__main__":
         parser.error(
             f"FM-Agent requires a git repository, but {proj_dir} is not."
         )
+
+    if resume_source is not None:
+        restore_workspace(resume_source, os.path.join(proj_dir, "fm_agent"))
 
     # Resolve the intent path before snapshotting, since cwd-relative paths must
     # resolve against the real project, not the frozen worktree copy.
@@ -958,6 +972,31 @@ if __name__ == "__main__":
     # snapshot commit, so the version to record must come from the real project.
     new_commit = _get_head_commit(proj_dir) if not is_entry else None
 
+    # Fresh runs in a copied project must archive the ORIGINAL workspace before
+    # starting analysis. Otherwise the later copy-back would destroy it, or an
+    # archive created inside a disposable entry copy would disappear with it.
+    copied_history = None
+    if is_entry or args.isolate:
+        original_work_dir = os.path.join(proj_dir, "fm_agent")
+        copied_history = collect_history_samples(proj_dir, original_work_dir)
+        if not resume and not old_commit:
+            archive_workspace(original_work_dir)
+
+    if is_entry:
+        entry_run_dir = original_proj_dir + ".fm-entry-run"
+        _make_run_copy(original_proj_dir, entry_run_dir)
+        required_source_files = list(dict.fromkeys(
+            _entry_func_source_rel(entry) for entry in args.entry_func
+        ))
+        validate_bugs = False
+        plugin_context.update({
+            "original_proj_dir": original_proj_dir,
+            "entry_run_dir": entry_run_dir,
+            "entry_funcs": args.entry_func,
+            "end_funcs": args.end_func or [],
+            "all_bugs": args.all_bugs,
+        })
+
     # With --isolate, the pipeline runs against the snapshot's fm_agent/. Resuming
     # needs the previous run's fm_agent/ (phases.json, specs, verification results)
     # to be present in the snapshot, so copy the excluded workspace in for resume
@@ -970,11 +1009,6 @@ if __name__ == "__main__":
         )
         if args.isolate
         else contextlib.nullcontext(proj_dir)
-    )
-    isolated_history = (
-        preserve_history_before_clean(os.path.join(proj_dir, "fm_agent"))
-        if args.isolate
-        else None
     )
     with run_ctx as run_dir:
         dashboard_process = _start_dashboard(run_dir) if args.dashboard else None
@@ -1006,9 +1040,10 @@ if __name__ == "__main__":
                     bug_validator_path=bug_validator_path,
                     validate_bugs=validate_bugs,
                     plugin_config=plugin_config,
-                    initial_history=isolated_history,
+                    initial_history=copied_history,
                     plugin_context=plugin_context,
                     all_bugs=args.all_bugs,
+                    source_project_dir=original_proj_dir,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
@@ -1034,9 +1069,7 @@ if __name__ == "__main__":
                 src_fm = os.path.join(run_dir, "fm_agent")
                 dst_fm = os.path.join(proj_dir, "fm_agent")
                 if os.path.isdir(src_fm):
-                    if os.path.isdir(dst_fm):
-                        shutil.rmtree(dst_fm)
-                    shutil.copytree(src_fm, dst_fm, symlinks=True)
+                    publish_workspace(src_fm, dst_fm)
                     print(f"[Pipeline] Copied results back to {dst_fm}")
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")
