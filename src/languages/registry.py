@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import logging
+import os
 
 from src.languages import python as _python
 from src.languages import go as _go
@@ -29,6 +30,7 @@ class LanguageHandler:
         -> {abs_filepath: [(func_name, body)]} | None
     split_blocks(func, granularity)      -> [chunk, ...] | None
     remove_comments(code)               -> str | None
+    indirect_calls(proj_dir)            -> [IndirectSite]
 
     Each function handles its own backend (e.g. codegraph) internally.
     batch_extract returns ``None`` when a semantic backend cannot safely
@@ -40,12 +42,16 @@ class LanguageHandler:
     file, or raises BackendUnavailableError for languages where a regex
     fallback is unsafe (e.g. Erlang/ELP) — callers that are about to delete
     extracted-function artifacts should catch it and skip the file instead of
-    trusting an empty regex result.
+    trusting an empty regex result. indirect_calls resolves indirect calls,
+    whose callee is a value chosen at run time (such as a C function
+    pointer) rather than named in the source; it returns an
+    empty list when it has nothing to add, and an exception it raises only
+    turns off that language's indirect calls for the rest of the run.
 
     To add a new language:
       1. Create src/languages/<lang>.py implementing batch_extract, call_edges,
          function_spans, and optionally incremental_source_extract / split_blocks /
-         remove_comments
+         remove_comments / indirect_calls
       2. Import it here and add one entry to REGISTRY
     No other files need to change.
     """
@@ -55,13 +61,14 @@ class LanguageHandler:
     incremental_source_extract: Callable | None = None
     split_blocks: Callable | None = None
     remove_comments: Callable | None = None
+    indirect_calls: Callable | None = None
 
 BackendUnavailableError = _BackendUnavailableError
 
 REGISTRY: dict = {
     "python":     LanguageHandler(batch_extract=_python.batch_extract,     call_edges=_python.call_edges,     function_spans=_python.function_spans, remove_comments=_python.remove_comments),
     "go":         LanguageHandler(batch_extract=_go.batch_extract,         call_edges=_go.call_edges,         function_spans=_go.function_spans, remove_comments=_go.remove_comments),
-    "c":          LanguageHandler(batch_extract=_c.batch_extract,          call_edges=_c.call_edges,          function_spans=_c.function_spans, split_blocks=_c.split_blocks, remove_comments=_c.remove_comments),
+    "c":          LanguageHandler(batch_extract=_c.batch_extract,          call_edges=_c.call_edges,          function_spans=_c.function_spans, split_blocks=_c.split_blocks, remove_comments=_c.remove_comments, indirect_calls=_c.indirect_calls),
     "cpp":        LanguageHandler(batch_extract=_cpp.batch_extract,        call_edges=_cpp.call_edges,        function_spans=_cpp.function_spans, split_blocks=_cpp.split_blocks, remove_comments=_cpp.remove_comments),
     "java":       LanguageHandler(batch_extract=_java.batch_extract,       call_edges=_java.call_edges,       function_spans=_java.function_spans, split_blocks=_java.split_blocks, remove_comments=_java.remove_comments),
     "rust":       LanguageHandler(batch_extract=_rust.batch_extract,       call_edges=_rust.call_edges,       function_spans=_rust.function_spans, split_blocks=_rust.split_blocks, remove_comments=_rust.remove_comments),
@@ -346,3 +353,34 @@ def call_edges_all(proj_dir: str, lang_keys) -> tuple:
             seen.add(key)
             edges.append(edge)
     return edges, langs
+
+
+_INDIRECT_CALLS_SWITCH = "FM_AGENT_INDIRECT_CALLS"
+_INDIRECT_CALLS_FAILED = set()  # (lang_key, proj_dir) whose analysis raised
+
+
+def indirect_call_sites_all(proj_dir: str) -> list:
+    """Return the indirect calls that every backend resolves.
+
+    Each item is an IndirectSite. All backends are asked rather than those of
+    one phase's files, since a C caller may sit in a header, which counts as
+    C++ by extension. Empty when FM_AGENT_INDIRECT_CALLS=0. The sites only add
+    edges, so a backend that raises is skipped for the rest of the run, with a
+    warning, and the call graph keeps its direct edges.
+    """
+    if os.environ.get(_INDIRECT_CALLS_SWITCH, "1").strip() == "0":
+        return []
+    sites = []
+    for lang_key, handler in REGISTRY.items():
+        failure_key = (lang_key, proj_dir)
+        if handler.indirect_calls is None or failure_key in _INDIRECT_CALLS_FAILED:
+            continue
+        try:
+            sites.extend(handler.indirect_calls(proj_dir))
+        except Exception as exc:  # noqa: BLE001 - degrade to direct edges only
+            _INDIRECT_CALLS_FAILED.add(failure_key)
+            _logger.warning(
+                "Indirect-call analysis for %s failed (%s: %s); continuing with "
+                "direct call edges only.", lang_key, type(exc).__name__, exc,
+            )
+    return sites

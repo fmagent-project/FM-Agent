@@ -295,7 +295,12 @@ def _clang_arguments(
     return result
 
 
-def _run_clang_ast(command, task, language: str, timeout: float):
+def _run_clang_ast(command, task, language: str, timeout: float, allow_errors: bool = False):
+    """Return one translation unit's JSON AST, or None.
+
+    With allow_errors, a unit Clang reports errors in still yields the AST it
+    printed for the code it could parse.
+    """
     source, directory, arguments = task
     argv = [*command, *_clang_arguments(arguments, source, directory, language)]
     try:
@@ -311,11 +316,11 @@ def _run_clang_ast(command, task, language: str, timeout: float):
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    if result.returncode != 0 or not result.stdout.strip():
+    if (result.returncode != 0 and not allow_errors) or not result.stdout.strip():
         return None
     try:
         ast = json.loads(result.stdout)
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return None
     return ast if isinstance(ast, dict) else None
 
@@ -552,14 +557,24 @@ def _clang_edges_from_asts(asts, root: Path, functions):
     return output, covered_fqns
 
 
-def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns):
-    """Use Clang for matched callers and codegraph for all other callers."""
+def _merge_call_edges(clang_edges, codegraph_edges, covered_fqns, keep_fn_pointer_edges=False):
+    """Use Clang for matched callers and codegraph for all other callers.
+
+    Clang's AST names only the direct callee of a call, so a call through a
+    function pointer yields no Clang edge. With keep_fn_pointer_edges,
+    codegraph's function-pointer dispatch edges are kept even for
+    Clang-covered callers, whether or not FM_AGENT_INDIRECT_CALLS is set.
+    """
     output = list(clang_edges)
-    output.extend(
-        edge
-        for edge in codegraph_edges
-        if edge.get("caller") not in covered_fqns
-    )
+    seen = {(edge.get("caller"), edge.get("callee")) for edge in clang_edges}
+    for edge in codegraph_edges:
+        if edge.get("caller") not in covered_fqns:
+            output.append(edge)
+        elif keep_fn_pointer_edges and edge.get("synthesized") == "fn-pointer-dispatch":
+            pair = (edge.get("caller"), edge.get("callee"))
+            if pair not in seen:
+                seen.add(pair)
+                output.append(edge)
     output.sort(
         key=lambda edge: (
             edge.get("span", {}).get("file") or "",
@@ -588,8 +603,22 @@ def _cache_key(root: Path, extractor, language: str, command, database_path):
     )
 
 
-def call_edges(proj_dir: str, language: str, extractor):
-    """Return per-function Clang edges with codegraph fallback."""
+def _cache_result(cache, key, value):
+    """Store value under key, dropping older results for the same language and root."""
+    if key is None:
+        return
+    for old_key in list(cache):
+        if old_key[:2] == key[:2] and old_key != key:
+            del cache[old_key]
+    cache[key] = value
+
+
+def call_edges(proj_dir: str, language: str, extractor, keep_fn_pointer_edges=False):
+    """Return per-function Clang edges with codegraph fallback.
+
+    keep_fn_pointer_edges keeps codegraph's function-pointer dispatch edges
+    for callers Clang covers too (see _merge_call_edges).
+    """
     root = Path(extractor._db).resolve().parent.parent
     command = _clang_command(language)
     if command is None:
@@ -597,6 +626,8 @@ def call_edges(proj_dir: str, language: str, extractor):
         return None
     database_path = _compile_database_path(root)
     cache_key = _cache_key(root, extractor, language, command, database_path)
+    if cache_key is not None:
+        cache_key = (*cache_key, keep_fn_pointer_edges)
     if cache_key is not None and cache_key in _CLANG_CACHE:
         return _CLANG_CACHE[cache_key]
 
@@ -632,7 +663,7 @@ def call_edges(proj_dir: str, language: str, extractor):
             )
             codegraph_edges = extractor.get_call_edges(language)
             result = _merge_call_edges(
-                clang_edges, codegraph_edges, covered_fqns
+                clang_edges, codegraph_edges, covered_fqns, keep_fn_pointer_edges
             )
             print(
                 f"[Clang] {language}: covered {len(covered_fqns)}/"
@@ -641,9 +672,5 @@ def call_edges(proj_dir: str, language: str, extractor):
                 f"{len(all_fqns - covered_fqns)} functions."
             )
 
-    if cache_key is not None:
-        for old_key in list(_CLANG_CACHE):
-            if old_key[:2] == cache_key[:2] and old_key != cache_key:
-                del _CLANG_CACHE[old_key]
-        _CLANG_CACHE[cache_key] = result
+    _cache_result(_CLANG_CACHE, cache_key, result)
     return result

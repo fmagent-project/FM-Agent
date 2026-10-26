@@ -75,6 +75,11 @@ from .domain_knowledge import (
     stage_domain_knowledge_files,
 )
 
+# Shared expectations written for indirect calls are not yet reconciled when
+# one target changes, so incremental mode leaves them out. Function-pointer
+# edges that codegraph finds itself are ordinary call edges and stay.
+_INDIRECT_CALLS = False
+
 
 class IncrementalMetadataError(RuntimeError):
     """Raised when required incremental metadata could not be made ready."""
@@ -834,7 +839,9 @@ def _topdown_ordered_fqns(work_dir, extra_call_edges=None):
     Regenerates the per-phase topdown-layer JSON files under work_dir/spec_prompts/ as
     a side effect (mirroring run_pipeline's generate_topdown_layers(work_dir) call).
     """
-    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+    generate_topdown_layers(
+        work_dir, extra_call_edges=extra_call_edges, indirect_calls=_INDIRECT_CALLS
+    )
     phases_data = _load_phases(work_dir)
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
 
@@ -1040,7 +1047,9 @@ def run_incremental_pipeline(
     logging.info("[Stage 7/10] Generating topdown layers...")
     with open(os.path.join(work_dir, "phases.json"), "r") as f:
         phases_data = json.load(f)
-    generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
+    generate_topdown_layers(
+        work_dir, extra_call_edges=extra_call_edges, indirect_calls=_INDIRECT_CALLS
+    )
     logging.info("  -> topdown layers generated for %d phase(s).", len(phases_data.get("phases", [])))
 
     # 8. Collect the scope of functions relevant to the developer intent (the intent file defines the goal of modification).
@@ -1684,6 +1693,7 @@ def _project_call_graph(work_dir, extra_call_edges=None):
         all_files,
         work_dir,
         extra_call_edges=extra_call_edges,
+        indirect_calls=_INDIRECT_CALLS,
     )
     return callees_map, callers_map, file_map, edge_aliases_map
 

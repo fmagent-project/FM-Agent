@@ -45,6 +45,7 @@ matching and cleanup use this layout too.
 | `CLANG_COMMAND`                 | `clang` / `clang++`            | Clang driver used for C/C++ call-graph analysis; the language-specific default is selected automatically |
 | `CLANG_COMPILE_COMMANDS`        | unset                          | Optional path to `compile_commands.json` or its directory; otherwise the project root and `build/` are checked |
 | `CLANG_TIMEOUT_SECONDS`         | `120`                          | Timeout for each Clang translation-unit AST export; functions not covered by successful exports use codegraph |
+| `FM_AGENT_INDIRECT_CALLS`       | `1`                            | Set to `0` to turn off resolving indirect calls, such as C calls through function pointers (resolved with Clang; also off in `--incremental` mode). Function-pointer edges that codegraph finds itself stay in the call graph either way. |
 | `ELP_COMMAND`                   | `elp`                          | ELP executable or command used for Erlang function and call-graph analysis |
 | `ELP_TIMEOUT_SECONDS`           | `180`                          | Timeout for ELP initialization, indexing, and individual LSP requests |
 

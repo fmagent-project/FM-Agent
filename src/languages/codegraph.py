@@ -11,6 +11,7 @@ REGISTRY in src/languages/registry.py. No other files need to change.
 import errno
 import functools
 import hashlib
+import json
 import logging
 import os
 import platform
@@ -220,6 +221,17 @@ def _fqn_for(file_path: str, name: str) -> str:
     parts = [p for p in d.split("/") if p]
     parts += [dashed, name]
     return "::".join(parts)
+
+
+def _synthesized_by(metadata) -> str | None:
+    """Return the edge's ``synthesizedBy`` marker, or None for a plain call."""
+    if not metadata:
+        return None
+    try:
+        value = json.loads(metadata).get("synthesizedBy")
+    except (ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
 
 
 def _node_fqn_map(cur, cg_langs) -> dict:
@@ -453,9 +465,12 @@ class CodeGraphExtractor:
         # inside the caller's file), while the edge provides the precise
         # call-site line/column. ORDER BY the edge coordinates so multiple call
         # sites of the same callee are returned in true source order.
+        # Edges codegraph synthesizes rather than reads off a call expression
+        # (function-pointer dispatch) carry their origin, so a backend that
+        # replaces codegraph's edges can still keep the ones it cannot derive.
         cur.execute(
             f"""
-            SELECT e.source, e.target, s.file_path, e.line, e.col
+            SELECT e.source, e.target, s.file_path, e.line, e.col, e.metadata
             FROM edges e
             JOIN nodes s ON e.source = s.id
             WHERE e.kind = 'calls' AND s.language IN ({placeholders})
@@ -463,7 +478,7 @@ class CodeGraphExtractor:
             """,
             cg_langs,
         )
-        for src_id, tgt_id, file_path, start_line, start_col in cur.fetchall():
+        for src_id, tgt_id, file_path, start_line, start_col, metadata in cur.fetchall():
             caller, callee = fqn_of.get(src_id), fqn_of.get(tgt_id)
             if not caller or not callee:
                 continue
@@ -476,7 +491,7 @@ class CodeGraphExtractor:
                 if key in seen:
                     continue
                 seen.add(key)
-            result.append({
+            edge = {
                 "caller": caller,
                 "callee": callee,
                 "kind": "call",
@@ -485,7 +500,11 @@ class CodeGraphExtractor:
                     "start_line": start_line,
                     "start_column": start_col,
                 },
-            })
+            }
+            synthesized = _synthesized_by(metadata)
+            if synthesized:
+                edge["synthesized"] = synthesized
+            result.append(edge)
 
         # Query 2: constructor calls synthesised from instantiates edges.
         # For each `caller instantiates ClassName` edge, find the constructor
