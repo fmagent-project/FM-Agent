@@ -16,8 +16,8 @@ import logging
 import subprocess
 
 from config import (
-    OPENCODE_MAX_RETRIES,
-    OPENCODE_SETUP_MODEL,
+    AGENT_MAX_RETRIES,
+    AGENT_SETUP_MODEL,
 )
 from .file_utils import (
     _is_test_file,
@@ -25,9 +25,8 @@ from .file_utils import (
     _iter_project_source_files,
     _is_under_submodules,
 )
-from .opencode_trace import run_opencode_traced
-from .llm_client import build_llm_cli_command
-from .language_mapping import extension_language_map
+from .agent_trace import record_stage_validation, run_agent_traced
+from .llm_client import build_llm_agent_command
 from .domain_knowledge import (
     format_domain_knowledge_bullets,
     list_staged_domain_knowledge_relpaths,
@@ -203,15 +202,15 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
-    command = build_llm_cli_command(
-        model=OPENCODE_SETUP_MODEL,
+    command = build_llm_agent_command(
+        model=AGENT_SETUP_MODEL,
         prompt=prompt,
         cwd=proj_dir,
     )
 
-    for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
+    for attempt in range(1, AGENT_MAX_RETRIES + 1):
         try:
-            run_opencode_traced(
+            run_agent_traced(
                 proj_dir=proj_dir,
                 work_dir=work_dir,
                 command=command,
@@ -229,10 +228,10 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
             return
         except subprocess.CalledProcessError as e:
             logging.warning(
-                "Domain-context sync attempt %d/%d failed: opencode exited %s",
-                attempt, OPENCODE_MAX_RETRIES, e.returncode,
+                "Domain-context sync attempt %d/%d failed: DeepSeek Harness exited %s",
+                attempt, AGENT_MAX_RETRIES, e.returncode,
             )
-            if attempt < OPENCODE_MAX_RETRIES:
+            if attempt < AGENT_MAX_RETRIES:
                 time.sleep(10)
 
     # The caller performs a final completeness check after this best-effort
@@ -241,7 +240,7 @@ def _sync_domain_context(proj_dir, work_dir, changed_phases, phase_cleanup=None)
     logging.warning(
         "Domain-context sync did not complete after %d attempts; "
         "phase_NN_types.txt files may be out of sync with phases.json.",
-        OPENCODE_MAX_RETRIES,
+        AGENT_MAX_RETRIES,
     )
 
 
@@ -586,15 +585,15 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
                    "Do NOT modify any existing project files.")
     prompt = f"{prompt}\n\n{fm_reminder}"
 
-    command = build_llm_cli_command(
-        model=OPENCODE_SETUP_MODEL,
+    command = build_llm_agent_command(
+        model=AGENT_SETUP_MODEL,
         prompt=prompt,
         cwd=proj_dir,
     )
 
-    for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
+    for attempt in range(1, AGENT_MAX_RETRIES + 1):
         try:
-            run_opencode_traced(
+            run_agent_traced(
                 proj_dir=proj_dir,
                 work_dir=work_dir,
                 command=command,
@@ -607,10 +606,10 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
             return
         except subprocess.CalledProcessError as e:
             logging.warning(
-                "Module-description update attempt %d/%d failed: opencode exited %s",
-                attempt, OPENCODE_MAX_RETRIES, e.returncode,
+                "Module-description update attempt %d/%d failed: DeepSeek Harness exited %s",
+                attempt, AGENT_MAX_RETRIES, e.returncode,
             )
-            if attempt < OPENCODE_MAX_RETRIES:
+            if attempt < AGENT_MAX_RETRIES:
                 time.sleep(10)
 
     # Best effort: a stale description is not fatal to the pipeline, so warn and
@@ -618,7 +617,7 @@ def _update_module_description(proj_dir, work_dir, modified_modules):
     logging.warning(
         "Module-description update did not complete after %d attempts; some module "
         "descriptions in phases.json may still reference deduplicated files.",
-        OPENCODE_MAX_RETRIES,
+        AGENT_MAX_RETRIES,
     )
 
 
@@ -635,20 +634,11 @@ def _phase_plan_schema_errors(phases_path):
     if not isinstance(data, dict):
         return ["the top-level value must be an object"]
 
-    errors = []
-    try:
-        extension_language_map(
-            data.get("languages"),
-            data.get("file_extensions"),
-        )
-    except ValueError as exc:
-        errors.append(str(exc))
-
     phases = data.get("phases")
     if not isinstance(phases, list):
-        errors.append('top-level field "phases" must be an array')
-        return errors
+        return ['top-level field "phases" must be an array']
 
+    errors = []
     for phase_index, phase in enumerate(phases):
         phase_path = f"phases[{phase_index}]"
         if not isinstance(phase, dict):
@@ -691,94 +681,133 @@ def _phase_plan_schema_errors(phases_path):
     return errors
 
 
-def _phase_plan_complete(work_dir, specification=None):
-    """Return True if phases.json is valid and obeys the language filter."""
+def _phase_plan_complete(work_dir):
+    """Return True only if phases.json exists and matches the required schema."""
     phases_path = os.path.join(work_dir, "phases.json")
-    return not (_phase_plan_schema_errors(phases_path) + _phase_plan_language_errors(phases_path, specification))
+    return not _phase_plan_schema_errors(phases_path)
 
 
-def _domain_context_complete(work_dir):
-    """Return True only if all domain context files exist and match the phases in phases.json."""
+def _missing_domain_context_outputs(work_dir):
+    """Return exact missing/invalid domain-context artifacts."""
+
+    missing = []
     phases_path = os.path.join(work_dir, "phases.json")
     if not _json_file_is_valid(phases_path):
-        return False
+        return ["fm_agent/phases.json (missing or invalid JSON)"]
 
     domain_dir = os.path.join(work_dir, "spec_prompts", "domain_context")
     if not os.path.exists(os.path.join(domain_dir, "engine_overview.txt")):
-        return False
+        missing.append("fm_agent/spec_prompts/domain_context/engine_overview.txt")
 
     try:
         with open(phases_path, "r") as f:
             phases_data = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return False
+        return ["fm_agent/phases.json (unreadable or invalid JSON)"]
 
     for phase in phases_data.get("phases", []):
         phase_num = phase.get("phase")
         if phase_num is None:
-            return False
+            missing.append("fm_agent/phases.json (phase number missing)")
+            continue
         types_path = os.path.join(domain_dir, f"phase_{phase_num:02d}_types.txt")
         if not os.path.exists(types_path):
-            return False
+            missing.append(
+                f"fm_agent/spec_prompts/domain_context/phase_{phase_num:02d}_types.txt"
+            )
 
-    return True
+    return missing
 
 
-def _setup_outputs_complete(work_dir, specification=None):
+def _domain_context_complete(work_dir):
+    """Return True only if all domain context files match phases.json."""
+
+    return not _missing_domain_context_outputs(work_dir)
+
+
+def _setup_outputs_complete(work_dir):
     """Return True when both phase plan and domain context are complete."""
-    return _phase_plan_complete(work_dir, specification) and _domain_context_complete(work_dir)
+    return _phase_plan_complete(work_dir) and _domain_context_complete(work_dir)
 
 
-def _collect_project_source_files(proj_dir, submodules=None, specification=None):
+def _collect_project_source_files(proj_dir, submodules=None):
     """Return non-test source files currently present in proj_dir, relative to proj_dir."""
     files = set()
-    for rel in _iter_project_source_files(proj_dir, submodules, specification):
+    for rel in _iter_project_source_files(proj_dir, submodules):
         if not _is_test_file(rel):
             files.add(rel)
     return files
 
 
-def _profile_language_allowed(source_file, specification=None):
-    if specification is None or specification.languages is None:
-        return True
-    from src.extract import EXT_TO_LANG  # local import avoids module cycles
+def _write_fallback_phase_plan(proj_dir, work_dir, submodules=None):
+    """Write a conservative phase plan when the model never creates one.
 
-    extension = os.path.basename(source_file).rsplit(".", 1)[-1].lower()
-    return specification.allows_language(EXT_TO_LANG.get(extension))
+    Stage 1 normally asks the model to group files semantically. A compatible
+    endpoint can still finish without executing ``write`` (or repeatedly emit a
+    malformed textual call). Aborting the entire analysis is unnecessary: a
+    deterministic single-phase plan preserves full source coverage and lets the
+    later model-backed stages proceed. Files are grouped by their top-level
+    directory only; no project source is modified.
+    """
+
+    source_files = sorted(_collect_project_source_files(proj_dir, submodules))
+    if not source_files:
+        return False
+
+    from src.extract import EXT_TO_LANG  # local import avoids a module cycle
+
+    grouped = {}
+    for source_file in source_files:
+        top_level = source_file.split("/", 1)[0] if "/" in source_file else "root"
+        grouped.setdefault(top_level, []).append(source_file)
+    extensions = sorted(
+        {
+            source_file.rsplit(".", 1)[1].lower()
+            for source_file in source_files
+            if "." in os.path.basename(source_file)
+        }
+    )
+    languages = sorted({EXT_TO_LANG[ext] for ext in extensions if ext in EXT_TO_LANG})
+    modules = [
+        {
+            "name": "root_sources" if name == "root" else name.replace("-", "_"),
+            "description": (
+                "Deterministic fallback grouping for source files at the project root."
+                if name == "root"
+                else f"Deterministic fallback grouping for source files under {name}/."
+            ),
+            "source_files": files,
+        }
+        for name, files in sorted(grouped.items())
+    ]
+    data = {
+        "project": os.path.basename(os.path.abspath(proj_dir)),
+        "languages": languages,
+        "file_extensions": extensions,
+        "phases": [
+            {
+                "phase": 1,
+                "name": "Complete Source Analysis",
+                "description": (
+                    "Fallback phase covering every detected non-test source file after "
+                    "the model did not create a valid phase plan."
+                ),
+                "modules": modules,
+                "depends_on_phases": [],
+            }
+        ],
+    }
+    os.makedirs(work_dir, exist_ok=True)
+    phases_path = os.path.join(work_dir, "phases.json")
+    temporary = phases_path + ".fallback.tmp"
+    with open(temporary, "w", encoding="utf-8") as stream:
+        json.dump(data, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+    os.replace(temporary, phases_path)
+    return not _phase_plan_schema_errors(phases_path)
 
 
-def _phase_plan_language_errors(phases_json, specification=None):
-    """Return phase-plan entries that violate a Profile language filter."""
-    if specification is None or specification.languages is None:
-        return []
-    try:
-        with open(phases_json, "r") as file:
-            data = json.load(file)
-    except (OSError, ValueError):
-        return []
-
-    if not isinstance(data, dict) or not isinstance(data.get("phases"), list):
-        return []
-
-    errors = []
-    for phase in data.get("phases", []):
-        if not isinstance(phase, dict) or not isinstance(phase.get("modules"), list):
-            continue
-        for module in phase.get("modules", []):
-            if not isinstance(module, dict) or not isinstance(module.get("source_files"), list):
-                continue
-            for source_file in module.get("source_files", []):
-                if not isinstance(source_file, str):
-                    continue
-                if not _profile_language_allowed(source_file, specification):
-                    errors.append(
-                        "source file "
-                        f"{source_file!r} is outside the Profile language filter"
-                    )
-    return errors
-
-
-def _phases_cover_current_sources(phases_json, proj_dir, submodules=None, specification=None):
+def _phases_cover_current_sources(phases_json, proj_dir, submodules=None):
     """Return whether phases.json is valid for the current source-file set."""
     try:
         with open(phases_json, "r") as f:
@@ -790,11 +819,7 @@ def _phases_cover_current_sources(phases_json, proj_dir, submodules=None, specif
     for phase in data.get("phases", []):
         for module in phase.get("modules", []):
             for source_file in module.get("source_files", []):
-                normalized = source_file.replace("\\", "/")
-                if _profile_language_allowed(normalized, specification):
-                    listed.add(normalized)
-                elif specification is None or specification.languages is None:
-                    listed.add(normalized)
+                listed.add(source_file.replace("\\", "/"))
 
     if not listed:
         return False
@@ -802,7 +827,7 @@ def _phases_cover_current_sources(phases_json, proj_dir, submodules=None, specif
         return False
     if any(not os.path.exists(os.path.join(proj_dir, sf)) for sf in listed):
         return False
-    return _collect_project_source_files(proj_dir, submodules, specification).issubset(listed)
+    return _collect_project_source_files(proj_dir, submodules).issubset(listed)
 
 
 def _filter_phases_to_submodules(phases_json, submodules):
@@ -839,43 +864,6 @@ def _filter_phases_to_submodules(phases_json, submodules):
     if modified_modules:
         with open(phases_json, "w") as f:
             json.dump(data, f, indent=2)
-
-    return {"removed": removed_total, "modified_modules": modified_modules}
-
-
-def _filter_phases_to_languages(phases_json, specification=None):
-    """Remove phase-plan source files outside the active Profile languages."""
-    if specification is None or specification.languages is None:
-        return {"removed": 0, "modified_modules": []}
-
-    with open(phases_json, "r") as file:
-        data = json.load(file)
-
-    removed_total = 0
-    modified_modules = []
-    for phase in sorted(data.get("phases", []), key=lambda p: p.get("phase", 0)):
-        for module in phase.get("modules", []):
-            original = list(module.get("source_files", []))
-            kept = [
-                source_file
-                for source_file in original
-                if _profile_language_allowed(source_file, specification)
-            ]
-            removed = [source_file for source_file in original if source_file not in kept]
-            if not removed:
-                continue
-            module["source_files"] = kept
-            removed_total += len(removed)
-            modified_modules.append({
-                "phase": phase.get("phase"),
-                "module": module.get("name", ""),
-                "removed_files": removed,
-                "source_files": list(kept),
-            })
-
-    if modified_modules:
-        with open(phases_json, "w") as file:
-            json.dump(data, file, indent=2)
 
     return {"removed": removed_total, "modified_modules": modified_modules}
 
@@ -954,16 +942,15 @@ def _ensure_source_files_in_phases(phases_json, required_source_files):
     }
 
 
-def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename, workflow_source=None):
+def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename):
     """Copy a workflow markdown into ``work_dir`` and rewrite the
     ``source_files`` instruction so it points at the concrete project root,
     telling the agent to record paths relative to it (and not prefixed with the
     project directory name).
     """
-    workflow_src = workflow_source or os.path.join(script_dir, "md", workflow_filename)
+    workflow_src = os.path.join(script_dir, "md", workflow_filename)
     workflow_dst = os.path.join(work_dir, workflow_filename)
-    if os.path.abspath(workflow_src) != os.path.abspath(workflow_dst):
-        shutil.copy2(workflow_src, workflow_dst)
+    shutil.copy2(workflow_src, workflow_dst)
     proj_dir_abs = os.path.abspath(proj_dir)
     proj_dir_name = os.path.basename(proj_dir_abs)
     with open(workflow_dst, "r") as _f:
@@ -993,23 +980,21 @@ def _prepare_workflow_file(proj_dir, work_dir, script_dir, workflow_filename, wo
 
 
 def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
-                         resume=False, submodules=None, workflow_source=None,
-                         specification=None):
+                         resume=False, submodules=None):
     """Stage 1: generate phase.json — input target code, output phases.json."""
     phases_json = os.path.join(work_dir, "phases.json")
     prev_mtime = os.path.getmtime(phases_json) if os.path.exists(phases_json) else None
 
     phase_plan_errors = (
         _phase_plan_schema_errors(phases_json)
-        + _phase_plan_language_errors(phases_json, specification)
         if os.path.exists(phases_json)
         else []
     )
-    _resume_skip = resume and _phase_plan_complete(work_dir, specification)
+    _resume_skip = resume and _phase_plan_complete(work_dir)
     if _resume_skip:
         print("[Pipeline] Stage 1/6: RESUME — phases.json found, skipping phase plan generation.")
 
-    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md", workflow_source)
+    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_phases.md")
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
@@ -1029,30 +1014,18 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             f"subdirectories: {allowed}. Do NOT include files outside these "
             "subdirectories in phases.json."
         )
-    language_reminder = ""
-    if specification is not None and specification.languages:
-        language_reminder = (
-            "IMPORTANT: Only include source files whose registered language key is one of: "
-            + ", ".join(specification.languages)
-            + ". Do NOT include source files written in other languages."
-        )
-    language_suffix = f" {language_reminder}" if language_reminder else ""
 
-    for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
+    for attempt in range(1, AGENT_MAX_RETRIES + 1):
         if _resume_skip:
             break
         if attempt == 1 and not resume:
-            prompt = (
-                f"Follow the instructions in the attached file. {fm_reminder} "
-                f"{submodule_reminder}{language_suffix}"
-            )
+            prompt = f"Follow the instructions in the attached file. {fm_reminder} {submodule_reminder}"
         else:
             prompt = ("A previous attempt was interrupted and may have already produced some of the "
                       "required output files. Follow the instructions in the attached file, but FIRST "
                       "check the current progress in fm_agent/ (e.g. phases.json). Keep any existing valid "
                       "output as-is and only generate the files that are missing or incomplete — do NOT "
-                      f"regenerate or overwrite work that is already done. {fm_reminder} "
-                      f"{submodule_reminder}{language_suffix}")
+                      f"regenerate or overwrite work that is already done. {fm_reminder} {submodule_reminder}")
         if is_incremental:
             prompt = f"{prompt} {incremental_reminder}"
         if phase_plan_errors:
@@ -1069,14 +1042,14 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
             )
             prompt = f"{prompt}\n\n{schema_repair_prompt}"
         prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_generate_phases.md")
-        command = build_llm_cli_command(
-            model=OPENCODE_SETUP_MODEL,
+        command = build_llm_agent_command(
+            model=AGENT_SETUP_MODEL,
             prompt=prompt,
             cwd=proj_dir,
             files=[prompt_file],
         )
         try:
-            run_opencode_traced(
+            run_agent_traced(
                 proj_dir=proj_dir,
                 work_dir=work_dir,
                 command=command,
@@ -1088,15 +1061,14 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                 output_files=[
                     "fm_agent/phases.json",
                 ],
-                summary=f"{command.backend} generate phases.json attempt {attempt}",
+                summary=f"DeepSeek Harness generate phases.json attempt {attempt}",
                 metadata={"attempt": attempt},
             )
         except subprocess.CalledProcessError as e:
-            logging.warning(f"Stage 1 attempt {attempt}: opencode exited with code {e.returncode}")
+            logging.warning(f"Stage 1 attempt {attempt}: DeepSeek Harness exited with code {e.returncode}")
 
         phase_plan_errors = (
             _phase_plan_schema_errors(phases_json)
-            + _phase_plan_language_errors(phases_json, specification)
             if os.path.exists(phases_json)
             else ["phases.json is missing"]
         )
@@ -1105,16 +1077,23 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
         if not phase_plan_errors:
             if submodules:
                 phase_plan_ready = _phases_cover_current_sources(
-                    phases_json, proj_dir, submodules, specification
+                    phases_json, proj_dir, submodules
                 )
             elif is_incremental:
                 phase_plan_ready = (
                     os.path.getmtime(phases_json) != prev_mtime
-                    or _phases_cover_current_sources(phases_json, proj_dir, specification)
+                    or _phases_cover_current_sources(phases_json, proj_dir)
                 )
             else:
                 phase_plan_ready = True
         if phase_plan_ready:
+            record_stage_validation(
+                work_dir,
+                "generate_phases_json",
+                "success",
+                "Stage 1 phase-plan artifact validation passed",
+                metadata={"attempt": attempt, "fallback": False},
+            )
             break
 
         failure = "update phases.json" if is_incremental else "produce phases.json"
@@ -1129,24 +1108,49 @@ def _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental=False,
                 if is_incremental
                 else "phases.json missing or invalid"
             )
-        if attempt < OPENCODE_MAX_RETRIES:
+        record_stage_validation(
+            work_dir,
+            "generate_phases_json",
+            "error",
+            "Stage 1 Harness process ended but phase-plan artifacts failed validation",
+            missing_outputs=["fm_agent/phases.json"],
+            errors=phase_plan_errors or [missing],
+            metadata={"attempt": attempt, "process_may_have_exited_zero": True},
+        )
+        if attempt < AGENT_MAX_RETRIES:
             delay = 10
             print(
-                f"[Pipeline] Stage 1 failed to {failure} (attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
+                f"[Pipeline] Stage 1 failed to {failure} (attempt {attempt}/{AGENT_MAX_RETRIES}). "
                 f"Retrying in {delay}s..."
             )
             logging.warning(f"Stage 1 attempt {attempt} failed: {missing}. Retrying in {delay}s.")
             time.sleep(delay)
         else:
+            if _write_fallback_phase_plan(proj_dir, work_dir, submodules):
+                warning = (
+                    f"Stage 1 model output was unavailable after {AGENT_MAX_RETRIES} "
+                    "attempts; generated a deterministic one-phase fallback covering "
+                    "all detected non-test source files."
+                )
+                print(f"[Pipeline] WARNING: {warning}")
+                logging.warning(warning)
+                record_stage_validation(
+                    work_dir,
+                    "generate_phases_json",
+                    "success",
+                    "Stage 1 deterministic fallback artifact validation passed",
+                    metadata={"attempt": attempt, "fallback": True},
+                )
+                break
             print(
-                f"[Pipeline] ERROR: Stage 1 failed after {OPENCODE_MAX_RETRIES} attempts. "
+                f"[Pipeline] ERROR: Stage 1 failed after {AGENT_MAX_RETRIES} attempts. "
                 f"{missing}. "
                 f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
             )
             sys.exit(1)
 
 def _post_process_phases(proj_dir, work_dir, required_source_files=None,
-                          submodules=None, one_phase=False, specification=None):
+                          submodules=None, one_phase=False):
     """Post-process phases.json: ensure required files, filter submodules,
     deduplicate, update descriptions, and clean empty phases before domain
     context generation.
@@ -1168,18 +1172,10 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
         if removed:
             print(f"[Pipeline] Removed {removed} out-of-scope source file(s) from phases.json.")
 
-    language_changes = _filter_phases_to_languages(phases_json, specification)
-    if specification is not None and specification.languages and language_changes.get("removed"):
-        print(
-            "[Pipeline] Profile language filter: removed "
-            f"{language_changes['removed']} source file(s) outside "
-            "the selected languages."
-        )
-
     dedup_changes = _deduplicate_phases(work_dir)
 
     changed_modules = _collect_changed_modules(
-        ensure_changes, filter_changes, language_changes, dedup_changes
+        ensure_changes, filter_changes, dedup_changes
     )
     _update_module_description(proj_dir, work_dir, changed_modules)
 
@@ -1191,7 +1187,6 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
     phases_modified = bool(
         forced
         or filter_changes.get("removed", 0)
-        or language_changes.get("removed", 0)
         or dedup_changes.get("modified_modules")
         or cleanup_result.get("removed_phases")
         or any(
@@ -1203,7 +1198,7 @@ def _post_process_phases(proj_dir, work_dir, required_source_files=None,
     return phases_modified
 
 
-def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False, workflow_source=None):
+def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False):
     """Stage 2: generate domain context — input phases.json, output domain context
     files for each phase.
     """
@@ -1211,13 +1206,13 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False, w
     if _resume_skip:
         print("[Pipeline] Stage 2/6: RESUME — domain context files found, skipping domain context generation.")
 
-    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md", workflow_source)
+    _prepare_workflow_file(proj_dir, work_dir, script_dir, "workflow_generate_domain_context.md")
 
     fm_reminder = ("IMPORTANT: The fm_agent/ directory is NOT part of the project source code. "
                     "It is a workspace for storing your output files only. "
                     "Do NOT modify any existing project files.")
 
-    for attempt in range(1, OPENCODE_MAX_RETRIES + 1):
+    for attempt in range(1, AGENT_MAX_RETRIES + 1):
         if _resume_skip:
             break
         if attempt == 1 and not resume:
@@ -1234,14 +1229,14 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False, w
                       "Keep any existing valid output as-is and only generate the files that are missing or "
                       f"incomplete — do NOT regenerate or overwrite work that is already done. {fm_reminder}")
         prompt_file = os.path.join(proj_dir, "fm_agent", "workflow_generate_domain_context.md")
-        command = build_llm_cli_command(
-            model=OPENCODE_SETUP_MODEL,
+        command = build_llm_agent_command(
+            model=AGENT_SETUP_MODEL,
             prompt=prompt,
             cwd=proj_dir,
             files=[prompt_file],
         )
         try:
-            run_opencode_traced(
+            run_agent_traced(
                 proj_dir=proj_dir,
                 work_dir=work_dir,
                 command=command,
@@ -1254,46 +1249,64 @@ def _run_generate_domain_context(proj_dir, work_dir, script_dir, resume=False, w
                 output_files=[
                     "fm_agent/spec_prompts/domain_context/engine_overview.txt",
                 ],
-                summary=f"{command.backend} generate domain context attempt {attempt}",
+                summary=f"DeepSeek Harness generate domain context attempt {attempt}",
                 metadata={"attempt": attempt},
             )
         except subprocess.CalledProcessError as e:
-            logging.warning(f"Stage 2 attempt {attempt}: opencode exited with code {e.returncode}")
+            logging.warning(f"Stage 2 attempt {attempt}: DeepSeek Harness exited with code {e.returncode}")
 
-        if _domain_context_complete(work_dir):
+        missing_outputs = _missing_domain_context_outputs(work_dir)
+        if not missing_outputs:
+            record_stage_validation(
+                work_dir,
+                "generate_domain_context",
+                "success",
+                "Stage 2 domain-context artifact validation passed",
+                metadata={"attempt": attempt},
+            )
             break
 
-        if attempt < OPENCODE_MAX_RETRIES:
+        record_stage_validation(
+            work_dir,
+            "generate_domain_context",
+            "error",
+            "Stage 2 Harness process ended but domain-context artifacts are missing",
+            missing_outputs=missing_outputs,
+            metadata={"attempt": attempt, "process_may_have_exited_zero": True},
+        )
+
+        if attempt < AGENT_MAX_RETRIES:
             delay = 10
             print(
                 f"[Pipeline] Stage 2 failed to produce domain context "
-                f"(attempt {attempt}/{OPENCODE_MAX_RETRIES}). "
+                f"(attempt {attempt}/{AGENT_MAX_RETRIES}). "
                 f"Retrying in {delay}s..."
             )
-            logging.warning(f"Stage 2 attempt {attempt} failed: domain context outputs missing. Retrying in {delay}s.")
+            detail = ", ".join(missing_outputs)
+            logging.warning(
+                f"Stage 2 attempt {attempt} failed: missing {detail}. Retrying in {delay}s."
+            )
             time.sleep(delay)
         else:
             print(
-                f"[Pipeline] ERROR: Stage 2 failed after {OPENCODE_MAX_RETRIES} attempts. "
-                f"Domain context outputs missing. "
+                f"[Pipeline] ERROR: Stage 2 failed after {AGENT_MAX_RETRIES} attempts. "
+                f"Missing: {', '.join(missing_outputs)}. "
                 f"Check {os.path.basename(proj_dir)}/fm_agent/trace/ for details."
             )
             sys.exit(1)
 
 def _run_setup_extract(proj_dir, work_dir, script_dir, is_incremental=False,
                        resume=False, required_source_files=None,
-                       submodules=None, one_phase=False,
-                       phase_workflow_source=None,
-                       domain_workflow_source=None, specification=None):
+                       submodules=None, one_phase=False):
     """Run generate-phases, post-process, and generate-domain-context stages.
 
     Backward-compatible wrapper that calls the three sub-stages in sequence.
     """
-    _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental, resume, submodules, phase_workflow_source, specification)
-    phases_modified = _post_process_phases(proj_dir, work_dir, required_source_files, submodules, one_phase, specification)
-    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume and not phases_modified, domain_workflow_source)
+    _run_generate_phases(proj_dir, work_dir, script_dir, is_incremental, resume, submodules)
+    phases_modified = _post_process_phases(proj_dir, work_dir, required_source_files, submodules, one_phase=one_phase)
+    _run_generate_domain_context(proj_dir, work_dir, script_dir, resume and not phases_modified)
 
-    if not _setup_outputs_complete(work_dir, specification):
+    if not _setup_outputs_complete(work_dir):
         print(
             "[Pipeline] ERROR: Stage 1/2 outputs are incomplete after "
             "post-processing. Expected fm_agent/phases.json, "

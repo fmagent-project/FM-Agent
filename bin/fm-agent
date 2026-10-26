@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+launcher="$(readlink -f "${BASH_SOURCE[0]}")"
+app_root="$(cd "$(dirname "$launcher")/.." && pwd)"
+python="$app_root/vendor/python/bin/python3"
+
+if [[ "$(uname -m)" != "x86_64" ]]; then
+    echo "FM-Agent offline runtime requires Linux x86_64." >&2
+    exit 1
+fi
+if [[ ! -x "$python" ]]; then
+    echo "Bundled Python runtime is missing: $python" >&2
+    exit 1
+fi
+
+config_home="${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/fm-agent"
+config_file="${FM_AGENT_CONFIG:-$config_home/fm-agent.toml}"
+secret_file="${FM_AGENT_SECRET_FILE:-$config_home/secrets.env}"
+if [[ ! -f "$config_file" ]]; then
+    umask 077
+    mkdir -p "$(dirname "$config_file")"
+    cp "$app_root/fm-agent.toml" "$config_file"
+    chmod 600 "$config_file"
+fi
+
+export FM_AGENT_CONFIG="$config_file"
+export FM_AGENT_SECRET_FILE="$secret_file"
+export FM_AGENT_MODEL_BACKEND="deepseek-harness"
+export FM_AGENT_DSH_BIN="$app_root/vendor/deepseek-harness/dsh"
+export FM_AGENT_DSH_PATCH="$app_root/config/dsh-fm-agent.patch.yml"
+export CODEGRAPH_BIN_DIR="$app_root/vendor/codegraph/bin"
+export CODEGRAPH_TELEMETRY=0
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONNOUSERSITE=1
+
+case "${1:-}" in
+    configure)
+        shift
+        exec "$python" "$app_root/src/configure_llm.py" "$@"
+        ;;
+    dashboard)
+        shift
+        exec "$python" "$app_root/dashboard.py" "$@"
+        ;;
+    report)
+        shift
+        exec "$python" "$app_root/report.py" "$@"
+        ;;
+    test-model)
+        shift
+        export FM_AGENT_DSH_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}/fm-agent/dsh"
+        exec "$python" "$app_root/scripts/test_model_connectivity.py" "$@"
+        ;;
+    verify-install)
+        shift
+        exec "$app_root/scripts/verify_offline.sh" "$@"
+        ;;
+    version|--version)
+        echo "FM-Agent DeepSeek-Harness offline bundle 0.3.0-dsh.1"
+        "$app_root/vendor/deepseek-harness/dsh" --version
+        "$python" --version
+        "$app_root/vendor/codegraph/bin/codegraph" --version
+        exit 0
+        ;;
+    help)
+        shift
+        set -- --help "$@"
+        ;;
+esac
+
+exec "$python" "$app_root/main.py" "$@"

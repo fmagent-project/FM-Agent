@@ -1,8 +1,5 @@
 from src.call_graph_edges import load_call_edges
-from plugins.entry_reasoning.plugin import (
-    _entry_func_source_rel,
-    _make_run_copy,
-)
+from src.entry_reasoning_pipeline import run_entry_pipeline
 from src.file_utils import (
     collect_file_names,
     _has_source_code,
@@ -11,13 +8,15 @@ from src.file_utils import (
     _json_file_is_valid,
     _is_under_submodules,
     _ensure_resume_mode_compatible,
-    ResumeModeMismatchError,
-    clear_test_file_exemptions,
+    _get_incomplete_verification_files,
+    _get_phase_files,
+    is_file_ready,
 )
-from src.verification import _generate_all_bugs_validation_summary
 from src.extract import run_extraction, EXT_TO_LANG
 from src.generate_topdown_layers import generate_topdown_layers
 from src.spec_generation_and_verification import run_spec_generation_and_verification
+from src.verification import write_static_verification_report
+from report import generate_report
 from src.incremental_reasoner import run_incremental_pipeline
 from src.git import (
     frozen_worktree,
@@ -26,38 +25,21 @@ from src.git import (
     _record_version,
 )
 from src.languages.codegraph import try_codegraph_init
-from src.plugin import PLUGIN_OPTION_NAMES, get_unsupported_plugin_options, run_plugin_hook
+from src.plugin import run_plugin_hook
 from src.pipeline_setup import (
+    _domain_context_complete,
+    _missing_domain_context_outputs,
+    _phase_plan_complete,
     _run_setup_extract,
     _run_generate_phases,
     _post_process_phases,
     _run_generate_domain_context,
 )
+from src.agent_trace import record_stage_validation
 from src.domain_knowledge import (
     collect_domain_knowledge_paths,
     stage_domain_knowledge_files,
 )
-from src.run_estimate import (
-    collect_history_samples,
-    preserve_history_before_clean,
-    record_completed_run,
-    write_history,
-    write_preflight_estimate,
-)
-from src.run_workspace import (
-    archive_workspace,
-    publish_workspace,
-    record_run_metadata,
-    restore_workspace,
-    validate_resume_source,
-)
-from src.specification import (
-    SOFTWARE_PROFILE,
-    SpecificationProfile,
-    SpecificationProfileSession,
-    bind_profile_session,
-)
-from config import settings
 import os
 import sys
 import argparse
@@ -67,116 +49,19 @@ import shutil
 import logging
 import contextlib
 import subprocess
-from pathlib import Path
 
 
-def _print_preflight_summary(estimate, output_path):
-    scope = estimate["scope"]
-    prediction = estimate["estimate"]
-    uncounted_files = scope.get("function_count_uncounted_files") or []
-    included = ", ".join(scope["included_directories"]) or "(none)"
-    excluded = ", ".join(
-        item["path"] for item in scope["excluded_directories"][:8]
-    ) or "(none)"
-    if len(scope["excluded_directories"]) > 8:
-        excluded += f", … +{len(scope['excluded_directories']) - 8}"
-    print("[Estimate] ESTIMATE — no LLM calls were made.")
-    print(f"[Estimate] Included directories: {included}")
-    print(f"[Estimate] Excluded directories: {excluded}")
-    function_summary = f"~{scope['function_count']} function(s)"
-    if uncounted_files:
-        function_summary = (
-            f"~{scope['function_count']} locally counted function(s), "
-            f"{len(uncounted_files)} source file(s) require semantic extraction"
-        )
-    print(
-        "[Estimate] "
-        f"{scope['included_file_count']} included source file(s), "
-        f"{scope['excluded_file_count']} excluded source file(s), "
-        f"{function_summary}."
-    )
-    print(
-        "[Estimate] Historical samples: "
-        f"{prediction['based_on_runs']}; details: {output_path}"
-    )
-    ranges = (
-        ("time", prediction.get("duration_seconds"), _format_estimate_duration),
-        ("LLM calls", prediction.get("llm_calls"), lambda value: str(int(value))),
-        ("tokens", prediction.get("tokens"), lambda value: f"{int(value):,}"),
-        ("cost", prediction.get("cost_usd"), lambda value: f"${value:.3f}"),
-    )
-    for label, value, formatter in ranges:
-        if isinstance(value, dict):
-            rendered = f"{formatter(value['low'])} – {formatter(value['high'])}"
-        else:
-            rendered = "history unavailable"
-        print(f"[Estimate] {label} (ESTIMATE): {rendered}")
-
-
-def _format_estimate_duration(seconds):
-    seconds = int(seconds)
-    hours, remainder = divmod(seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    if hours:
-        return f"{hours}h {minutes:02d}m"
-    if minutes:
-        return f"{minutes}m {seconds:02d}s"
-    return f"{seconds}s"
-
-
-def _existing_required_source_files(proj_dir, required_source_files):
-    """Keep required files that still exist after a Stage 1 scope hook."""
-    if required_source_files is None:
-        return None
-    return [
-        source_file
-        for source_file in required_source_files
-        if os.path.isfile(os.path.join(proj_dir, source_file))
-    ]
-
-
-def _finalize_failed_entry_run(original_proj_dir, entry_run_dir):
-    """Preserve partial entry results after failure and remove the run copy."""
-    if not entry_run_dir or not os.path.isdir(entry_run_dir):
-        return
-
-    run_work_dir = os.path.join(entry_run_dir, "fm_agent")
-    original_work_dir = os.path.join(original_proj_dir, "fm_agent")
-    if os.path.isdir(run_work_dir):
-        publish_workspace(run_work_dir, original_work_dir)
-        published_marker = os.path.join(original_work_dir, ".entry_scope_ready")
-        if os.path.isfile(published_marker):
-            os.remove(published_marker)
-        print(f"[EntryPlugin] Copied partial fm_agent/ to {original_work_dir}.")
-    shutil.rmtree(entry_run_dir, ignore_errors=True)
-
-
-def _resolve_bug_validator_path(raw_path):
-    """Resolve a custom bug-validator prompt path from the launch directory."""
-    if not raw_path:
-        return None
-
-    path = os.path.abspath(os.path.expanduser(raw_path))
-    if not os.path.isfile(path):
-        raise ValueError(
-            "--bug-validator must point to a file: "
-            f"{raw_path}"
-        )
-
-    try:
-        with open(path, "r"):
-            pass
-    except OSError as exc:
-        raise ValueError(
-            f"--bug-validator file is not readable: {exc}"
-        ) from exc
-
-    return path
+def _clean_previous_run(work_dir):
+    """Remove the fm_agent working directory from the previous pipeline run."""
+    if os.path.isdir(work_dir):
+        shutil.rmtree(work_dir)
 
 
 def _start_dashboard(work_dir):
-    """Start the live dashboard for this run and return its process handle."""
-    dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.py")
+    """Start the same live process view exposed by the public project."""
+    dashboard_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "dashboard.py"
+    )
     try:
         return subprocess.Popen([sys.executable, dashboard_path, work_dir])
     except Exception as exc:
@@ -234,34 +119,6 @@ def _normalize_submodules(proj_dir, submodules):
     return collapsed
 
 
-def _active_plugin_options(args, effective_resume):
-    """Return active plugin-sensitive options."""
-    active = {
-        name
-        for name in PLUGIN_OPTION_NAMES
-        if getattr(args, name, False)
-    }
-    if effective_resume:
-        active.add("resume")
-    if settings.runtime.domain_knowledge_paths.strip() or os.environ.get("FM_AGENT_DOMAIN_KNOWLEDGE"):
-        active.add("domain_knowledge")
-    return active
-
-
-def _validate_plugin_options(parser, plugin_config, args, resume):
-    """Fail before side effects when a plugin denies an active option."""
-    unsupported = get_unsupported_plugin_options(
-        plugin_config,
-        _active_plugin_options(args, resume),
-    )
-    if unsupported:
-        flags = ", ".join(f"--{name.replace('_', '-')}" for name in unsupported)
-        parser.error(
-            f"Plugin '{plugin_config.name}' does not support option(s): {flags}. "
-            "Remove the option(s) or use a compatible plugin."
-        )
-
-
 def run_pipeline(
     proj_dir,
     resume=False,
@@ -271,14 +128,9 @@ def run_pipeline(
     one_phase=False,
     extra_call_edges_path=None,
     only_spec=False,
-    bug_validator_path=None,
-    validate_bugs=True,
     plugin_config=None,
-    initial_history=None,
     plugin_context=None,
     all_bugs=False,
-    specification: SpecificationProfile | None = None,
-    source_project_dir=None,
 ):
     if not os.path.isdir(proj_dir):
         print(f"[Pipeline] ERROR: proj_dir does not exist or is not a directory: {proj_dir}")
@@ -294,16 +146,10 @@ def run_pipeline(
     output_dir = os.path.join(work_dir, "logic_verification_results")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     extra_call_edges = load_call_edges(extra_call_edges_path)
-    profile_session = SpecificationProfileSession(
-        default_profile=specification or SOFTWARE_PROFILE,
-        plugin_root=(plugin_config.root if plugin_config is not None else None),
-        default_prompt_root=Path(script_dir),
-    )
 
-    # Archive the previous run — unless resuming, where we keep all
+    # Clean files from the previous run — unless resuming, where we keep all
     # prior progress (phases.json, generated specs, verification results) and
     # only do the remaining work.
-    preserved_history = list(initial_history or [])
     if resume:
         if os.path.isdir(work_dir):
             print(f"[Pipeline] RESUME: keeping existing {os.path.relpath(work_dir, proj_dir)}/ — only remaining work will run.")
@@ -311,40 +157,22 @@ def run_pipeline(
             print("[Pipeline] RESUME requested but no previous fm_agent/ found — starting fresh.")
             resume = False
     else:
-        if initial_history is None:
-            preserved_history = preserve_history_before_clean(work_dir)
-        archive_workspace(work_dir)
+        _clean_previous_run(work_dir)
+    if resume and not only_spec:
+        _ensure_resume_mode_compatible(output_dir, all_bugs)
     os.makedirs(work_dir, exist_ok=True)
-    metadata = record_run_metadata(work_dir, source_project_dir or proj_dir)
-    print(f"[Pipeline] Current run: {os.path.abspath(work_dir)} (ID: {metadata['run_id']})")
-    if preserved_history:
-        write_history(work_dir, preserved_history)
-    estimate_path = os.path.join(work_dir, "estimate.json")
-    estimate = write_preflight_estimate(
-        proj_dir,
-        work_dir,
-        submodules=submodules,
-    )
-    _print_preflight_summary(estimate, estimate_path)
     if plugin_config is not None:
         plugin_context_path = os.path.join(work_dir, "plugin_context.json")
-        effective_plugin_context = dict(plugin_context or {})
-        if submodules:
-            effective_plugin_context["submodules"] = list(submodules)
         with open(plugin_context_path, "w", encoding="utf-8") as file:
-            json.dump(effective_plugin_context, file, indent=2)
+            json.dump(plugin_context or {}, file, indent=2)
         if plugin_config.configure_hook is not None:
-            with bind_profile_session(profile_session):
-                run_plugin_hook(
-                    plugin_config.name,
-                    "configure",
-                    plugin_config.configure_function,
-                    plugin_config.configure_hook,
-                    proj_dir,
-                )
-    specification = profile_session.freeze_and_validate()
-    if resume and not only_spec and specification.enable_reasoning:
-        _ensure_resume_mode_compatible(output_dir, all_bugs)
+            run_plugin_hook(
+                plugin_config.name,
+                "configure",
+                plugin_config.configure_function,
+                plugin_config.configure_hook,
+                proj_dir,
+            )
     domain_knowledge_relpaths = stage_domain_knowledge_files(
         proj_dir, work_dir, domain_knowledge_files
     )
@@ -388,8 +216,6 @@ def run_pipeline(
         _run_generate_phases(
             proj_dir, work_dir, script_dir, resume=resume,
             submodules=submodules,
-            workflow_source=specification.prompts.phase_plan,
-            specification=specification,
         )
         if phase_stage is not None and phase_stage.output_hook is not None:
             run_plugin_hook(
@@ -400,16 +226,22 @@ def run_pipeline(
                 proj_dir,
             )
 
-    surviving_required_source_files = _existing_required_source_files(
-        proj_dir, required_source_files
-    )
     phases_modified = _post_process_phases(
         proj_dir, work_dir,
-        required_source_files=surviving_required_source_files,
+        required_source_files=required_source_files,
         submodules=submodules,
         one_phase=one_phase,
-        specification=specification,
     )
+    if not _phase_plan_complete(work_dir):
+        record_stage_validation(
+            work_dir,
+            "stage_1",
+            "error",
+            "Stage 1 final artifact validation failed",
+            missing_outputs=["fm_agent/phases.json"],
+        )
+        print("[Pipeline] ERROR: Stage 1 final phases.json validation failed.")
+        sys.exit(1)
 
     print("[Pipeline] Stage 2/6: Generating domain context...")
     if context_stage is not None and context_stage.type == "pass":
@@ -439,7 +271,6 @@ def run_pipeline(
             work_dir,
             script_dir,
             resume=resume and not phases_modified,
-            workflow_source=specification.prompts.domain_context,
         )
         if context_stage is not None and context_stage.output_hook is not None:
             run_plugin_hook(
@@ -450,6 +281,21 @@ def run_pipeline(
                 proj_dir,
             )
 
+    if not _domain_context_complete(work_dir):
+        missing_context = _missing_domain_context_outputs(work_dir)
+        record_stage_validation(
+            work_dir,
+            "stage_2",
+            "error",
+            "Stage 2 final artifact validation failed",
+            missing_outputs=missing_context,
+        )
+        print(
+            "[Pipeline] ERROR: Stage 2 final artifact validation failed. Missing: "
+            + ", ".join(missing_context)
+        )
+        sys.exit(1)
+
     # Build (or rebuild) the codegraph index if codegraph is installed. Both
     # run_extraction (Stage 3) and generate_topdown_layers (Stage 5) read from it.
     # force=not resume mirrors run_extraction below: a fresh run rebuilds so the
@@ -459,7 +305,7 @@ def run_pipeline(
 
     # Run function extraction using extract.py
     # force=False on resume preserves already-specced extracted files; on a fresh
-    # run fm_agent/ is new so it is equivalent to force=True.
+    # run fm_agent/ was just wiped so it is equivalent to force=True.
     print("[Pipeline] Stage 3/6: Extracting functions from source files...")
     if extraction_stage is not None and extraction_stage.type == "pass":
         print(
@@ -483,7 +329,7 @@ def run_pipeline(
                 extraction_stage.input_hook,
                 proj_dir,
             )
-        run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True, specification=specification)
+        run_extraction(proj_dir, work_dir=work_dir, force=not resume, verbose=True)
         if extraction_stage is not None and extraction_stage.output_hook is not None:
             run_plugin_hook(
                 plugin_config.name,
@@ -493,13 +339,37 @@ def run_pipeline(
                 proj_dir,
             )
 
+    extracted_count = sum(
+        1
+        for root, _dirs, files in os.walk(input_dir)
+        for filename in files
+        if os.path.isfile(os.path.join(root, filename))
+        and not filename.endswith((".spec.json", ".info.json"))
+    ) if os.path.isdir(input_dir) else 0
+    record_stage_validation(
+        work_dir,
+        "stage_3",
+        "success",
+        "Stage 3 local function extraction completed",
+        metadata={"extracted_function_count": extracted_count},
+    )
+
     # Copy system_prompt.md to spec_prompts/system_prompt.md
     spec_prompts_dir = os.path.join(work_dir, "spec_prompts")
     os.makedirs(spec_prompts_dir, exist_ok=True)
-    system_prompt_source = Path(specification.prompts.system)
-    system_prompt_destination = Path(spec_prompts_dir) / "system_prompt.md"
-    if system_prompt_source.resolve() != system_prompt_destination.resolve():
-        shutil.copy2(system_prompt_source, system_prompt_destination)
+    shutil.copy2(
+        os.path.join(script_dir, "md", "system_prompt.md"),
+        os.path.join(spec_prompts_dir, "system_prompt.md"),
+    )
+    shutil.copy2(
+        os.path.join(script_dir, "src", "generate_batch_prompts.py"),
+        os.path.join(spec_prompts_dir, "generate_batch_prompts.py"),
+    )
+    # generate_batch_prompts.py imports is_file_ready from this module at runtime.
+    shutil.copy2(
+        os.path.join(script_dir, "src", "file_utils.py"),
+        os.path.join(spec_prompts_dir, "file_utils.py"),
+    )
 
     phases_path = os.path.join(work_dir, "phases.json")
     with open(phases_path, "r") as f:
@@ -533,11 +403,10 @@ def run_pipeline(
                 file_list_stage.input_hook,
                 proj_dir,
             )
-        file_list = collect_file_names(input_dir, file_list_path, specification)
+        file_list = collect_file_names(input_dir, file_list_path)
         if submodules:
             file_list = _write_file_names(
-                _get_all_phase_files(phases_data, input_dir, specification),
-                file_list_path,
+                _get_all_phase_files(phases_data, input_dir), file_list_path
             )
         if file_list_stage is not None and file_list_stage.output_hook is not None:
             run_plugin_hook(
@@ -550,7 +419,36 @@ def run_pipeline(
             with open(file_list_path, "r", encoding="utf-8") as file:
                 file_list = json.load(file)
 
+    if not isinstance(file_list, list) or not _json_file_is_valid(file_list_path):
+        record_stage_validation(
+            work_dir,
+            "stage_4",
+            "error",
+            "Stage 4 file-list artifact validation failed",
+            missing_outputs=["fm_agent/fm_agent_file_list.json"],
+        )
+        print("[Pipeline] ERROR: Stage 4 produced an invalid function file list.")
+        sys.exit(1)
+    record_stage_validation(
+        work_dir,
+        "stage_4",
+        "success",
+        "Stage 4 local file-list validation passed",
+        metadata={"function_count": len(file_list)},
+    )
+
     if not file_list:
+        for stage, summary in (
+            ("stage_5", "Stage 5 skipped because Stage 4 found no functions"),
+            ("stage_6", "Stage 6 skipped because Stage 4 found no functions"),
+        ):
+            record_stage_validation(
+                work_dir,
+                stage,
+                "success",
+                summary,
+                metadata={"skipped": True, "reason": "no_extracted_functions"},
+            )
         print("[Pipeline] No functions found to verify. Skipping spec generation.")
         return
 
@@ -578,7 +476,7 @@ def run_pipeline(
                 topdown_stage.input_hook,
                 proj_dir,
             )
-        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges, specification=specification)
+        generate_topdown_layers(work_dir, extra_call_edges=extra_call_edges)
         if topdown_stage is not None and topdown_stage.output_hook is not None:
             run_plugin_hook(
                 plugin_config.name,
@@ -588,9 +486,46 @@ def run_pipeline(
                 proj_dir,
             )
 
+    expected_layer_files = []
+    for phase in phases_data.get("phases", []):
+        phase_num = phase.get("phase")
+        if phase_num is None or not _get_phase_files(phases_data, phase_num, input_dir):
+            continue
+        expected_layer_files.append(
+            os.path.join(
+                spec_prompts_dir,
+                f"phase_{phase_num:02d}_topdown_layers.json",
+            )
+        )
+    missing_layer_files = [
+        os.path.relpath(path, proj_dir)
+        for path in expected_layer_files
+        if not _json_file_is_valid(path)
+    ]
+    if missing_layer_files:
+        record_stage_validation(
+            work_dir,
+            "stage_5",
+            "error",
+            "Stage 5 top-down layer artifact validation failed",
+            missing_outputs=missing_layer_files,
+        )
+        print(
+            "[Pipeline] ERROR: Stage 5 outputs missing or invalid: "
+            + ", ".join(missing_layer_files)
+        )
+        sys.exit(1)
+    record_stage_validation(
+        work_dir,
+        "stage_5",
+        "success",
+        "Stage 5 local top-down layer validation passed",
+        metadata={"phase_output_count": len(expected_layer_files)},
+    )
+
     # --- Stage 6: Execute spec generation workflow (per phase, per layer) ---
-    if only_spec or not specification.enable_reasoning:
-        print("[Pipeline] Stage 6/6: Generating specs (reasoning & bug validation disabled)...")
+    if only_spec:
+        print("[Pipeline] Stage 6/6: Generating specs (static reasoning disabled)...")
     else:
         print("[Pipeline] Stage 6/6: Generating specs & verification...")
     if spec_stage is not None and spec_stage.type == "pass":
@@ -626,80 +561,112 @@ def run_pipeline(
             resume=resume,
             extra_call_edges=extra_call_edges,
             only_spec=only_spec,
-            bug_validator_path=bug_validator_path,
-            validate_bugs=validate_bugs,
             all_bugs=all_bugs,
-            specification=specification,
+        )
+        if spec_stage is not None and spec_stage.output_hook is not None:
+            run_plugin_hook(
+                plugin_config.name,
+                "generate_specs_and_verification",
+                spec_stage.output_function,
+                spec_stage.output_hook,
+                proj_dir,
+            )
+
+    unready_specs = [
+        rel for rel in file_list
+        if not is_file_ready(os.path.join(input_dir, rel))
+    ]
+    incomplete_results = (
+        []
+        if only_spec
+        else _get_incomplete_verification_files(
+            file_list,
+            input_dir,
+            output_dir,
+            work_dir,
+            all_bugs=all_bugs,
+        )
+    )
+    stage6_incomplete = bool(unready_specs or incomplete_results)
+    missing_stage6 = []
+    if stage6_incomplete:
+        missing_stage6 = [
+            f"fm_agent/extracted_functions/{rel}.spec.json/.info.json"
+            for rel in unready_specs
+        ] + [
+            f"fm_agent/logic_verification_results/{os.path.splitext(rel)[0]}.json"
+            for rel in incomplete_results
+        ]
+        record_stage_validation(
+            work_dir,
+            "stage_6",
+            "error",
+            "Stage 6 final artifact validation failed",
+            missing_outputs=missing_stage6,
+        )
+    else:
+        record_stage_validation(
+            work_dir,
+            "stage_6",
+            "success",
+            "Stage 6 final artifact validation passed",
+            metadata={
+                "function_count": len(file_list),
+                "static_reasoning": not only_spec,
+            },
         )
 
-    # Print confirmed bug count only when reasoning and bug validation are
-    # both enabled for the active profile and invocation.
-    if not only_spec and validate_bugs and specification.enable_reasoning:
-        if all_bugs:
-            # A resumed run may find every function and candidate validation
-            # already complete, so no watcher runs to refresh the persistent
-            # summary. Rebuild it from the current terminal records here.
-            _generate_all_bugs_validation_summary(work_dir)
-        summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-        if os.path.exists(summary_path):
-            with open(summary_path, "r") as f:
-                summary = json.load(f)
-            confirmed = summary.get("total_confirmed", 0)
-            print(f"[Pipeline] Confirmed bugs: {confirmed}")
+    # Write the reports after the terminal Stage 6 validation event so the
+    # diagnostics embedded in the reports describe the complete run rather
+    # than stopping one event early.  Partial runs still receive reports.
+    if not only_spec:
+        verification_report = write_static_verification_report(
+            input_dir,
+            output_dir,
+            work_dir,
+            file_list,
+            all_bugs=all_bugs,
+        )
+        html_report = generate_report(work_dir)
+        print(
+            "[Pipeline] Static verification report: "
+            f"{os.path.join(work_dir, 'VERIFICATION-REPORT.md')} "
+            f"(status={verification_report['status']})"
+        )
+        print(f"[Pipeline] Interactive report: {html_report}")
 
-    # Regenerate the static HTML report index from the completed artifacts.
-    # Runs in every completed mode (including --only-spec, which yields an
-    # empty-state page); a rendering problem must never fail the run.
-    try:
-        from report import generate_report
-        index_path = generate_report(work_dir)
-        print(f"[Pipeline] Report index written to {os.path.relpath(index_path, proj_dir)}")
-    except Exception as exc:
-        logging.warning("[Pipeline] report.html generation skipped: %s", exc)
+    if stage6_incomplete:
+        print(
+            "[Pipeline] ERROR: Stage 6 outputs missing or invalid: "
+            + ", ".join(missing_stage6)
+        )
+        sys.exit(1)
 
-    if only_spec or not specification.enable_reasoning:
-        print("[Pipeline] Done (specs only; reasoning & bug validation skipped).")
+    if only_spec:
+        print("[Pipeline] Done (specs only; static reasoning skipped).")
     else:
         print("[Pipeline] Done.")
-
-    if spec_stage is not None and spec_stage.output_hook is not None:
-        run_plugin_hook(
-            plugin_config.name,
-            "generate_specs_and_verification",
-            spec_stage.output_function,
-            spec_stage.output_hook,
-            proj_dir,
-        )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        usage="python3 main.py <proj_dir> [--resume | --resume-from WORKSPACE] [--incremental INTENT_FILE] "
+        usage="python3 main.py <proj_dir> [--resume] [--incremental INTENT_FILE] "
               "[--domain-knowledge FILE ...] [--one-phase] [--isolate] "
               "[--all-bugs] "
-              "[--submodule PATH [PATH ...]] [--entry-func PATH [PATH ...]] "
-              "[--end-func PATH ...] [--extra-edge FILE] "
-              "[--bug-validator FILE] [--only-spec] [--estimate] "
+              "[--submodule PATH [PATH ...]] [--entry-func PATH] "
+              "[--end-func PATH ...] [--extra-edge FILE] [--only-spec] "
               "[--dashboard] "
               "[--list-plugin] [--plugin NAME]",
         description="Run the FM agent pipeline on a project directory.",
     )
     parser.add_argument("proj_dir", nargs="?", help="path to the project directory")
-    resume_options = parser.add_mutually_exclusive_group()
-    resume_options.add_argument(
+    parser.add_argument(
         "--resume",
         action="store_true",
-        help="continue the current run in <proj_dir>/fm_agent instead of archiving it: "
+        help="continue a previous run in <proj_dir>/fm_agent instead of wiping it: "
              "keeps phases.json, generated specs, and existing verification results; "
              "only does the remaining work. Repeat --all-bugs when resuming an "
              "all-bugs run.",
-    )
-    resume_options.add_argument(
-        "--resume-from",
-        metavar="WORKSPACE",
-        help="restore an archived workspace to fm_agent/ and resume it; "
-             "archives the current workspace and retains the selected archive. "
-             "Repeat the original run's options (including --all-bugs).",
     )
     parser.add_argument(
         "--incremental",
@@ -710,8 +677,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--isolate",
         action="store_true",
-        help="Run the pipeline against an isolated git worktree snapshot of "
-        "the project instead of the project directory itself.",
+        help="Run the pipeline against an isolated snapshot. Git repositories "
+        "use a worktree; ordinary directories use a filesystem copy.",
     )
     parser.add_argument(
         "--one-phase",
@@ -721,20 +688,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--all-bugs",
         action="store_true",
-        help="continue reasoning after mismatches and report every candidate; "
-        "full and incremental modes validate each candidate.",
+        help="continue static reasoning after mismatches and report every candidate.",
     )
     parser.add_argument(
         "--only-spec",
         action="store_true",
-        help="Only generate behavioral specs; skip the reasoning and bug "
-        "validation stages.",
-    )
-    parser.add_argument(
-        "--estimate",
-        action="store_true",
-        help="scan source scope and print a history-based run estimate without "
-        "starting the pipeline or making LLM calls",
+        help="Only generate behavioral specs; skip the static reasoning stage.",
     )
     parser.add_argument(
         "--dashboard",
@@ -750,7 +709,7 @@ if __name__ == "__main__":
         default=[],
         help="additional Markdown domain-knowledge file(s) to copy into "
         "fm_agent/spec_prompts/domain_context/user_knowledge/ and provide to "
-        "setup, spec generation, and validation agents. May be repeated. "
+        "setup, spec generation, and static reasoning agents. May be repeated. "
         "FM_AGENT_DOMAIN_KNOWLEDGE can also provide os.pathsep-separated files.",
     )
     parser.add_argument(
@@ -763,9 +722,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--entry-func",
         metavar="PATH",
-        nargs="+",
         default=None,
-        help="one or more function paths of the entry points to start reasoning from.",
+        help="function path of the entry point to start reasoning from.",
     )
     parser.add_argument(
         "--end-func",
@@ -782,13 +740,6 @@ if __name__ == "__main__":
         default=None,
         help="optional JSON file, or directory of JSON files, containing "
         "supplemental caller->callee edges.",
-    )
-    parser.add_argument(
-        "--bug-validator",
-        metavar="FILE",
-        default=None,
-        help="use a custom Markdown prompt for bug validation instead of "
-        "the built-in md/bug_validator.md",
     )
     parser.add_argument(
         "--list-plugin",
@@ -819,12 +770,9 @@ if __name__ == "__main__":
         sys.exit(0)
 
     selected_plugin = args.plugin
-    if args.entry_func is not None:
-        if selected_plugin is not None:
-            parser.error("--plugin cannot be combined with --entry-func.")
-        selected_plugin = "entry_reasoning"
-    elif selected_plugin == "entry_reasoning":
-        parser.error("the entry_reasoning plugin requires --entry-func.")
+
+    if selected_plugin and args.entry_func is not None:
+        parser.error("--plugin cannot be combined with --entry-func.")
 
     plugin_config = None
     if selected_plugin:
@@ -842,21 +790,16 @@ if __name__ == "__main__":
     if not args.proj_dir:
         parser.error("the following arguments are required: proj_dir")
 
-    resume = bool(args.resume or args.resume_from or os.environ.get("FM_AGENT_RESUME") == "1")
-    if plugin_config is not None:
-        _validate_plugin_options(parser, plugin_config, args, resume)
+    resume = args.resume or os.environ.get("FM_AGENT_RESUME") == "1"
     proj_dir = os.path.abspath(args.proj_dir)
-    is_entry = args.entry_func is not None
+    if not os.path.isdir(proj_dir):
+        parser.error(f"project directory does not exist or is not a directory: {proj_dir}")
     extra_call_edges_path = args.extra_edge
     if extra_call_edges_path:
         extra_call_edges_path = os.path.abspath(extra_call_edges_path)
     plugin_context = {
         "extra_edge": extra_call_edges_path,
     }
-    try:
-        bug_validator_path = _resolve_bug_validator_path(args.bug_validator)
-    except ValueError as exc:
-        parser.error(str(exc))
     try:
         submodules = _normalize_submodules(proj_dir, args.submodule)
     except ValueError as exc:
@@ -877,52 +820,8 @@ if __name__ == "__main__":
     if args.only_spec and args.incremental:
         parser.error(
             "--only-spec cannot be combined with --incremental "
-            "(incremental mode is inherently a reasoning/bug-validation flow)."
+            "(incremental mode includes static reasoning)."
         )
-
-    resume_source = None
-    if args.resume_from:
-        if args.incremental:
-            parser.error("--resume-from cannot be combined with --incremental")
-        try:
-            resume_source = validate_resume_source(args.resume_from, os.path.join(proj_dir, "fm_agent"))
-            if not args.only_spec:
-                _ensure_resume_mode_compatible(
-                    str(resume_source / "logic_verification_results"), args.all_bugs
-                )
-        except (ValueError, ResumeModeMismatchError) as exc:
-            parser.error(str(exc))
-
-    if args.estimate:
-        incompatible = any(
-            [
-                resume,
-                args.incremental,
-                args.entry_func,
-                args.end_func,
-                args.isolate,
-                args.only_spec,
-                args.all_bugs,
-                args.dashboard,
-            ]
-        )
-        if incompatible:
-            parser.error(
-                "--estimate is a standalone preflight and cannot be combined "
-                "with resume, incremental, entry/end functions, isolate, "
-                "only-spec, all-bugs, or dashboard"
-            )
-        estimate_work_dir = os.path.join(proj_dir, "fm_agent_estimate")
-        estimate = write_preflight_estimate(
-            proj_dir,
-            estimate_work_dir,
-            submodules=submodules,
-        )
-        _print_preflight_summary(
-            estimate,
-            os.path.join(estimate_work_dir, "estimate.json"),
-        )
-        sys.exit(0)
 
     # ---- pre-flight environment check (shared by all pipeline modes) ----
     import config
@@ -932,35 +831,44 @@ if __name__ == "__main__":
 
     start_time = time.time()
 
-    original_proj_dir = proj_dir
-    entry_run_dir = None
-    required_source_files = None
-    validate_bugs = True
-    # Incremental mode diffs against the commit recorded by a previous run, and
-    # --isolate snapshots the repo via a git worktree, so both require a git repo.
-    # A non-git project can only run the full pipeline against the project directory
-    # itself.
-    if not is_entry and not _is_git_repo(proj_dir):
-        parser.error(
-            f"FM-Agent requires a git repository, but {proj_dir} is not."
-        )
+    # Entry-point mode uses its dedicated copy-and-trim pipeline.
+    if args.entry_func is not None:
+        dashboard_process = _start_dashboard(proj_dir) if args.dashboard else None
+        try:
+            run_entry_pipeline(
+                proj_dir,
+                entry_func=args.entry_func,
+                end_funcs=args.end_func,
+                resume=resume,
+                domain_knowledge_files=domain_knowledge_files,
+                one_phase=args.one_phase,
+                extra_call_edges_path=extra_call_edges_path,
+                only_spec=args.only_spec,
+                all_bugs=args.all_bugs,
+            )
+        finally:
+            _stop_dashboard(dashboard_process)
+        end_time = time.time()
+        logging.info(f"Total time: {end_time - start_time:.2f} seconds")
+        sys.exit(0)
 
-    if resume_source is not None:
-        restore_workspace(resume_source, os.path.join(proj_dir, "fm_agent"))
+    # Incremental mode needs commit history. Full and isolated full runs also
+    # support ordinary source directories; frozen_worktree copies them.
+    if args.incremental and not _is_git_repo(proj_dir):
+        parser.error(
+            "--incremental requires a Git repository with at least one commit; "
+            f"{proj_dir} is an ordinary directory. Run a full analysis instead."
+        )
 
     # Resolve the intent path before snapshotting, since cwd-relative paths must
     # resolve against the real project, not the frozen worktree copy.
-    intent_path = (
-        os.path.abspath(args.incremental)
-        if not is_entry and args.incremental
-        else None
-    )
+    intent_path = os.path.abspath(args.incremental) if args.incremental else None
 
     # In incremental mode the commit to diff against is the most recent one recorded
     # in version.log (the last line, since each run appends its commit). Read it from
     # the real project before snapshotting.
     old_commit = None
-    if not is_entry and args.incremental:
+    if args.incremental:
         version_path = os.path.join(proj_dir, "fm_agent", "version.log")
         if os.path.exists(version_path):
             with open(version_path, "r") as f:
@@ -970,41 +878,14 @@ if __name__ == "__main__":
     # Capture the project's latest commit id before running. With --isolate the
     # pipeline runs against a throwaway worktree snapshot whose HEAD is a synthetic
     # snapshot commit, so the version to record must come from the real project.
-    new_commit = _get_head_commit(proj_dir) if not is_entry else None
-
-    # Fresh runs in a copied project must archive the ORIGINAL workspace before
-    # starting analysis. Otherwise the later copy-back would destroy it, or an
-    # archive created inside a disposable entry copy would disappear with it.
-    copied_history = None
-    if is_entry or args.isolate:
-        original_work_dir = os.path.join(proj_dir, "fm_agent")
-        copied_history = collect_history_samples(proj_dir, original_work_dir)
-        if not resume and not old_commit:
-            archive_workspace(original_work_dir)
-
-    if is_entry:
-        entry_run_dir = original_proj_dir + ".fm-entry-run"
-        _make_run_copy(original_proj_dir, entry_run_dir)
-        required_source_files = list(dict.fromkeys(
-            _entry_func_source_rel(entry) for entry in args.entry_func
-        ))
-        validate_bugs = False
-        plugin_context.update({
-            "original_proj_dir": original_proj_dir,
-            "entry_run_dir": entry_run_dir,
-            "entry_funcs": args.entry_func,
-            "end_funcs": args.end_func or [],
-            "all_bugs": args.all_bugs,
-        })
+    new_commit = _get_head_commit(proj_dir)
 
     # With --isolate, the pipeline runs against the snapshot's fm_agent/. Resuming
     # needs the previous run's fm_agent/ (phases.json, specs, verification results)
     # to be present in the snapshot, so copy the excluded workspace in for resume
     # too — not just incremental mode.
     run_ctx = (
-        contextlib.nullcontext(entry_run_dir)
-        if is_entry
-        else frozen_worktree(
+        frozen_worktree(
             proj_dir, copy_excluded=bool(args.incremental) or resume
         )
         if args.isolate
@@ -1015,7 +896,7 @@ if __name__ == "__main__":
         try:
             # Incremental mode requires a recorded commit to diff against; without a
             # version.log from a previous run, fall back to the full pipeline.
-            if not is_entry and args.incremental and old_commit:
+            if args.incremental and old_commit:
                 run_incremental_pipeline(
                     run_dir,
                     intent_path,
@@ -1024,37 +905,26 @@ if __name__ == "__main__":
                     submodules=submodules,
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
-                    bug_validator_path=bug_validator_path,
                     all_bugs=args.all_bugs,
                 )
             else:
                 run_pipeline(
                     run_dir,
                     resume=resume,
-                    required_source_files=required_source_files,
                     domain_knowledge_files=domain_knowledge_files,
                     submodules=submodules,
                     one_phase=args.one_phase,
                     extra_call_edges_path=extra_call_edges_path,
                     only_spec=args.only_spec,
-                    bug_validator_path=bug_validator_path,
-                    validate_bugs=validate_bugs,
                     plugin_config=plugin_config,
-                    initial_history=copied_history,
                     plugin_context=plugin_context,
                     all_bugs=args.all_bugs,
-                    source_project_dir=original_proj_dir,
                 )
             # Record the commit that was processed. Written after the pipeline since
             # it recreates fm_agent/; with --isolate it lives in the snapshot and is
             # copied back to the real project below. Only recorded on success so a
             # partial run does not advance the version baseline.
-            if not is_entry:
-                _record_version(new_commit, os.path.join(run_dir, "fm_agent"))
-                record_completed_run(
-                    os.path.join(run_dir, "fm_agent"),
-                    duration_seconds=time.time() - start_time,
-                )
+            _record_version(new_commit, os.path.join(run_dir, "fm_agent"))
         finally:
             _stop_dashboard(dashboard_process)
             # With --isolate the pipeline ran against a throwaway snapshot, so its
@@ -1062,14 +932,13 @@ if __name__ == "__main__":
             # project so they are not lost when the snapshot is discarded — this runs
             # even when the pipeline crashes or is interrupted mid-run, so partial
             # progress survives and can be resumed with --resume.
-            if is_entry:
-                _finalize_failed_entry_run(original_proj_dir, entry_run_dir)
-                clear_test_file_exemptions()
-            elif args.isolate:
+            if args.isolate:
                 src_fm = os.path.join(run_dir, "fm_agent")
                 dst_fm = os.path.join(proj_dir, "fm_agent")
                 if os.path.isdir(src_fm):
-                    publish_workspace(src_fm, dst_fm)
+                    if os.path.isdir(dst_fm):
+                        shutil.rmtree(dst_fm)
+                    shutil.copytree(src_fm, dst_fm, symlinks=True)
                     print(f"[Pipeline] Copied results back to {dst_fm}")
     end_time = time.time()
     logging.info(f"Total time: {end_time - start_time:.2f} seconds")

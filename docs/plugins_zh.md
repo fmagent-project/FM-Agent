@@ -73,65 +73,6 @@ def hook(proj_dir: str) -> None:
 
 `configure_function` 可选。插件可以配置任意一部分受支持 Stage。
 
-### Option 兼容性（可选）
-
-插件可以显式拒绝自身无法正确处理的命令行选项：
-
-```json
-{
-  "name": "example_plugin",
-  "version": "V1.0",
-  "unsupported_options": ["resume", "incremental"],
-  "stages": {}
-}
-```
-
-该字段是稀疏 denylist：未列出的选项默认视为 supported。名称使用 argparse 的
-稳定 `dest`（例如 `one_phase`、`domain_knowledge`），当前注册的名称包括
-`resume`、`incremental`、`isolate`、`one_phase`、`all_bugs`、`only_spec`、
-`estimate`、`domain_knowledge`、`submodule`、`end_func`、`extra_edge` 和
-`bug_validator`。`--knowledge` 与 `domain_knowledge` 使用同一名称，
-`FM_AGENT_RESUME=1` 与 `resume` 使用同一名称。
-
-FM-Agent 会在解析选项路径、执行环境检查、创建隔离 worktree、修改 `fm_agent/`
-或调用 LLM 之前检查 denylist。这只是插件兼容性检查；现有全局 CLI 组合规则仍然
-有效。该字段不会替代 Hook 契约，也不会强制插件使用 Profile。
-
-## Specification Profile（可选）
-
-插件可以在 `configure` 中同步注册一个 `SpecificationProfile`。阶段编排、LLM 调度、
-重试和 trace 仍由公共 Pipeline 负责，Profile 提供两个产物和四个 prompt 资源。Profile
-默认使用标准 JSON spec/info contract；只有非 JSON 格式（例如 Markdown）可自定义
-`PromptContract`。示例如下：
-
-```python
-from src.specification import ArtifactPair, PromptBundle, SpecificationProfile, configure_specification
-
-
-def configure(proj_dir: str) -> None:
-    configure_specification(SpecificationProfile(
-        id="markdown", schema_version="V1",
-        artifacts=ArtifactPair(
-            self_suffix="_spec.md", dependency_suffix="_info.md",
-            append_to_filename=False,
-        ),
-        prompts=PromptBundle(
-            phase_plan="prompts/workflow_generate_phases.md",
-            domain_context="prompts/workflow_generate_domain_context.md",
-            system="prompts/system_prompt.md",
-            batch_workflow="prompts/workflow_spec_step4_batch.md",
-        ),
-        prompt_contract=MARKDOWN_PROMPT_CONTRACT,  # 由插件自行实现
-        languages=("python",),
-    ))
-```
-
-`prompts/*` 相对插件根目录解析。固定生成两个产物（上例中 `foo.py` 对应
-`foo_spec.md` 与 `foo_info.md`）。自定义 Profile 默认关闭 `enable_reasoning`；公共校验
-先要求两个文件存在且非空，再调用可选 `validator`。校验失败沿用 Stage 6 retry。`languages`
-只能筛选已注册语言，不能新增 parser。Profile 与 Stage Hook 可混用且不额外做冲突检测；
-自定义 Profile 不启用 software reasoning，也不提供正确性保障。
-
 ## 执行模式
 
 ### Pass
@@ -188,11 +129,9 @@ Hook 通过标准项目文件修改输入或输出，不返回 Stage 数据。
 
 ```json
 {
-  "extra_edge": null, "submodules": ["src"]
+  "extra_edge": null
 }
 ```
-
-`submodules` 仅在指定 `--submodule` 时写入，值为归一化后的项目相对路径。
 
 configure Hook 可以直接读取：
 
@@ -221,83 +160,8 @@ ready 产物并跳过内部生成，边界 Hook 仍会执行，因此插件作�
 isolate 模式下 Hook 收到隔离 worktree 路径；现有 isolate 流程会把 `fm_agent/`
 结果复制回原项目。
 
-Pipeline Hook 支持 full、resume 和 isolate。Incremental Pipeline 不接收插件
-配置，也不执行插件 Hook。插件可以通过 `unsupported_options` 拒绝这些选项。
-
-入口函数运行会自动启用内置 `entry_reasoning` 插件。`--entry-func` 不能与另一个
-显式选择的 `--plugin` 组合使用。
-
-## 内置 entry reasoning 插件
-
-内置插件使用标准目录结构：
-
-```text
-plugins/
-└── entry_reasoning/
-    ├── plugin.json
-    └── plugin.py
-```
-
-在 `run_pipeline()` 开始前，FM-Agent 将原项目复制到同级的
-`<proj_dir>.fm-entry-run` 目录，并把该隔离路径作为 Pipeline 项目。原项目源码
-不会被裁剪。
-
-该插件配置两个 modify Hook：
-
-```text
-generate_phase_plan input Hook
-→ 在临时 selection copy 中提取全部函数
-→ 构建调用图
-→ 选择从所有 entry_funcs 可达的函数并集
-→ 根据 end_funcs 可选地限制调用路径
-→ 从 entry run copy 删除不相关文件和函数
-→ 在裁剪后的副本上运行内置 Stage 1–6
-→ generate_specs_and_verification output Hook
-→ 将 fm_agent/ 复制回原项目
-→ 删除 entry run copy
-```
-
-entry 插件上下文包含：
-
-```json
-{
-  "original_proj_dir": "/path/to/demo",
-  "entry_run_dir": "/path/to/demo.fm-entry-run",
-  "entry_funcs": ["src::main-c::main", "api::server-c::serve"],
-  "end_funcs": [],
-  "extra_edge": null,
-  "all_bugs": false
-}
-```
-
-`--entry-func` 可接受一个或多个以空格分隔的函数 FQN。未指定 `--end-func`
-时，入口推理分析每个请求入口可达函数的并集；指定 end function 后，只保留任一
-请求入口到任一 end function 的有效调用链，并将每个 end function 视为终点。所有
-请求入口都会被校验，缺失 FQN 会一次性报告。所有入口源文件都会绕过 test-file
-过滤；只有经过 end 裁剪后仍存在的入口源文件才会被强制写入 `phases.json`。
-
-入口函数运行会生成规约和推理结果，但按设计跳过 Bug Validation。Stage 6 output
-Hook 发布正常结果；若后续 Stage 失败，CLI 会复制已有的部分结果并删除 run copy。
-如果 entry 选择本身失败，则保留原有 `fm_agent/`。只会复制回 `fm_agent/`，裁剪后
-的源码会随 run copy 一起丢弃。
-
-## 内置 chip 插件
-
-内置 `chip` 插件在 `configure` 中选择一个硬件 Profile，随后使用公共 Stage 1–6
-Pipeline。它的 manifest 额外声明 Stage 6 modify Hook，并显式拒绝当前对 chip
-尚未定义语义的选项。
-
-```bash
-uv run python main.py <proj_dir> --plugin chip
-```
-
-插件根据选定源码范围注册 `chip-chisel` 或 `chip-verilog` Profile。硬件 prompt、成对的
-Markdown 产物、reader 和 validation policy 由 Profile 提供，公共 Pipeline 继续负责阶段
-编排与 LLM 执行。modify Hook 对 Chisel 声明进行产物 eligibility 分类并保留依赖图，
-随后从 ready module artifacts 生成 root DUT 的设计文档。
-
-安装方式、backend 选择、运行命令、输出、支持的选项和已知限制见
-[chip 插件指南](../plugins/chip/README_zh.md)。
+Pipeline Hook 支持 full、resume 和 isolate。Entry 和 incremental Pipeline
+不接收插件配置，也不执行插件 Hook。`--plugin` 不能与 `--entry-func` 组合使用。
 
 ## 验证与信任边界
 

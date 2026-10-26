@@ -1,1395 +1,182 @@
-"""Deterministic HTML report index for an FM-Agent run.
+#!/usr/bin/env python3
+"""Generate a deterministic, self-contained HTML report for static FM-Agent runs.
 
-Scans the ``<proj_dir>/fm_agent/`` workspace artifacts — bug validation
-reports (``bug_validation/*.result.json`` + ``summary.json``) — and renders a
-self-contained ``report.html`` with client-side search / filter / sort /
-expand-collapse. Only bug validations that reached a conclusion
-(``confirmed`` / ``not_confirmed``) are shown; analysis results and
-``error`` / ``pending`` validations are excluded from the page. No LLM
-calls, no network, no new dependencies: the same
-artifacts always produce the same byte-identical page.
-
-The page is written to ``<work_dir>/report.html`` and is regenerated
-automatically at the end of every full-pipeline run (see the hook at the end
-of ``main.run_pipeline``); open it in a browser to browse, search, filter,
-sort and expand each report. It can also be regenerated on demand from any
-existing run's artifacts, with no LLM call involved:
-
-Usage:
-    uv run python report.py <proj_dir>                 # project root -> <proj_dir>/fm_agent/report.html
-    uv run python report.py <proj_dir>/fm_agent        # an fm_agent workspace directory directly
-    uv run python report.py /path/fm_agent.archived_xx # an archived workspace
-
-Public API:
-    generate_report(work_dir) -> str   # path of the written report.html
-
-Note: the incremental pipeline (``--incremental``) does not run the
-auto-generation hook; run ``uv run python report.py <proj_dir>`` manually to
-build the page from an incremental run's artifacts.
+The upstream GitHub project exposed a searchable ``report.html`` after dynamic
+bug validation.  This offline DeepSeek-Harness build intentionally removes that
+runtime stage, so the equivalent page is generated directly from terminal
+static reasoning artifacts instead.  No model call or network access occurs.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import sys
-from html import escape
 
 
-# No-dot extension -> language table, copied from src/extract.py so this module
-# is self-contained (the reverse mapping and shape detection rely on it).
-_EXT_TO_LANG = {
-    "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "c": "c", "h": "cpp", "hpp": "cpp",
-    "py": "python",
-    "erl": "erlang",
-    "go": "go",
-    "rs": "rust",
-    "java": "java",
-    "ts": "typescript", "tsx": "typescript",
-    "js": "javascript", "jsx": "javascript",
-    "cu": "cuda", "cuh": "cuda",
-    "ets": "arkts",
-}
+def _locate_workdir(value: str) -> str:
+    path = os.path.abspath(os.path.expanduser(value))
+    child = os.path.join(path, "fm_agent")
+    if os.path.isdir(child):
+        return child
+    return path
 
 
-def _extracted_file_to_source_rel(extracted_rel):
-    """Map an extracted-function file path back to its source file (relative).
-
-    Inverse of the extraction layout: ``src/engine/loader-cpp/loadData.cpp``
-    (a function file) -> ``src/engine/loader.cpp`` (the source file). Extraction
-    builds the function directory by replacing the source filename's last dot
-    with a hyphen (``loader.cpp`` -> ``loader-cpp``). Member functions keep the
-    class qualifier in the flat filename (``.../loader-cpp/MyClass::method.cpp``),
-    so the ``<base>-<ext>`` directory is the function file's immediate parent; we
-    still locate it by scanning the path components from the right (matching a
-    component that ends in ``-<known extension>``) so the mapping is robust.
-    """
-    parts = extracted_rel.replace("\\", "/").split("/")
-    for i in range(len(parts) - 2, -1, -1):          # skip the trailing func file
-        comp = parts[i]
-        hyphen = comp.rfind("-")
-        if hyphen > 0 and comp[hyphen + 1:] in _EXT_TO_LANG:
-            src_dir = os.sep.join(parts[:i])
-            source_base = comp[:hyphen] + "." + comp[hyphen + 1:]
-            return os.path.join(src_dir, source_base) if src_dir else source_base
-    # Fallback: original immediate-parent behaviour (no recognised -ext dir).
-    func_dir = os.path.dirname(extracted_rel)
-    src_dir = os.path.dirname(func_dir)
-    dir_name = os.path.basename(func_dir)
-    hyphen = dir_name.rfind("-")
-    source_base = dir_name[:hyphen] + "." + dir_name[hyphen + 1:] if hyphen > 0 else dir_name
-    return os.path.join(src_dir, source_base) if src_dir else source_base
+def _read_json(path: str):
+    with open(path, encoding="utf-8") as stream:
+        return json.load(stream)
 
 
-def _locate_workdir(proj_dir):
-    """Resolve the fm_agent workspace directory for a project or run.
-
-    Accepts a project root (probes ``<root>/fm_agent/``), an ``fm_agent/``
-    directory itself, or an archived workspace (e.g. ``fm_agent.archived_xx``).
-    The child workspace is probed before the path itself so a project that
-    happens to own a top-level ``trace/``, ``bug_validation/``, or
-    ``logic_verification_results/`` directory is not mistaken for a workspace;
-    a direct ``fm_agent/`` or archived-workspace path still resolves via the
-    path-itself probe. Detection uses any artifact marker subdirectory
-    (``trace/``, ``bug_validation/``, ``logic_verification_results/``) — more
-    robust than requiring ``trace/`` alone, since archived workspaces may have
-    been stripped of traces.
-    """
-    p = os.path.abspath(proj_dir)
-    markers = ("trace", "bug_validation", "logic_verification_results")
-    cand = os.path.join(p, "fm_agent")
-    if os.path.isfile(os.path.join(cand, "run.json")) or any(os.path.isdir(os.path.join(cand, m)) for m in markers):
-        return cand
-    if os.path.isfile(os.path.join(p, "run.json")) or any(os.path.isdir(os.path.join(p, m)) for m in markers):
-        return p
-    return cand  # directory may not exist yet; caller validates
-
-
-# Server-side default ordering within each kind (confirmed/first bugs, then
-# analyses). The client re-sorts on demand; this only fixes the default row
-# order embedded in the page so it is deterministic.
-_VERDICT_RANK = {"MISMATCH": 0, "MATCH": 1, "ERROR": 2, "SKIPPED": 3}
-_STATUS_RANK = {"confirmed": 0, "not_confirmed": 1, "error": 2, "pending": 3}
-
-_CANDIDATE_RE = re.compile(r"\.bug-\d{3}\.json$")
-
-
-def _extracted_suffix(path):
-    """Return the portion of ``path`` below ``extracted_functions/``.
-
-    The ``function`` / ``source_file`` fields stored in artifacts are the
-    extracted-function path, which appears in three shapes: an absolute path
-    (default mode), a project-relative ``fm_agent/extracted_functions/...``
-    (all-bugs mode), or a bare ``extracted_functions/...``. Normalise all of
-    them to the stable suffix the extraction layout understands.
-    """
-    if not isinstance(path, str) or not path:
-        return ""
-    norm = "/" + path.replace("\\", "/")
-    _, marker, rel = norm.rpartition("/extracted_functions/")
-    if marker and rel:
-        return rel
-    return path.replace("\\", "/").lstrip("/")
-
-
-def _is_extracted_shape(rel):
-    """Return whether ``rel`` follows the extraction layout.
-
-    An extracted-function path either carries the ``extracted_functions`` marker
-    somewhere in its components, or has a directory component of the form
-    ``<base>-<known extension>`` (the function dir extraction builds by replacing
-    the source filename's last dot with a hyphen). Anything else is either an
-    already-mapped original source path or an unrecognised value, and must not be
-    run through the reverse mapping.
-    """
-    parts = [p for p in rel.split("/") if p and p not in (".", "..")]
-    if "extracted_functions" in parts:
-        return True
-    for comp in parts[:-1]:  # the trailing component is the function file itself
-        hyphen = comp.rfind("-")
-        if hyphen > 0 and comp[hyphen + 1:] in _EXT_TO_LANG:
-            return True
-    return False
-
-
-def _map_source(function):
-    """Map an artifact ``function`` / ``source_file`` value to the original
-    project-relative source path.
-
-    Artifacts store the extracted-function path in several shapes: an absolute
-    path under ``.../extracted_functions/``, a project-relative
-    ``fm_agent/extracted_functions/...``, a bare ``extracted_functions/...``, a
-    marker-less extracted suffix such as ``src/engine/loader-cpp/loadData.cpp``
-    (bug validators strip the ``fm_agent/extracted_functions`` prefix, leaving a
-    leading-slash path), or — for records that already carry the original path —
-    the source path itself. Reverse-map the extracted shapes; pass anything not
-    shaped like an extracted path through unchanged.
-    """
-    if not isinstance(function, str) or not function:
-        return ""
-    norm = function.replace("\\", "/").lstrip("/")
-    suffix = _extracted_suffix(norm)  # falls back to the normalised path itself
-    if not suffix or not _is_extracted_shape(suffix):
-        return suffix  # already the original source path (or unrecognised)
+def _source_payload(work_dir: str, record: dict) -> dict:
+    source_rel = str(record.get("source_file") or "")
+    if not source_rel or source_rel.startswith("/") or ".." in source_rel.split("/"):
+        return {"href": "", "text": ""}
+    project_root = os.path.dirname(os.path.abspath(work_dir))
+    source_path = os.path.join(project_root, source_rel.replace("/", os.sep))
+    text = ""
     try:
-        return _extracted_file_to_source_rel(suffix).replace(os.sep, "/")
-    except Exception:
-        return suffix  # best effort: keep the extracted suffix rather than ""
-
-
-def _func_name(function):
-    """Derive the function name from an extracted-function path."""
-    base = os.path.basename((function or "").replace("\\", "/").rstrip("/"))
-    stem = os.path.splitext(base)[0]
-    return stem or ""
-
-
-def _bug_detail_ref(work_dir, bug_id):
-    """Prefer the human-readable Markdown report, then the JSON record."""
-    bv = os.path.join(work_dir, "bug_validation")
-    if bug_id and os.path.isfile(os.path.join(bv, f"{bug_id}.md")):
-        return f"bug_validation/{bug_id}.md"
-    if bug_id and os.path.isfile(os.path.join(bv, f"{bug_id}.result.json")):
-        return f"bug_validation/{bug_id}.result.json"
-    return ""
-
-
-def _bug_detail(record):
-    """Build the expandable technical detail block for a bug record."""
-    detail = {}
-    status = record.get("confirmation_status")
-    if status:
-        detail["Confirmation status"] = status
-    if record.get("attempts") is not None:
-        detail["Attempts"] = record["attempts"]
-    for label, key in (
-        ("Trigger summary", "trigger_summary"),
-        ("Probe script", "probe_script"),
-        ("Probe output", "probe_stdout"),
-        ("Validation error", "validation_error"),
-    ):
-        value = record.get(key)
-        if value:
-            detail[label] = value
-    return detail
-
-
-def _collect_bugs(work_dir):
-    """Collect bug items, preferring the aggregated summary.json.
-
-    ``summary.json`` (written deterministically by
-    ``verification._generate_*_validation_summary``) is the authoritative list:
-    in ``--all-bugs`` mode it synthesises ``pending`` records that have no
-    ``.result.json`` on disk, so reading it first is required to not lose them.
-    """
-    records = None
-    summary_path = os.path.join(work_dir, "bug_validation", "summary.json")
-    try:
-        with open(summary_path, "r", encoding="utf-8") as f:
-            summary = json.load(f)
-        bugs = summary.get("bugs")
-        if isinstance(bugs, list):
-            records = bugs
-    except (OSError, ValueError):
+        with open(source_path, encoding="utf-8", errors="replace") as stream:
+            text = stream.read()
+    except OSError:
         pass
+    return {
+        "href": os.path.relpath(source_path, work_dir).replace(os.sep, "/"),
+        "text": text,
+    }
 
-    if records is None:
-        records = []
-        bv = os.path.join(work_dir, "bug_validation")
-        if os.path.isdir(bv):
-            for fname in sorted(os.listdir(bv)):
-                if not fname.endswith(".result.json"):
+
+_HTML = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FM-Agent Static Verification Report</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f8fa;--card:#fff;--fg:#1f2328;--muted:#59636e;
+--border:#d0d7de;--green:#1a7f37;--amber:#9a6700;--red:#cf222e;--blue:#0969da;--band:#fff8c5}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--card:#161b22;--fg:#e6edf3;
+--muted:#8b949e;--border:#30363d;--green:#3fb950;--amber:#d29922;--red:#f85149;--blue:#58a6ff;--band:#3b2e00}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
+header,main{max-width:1280px;margin:auto;padding:20px}h1{margin:0 0 4px;font-size:25px}.muted{color:var(--muted)}
+.summary{display:grid;grid-template-columns:repeat(5,minmax(105px,1fr));gap:10px;margin:18px 0}
+.metric,.toolbar,.item,.diagnostics{background:var(--card);border:1px solid var(--border);border-radius:8px}.metric{padding:12px}
+.metric b{font-size:22px;display:block}.toolbar{padding:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input,select,button{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 9px}
+button{cursor:pointer}#search{flex:1;min-width:240px}.filter-box{position:relative;border:1px solid var(--border);border-radius:6px;padding:6px 9px}
+.filter-box>summary{cursor:pointer;font-weight:600}.filter-menu{display:grid;gap:4px;min-width:210px;max-height:250px;overflow:auto;padding-top:8px}
+.filter-menu label{display:flex;gap:6px;align-items:center;font-family:ui-monospace,monospace;font-size:12px}
+.filter-menu input{min-width:0}.items{display:grid;gap:10px;margin-top:12px}.item{overflow:hidden}
+.item>summary{list-style:none;cursor:pointer;padding:13px}.item>summary::-webkit-details-marker{display:none}.item[open]>summary{border-bottom:1px solid var(--border)}
+.body{padding:14px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.title{font-weight:700;font-size:16px}
+.badge{border-radius:999px;color:white;padding:2px 9px;font-size:12px;font-weight:700}.MATCH{background:var(--green)}
+.MISMATCH{background:var(--amber)}.ERROR,.MISSING{background:var(--red)}.path{font-family:ui-monospace,monospace;color:var(--muted)}
+.candidate{border-left:4px solid var(--amber);padding:6px 12px;margin:10px 0;background:color-mix(in srgb,var(--amber) 6%,transparent)}
+dt{font-weight:700;margin-top:7px}dd{margin-left:0;white-space:pre-wrap}.actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+pre,.source{overflow:auto;background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border)}a{color:var(--blue)}
+.notice{border-left:4px solid var(--blue);padding:8px 12px;background:var(--card)}.source{padding:0;font:12px/1.55 ui-monospace,monospace}
+.source-line{display:grid;grid-template-columns:54px 1fr;min-width:max-content}.source-line.hit{background:var(--band)}
+.ln{color:var(--muted);text-align:right;padding:0 12px 0 6px;user-select:none}.code{white-space:pre;padding-right:16px}
+.kw{color:#cf222e;font-weight:600}.str{color:#0a3069}.com{color:#6e7781;font-style:italic}.diagnostics{padding:12px;margin-top:12px}
+dialog{width:min(1000px,94vw);max-height:90vh;background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:10px;padding:0}
+dialog::backdrop{background:#0008}.dialog-head{position:sticky;top:0;background:var(--card);display:flex;justify-content:space-between;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);z-index:2}.dialog-body{padding:16px}
+@media(max-width:700px){.summary{grid-template-columns:repeat(2,1fr)}header,main{padding:14px}.toolbar>*{width:100%}}
+</style></head><body>
+<header><h1>FM-Agent Static Verification Report</h1><div id="subtitle" class="muted"></div></header>
+<main><div class="notice"><b>Static result semantics:</b> MISMATCH is an unconfirmed static bug candidate. Dynamic tests and instrumentation are intentionally not included in this build.</div>
+<section id="summary" class="summary"></section>
+<section class="toolbar"><input id="search" type="search" placeholder="Search title / file / function / evidence" autocomplete="off">
+<details class="filter-box"><summary>Verdicts</summary><div id="verdict-options" class="filter-menu"></div></details>
+<details class="filter-box"><summary>Source files</summary><div id="file-options" class="filter-menu"></div></details>
+<select id="sort"><option value="risk">Candidates first</option><option value="source">Source path</option><option value="function">Function</option></select>
+<button id="expand-all">Expand all</button><button id="collapse-all">Collapse all</button><button id="reset">Reset</button><span id="shown" class="muted"></span></section>
+<section id="items" class="items"></section><section id="diagnostics" class="diagnostics"></section></main>
+<dialog id="detail-dialog"><div class="dialog-head"><b id="dialog-title"></b><button id="dialog-close">Close</button></div><div id="dialog-body" class="dialog-body"></div></dialog>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const R=JSON.parse(document.getElementById('data').textContent), q=document.getElementById.bind(document);
+const rowsAll=Array.isArray(R.results)?R.results:[], counts=R.counts||{}, rank={MISMATCH:0,ERROR:1,MISSING:2,MATCH:3};
+const metric=(name,value)=>{const d=document.createElement('div');d.className='metric';const b=document.createElement('b');b.textContent=value;d.append(b,document.createTextNode(name));return d};
+function add(parent,tag,text,cls){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;parent.appendChild(e);return e}
+q('subtitle').textContent=`Status: ${(R.status||'unknown').toUpperCase()} · mode: ${R.mode||'default'} · scope: ${R.analysis_scope||'full'}`;
+q('summary').append(metric('Functions',R.total_functions||0),metric('Candidates',counts.MISMATCH||0),metric('Passed',counts.MATCH||0),metric('Errors',counts.ERROR||0),metric('Missing',counts.MISSING||0));
+function makeChecks(id,values,indent){const host=q(id);for(const value of values){const label=document.createElement('label');if(indent)label.style.paddingLeft=`${Math.max(0,value.split('/').length-1)*12}px`;const box=document.createElement('input');box.type='checkbox';box.value=value;box.checked=true;box.addEventListener('change',render);label.append(box,document.createTextNode(value));host.appendChild(label)}}
+makeChecks('verdict-options',[...new Set(rowsAll.map(r=>r.verdict))].sort((a,b)=>(rank[a]??9)-(rank[b]??9)),false);
+makeChecks('file-options',[...new Set(rowsAll.map(r=>r.source_file||r.function).filter(Boolean))].sort(),true);
+function checked(id){return new Set([...q(id).querySelectorAll('input:checked')].map(x=>x.value))}
+function highlightedLine(text){const frag=document.createDocumentFragment();const re=/(\/\/.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:if|else|for|while|switch|case|return|int|long|short|char|void|float|double|struct|class|public|private|const|static|bool|true|false|null|None|def|fn|let|var)\b)/gm;let pos=0,m;while((m=re.exec(text))){frag.append(document.createTextNode(text.slice(pos,m.index)));const s=document.createElement('span');s.className=m[0].startsWith('//')?'com':(m[0][0]==='"'||m[0][0]==="'")?'str':'kw';s.textContent=m[0];frag.append(s);pos=re.lastIndex}frag.append(document.createTextNode(text.slice(pos)));return frag}
+function sourcePane(r){const pane=document.createElement('div');pane.className='source';const lines=(r.source_text||'').split('\n');lines.forEach((line,i)=>{const n=i+1,row=add(pane,'div','',`source-line ${r.start_line&&n>=r.start_line&&n<=(r.end_line||r.start_line)?'hit':''}`);add(row,'span',String(n),'ln');const code=add(row,'span','', 'code');code.append(highlightedLine(line))});return pane}
+function candidateSection(g,i){const c=add(document.createElement('div'),'section','', 'candidate');add(c,'h3',`Static candidate ${i+1}`);const dl=add(c,'dl','');for(const [label,key] of [['Generated spec claim','spec_claim'],['Actual behavior','actual_behavior'],['Trigger condition','trigger_condition'],['Code evidence','code_evidence']]){add(dl,'dt',label);add(dl,'dd',g[key]||'(not recorded)')}return c}
+function detailBody(r){const body=document.createElement('div');if(r.error){add(body,'h3','Error');add(body,'pre',r.error)}(r.candidates||[]).forEach((g,i)=>body.append(candidateSection(g,i)));const actions=add(body,'div','', 'actions');for(const [label,href] of [['Open result JSON',r.result_file],['Open generated spec',r.spec_file],['Open source',r.source_href]]){if(!href)continue;const a=add(actions,'a',label);a.href=href;a.target='_blank'}if(r.source_text){add(body,'h3',`Source · ${r.source_file||''} ${r.location||''}`);body.append(sourcePane(r))}return body}
+function openFull(r){q('dialog-title').textContent=`${r.verdict} · ${r.function_name||r.function}`;q('dialog-body').replaceChildren(detailBody(r));q('detail-dialog').showModal()}
+function card(r){const box=document.createElement('details');box.className='item';const head=add(box,'summary','');const row=add(head,'div','', 'row');add(row,'span',r.verdict,'badge '+r.verdict);add(row,'span',r.function_name||r.function,'title');add(row,'span',`${r.source_file||r.function}${r.location?' · '+r.location:''}`,'path');const body=add(box,'div','', 'body');const actions=add(body,'div','', 'actions');const full=add(actions,'button','Open full detail');full.type='button';full.onclick=()=>openFull(r);body.append(detailBody(r));return box}
+function render(){const needle=q('search').value.trim().toLowerCase(),verdicts=checked('verdict-options'),files=checked('file-options'),sort=q('sort').value;let rows=rowsAll.filter(r=>verdicts.has(r.verdict)&&files.has(r.source_file||r.function)&&(!needle||JSON.stringify(r).toLowerCase().includes(needle)));rows.sort((a,b)=>sort==='source'?(a.source_file||'').localeCompare(b.source_file||''):sort==='function'?(a.function_name||'').localeCompare(b.function_name||''):(rank[a.verdict]??9)-(rank[b.verdict]??9)||(a.source_file||'').localeCompare(b.source_file||''));q('items').replaceChildren(...rows.map(card));q('shown').textContent=`${rows.length} / ${rowsAll.length} reports`}
+q('search').addEventListener('input',render);q('sort').addEventListener('change',render);q('expand-all').onclick=()=>q('items').querySelectorAll('.item').forEach(x=>x.open=true);q('collapse-all').onclick=()=>q('items').querySelectorAll('.item').forEach(x=>x.open=false);
+q('reset').onclick=()=>{q('search').value='';q('sort').value='risk';document.querySelectorAll('.filter-menu input').forEach(x=>x.checked=true);render()};q('dialog-close').onclick=()=>q('detail-dialog').close();
+const t=R.trace||{};q('diagnostics').textContent=`Trace events: ${t.total_events||0} · Historical recovered/error events: ${t.historical_error_events||0} · Report status is determined by terminal static artifacts.`;render();
+</script></body></html>"""
+
+
+def generate_report(work_dir: str) -> str:
+    work_dir = os.path.abspath(work_dir)
+    report_path = os.path.join(work_dir, "VERIFICATION-REPORT.json")
+    report = _read_json(report_path)
+    results = []
+    for original in report.get("results", []):
+        if not isinstance(original, dict):
+            continue
+        record = dict(original)
+        source = _source_payload(work_dir, record)
+        record["source_href"] = source["href"]
+        record["source_text"] = source["text"]
+        results.append(record)
+    report["results"] = results
+    payload = json.dumps(report, ensure_ascii=False, sort_keys=True)
+    payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    html = _HTML.replace("__DATA__", payload)
+    output = os.path.join(work_dir, "report.html")
+    temporary = output + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as stream:
+        stream.write(html)
+    os.replace(temporary, output)
+    return output
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("path", help="project root or fm_agent workspace")
+    args = parser.parse_args()
+    work_dir = _locate_workdir(args.path)
+    report_path = os.path.join(work_dir, "VERIFICATION-REPORT.json")
+    if not os.path.isfile(report_path):
+        input_dir = os.path.join(work_dir, "extracted_functions")
+        output_dir = os.path.join(work_dir, "logic_verification_results")
+        if not os.path.isdir(output_dir):
+            print(f"error: static result directory not found: {output_dir}", file=sys.stderr)
+            return 1
+        from src.verification import write_static_verification_report
+        all_bugs = False
+        for root, _dirs, files in os.walk(output_dir):
+            for filename in files:
+                if not filename.endswith(".json") or ".bug-" in filename:
                     continue
                 try:
-                    with open(os.path.join(bv, fname), "r", encoding="utf-8") as f:
-                        records.append(json.load(f))
-                except (OSError, ValueError):
-                    continue
-
-    items = []
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        bug_id = record.get("id") or ""
-        src = record.get("source_file") or ""
-        fn = record.get("function_name") or _func_name(src)
-        items.append({
-            "kind": "bug",
-            "id": bug_id,
-            "title": f"Bug Report: {fn}" if fn else "Bug Report",
-            "status": str(record.get("confirmation_status") or "pending"),
-            "source_file": _map_source(src),
-            "function_name": fn,
-            "location": "",
-            "detail_ref": _bug_detail_ref(work_dir, bug_id),
-            "detail": _bug_detail(record),
-        })
-    return items
-
-
-def _analysis_detail(result):
-    """Build the expandable technical detail block for an analysis result."""
-    detail = {}
-    verdict = result.get("verdict")
-    if verdict:
-        detail["Verdict"] = verdict
-    gaps = result.get("gaps")
-    if isinstance(gaps, dict):
-        for label, key in (
-            ("Spec claim", "spec_claim"),
-            ("Actual behavior", "actual_behavior"),
-            ("Code evidence", "code_evidence"),
-            ("Trigger condition", "trigger_condition"),
-        ):
-            value = gaps.get(key)
-            if value:
-                detail[label] = value
-    if result.get("error"):
-        detail["Error"] = result["error"]
-    if result.get("all_bugs") is not None:
-        detail["All-bugs candidates"] = result.get("bug_count")
-        detail["Reasoning complete"] = result.get("reasoning_complete")
-    return detail
-
-
-def _collect_analyses(work_dir):
-    """Collect one item per function-level verification result.
-
-    ``*.bug-NNN.json`` candidate files are skipped: in ``--all-bugs`` mode each
-    candidate already has its own bug-validation record, so including them here
-    would double-count the same function.
-    """
-    results_dir = os.path.join(work_dir, "logic_verification_results")
-    items = []
-    if not os.path.isdir(results_dir):
-        return items
-    for root, _dirs, files in os.walk(results_dir):
-        for fname in sorted(files):
-            if not fname.endswith(".json") or _CANDIDATE_RE.search(fname):
-                continue
-            path = os.path.join(root, fname)
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    result = json.load(f)
-            except (OSError, ValueError):
-                continue
-            if not isinstance(result, dict):
-                continue
-            rel = os.path.relpath(path, results_dir).replace(os.sep, "/")
-            func = result.get("function") or ""
-            fn = _func_name(func)
-            items.append({
-                "kind": "analysis",
-                "id": rel,
-                "title": f"Analysis: {fn}" if fn else "Analysis",
-                "status": str(result.get("verdict") or "ERROR"),
-                "source_file": _map_source(func),
-                "function_name": fn,
-                "location": "",
-                "detail_ref": f"logic_verification_results/{rel}",
-                "detail": _analysis_detail(result),
-            })
-    return items
-
-
-def _match_span(spans, fn):
-    """Match a function name against codegraph spans; return ``L<start>-L<end>``.
-
-    ``get_function_spans`` returns one span per node with the base extraction
-    identifier (no ``_N`` suffix), so overloads yield several same-named spans
-    in line order. A free function and a member with the same short name can
-    coexist in one file (e.g. ``Flush`` next to ``Cache::Flush``): an exact
-    ident match always wins first, so the bare ``Flush`` never lands on the
-    member's earlier span; ``::``-qualified short-name matching is a second
-    pass kept for filenames whose class qualifier was sanitised away
-    (``operator[]``). If ``fn`` carries a ``_N`` dedup suffix, strip it and
-    take the Nth span with that exact base ident (``::``-qualified base idents
-    fall back to ``::``-suffix matching when no exact base exists), so
-    overloads resolve even when an unrelated same-short-name member precedes
-    them in line order. Anything unmatched returns "" (the page shows "—").
-    """
-    if not spans:
-        return ""
-    for name, start, end in spans:
-        if name == fn:
-            # codegraph spans are 0-indexed inclusive; display 1-indexed.
-            return f"L{start + 1}-L{end + 1}"
-    for name, start, end in spans:
-        if name.endswith("::" + fn):
-            return f"L{start + 1}-L{end + 1}"
-    m = re.match(r"^(.*)_(\d+)$", fn)
-    if m:
-        base, idx = m.group(1), int(m.group(2))
-        pool = [s for s in spans if s[0] == base]
-        if not pool:
-            pool = [s for s in spans if s[0].endswith("::" + base)]
-        if idx < len(pool):
-            name, start, end = pool[idx]
-            return f"L{start + 1}-L{end + 1}"
-    return ""
-
-
-def _source_project_root(work_dir):
-    """Locate sources even when a workspace has moved to the external archive."""
-    try:
-        with open(os.path.join(work_dir, "run.json"), encoding="utf-8") as file:
-            metadata = json.load(file)
-        if isinstance(metadata, dict):
-            for key in ("analysis_dir", "project_dir"):
-                root = metadata.get(key)
-                if isinstance(root, str) and os.path.isdir(root):
-                    return root
-    except (OSError, ValueError):
-        pass
-    return os.path.dirname(os.path.abspath(work_dir))
-
-
-def _enrich_locations(work_dir, items):
-    """Best-effort fill ``location`` from the codegraph index, when available.
-
-    The codegraph database lives in the project root (``.codegraph/codegraph.db``),
-    found using the source directory recorded in run.json, or the workspace's
-    parent for older runs. Any failure — missing db, unsupported language,
-    unindexed file — leaves ``location`` empty and the page renders "—".
-    """
-    try:
-        from src.languages.codegraph import CodeGraphExtractor
-        extractor = CodeGraphExtractor.from_proj_dir(_source_project_root(work_dir))
-    except Exception:
-        return items
-    if extractor is None:
-        return items
-    proj_root = _source_project_root(work_dir)
-    for item in items:
-        src = item.get("source_file") or ""
-        fn = item.get("function_name") or ""
-        if not src or not fn:
-            continue
-        ext = src.rsplit(".", 1)[-1] if "." in src else ""
-        lang_key = _EXT_TO_LANG.get(ext)
-        if not lang_key:
-            continue
-        try:
-            spans = extractor.get_function_spans(lang_key, os.path.join(proj_root, src))
-        except Exception:
-            spans = None
-        loc = _match_span(spans, fn)
-        if loc:
-            item["location"] = loc
-    return items
-
-
-def _attach_source_href(work_dir, items):
-    """Best-effort add ``source_href``: report.html → original source file.
-
-    Use the source directory recorded in run.json, falling back to the parent
-    for older runs. The link resolves while that source tree remains available.
-    """
-    work_dir_abs = os.path.abspath(work_dir)
-    proj_root = _source_project_root(work_dir)
-    for item in items:
-        src = item.get("source_file") or ""
-        if not src or src.startswith("/") or ".." in src.split("/"):
-            continue
-        target = os.path.join(proj_root, src.replace("/", os.sep))
-        item["source_href"] = os.path.relpath(target, work_dir_abs).replace(os.sep, "/")
-    return items
-
-
-# ---------------------------------------------------------------------------
-# HTML rendering
-# ---------------------------------------------------------------------------
-
-_HTML_TEMPLATE = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FM-Agent Report Index</title>
-<style>
-:root {
-  --bg: #ffffff; --panel: #ffffff; --border: #d0d7de;
-  --text: #1f2328; --muted: #59636e; --accent: #0969da;
-  color-scheme: light;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text);
-       font: 14px/1.45 ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-header { padding: 18px 22px 10px; }
-h1 { margin: 0 0 4px; font-size: 20px; }
-#stats { color: var(--muted); margin: 0 0 12px; font-size: 13px; }
-.controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-start; }
-.controls label.opt { display: block; color: var(--text); font-size: 12px; margin: 2px 0; }
-.opt input[type="checkbox"] { vertical-align: middle; }
-#search { width: 260px; max-width: 100%; padding: 6px 10px; border-radius: 6px;
-          border: 1px solid var(--border); background: var(--panel); color: var(--text); }
-#sort { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
-        background: var(--panel); color: var(--text); }
-button { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
-         background: var(--panel); color: var(--text); cursor: pointer; }
-button:hover { border-color: var(--accent); }
-.filter-group { border: 2px solid var(--border); border-radius: 6px; padding: 6px 10px;
-                max-height: 160px; overflow: auto; min-width: 150px; }
-.filter-group.grow { max-height: none; }
-.filter-group .fg-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
-                          color: var(--muted); margin-bottom: 4px; }
-#file-opts, #status-opts { overflow-wrap: anywhere; }
-#file-opts ul.tree, #status-opts ul.tree { list-style: none; margin: 0; padding-left: 0; }
-#file-opts ul.tree ul, #status-opts ul.tree ul { list-style: none; margin: 0; padding-left: 13px; }
-#file-opts .dir, #status-opts .dir { display: flex; align-items: center; gap: 4px; font-size: 12px;
-                  cursor: pointer; padding: 1px 0; color: var(--text); user-select: none; }
-#file-opts .dir-label, #status-opts .dir-label { cursor: pointer; }
-#file-opts .dir-label:hover, #status-opts .dir-label:hover { color: var(--accent); }
-#file-opts label.opt, #status-opts label.opt { padding-left: 0; }
-.hidden { display: none !important; }
-main { padding: 6px 22px 40px; }
-ul#items { list-style: none; margin: 0; padding: 0; }
-li.item { margin: 0 0 8px; border: 2px solid var(--border); border-radius: 8px;
-          background: var(--panel); overflow: hidden; }
-.head { display: grid; grid-template-columns: 104px minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1fr) 96px auto;
-        gap: 8px; align-items: center; padding: 9px 12px; cursor: pointer; }
-.head:hover { background: #f6f8fa; }
-.head .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.head .file, .head .func, .head .loc { color: var(--muted); overflow: hidden;
-        text-overflow: ellipsis; white-space: nowrap; }
-.head a.file, .head button.file { color: var(--accent); text-decoration: none; }
-.head a.file:hover, .head button.file:hover { text-decoration: underline; }
-.head button.file { border: 0; background: none; padding: 0; font: inherit;
-        cursor: pointer; text-align: left; }
-.head .loc { font-variant-numeric: tabular-nums; }
-.head .badge { justify-self: stretch; text-align: center; }
-.chev { color: var(--muted); user-select: none; }
-.badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
-         font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; }
-.status-confirmed { background: #cf222e; }
-.status-MATCH { background: #1a7f37; }
-.status-not_confirmed { background: #e36209; }
-.status-MISMATCH { background: #9a6700; }
-.status-error, .status-ERROR { background: #a40e26; }
-.status-pending, .status-SKIPPED { background: #59636e; }
-.details { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px;
-           padding: 10px 14px 12px; border-top: 2px solid var(--border); }
-.detail-left, .detail-right { min-width: 0; }
-.detail-row { margin: 0 0 10px; }
-.detail-label { color: var(--muted); font-size: 12px; font-weight: 600;
-                text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }
-.detail-value { white-space: pre-wrap; word-break: break-word; }
-.detail-value pre { margin: 0; padding: 8px 10px; border-radius: 6px; background: #f6f8fa;
-                    border: 2px solid var(--border); overflow-x: auto;
-                    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.open-link { display: inline-block; margin-top: 4px; color: var(--accent); text-decoration: none;
-             border: 0; background: none; padding: 0; font: inherit; cursor: pointer; }
-.open-link:hover { text-decoration: underline; }
-.detail-empty { color: var(--muted); font-style: italic; }
-.src-head { display: flex; justify-content: space-between; gap: 8px; font-size: 11px;
-            color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
-            margin-bottom: 4px; overflow: hidden; }
-.src-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.src-code { margin: 0; border-radius: 6px; border: 2px solid var(--border); overflow-x: auto;
-            background: var(--panel); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.src-line { display: flex; padding: 0 10px; white-space: pre; }
-.src-line.hl { background: #fff8c5; }
-.src-line .ln { flex: none; width: 3em; text-align: right; padding-right: 12px;
-                color: var(--muted); font-variant-numeric: tabular-nums; user-select: none; }
-.src-line .code { flex: 1; }
-.tk-kw { color: #cf222e; }
-.tk-str { color: #0a3069; }
-.tk-com { color: #6e7781; }
-.tk-num { color: #0550ae; }
-.tk-fn { color: #8250df; }
-.src-empty { color: var(--muted); font-style: italic; }
-#page-overlay { position: fixed; inset: 0; z-index: 99; background: #fff; overflow: auto;
-                display: none; padding: 0; }
-#page-overlay.show { display: block; }
-@media (max-width: 900px) { .details { grid-template-columns: 1fr; } }
-#empty { color: var(--muted); text-align: center; padding: 40px 0; }
-</style>
-</head>
-<body>
-<header>
-  <h1>FM-Agent Report Index</h1>
-  <div id="stats"></div>
-  <div class="controls">
-    <input id="search" type="search" placeholder="Search title / file / function / location" autocomplete="off">
-    <div class="filter-group grow"><div class="fg-title">Type / Status</div>
-      <div id="status-opts"></div>
-    </div>
-    <div class="filter-group"><div class="fg-title">Source file</div><div id="file-opts"></div></div>
-    <div class="filter-group">
-      <div class="fg-title">Sort</div>
-      <select id="sort">
-        <option value="status" selected>status</option>
-        <option value="file">file</option>
-        <option value="function">function</option>
-      </select>
-    </div>
-    <div class="filter-group">
-      <div class="fg-title">Actions</div>
-      <button id="expand-all" type="button">Expand all</button>
-      <button id="collapse-all" type="button">Collapse all</button>
-      <button id="reset" type="button">Reset</button>
-    </div>
-  </div>
-</header>
-<main>
-  <div id="empty" class="hidden">No reports match your filters. Adjust the search or filters, or press <b>Reset</b>.</div>
-  <ul id="items"></ul>
-</main>
-<script id="report-data" type="application/json">__DATA__</script>
-<script id="source-data" type="application/json">__SOURCES__</script>
-<script>
-const DATA = JSON.parse(document.getElementById('report-data').textContent);
-const SOURCES = JSON.parse(document.getElementById('source-data').textContent);
-const STATUS_RANK = {confirmed:0, not_confirmed:1, error:2, pending:3, MISMATCH:10, MATCH:11, ERROR:12, SKIPPED:13};
-// Display label per status; the underlying status value (badge class, filter
-// checkbox value, sort keys) is unchanged — only what the user reads differs.
-const STATUS_LABEL = {
-  MISMATCH: 'bug_candidate',
-  MATCH: 'passed',
-  confirmed: 'confirmed_bug',
-  not_confirmed: 'potential_bug',
-  error: 'error',
-  pending: 'pending',
-  ERROR: 'error',
-  SKIPPED: 'skipped',
-};
-
-const state = {
-  search: '',
-  statuses: new Set(),
-  files: new Set(),
-  fileDirs: new Set(),
-  fileSeeded: false,
-  statusDirs: new Set(),
-  sort: 'status',
-  expanded: new Set(),
-};
-
-const $ = (id) => document.getElementById(id);
-
-function matches(it) {
-  if (state.statuses.size && !state.statuses.has(it.status)) return false;
-  if (state.files.size && !state.files.has(it.source_file)) return false;
-  const q = state.search.trim().toLowerCase();
-  if (q) {
-    const hay = [it.title, it.source_file, it.function_name, it.location].join(' ').toLowerCase();
-    if (!hay.includes(q)) return false;
-  }
-  return true;
-}
-
-function cmp(a, b) {
-  let k = 0;
-  switch (state.sort) {
-    case 'file': k = a.source_file < b.source_file ? -1 : a.source_file > b.source_file ? 1 : 0; break;
-    case 'function':
-      k = a.function_name < b.function_name ? -1 : a.function_name > b.function_name ? 1 : 0;
-      // Same function name in different files: group every item from the same
-      // file together before the kind/id tie-breaks interleave them.
-      if (k === 0) k = a.source_file < b.source_file ? -1 : a.source_file > b.source_file ? 1 : 0;
-      break;
-    default: k = (STATUS_RANK[a.status] ?? 99) - (STATUS_RANK[b.status] ?? 99);
-  }
-  if (k === 0) k = a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0;
-  if (k === 0) k = a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  return k;
-}
-
-function badge(cls, text) {
-  const s = document.createElement('span');
-  s.className = 'badge ' + cls;
-  s.textContent = text;
-  return s;
-}
-
-function buildStatusOptions() {
-  // Flat list of status checkboxes. The report carries only concluded bug
-  // validations (confirmed / not_confirmed), so there are no kind roots — the
-  // bug/analysis distinction is gone from the page.
-  const container = $('status-opts');
-  container.textContent = '';
-  const vals = Array.from(new Set(DATA.map((it) => it.status)))
-    .filter((v) => v !== '')
-    .sort((a, b) => (STATUS_RANK[a] ?? 99) - (STATUS_RANK[b] ?? 99) || (a < b ? -1 : a > b ? 1 : 0));
-  const ul = document.createElement('ul');
-  ul.className = 'tree';
-  for (const v of vals) {
-    const li = document.createElement('li');
-    const label = document.createElement('label');
-    label.className = 'opt';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = v;
-    cb.checked = state.statuses.has(v);
-    cb.addEventListener('change', () => {
-      if (cb.checked) state.statuses.add(v); else state.statuses.delete(v);
-      render();
-    });
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(' ' + (STATUS_LABEL[v] || v)));
-    li.appendChild(label);
-    ul.appendChild(li);
-  }
-  container.appendChild(ul);
-}
-
-function buildFileTree(container, values, selected) {
-  // Collapsible multi-level tree of source files. Leaf checkboxes keep the exact
-  // full source_file value as the filter key, so matches() semantics are unchanged;
-  // directory checkboxes select every descendant file (indeterminate when partial).
-  const root = { name: '', values: [], children: new Map() };
-  const distinct = Array.from(new Set(values)).filter((v) => v !== '').sort();
-  for (const v of distinct) {
-    const segs = v.replace(/\\/g, '/').split('/').filter(Boolean);
-    if (!segs.length) continue;
-    let node = root, key = '';
-    for (let i = 0; i < segs.length; i++) {
-      key = key ? key + '/' + segs[i] : segs[i];
-      if (!node.children.has(segs[i])) {
-        node.children.set(segs[i], { name: segs[i], key, values: [], children: new Map() });
-      }
-      node = node.children.get(segs[i]);
-      if (i === segs.length - 1) node.values.push(v);
-    }
-  }
-  // Collect each node's own + all descendant values for directory select-all.
-  const collect = (n) => {
-    for (const c of n.children.values()) {
-      collect(c);
-      for (const v of c.values) n.values.push(v);
-    }
-  };
-  collect(root);
-  // Default expansion: top-level directories only (seed once, then Set is authoritative).
-  if (!state.fileSeeded) {
-    for (const c of root.children.values()) if (c.children.size) state.fileDirs.add(c.key);
-    state.fileSeeded = true;
-  }
-  container.textContent = '';
-  const ul = document.createElement('ul');
-  ul.className = 'tree';
-  const renderNode = (node, parentUl) => {
-    const dirs = [], leaves = [];
-    for (const c of node.children.values()) (c.children.size ? dirs : leaves).push(c);
-    dirs.sort((a, b) => a.name < b.name ? -1 : 1);
-    leaves.sort((a, b) => a.name < b.name ? -1 : 1);
-    for (const d of dirs) {
-      const open = state.fileDirs.has(d.key);
-      const li = document.createElement('li');
-      const row = document.createElement('div');
-      row.className = 'dir';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      const n = d.values.length, sel = d.values.filter((v) => selected.has(v)).length;
-      cb.checked = n > 0 && sel === n;
-      cb.indeterminate = sel > 0 && sel < n;
-      cb.addEventListener('change', () => {
-        for (const v of d.values) cb.checked ? selected.add(v) : selected.delete(v);
-        render();
-      });
-      const label = document.createElement('span');
-      label.className = 'dir-label';
-      label.textContent = (open ? '▾ ' : '▸ ') + d.name;
-      label.addEventListener('click', () => {
-        if (state.fileDirs.has(d.key)) state.fileDirs.delete(d.key); else state.fileDirs.add(d.key);
-        render();
-      });
-      row.appendChild(cb); row.appendChild(label);
-      li.appendChild(row);
-      const sub = document.createElement('ul');
-      renderNode(d, sub);
-      sub.classList.toggle('hidden', !open);
-      li.appendChild(sub);
-      parentUl.appendChild(li);
-    }
-    for (const f of leaves) {
-      for (const v of f.values) {
-        const li = document.createElement('li');
-        const label = document.createElement('label');
-        label.className = 'opt';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.value = v;
-        cb.checked = selected.has(v);
-        cb.addEventListener('change', () => {
-          if (cb.checked) selected.add(v); else selected.delete(v);
-          render();
-        });
-        label.appendChild(cb);
-        label.appendChild(document.createTextNode(' ' + f.name));
-        li.appendChild(label);
-        parentUl.appendChild(li);
-      }
-    }
-  };
-  renderNode(root, ul);
-  container.appendChild(ul);
-}
-
-function detailBody(it) {
-  const body = document.createElement('div');
-  body.className = 'detail-left';
-  const entries = Object.entries(it.detail || {});
-  for (const [label, value] of entries) {
-    const row = document.createElement('div');
-    row.className = 'detail-row';
-    const l = document.createElement('div');
-    l.className = 'detail-label';
-    l.textContent = label + ':';
-    row.appendChild(l);
-    const v = document.createElement('div');
-    v.className = 'detail-value';
-    if (String(value).indexOf('\n') !== -1) {
-      const pre = document.createElement('pre');
-      pre.textContent = value;
-      v.appendChild(pre);
-    } else {
-      v.textContent = value;
-    }
-    row.appendChild(v);
-    body.appendChild(row);
-  }
-  if (it.detail_full) {
-    const link = document.createElement('button');
-    link.className = 'open-link';
-    link.type = 'button';
-    link.textContent = 'Open full report ↗';
-    // A <button> has no default navigation, so a click can never fall through
-    // to an href="#" (report.html#). document.write avoids blob-URL windows.
-    link.addEventListener('click', () => openPage(fullPageHTML(it)));
-    body.appendChild(link);
-  }
-  if (!entries.length && !it.detail_full) {
-    const d = document.createElement('div');
-    d.className = 'detail-empty';
-    d.textContent = 'No technical details available.';
-    body.appendChild(d);
-  }
-  return body;
-}
-
-function parseLoc(loc) {
-  // "L6-L6" / "L6-L7" -> {start, end}; unmatched -> null
-  const m = /^L(\d+)(?:-L(\d+))?$/.exec(loc || '');
-  if (!m) return null;
-  const a = +m[1], b = m[2] ? +m[2] : a;
-  return { start: Math.min(a, b), end: Math.max(a, b) };
-}
-
-const KEYWORDS = new Set(('if else elif return def class struct void int char long float double bool '
-  + 'true false null nullptr new delete for while do switch case break continue const static public '
-  + 'private protected virtual override unsigned signed sizeof using namespace import from include '
-  + 'function var let this self try except finally lambda yield async await goto').split(' '));
-
-// Lightweight GitHub-light tokenizer. ``st`` ({inBlock, inStr}) carries state
-// across lines so block comments and multi-line strings colour correctly.
-function highlightLine(line, st) {
-  const out = [];
-  const push = (text, cls) => { if (text) out.push({ t: text, c: cls }); };
-  const isId = (c) => /[A-Za-z_]/.test(c);
-  const isNum = (c) => /[0-9]/.test(c);
-  const isNumCh = (c) => /[0-9_.a-fA-FxXbBoOeE]/.test(c);
-  let i = 0, n = line.length;
-  while (i < n) {
-    const ch = line[i];
-    if (st.inStr) {
-      let j = i, esc = false, closed = false;
-      while (j < n) {
-        if (esc) { esc = false; j++; continue; }
-        if (line[j] === '\\') { esc = true; j++; continue; }
-        if (line[j] === st.inStr) { j++; closed = true; break; }
-        j++;
-      }
-      if (closed) st.inStr = null; // unterminated -> keep state, carry to next line
-      push(line.slice(i, j), 'str');
-      i = j;
-      continue;
-    }
-    if (st.inBlock) {
-      const end = line.indexOf('*/', i);
-      if (end === -1) { push(line.slice(i), 'com'); i = n; }
-      else { push(line.slice(i, end + 2), 'com'); st.inBlock = false; i = end + 2; }
-      continue;
-    }
-    if (ch === '/' && line[i + 1] === '/') { push(line.slice(i), 'com'); i = n; continue; }
-    if (ch === '/' && line[i + 1] === '*') {
-      const end = line.indexOf('*/', i + 2);
-      if (end === -1) { push(line.slice(i), 'com'); st.inBlock = true; i = n; }
-      else { push(line.slice(i, end + 2), 'com'); i = end + 2; }
-      continue;
-    }
-    if (ch === '#') { push(line.slice(i), 'com'); i = n; continue; }
-    if (ch === '"' || ch === "'" || ch === '`') {
-      if (line[i + 1] === ch && line[i + 2] === ch) { // triple-quoted string
-        const end = line.indexOf(ch + ch + ch, i + 3);
-        if (end === -1) { push(line.slice(i), 'str'); st.inStr = ch; i = n; }
-        else { push(line.slice(i, end + 3), 'str'); i = end + 3; }
-        continue;
-      }
-      let j = i + 1, esc = false, closed = false;
-      while (j < n) {
-        if (esc) { esc = false; j++; continue; }
-        if (line[j] === '\\') { esc = true; j++; continue; }
-        if (line[j] === ch) { j++; closed = true; break; }
-        j++;
-      }
-      if (!closed) st.inStr = ch; // unterminated on this line, carry to next
-      push(line.slice(i, j), 'str');
-      i = j;
-      continue;
-    }
-    if (isNum(ch) || (ch === '.' && isNum(line[i + 1]))) {
-      let j = i;
-      while (j < n && isNumCh(line[j])) j++;
-      push(line.slice(i, j), 'num');
-      i = j;
-      continue;
-    }
-    if (isId(ch)) {
-      let j = i;
-      while (j < n && /[\w$]/.test(line[j])) j++;
-      const word = line.slice(i, j);
-      let k = j;
-      while (k < n && line[k] === ' ') k++;
-      push(word, line[k] === '(' ? 'fn' : KEYWORDS.has(word) ? 'kw' : '');
-      i = j;
-      continue;
-    }
-    push(ch, '');
-    i++;
-  }
-  return out;
-}
-
-function sourceBody(it) {
-  const col = document.createElement('div');
-  col.className = 'detail-right';
-  const content = SOURCES[it.source_file];
-  if (content == null) {
-    const d = document.createElement('div');
-    d.className = 'src-empty';
-    d.textContent = 'Source not embedded';
-    col.appendChild(d);
-    return col;
-  }
-  const head = document.createElement('div');
-  head.className = 'src-head';
-  const name = document.createElement('span');
-  name.textContent = it.source_file;
-  const fn = document.createElement('span');
-  fn.textContent = it.function_name ? it.function_name + ' · ' : '';
-  const loc = document.createElement('span');
-  loc.textContent = it.location || '—';
-  head.appendChild(name); head.appendChild(fn); head.appendChild(loc);
-  col.appendChild(head);
-  const pre = document.createElement('pre');
-  pre.className = 'src-code';
-  const lines = content.replace(/\n$/, '').split('\n'); // drop the trailing blank row
-  const range = parseLoc(it.location);
-  // Show only the erroneous function body (its exact line range); without a
-  // location the whole file is shown as a fallback. No highlight band here —
-  // the compact expanded view stays plain (syntax colours only); the
-  // self-contained source page keeps the band instead.
-  const start = range ? range.start : 1;
-  const end = range ? range.end : lines.length;
-  // A stored span can be stale: regenerating a workspace against a changed
-  // source tree (or a stale adjacent codegraph index) may leave a location
-  // past the embedded file's last line. Clamp to the embedded line count and
-  // fall back to the whole file when the range no longer intersects it, so
-  // highlightLine never receives undefined and the row keeps rendering.
-  const showAll = !range || start > lines.length;
-  const lo = showAll ? 1 : start;
-  const hi = showAll ? lines.length : Math.min(end, lines.length);
-  const st = { inBlock: false, inStr: null };
-  for (let i = lo - 1; i < hi; i++) {
-    const row = document.createElement('div');
-    row.className = 'src-line';
-    const ln = document.createElement('span');
-    ln.className = 'ln';
-    ln.textContent = String(i + 1);
-    row.appendChild(ln);
-    const code = document.createElement('span');
-    code.className = 'code';
-    const tokens = highlightLine(lines[i], st);
-    for (const tok of tokens) {
-      const s = document.createElement('span');
-      if (tok.c) s.className = 'tk-' + tok.c;
-      s.textContent = tok.t;
-      code.appendChild(s);
-    }
-    row.appendChild(code);
-    pre.appendChild(row);
-  }
-  col.appendChild(pre);
-  return col;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// Lightweight GitHub-ish markdown: escape first, then structural transforms, so
-// the produced HTML never carries raw user text. Fenced code stays escaped.
-function renderInline(s) {
-  let out = escapeHtml(s);
-  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
-  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-  // The full-report page is a read-only view: markdown links render as plain
-  // text — link label followed by the local file location in parens (no <a>),
-  // so URLs surface as inert text and are never clickable.
-  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, u) => t + ' (' + u + ')');
-  return out;
-}
-
-function renderMarkdown(text) {
-  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
-  let html = '', i = 0, inCode = false, buf = [];
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^```/.test(line)) {
-      if (inCode) { html += '<pre><code>' + buf.join('\n') + '</code></pre>'; buf = []; inCode = false; }
-      else inCode = true;
-      i++; continue;
-    }
-    if (inCode) { buf.push(escapeHtml(line)); i++; continue; }
-    const h = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (h) { const n = h[1].length; html += '<h' + n + '>' + renderInline(h[2]) + '</h' + n + '>'; i++; continue; }
-    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { html += '<hr>'; i++; continue; }
-    if (/^>\s?/.test(line)) {
-      const q = [];
-      while (i < lines.length && /^>\s?/.test(lines[i])) { q.push(lines[i].replace(/^>\s?/, '')); i++; }
-      html += '<blockquote>' + q.map((l) => '<p>' + renderInline(l) + '</p>').join('') + '</blockquote>';
-      continue;
-    }
-    if (/^([-*+]|\d+[.)])\s+/.test(line)) {
-      const ordered = /^\d+[.)]\s+/.test(line);
-      const items = [];
-      while (i < lines.length && /^([-*+]|\d+[.)])\s+/.test(lines[i])) {
-        items.push('<li>' + renderInline(lines[i].replace(/^([-*+]|\d+[.)])\s+/, '')) + '</li>');
-        i++;
-      }
-      html += (ordered ? '<ol>' : '<ul>') + items.join('') + (ordered ? '</ol>' : '</ul>');
-      continue;
-    }
-    if (/^\s*$/.test(line)) { i++; continue; }
-    const para = [line]; i++;
-    while (i < lines.length && !/^\s*$/.test(lines[i])
-        && !/^(#{1,6})\s/.test(lines[i]) && !/^```/.test(lines[i])
-        && !/^>\s?/.test(lines[i]) && !/^([-*+]|\d+[.)])\s/.test(lines[i])) {
-      para.push(lines[i]); i++;
-    }
-    html += '<p>' + renderInline(para.join(' ')) + '</p>';
-  }
-  if (inCode) html += '<pre><code>' + buf.join('\n') + '</code></pre>';
-  return html;
-}
-
-function renderFull(it) {
-  const text = it.detail_full || '';
-  if (/\.json$/i.test(it.detail_ref || '')) {
-    try { return '<pre class="pre-json">' + escapeHtml(JSON.stringify(JSON.parse(text), null, 2)) + '</pre>'; }
-    catch (e) { return '<pre class="pre-json">' + escapeHtml(text) + '</pre>'; }
-  }
-  return renderMarkdown(text);
-}
-
-// GitHub-light styles for the self-contained source views. These pages are
-// separate documents (opened via window.open + document.write), so they carry
-// their own copy of the source classes instead of inheriting the main page's.
-const SRC_PAGE_CSS = '.src-code{margin:0;border-radius:6px;border:1px solid #d0d7de;overflow-x:auto;'
-  + 'background:#fff;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}'
-  + '.src-line{display:flex;padding:0 10px;white-space:pre;}'
-  + '.src-line.hl{background:#fff8c5;}'
-  + '.src-line .ln{flex:none;width:3em;text-align:right;padding-right:12px;color:#59636e;'
-  + 'font-variant-numeric:tabular-nums;user-select:none;}'
-  + '.src-line .code{flex:1;}.tk-kw{color:#cf222e;}.tk-str{color:#0a3069;}.tk-com{color:#6e7781;}'
-  + '.tk-num{color:#0550ae;}.tk-fn{color:#8250df;}'
-  + '.src-empty{color:#59636e;font-style:italic;}';
-
-const FULL_PAGE_CSS = 'body{font:14px/1.6 ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
-  + 'color:#1f2328;max-width:860px;margin:0 auto;padding:28px 20px;}'
-  + '.page-head{font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.04em;'
-  + 'color:#59636e;border-bottom:1px solid #d0d7de;padding-bottom:6px;margin-bottom:10px;}'
-  + 'h1,h2,h3,h4,h5,h6{font-weight:600;line-height:1.25;margin:16px 0 8px;}'
-  + 'h1,h2{border-bottom:1px solid #d0d7de;padding-bottom:.3em;}h1{font-size:1.6em;}h2{font-size:1.3em;}'
-  + 'p{margin:0 0 12px;}'
-  + 'pre{padding:12px 14px;border-radius:6px;background:#f6f8fa;border:1px solid #d0d7de;overflow-x:auto;'
-  + 'font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}'
-  + '.pre-json{white-space:pre;}'
-  + 'code{background:#f6f8fa;border-radius:4px;padding:1px 4px;'
-  + 'font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}'
-  + 'pre code{background:none;padding:0;}'
-  + 'blockquote{border-left:4px solid #d0d7de;color:#59636e;margin:0 0 12px;padding:0 14px;}'
-  + 'hr{border:0;border-top:1px solid #d0d7de;margin:18px 0;}'
-  + 'a{color:#0969da;text-decoration:none;}a:hover{text-decoration:underline;}'
-  + 'ul,ol{margin:0 0 12px;padding-left:24px;}li{margin:2px 0;}';
-
-// Full file rendered as an HTML string. Every token is escapeHtml'd before
-// concatenation, so the result is safe for innerHTML / document.write. Lines
-// inside ``range`` (the erroneous function) get the highlight band.
-function srcLinesHTML(content, range) {
-  if (content == null) return '<div class="src-empty">Source not embedded</div>';
-  const lines = String(content).replace(/\n$/, '').split('\n');
-  let html = '', st = { inBlock: false, inStr: null };
-  for (let i = 0; i < lines.length; i++) {
-    const n = i + 1;
-    const hl = range && n >= range.start && n <= range.end ? ' hl' : '';
-    let code = '';
-    for (const tok of highlightLine(lines[i], st)) {
-      code += (tok.c ? '<span class="tk-' + tok.c + '">' : '<span>')
-        + escapeHtml(tok.t) + '</span>';
-    }
-    html += '<div class="src-line' + hl + '"><span class="ln">' + n + '</span>'
-      + '<span class="code">' + code + '</span></div>';
-  }
-  return '<pre class="src-code">' + html + '</pre>';
-}
-
-function pageChrome(title, css, body) {
-  return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
-    + '<title>' + escapeHtml(title) + '</title>'
-    + '<style>' + css + '</style></head><body>' + body + '</body></html>';
-}
-
-function fullPageHTML(it) {
-  // Single-column self-contained detail page: just the rendered report.
-  const title = (it.title || 'Report') + (it.source_file ? ' — ' + it.source_file : '');
-  return pageChrome(title, FULL_PAGE_CSS,
-    '<div class="page-head">Full report</div>' + renderFull(it));
-}
-
-function sourcePageHTML(it) {
-  // Self-contained source-only page: the full file, syntax-highlighted, with
-  // the erroneous function's line range banded.
-  const title = (it.function_name || 'Source') + ' — ' + (it.source_file || '');
-  const range = parseLoc(it.location);
-  const body = '<div class="page-head">' + escapeHtml(it.source_file || 'Source')
-    + (it.function_name ? ' · ' + escapeHtml(it.function_name) : '')
-    + (it.location ? ' · ' + escapeHtml(it.location) : '') + '</div>'
-    + srcLinesHTML(SOURCES[it.source_file], range);
-  return pageChrome(title, FULL_PAGE_CSS + SRC_PAGE_CSS, body);
-}
-
-// Robust self-contained new page. document.write avoids blob-URL navigation,
-// which is unreliable from file:// (it would fall back to the anchor's href="#"
-// and the address turns into report.html#). If the popup is blocked, the same
-// HTML is shown in an in-page overlay so the content is always reachable.
-function openPage(html) {
-  let w = null;
-  try { w = window.open('', '_blank'); } catch (e) { w = null; }
-  if (w && w.document) {
-    try {
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-    } catch (e) { w = null; }
-  }
-  if (!w || !w.document) {
-    const ov = document.getElementById('page-overlay');
-    if (ov) {
-      ov.innerHTML = html;
-      ov.classList.add('show');
-    }
-  }
-}
-
-function rowEl(it) {
-  const li = document.createElement('li');
-  li.className = 'item';
-  const open = state.expanded.has(it.id);
-
-  const head = document.createElement('div');
-  head.className = 'head';
-  head.setAttribute('role', 'button');
-  head.setAttribute('aria-expanded', open ? 'true' : 'false');
-  head.addEventListener('click', () => {
-    if (open) state.expanded.delete(it.id); else state.expanded.add(it.id);
-    render();
-  });
-
-  head.appendChild(badge('status-' + it.status, STATUS_LABEL[it.status] || it.status));
-  const title = document.createElement('span');
-  title.className = 'title';
-  title.textContent = it.title;
-  head.appendChild(title);
-  const file = document.createElement(it.source_file ? 'button' : 'span');
-  file.className = 'file';
-  if (it.source_file) {
-    file.type = 'button';
-    file.title = 'Open source page';
-    // <button> has no default navigation, so a click (any button) never falls
-    // through to an href="#" like an <a> would.
-    file.addEventListener('click', (e) => {
-      // Opening the source page must not bubble to the row head's toggle
-      // handler — otherwise every "open source" also expands/collapses the row
-      // and rebuilds the whole list (re-tokenizing the file in sourceBody
-      // right after sourcePageHTML already did).
-      e.stopPropagation();
-      openPage(sourcePageHTML(it));
-    });
-  }
-  file.textContent = it.source_file || '—';
-  head.appendChild(file);
-  const fn = document.createElement('span');
-  fn.className = 'func';
-  fn.textContent = it.function_name || '—';
-  head.appendChild(fn);
-  const loc = document.createElement('span');
-  loc.className = 'loc';
-  loc.textContent = it.location || '—';
-  head.appendChild(loc);
-  const chev = document.createElement('span');
-  chev.className = 'chev';
-  chev.textContent = open ? '▾' : '▸';
-  head.appendChild(chev);
-
-  li.appendChild(head);
-  const body = document.createElement('div');
-  body.className = 'details';
-  body.appendChild(detailBody(it));
-  // Build the source pane only when the row is expanded. sourceBody tokenizes
-  // and DOM-constructs the (possibly whole-file) source; doing it for every
-  // collapsed row — and rebuilding on every filter/sort — would re-tokenize
-  // large shared files for every item. Expanded rows are few and rebuilt
-  // on the expand-triggered render(), so a simple eager check is enough.
-  if (open) body.appendChild(sourceBody(it));
-  body.classList.toggle('hidden', !open);
-  li.appendChild(body);
-  return li;
-}
-
-function render() {
-  const shown = DATA.filter(matches).sort(cmp);
-
-  buildStatusOptions();
-  buildFileTree($('file-opts'), DATA.map((it) => it.source_file), state.files);
-
-  const itemsEl = $('items');
-  itemsEl.textContent = '';
-  for (const it of shown) itemsEl.appendChild(rowEl(it));
-
-  $('empty').classList.toggle('hidden', shown.length > 0);
-
-  const filtered = state.search.trim() || state.statuses.size || state.files.size;
-  let stats = shown.length + ' / ' + DATA.length + ' bug reports';
-  if (filtered) stats += '  ·  shown: ' + shown.length;
-  $('stats').textContent = stats;
-}
-
-function setup() {
-  const overlay = document.createElement('div');
-  overlay.id = 'page-overlay';
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) { overlay.innerHTML = ''; overlay.classList.remove('show'); }
-  });
-  document.body.appendChild(overlay);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { overlay.innerHTML = ''; overlay.classList.remove('show'); }
-  });
-  $('search').addEventListener('input', (e) => { state.search = e.target.value; render(); });
-  $('sort').addEventListener('change', (e) => { state.sort = e.target.value; render(); });
-  $('expand-all').addEventListener('click', () => {
-    for (const it of DATA) state.expanded.add(it.id);
-    render();
-  });
-  $('collapse-all').addEventListener('click', () => { state.expanded.clear(); render(); });
-  $('reset').addEventListener('click', () => {
-    state.search = '';
-    state.statuses.clear();
-    state.files.clear();
-    state.fileDirs.clear();
-    state.fileSeeded = false;
-    state.statusDirs.clear();
-    state.sort = 'status';
-    state.expanded.clear();
-    $('search').value = '';
-    $('sort').value = 'status';
-    render();
-  });
-  render();
-}
-setup();
-</script>
-</body>
-</html>
-"""
-
-
-def _embed_sources(work_dir, items):
-    """Embed the original source of every referenced file, deduplicated.
-
-    Reads the source tree located by ``_source_project_root`` so the expanded
-    view can show the function with GitHub-style syntax highlighting. Each unique
-    ``source_file`` is read once; a missing or unreadable file is skipped (the
-    page then shows a muted note). The read happens at generation time, so the
-    output stays byte-deterministic as long as the sources are unchanged.
-    """
-    proj_root = _source_project_root(work_dir)
-    sources = {}
-    for item in items:
-        src = item.get("source_file") or ""
-        if not src or src in sources or src.startswith("/") or ".." in src.split("/"):
-            continue
-        path = os.path.join(proj_root, src.replace("/", os.sep))
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                sources[src] = f.read()
-        except OSError:
-            continue
-    return sources
-
-
-def _embed_detail_full(work_dir, items):
-    """Embed the full report (markdown / json) behind each item's ``detail_ref``.
-
-    Reading the referenced file at generation time lets the page render the
-    complete report inline and open a self-contained copy in a new tab — no
-    external file dependency. A missing or unreadable reference leaves the
-    field empty (the page then omits the full-report section).
-    """
-    for item in items:
-        ref = item.get("detail_ref") or ""
-        if not ref:
-            item["detail_full"] = ""
-            continue
-        path = os.path.join(work_dir, ref.replace("/", os.sep))
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                item["detail_full"] = f.read()
-        except OSError:
-            item["detail_full"] = ""
-    return items
-
-
-def _render_html(items, sources, run_metadata=None):
-    """Render a self-contained HTML page embedding items and source files."""
-    ordered = sorted(
-        items,
-        key=lambda it: (
-            it["kind"],
-            (_STATUS_RANK if it["kind"] == "bug" else _VERDICT_RANK).get(it["status"], 99),
-            it["id"],
-        ),
-    )
-    payload = json.dumps(ordered, ensure_ascii=False)
-    # sort_keys: the sources dict preserves item collection order, and
-    # _collect_analyses' os.walk directory traversal is filesystem-dependent —
-    # identical artifacts could otherwise serialize different bytes across
-    # filesystems/copied workspaces, breaking generate_report's determinism.
-    src_payload = json.dumps(sources, sort_keys=True, ensure_ascii=False)
-    # Neutralise characters that would close the JSON <script> block or be
-    # interpreted as markup inside it; JSON.parse restores the literal values.
-    payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    src_payload = src_payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    # Splice the payloads between the two sentinels in a single pass: the
-    # template is partitioned before any payload is inserted, so neither the
-    # report data (which may mention __SOURCES__) nor embedded source text
-    # (which may contain __DATA__) is ever re-scanned as a substitution target.
-    pre, _, mid = _HTML_TEMPLATE.partition("__DATA__")
-    mid, _, post = mid.partition("__SOURCES__")
-    if run_metadata:
-        identity = f"Run: {run_metadata.get('run_id', 'unknown')} | HEAD: {run_metadata.get('git_head') or 'unknown'}"
-        if run_metadata.get("git_dirty"):
-            identity += " (uncommitted changes)"
-        pre = pre.replace("<div id=\"stats\"></div>",
-                          f"<p>{escape(identity)}</p><div id=\"stats\"></div>", 1)
-    return pre + payload + mid + src_payload + post
-
-
-def generate_report(work_dir):
-    """Scan ``work_dir`` artifacts and write ``<work_dir>/report.html``.
-
-    Deterministic and LLM-free: re-running on the same artifacts produces the
-    same bytes. Returns the absolute path of the written file.
-    """
-    items = _collect_bugs(work_dir)
-    # Report only concluded bug validations: confirmed / not_confirmed.
-    # Per-function analysis items and error/pending validations are excluded
-    # from the page entirely (their sources/detail are not embedded either).
-    items = [
-        it for it in items
-        if it["kind"] == "bug" and it["status"] in ("confirmed", "not_confirmed")
-    ]
-    _enrich_locations(work_dir, items)
-    _attach_source_href(work_dir, items)
-    _embed_detail_full(work_dir, items)
-    sources = _embed_sources(work_dir, items)
-    try:
-        with open(os.path.join(work_dir, "run.json"), encoding="utf-8") as file:
-            run_metadata = json.load(file)
-        if not isinstance(run_metadata, dict):
-            run_metadata = None
-    except (OSError, ValueError):
-        run_metadata = None
-    html = _render_html(items, sources, run_metadata)
-
-    out = os.path.join(work_dir, "report.html")
-    tmp = out + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(html)
-    os.replace(tmp, out)
-    return out
-
-
-def main():
-    """CLI entry point: regenerate report.html from an existing run."""
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("proj_dir", help="project root, or an fm_agent workspace directory")
-    args = ap.parse_args()
-
-    work_dir = _locate_workdir(args.proj_dir)
-    if not os.path.isdir(work_dir):
-        print(
-            f"error: no fm_agent workspace found under {args.proj_dir} "
-            f"(looked for {work_dir})",
-            file=sys.stderr,
+                    all_bugs = bool(_read_json(os.path.join(root, filename)).get("all_bugs"))
+                except (OSError, ValueError, AttributeError):
+                    pass
+                if all_bugs:
+                    break
+            if all_bugs:
+                break
+        write_static_verification_report(
+            input_dir,
+            output_dir,
+            work_dir,
+            function_files=None,
+            all_bugs=all_bugs,
+            analysis_scope="reconstructed",
         )
-        sys.exit(1)
-
-    out = generate_report(work_dir)
-    print(f"Report index written to {out}")
+    print(f"Report index written to {generate_report(work_dir)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

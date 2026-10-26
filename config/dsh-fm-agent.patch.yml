@@ -1,0 +1,42 @@
+# FM-Agent's non-interactive provider overlay for the shipped headless profile.
+# Secrets and endpoint/model values are supplied only through the child process
+# environment; this file is safe to include in an offline distribution.
+- id: llm-deepseek
+  disabled: true
+
+# Headless FM-Agent calls do not need generated session titles. Disabling the
+# title step also prevents an unnecessary extra model request.
+- id: session-title-llm
+  disabled: true
+
+- id: llm-pi-ai
+  config:
+    providers:
+      fm-agent:
+        displayName: FM-Agent OpenAI-compatible endpoint
+        apiKeyEnv: LLM_API_KEY
+        api: !!js "process.env.LLM_API_STYLE === 'anthropic' ? 'anthropic-messages' : 'openai-completions'"
+        baseURL: !!js process.env.LLM_API_BASE_URL
+        models:
+          - id: !!js process.env.LLM_MODEL
+            contextWindow: 262144
+            maxTokens: 32768
+        retryPolicy:
+          mode: normal
+          maxRetries: 5
+
+- id: agent-default-model
+  config:
+    provider: fm-agent
+    model: !!js process.env.LLM_MODEL
+
+# FM-Agent tasks operate only on the supplied local checkout. Disable optional
+# network tools and provider-specific telemetry/search routes.
+- id: tool-web
+  disabled: true
+
+- id: web-search-deepseek
+  disabled: true
+
+- id: session-telemetry-otel
+  disabled: true

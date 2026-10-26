@@ -1,0 +1,20 @@
+services:
+  fm-agent-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "${FM_WEB_PUBLIC_PORT:-8080}:8080"
+    environment:
+      FM_WEB_MAX_CONCURRENT_TASKS: "${FM_WEB_MAX_CONCURRENT_TASKS:-5}"
+      FM_WEB_DEMO_MODE: "${FM_WEB_DEMO_MODE:-0}"
+      LLM_API_BASE_URL: "${LLM_API_BASE_URL:-https://api.deepseek.com}"
+      LLM_MODEL: "${LLM_MODEL:-deepseek-flash}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      FM_AGENT_TOOL_COMPAT_MODE: "${FM_AGENT_TOOL_COMPAT_MODE:-native}"
+    volumes:
+      - fm-agent-web-data:/data
+    restart: unless-stopped
+
+volumes:
+  fm-agent-web-data:

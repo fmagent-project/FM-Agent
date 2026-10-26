@@ -1,0 +1,23 @@
+FROM ubuntu:22.04
+
+WORKDIR /opt/fm-agent
+COPY . /opt/fm-agent
+
+RUN chmod +x /opt/fm-agent/bin/fm-agent /opt/fm-agent/bin/fm-agent-web \
+    && mkdir -p /data/config /data/state /data/tasks
+
+ENV XDG_CONFIG_HOME=/data/config \
+    XDG_STATE_HOME=/data/state \
+    FM_WEB_DATA_DIR=/data \
+    FM_WEB_HOST=0.0.0.0 \
+    FM_WEB_PORT=8080 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1
+
+VOLUME ["/data"]
+EXPOSE 8080
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["/opt/fm-agent/vendor/python/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()"]
+
+CMD ["/opt/fm-agent/bin/fm-agent-web"]

@@ -1,0 +1,7 @@
+webapp_data/
+**/__pycache__/
+**/*.pyc
+.git/
+.idea/
+.vscode/
+*.tar.gz

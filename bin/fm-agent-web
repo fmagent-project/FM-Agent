@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+launcher="$(readlink -f "${BASH_SOURCE[0]}")"
+app_root="$(cd "$(dirname "$launcher")/.." && pwd)"
+python="$app_root/vendor/python/bin/python3"
+
+if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+    echo "FM-Agent Web offline runtime requires Linux x86_64." >&2
+    exit 1
+fi
+if [[ ! -x "$python" ]]; then
+    echo "Bundled Python runtime is missing: $python" >&2
+    exit 1
+fi
+
+config_home="${XDG_CONFIG_HOME:-${HOME:?HOME is not set}/.config}/fm-agent"
+config_file="${FM_AGENT_CONFIG:-$config_home/fm-agent.toml}"
+secret_file="${FM_AGENT_SECRET_FILE:-$config_home/secrets.env}"
+if [[ ! -f "$config_file" ]]; then
+    umask 077
+    mkdir -p "$(dirname "$config_file")"
+    cp "$app_root/fm-agent.toml" "$config_file"
+    chmod 600 "$config_file"
+fi
+
+export FM_AGENT_CONFIG="$config_file"
+export FM_AGENT_SECRET_FILE="$secret_file"
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONNOUSERSITE=1
+
+# Native Function Calling is the default for every model. Deployments that
+# require the local Qwen text-tool proxy must opt in explicitly through the
+# public FM_AGENT_TOOL_COMPAT_MODE configuration.
+export FM_AGENT_TOOL_COMPAT_MODE="${FM_AGENT_TOOL_COMPAT_MODE:-native}"
+
+cd "$app_root"
+exec "$python" -m webapp.server "$@"

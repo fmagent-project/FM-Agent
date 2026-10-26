@@ -1,517 +1,67 @@
-# FM-Agent: Scaling Formal Methods to Large Systems via LLM-Based Hoare-Style Reasoning
+# FM-Agent · DeepSeek Harness offline bundle
 
-<div align="center">
+This Ubuntu 22.04 x86_64 delivery is based on the user-supplied latest
+`FM-Agent-release.zip`. Every model call is routed through the bundled DeepSeek
+Harness. OpenCode, Bun, oh-my-openagent, Pi Agent Validator, runtime probes,
+dynamic instrumentation, automated repair, and dynamic bug confirmation are not
+included.
 
-English | [中文](README_zh.md)
+Python 3.12, DeepSeek Harness, CodeGraph, Python dependencies, and parser
+extensions are bundled. Installation and local verification perform no downloads.
+Inference still requires a reachable OpenAI-compatible or Anthropic-compatible
+model endpoint. DashScope therefore needs outbound connectivity; an air-gapped
+deployment must use an internal endpoint.
 
-[Website](http://fm-agent.ai/) · [Paper](https://arxiv.org/abs/2604.11556)
+The default Qwen text-tool proxy strips server-side tool fields before requests
+reach an upstream configured with an incompatible Mistral parser, then validates
+and restores textual Qwen tool calls for Harness. Use
+`tool_compat_mode = "native"` only with a correctly configured upstream parser.
 
-</div>
+See [INSTALL_zh.md](INSTALL_zh.md) for the complete Chinese installation guide and
+[docs/FM-Agent-release-change-analysis_zh.md](docs/FM-Agent-release-change-analysis_zh.md)
+for the source-change analysis. The complete three-way conformance matrix is in
+[docs/UPSTREAM-CONFORMANCE-ANALYSIS_zh.md](docs/UPSTREAM-CONFORMANCE-ANALYSIS_zh.md),
+and the implementation change report is in
+[docs/V0.3.0-MODIFICATION-REPORT_zh.md](docs/V0.3.0-MODIFICATION-REPORT_zh.md).
+The shorter audit summary is in
+[docs/COMPATIBILITY-AUDIT_zh.md](docs/COMPATIBILITY-AUDIT_zh.md). Test evidence is summarized in
+[VALIDATION-REPORT_zh.md](VALIDATION-REPORT_zh.md).
 
-FM-Agent is the first framework that realizes fully automated reasoning for large-scale systems (e.g., [Claude's C Compiler](https://github.com/anthropics/claudes-c-compiler) with 143K LoC).
-It contains three steps:
-
-- Specification generation: Autonomously understand developers' intent of system design. Generate correctness specification for each function.
-- Code reasoning: Reason about the code against the specification without any human effort.
-- Bug diagnosis: Analyze the root cause and location of bugs based on the reasoning process.
-
-The [website](http://fm-agent.ai/) of FM-Agent provides an online service for reasoning about codebases. You can try it easily!
-
-> **⚠️ Warning**: The effectiveness of this framework is heavily influenced by the capability of the underlying model. Weaker models may produce hallucinations, leading to incorrect reasoning conclusions. Choose a model with strong reasoning abilities for more reliable results.
-
-## Table of Contents
-
-  - [Table of Contents](#table-of-contents)
-  - [File Structure](#file-structure)
-  - [Environment Setup](#environment-setup)
-    - [Requirements](#requirements)
-      - [Tested macOS Environment](#tested-macos-environment)
-    - [Install Dependencies](#install-dependencies)
-  - [Configuration](#configuration)
-  - [Quick Start](#quick-start)
-  - [Important Notes](#important-notes)
-  - [Citation](#citation)
-  - [Contact](#contact)
-
-
-## File Structure
-
-```
-|-- main.py                       # Entry point — orchestrates the full pipeline
-|-- dashboard.py                  # Standalone real-time TUI dashboard for a run
-|-- config.py                     # Configuration (models, granularity, concurrency, timeouts)
-|-- install.sh                    # Dependency installation script
-|-- pyproject.toml / uv.lock      # Python project metadata and pinned dependencies (uv)
-|-- .env.example                  # Template for the .env runtime config
-|-- src/                          # Core source modules (extraction, reasoning, LLM interaction, etc.)
-|-- md/                           # Workflow instructions that guide the agent
-|-- docs/                         # Additional documentation (e.g. OpenCode/LLM provider setup)
-```
-
-## Environment Setup
-
-### Requirements
-
-- Ubuntu (22.04 LTS, 24.04 LTS is tested)
-- Python 3.12
-- pip >= 23
-- [openai](https://pypi.org/project/openai/) 2.15.0
-- [OpenCode](https://github.com/opencode-ai/opencode) 1.4.6
-- [Bun](https://bun.sh/)
-- [oh-my-openagent](https://www.npmjs.com/package/oh-my-openagent) plugin (installed via `bunx`)
-- [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) plugin — captures raw OpenCode LLM request/response traces (see [Structured Trace](#structured-trace))
-- An LLM API key for your provider (the examples use [OpenRouter](https://openrouter.ai/))
-- [Clang](https://clang.llvm.org/docs/UsersManual.html) — optional; used for more precise C/C++ call graphs when available, with per-function codegraph fallback for code Clang cannot analyze. FM-Agent reads `compile_commands.json` from the project root or `build/`; set `CLANG_COMPILE_COMMANDS` for another location.
-- [Erlang Language Platform (ELP)](https://whatsapp.github.io/erlang-language-platform/docs/get-started/) — optional; required only when analyzing Erlang projects
-  - The Erlang integration has been tested on Ubuntu with Erlang/OTP 26 or newer; select an ELP release binary built for a compatible OTP version.
-  - rebar3 3.24.0 or newer is required for ELP to auto-discover projects containing `rebar.config`.
-  - The macOS Erlang toolchain has not been tested as part of this integration; `./install.sh --with-erlang` installs the current Homebrew formula versions.
-
-#### Tested macOS Environment
-
-The following macOS environment has been tested with the install script:
-
-- macOS 14.5 (Build 23F79), arm64
-- Darwin 23.5.0
-- Python 3.11.7
-- pip 23.3.1
-- uv 0.7.9
-- OpenCode 1.17.9
-- Bun/bunx 1.3.14
-- Homebrew 6.0.3
-- UnZip 6.00
-
-### Install Dependencies
-
-Set the LLM API key used by both FM-Agent and OpenCode. We recommend [OpenRouter](https://openrouter.ai/): FM-Agent invokes LLMs concurrently, and OpenRouter is generous on RPM (requests per minute) and TPM (tokens per minute) — but any compatible provider works.
-
-The easiest setup path is the interactive wizard:
+## Quick start
 
 ```bash
-uv run python src/configure_llm.py
-```
-
-It previews the changes, backs up existing files, updates the active FM-Agent
-TOML file, stores
-the API key in `.env` plus a private local key file for standalone OpenCode, and syncs the matching OpenCode provider entry in
-`~/.config/opencode/opencode.json` (or the platform-equivalent config path)
-without requiring you to hand-edit JSON.
-If you choose `auto`, `codex-cli`, `claude-cli`, or `dsh`, the wizard asks for a
-model ID, saves the backend and selected model in the active FM-Agent TOML,
-and clears stale non-secret LLM overrides from `.env`, retaining effort in TOML.
-Codex and Claude use their own CLI authentication; DSH requires `DEEPSEEK_API_KEY`
-and optionally `DEEPSEEK_BASE_URL` for a gateway.
-
-If you prefer to edit files manually, put your API key in `.env` (gitignored,
-loaded automatically via python-dotenv); every other setting has a committed
-default in `fm-agent.toml`. Copy the template:
-
-```bash
-cp .env.example .env
-# then edit .env and set LLM_API_KEY
-```
-
-```bash
-# .env  (secret only)
-LLM_API_KEY=your-api-key-here
-```
-
-Non-secret settings — model, endpoint, backend, provider, etc. — live in
-`fm-agent.toml` under `[llm]`. Edit them there for a permanent change. To
-override without touching the committed file — e.g. on a git clone you update
-with `git pull` — set the matching environment variable in `.env` or your
-shell. Precedence is `env > .env > fm-agent.toml`; because `.env` wins over the
-toml, a stale value there overrides a later toml edit, so check `.env` first if
-a change isn't taking effect. The wizard removes the common legacy LLM override
-keys from `.env` for you. See [docs/config_llm.md](docs/config_llm.md) for
-details and OpenCode provider setup. The wizard also warns about LLM variables
-already exported by the launching shell; use its displayed `unset` command
-before starting FM-Agent if the saved configuration should take effect.
-
-To change just one non-secret LLM setting without manually editing the file,
-use the configuration command. For example, select the local Codex CLI backend:
-
-```bash
-uv run python src/configure_llm.py set --backend codex-cli
-```
-
-It previews and backs up `fm-agent.toml`, then changes only the setting(s) you
-pass. The command also supports `--name`, `--provider`, `--base-url`,
-`--effort`, and `--api-style`; see [docs/config_llm.md](docs/config_llm.md) for
-the complete syntax. It warns when a legacy `.env` value would still override a
-requested TOML setting.
-
-Then, the core dependencies above can be installed via the provided script. The optional Clang and Erlang toolchains are not installed by default:
-
-```bash
+sha256sum -c FM-Agent-release-deepseek-harness-offline-ubuntu22-x86_64-v0.3.0-dsh.1.tar.gz.sha256
+tar -xzf FM-Agent-release-deepseek-harness-offline-ubuntu22-x86_64-v0.3.0-dsh.1.tar.gz
+cd FM-Agent-release-deepseek-harness-offline-ubuntu22-x86_64-v0.3.0-dsh.1
 ./install.sh
+export PATH="$HOME/.local/bin:$PATH"
+fm-agent configure
+fm-agent test-model
+fm-agent /absolute/path/to/project --one-phase
 ```
 
-Erlang support is optional because its toolchain is not needed for other languages. To install or verify Erlang/OTP 26+, rebar3 3.24.0+, and a compatible ELP release automatically, run:
+Ordinary local directories work without `.git`, including with `--isolate`.
+Only `--incremental INTENT_FILE` requires a Git repository with a commit.
+
+Results are written below `<project>/fm_agent/`. `--all-bugs` collects every
+static mismatch candidate; it does not dynamically confirm those candidates.
+
+Useful commands:
 
 ```bash
-./install.sh --with-erlang
+fm-agent version
+fm-agent configure show
+fm-agent verify-install --full
+fm-agent test-model
+fm-agent /path/to/project --resume --one-phase
+fm-agent /path/to/project --isolate --one-phase
+fm-agent /path/to/project --dashboard --one-phase
+fm-agent dashboard /path/to/project
+fm-agent report /path/to/project
 ```
 
-The Erlang option uses Homebrew on macOS and the RabbitMQ Team Erlang PPA on Ubuntu when the system OTP is missing or too old. The Ubuntu configuration has been tested with Erlang/OTP 26+; the macOS Erlang configuration has not been tested and uses the current formula versions selected by Homebrew. On Linux, rebar3 and ELP are installed into `~/.local/bin`; ensure this directory is on `PATH` in new shells. You can still install these tools manually, verify `rebar3 version` and `elp version`, and set `ELP_COMMAND` to an absolute ELP path if needed.
-
-FM-Agent configures OpenCode's provider automatically from `fm-agent.toml`, so
-you do not need to hand-edit `~/.config/opencode/opencode.json` for the model
-or key. The configuration wizard above can still keep that file synchronized for
-standalone OpenCode usage by writing the API key to a private provider-specific
-key file under your user state/config directory (see [docs/config_llm.md](docs/config_llm.md)).
-If you already use `OPENCODE_CONFIG`, the wizard updates that file instead of
-the default global path. It also honors `OPENCODE_CONFIG_DIR`, using that
-directory's `opencode.jsonc` when present or its `opencode.json` otherwise.
-
-**Important:** FM-Agent automatically derives test cases based on the reasoning process to trigger potential bugs, which help developers locate and fix them. Before running FM-Agent, please ensure the execution environment for test cases is ready. If project-specific validation instructions are needed, provide them with `--bug-validator`; otherwise, the agent will decide how to execute the tests.
-
-## Configuration
-
-Settings live in [`fm-agent.toml`](fm-agent.toml) (with inline comments); each can also be overridden by its environment variable. See [docs/configuration.md](docs/configuration.md) for the full reference of every parameter, default, and description.
-
-(Optional) FM-Agent uses oh-my-openagent plugin to enhance OpenCode. The comment-checker hook built into this plugin should be disabled, otherwise it may intercept every comment block that FM-Agent writes, which are specifications of functions. It may force the agent to waste tokens justifying or removing them.
-You can open your oh-my-openagent config file (typically ~/.config/opencode/oh-my-openagent.json) and add disabled_hooks:
-
-```json
-{
-  "disabled_hooks": ["comment-checker"],
-}
-```
-
-### Structured Trace
-
-FM-Agent always writes structured execution traces under `fm_agent/trace/`:
-
-| Path | Content |
-|---|---|
-| `fm_agent/trace/events.jsonl` | Structured events for OpenCode calls and verification LLM calls |
-| `fm_agent/trace/payloads/` | Event payloads such as OpenCode stdout and selected LLM messages |
-| `fm_agent/trace/opencode/` | Optional raw OpenCode LLM request/response JSONL files |
-
-To capture raw OpenCode LLM traffic, install the OpenCode trace plugin manually by adding it to `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@lucentia/opencode-trace"]
-}
-```
-
-FM-Agent automatically passes `TRACE_DIR` and `TRACE_FILENAME` to each OpenCode process. The plugin writes `fm_agent/trace/opencode/<event_id>.jsonl`, where `<event_id>` matches the corresponding `opencode_call` event in `events.jsonl`.
-OpenCode may cache the `@latest` package; to force a refresh, remove `~/.cache/opencode/packages/@lucentia/opencode-trace@latest`.
-
-
-## Quick Start
-
-```bash
-uv run python main.py <proj_dir> [--resume] [--all-bugs] [--domain-knowledge FILE ...] [--bug-validator FILE] [--submodule PATH [PATH ...]]
-```
-
-| Argument                    | Description                                                                                     |
-| --------------------------- | ----------------------------------------------------------------------------------------------- |
-| `proj_dir`                  | Directory of codebase that you want to check correctness                                        |
-| `--resume`                  | Continue a previous, interrupted run instead of starting over                                   |
-| `--resume-from WORKSPACE`   | Restore and resume an archived run, preserving both the archive and the current run. Repeat the original analysis options. |
-| `--incremental INTENT_FILE` | Run in incremental mode. The value is the path to an intent file describing the goal of the modification. |
-| `--all-bugs`                | Continue reasoning after a mismatch and report every candidate. Full and incremental modes validate each candidate. |
-| `--domain-knowledge FILE [FILE ...]` | Copy extra Markdown domain-knowledge files into the run and provide them to setup, spec generation, and bug validation agents. Alias: `--knowledge`; may be repeated. |
-| `--bug-validator FILE`       | Use a custom Markdown prompt for bug validation instead of the built-in `md/bug_validator.md`. |
-| `--isolate`                 | Run against an isolated git worktree snapshot of the project instead of the project directory itself. |
-| `--submodule PATH [PATH ...]` | Only process source code under one or more subdirectories of `proj_dir`. |
-| `--extra-edge FILE`         | Add supplemental caller-to-callee edges to the static call graph from a JSON file or directory. |
-| `--only-spec`               | Only generate behavioral specs; skip the reasoning and bug validation stages. Cannot be combined with `--incremental`. |
-| `--estimate`                | Scan scope and print a history-based time, LLM-call, token, and cost estimate without making LLM calls. |
-| `--plugin NAME`             | Load a pipeline plugin from `plugins/NAME/`. |
-| `--list-plugin`             | List valid pipeline plugins and exit. |
-
-### Pipeline plugins
-
-FM-Agent plugins can pass, replace, or modify each of the six pipeline stages
-through trusted Python hooks. Every hook uses the same signature:
-
-```python
-def hook(proj_dir: str) -> None:
-    ...
-```
-
-See [Pipeline Plugins](docs/plugins.md) for the plugin layout, JSON
-configuration, execution modes, lifecycle, and trust boundary.
-
-`proj_dir` must be a git repository.
-
-### Pre-run estimate
-
-Inspect the planned source scope before spending any model tokens:
-
-```bash
-uv run python main.py <proj_dir> --estimate
-uv run python main.py <proj_dir> --estimate --submodule src/core src/runtime
-```
-
-The preflight lists included and excluded directories, included/excluded source
-file counts, an approximate function count from local extraction, and the six
-analysis stages. When completed runs are available, it scales their actual
-duration, LLM-call count, token usage, and cost by the current function count
-(falling back to file count) and reports a range. Every projected value is
-labelled **ESTIMATE**; with no completed history it reports that the estimate is
-unavailable instead of inventing a number.
-
-Successful-run summaries are retained in `fm_agent/history.jsonl` across fresh
-runs. A normal run also generates `fm_agent/estimate.json` before its first LLM
-stage, so the live dashboard can show the same preflight alongside actual usage.
-
-To provide project-specific domain knowledge without editing FM-Agent's built-in prompts, pass one or more Markdown files:
-
-```bash
-uv run python main.py <proj_dir> --domain-knowledge docs/invariants.md docs/protocol.md
-```
-
-FM-Agent stages these files under `fm_agent/spec_prompts/domain_context/user_knowledge/` for the current run. You can also set `FM_AGENT_DOMAIN_KNOWLEDGE` to an `os.pathsep`-separated list of Markdown files.
-
-To customize how candidate bugs are tested, pass a Markdown file with
-`--bug-validator`:
-
-```bash
-uv run python main.py <proj_dir> --bug-validator prompts/compiler_bug_validator.md
-```
-
-The selected file replaces the built-in `md/bug_validator.md` instructions.
-When a custom `--bug-validator` is used for `--all-bugs` candidate validation,
-FM-Agent specifies the output path, required fields, and allowed values for the
-final result JSON so it can reliably read and validate the result and safely
-reuse it during `--resume`.
-Relative `--bug-validator` paths are resolved from the directory where
-FM-Agent is launched, not from `proj_dir`.
-FM-Agent still adds the current bug ID, target verification result, and any
-`--domain-knowledge` files to each generated bug-validation prompt.
-
-Use `--submodule` to limit a full or incremental run to selected project subdirectories:
-
-```bash
-uv run python main.py <proj_dir> --submodule src/core src/runtime
-uv run python main.py <proj_dir> --incremental intent.md --submodule src/core src/runtime
-```
-
-`--submodule` paths must point to directories inside `proj_dir`. The option can be combined with `--resume`, `--isolate`, and `--incremental`.
-
-Use `--all-bugs` with full or incremental analysis:
-
-```bash
-uv run python main.py <proj_dir> --all-bugs
-uv run python main.py <proj_dir> --incremental intent.md --all-bugs
-```
-
-The option is off by default. When enabled, FM-Agent continues through later
-reasoning checkpoints and writes one standard mismatch result per candidate.
-Full and incremental modes validate each candidate independently.
-
-For a result such as `path/to/function.json`, all-bugs candidates are written
-beside it as `path/to/function.bug-001.json`, `bug-002.json`, and so on. The
-primary result records `bug_count` and `reasoning_complete`. Resume treats a
-complete primary result as the reasoning checkpoint and only reruns candidate
-validations that do not yet have a terminal result. If reasoning stopped partway
-through, FM-Agent clears that function's intermediate candidates and validations
-and reruns the function without disturbing completed functions.
-
-By default, a fresh full run moves the existing analysis artifacts in `fm_agent/` to
-`<proj_dir>.fm_agent_runs/<UTC-timestamp>_<unique-id>/` before starting. Reports,
-traces, specifications, validation evidence, and checkpoints are retained. The
-current run remains at `<proj_dir>/fm_agent/`; both paths are printed on the CLI.
-Archives live beside the project so CodeGraph and project agents do not scan
-old code or reports.
-Empty workspaces and workspaces containing only `.env_check_memory` are not
-archived. This warning-ignore preference file stays in the current workspace
-across fresh runs; restoring an archive or copying results back also preserves
-the current preferences. Environment checks only create the workspace when
-saving an explicit warning-ignore preference.
-If archiving fails, analysis stops and the original workspace is left intact.
-Archived runs are never automatically deleted; remove unwanted archive
-directories explicitly when you no longer need them. This also applies to fresh
-`--isolate` and `--entry-func` runs; their result copy-back preserves the previous
-workspace before installing the new one.
-
-Archiving and result publication use same-filesystem renames. The project's
-parent directory must be writable, and the project, archive, and temporary
-publication directory must be on the same filesystem. A project that is itself
-a separate mount point may not meet this requirement; a failed operation
-preserves the existing results. Publication stages copies in
-`.<project-name>.fm_agent_publish_*/` beside the project, so remnants after a
-forced termination stay outside the analysis scope.
-
-Pass `--resume` (or set `FM_AGENT_RESUME=1`) to keep the current workspace and do
-only the remaining work. If you accidentally started a new run, restore the
-earlier workspace with `--resume-from`:
-
-```bash
-uv run python main.py <proj_dir> --resume
-uv run python main.py <proj_dir> --resume-from <proj_dir>.fm_agent_runs/<archive-id>
-uv run python report.py <proj_dir>.fm_agent_runs/<archive-id>
-```
-
-Restoration copies the selected archive, archives the current workspace, then
-resumes at `fm_agent/`. The selected archive remains available for comparison.
-Use the same source checkout and analysis options as the interrupted run;
-restoring artifacts does not check out or revert source code. In particular, an
-all-bugs workspace requires `--all-bugs`; incompatible reasoning modes are
-rejected. `--resume-from` cannot be combined with `--resume`, `--incremental`, or
-`--estimate`.
-
-`--resume-from WORKSPACE` accepts absolute paths, relative paths, and `~`.
-Relative paths are resolved from the directory where the command is launched.
-
-New runs write `fm_agent/run.json` before analysis, recording a stable run ID,
-timestamp, project path, Git HEAD and whether the checkout has uncommitted
-changes. The HTML report displays the ID and revision. Open the archived
-`report.html` to view its saved report, or use the command above to regenerate it
-from archived evidence (source previews on regeneration depend on source
-availability). Older workspaces without `run.json` are also preserved and can
-be resumed. Historical estimates include completed archived runs. Incremental
-mode continues to update its existing workspace in place.
-
-Use `--only-spec` to stop after generating behavioral specs, skipping the reasoning and bug validation stages. This produces adjacent `.spec.json` and `.info.json` metadata files for each function without spending time on verification, which is useful when you only want the specs or want to review them before running the full analysis. It cannot be combined with `--incremental`, which is inherently a reasoning/bug-validation flow.
-
-```bash
-uv run python main.py <proj_dir> --only-spec
-```
-
-Use `--extra-edge FILE` when the static parser cannot see an important call relationship, such as indirect syscall dispatch. Supplemental edges are applied to full and incremental runs. The JSON shape is:
-
-```json
-{
-  "edges": [
-    {
-      "caller": {
-        "fqn": "third_party::musl::src::time::nanosleep-c::nanosleep",
-        "callsite_names": ["nanosleep"]
-      },
-      "callee": {
-        "fqn": "kernel::liteos_a::syscall::time_syscall-c::SysNanoSleep",
-        "info_names": ["__NR_nanosleep", "SYS_nanosleep", "nanosleep"]
-      }
-    }
-  ]
-}
-```
-
-Extra-edge field rules:
-
-- `caller.fqn`: exact FQN for a single caller, adding one edge to `callee.fqn`. It may be empty.
-- `caller.callsite_names`: source callsite function names. Any function containing these callsites becomes a caller and gets an edge to `callee.fqn`. It may be empty.
-  - At least one of `caller.fqn` and `caller.callsite_names` must be non-empty.
-- `callee.fqn`: exact FQN for a single callee.
-- `callee.info_names`: optional names used to match callee entries in generated `.info.json` files. They are only used for `.info.json` matching and passing caller expectations.
-
-### Incremental Mode
-
-In incremental mode, FM-Agent reuses the results of a previous run and only re-checks what changed. It diffs the current code against the commit recorded by the previous run in `fm_agent/version.log`. Each run records the processed commit id to that file, so a subsequent `--incremental` run automatically picks it up:
-
-```bash
-python3 main.py <proj_dir> --incremental <intent_file>
-```
-
-If `fm_agent/version.log` does not exist (no previous run to compare against), FM-Agent falls back to a full run.
-
-### Live Dashboard
-
-FM-Agent ships a standalone real-time TUI dashboard ([dashboard.py](dashboard.py)) that visualizes a run as it progresses: pre-run scope and estimates, per-stage progress, token usage and cost, prompt-cache hit rate, and bug-validation verdicts. It reads the trace files FM-Agent writes under `fm_agent/`, so run it in a second terminal while `main.py` is going:
-
-```bash
-uv run python dashboard.py <proj_dir>
-```
-
-Alternatively, start it automatically from the main command; it monitors the
-current run's workspace (including isolated runs) and is stopped when the run
-finishes:
-
-```bash
-uv run python main.py <proj_dir> --dashboard
-```
-
-To generate and display only the pre-run estimate, without starting the
-pipeline or making LLM calls:
-
-```bash
-uv run python dashboard.py <proj_dir> --estimate
-uv run python dashboard.py <proj_dir> --estimate --submodule src/core src/runtime
-```
-
-| Argument    | Description                                                  |
-| ----------- | ----------------------------------------------------------- |
-| `proj_dir`  | Same codebase directory passed to `main.py` (monitors `<proj_dir>/fm_agent/`). You can also point it directly at any workspace directory containing a `trace/` subdir, e.g. an archived run |
-
-Press `Ctrl-C` to exit the dashboard; it does not affect the running pipeline.
-
-### Output
-
-FM-Agent creates an `fm_agent/` directory under your codebase directory. The key outputs are:
-
-#### Bug Reports (`fm_agent/bug_validation/<bug_id>.md`)
-
-Each confirmed or investigated bug produces a Markdown report containing:
-
-| Section | Content |
-|---|---|
-| Specification Claim | The post-condition that the function specification requires |
-| Actual Behavior | The post-condition that the code actually implements |
-| Code Evidence | The specific code statements (with line numbers) that cause the violation |
-| Trigger Condition | A description of the condition that triggers the bug |
-| How to Trigger | Concrete input parameters, expected vs. actual output, and reproduction steps |
-| Probe Script | The full test script used to confirm the bug |
-| Probe Output | Raw stdout from executing the probe script |
-
-A `summary.json` file in `fm_agent/bug_validation/` aggregates all bug results
-with counts of total reported, confirmed, not confirmed bugs. In `--all-bugs`
-mode, the summary additionally reports pending candidates; a missing, corrupt,
-or non-terminal validation is pending instead of disappearing from the totals.
-Default-mode summary behavior is unchanged.
-
-#### Interactive Report Index (`fm_agent/report.html`)
-
-A single self-contained `report.html` is generated automatically at the end of
-every full pipeline run (spec-only mode included), aggregating both the bug
-validation results and the per-function logic verification results into one
-browseable page. It is rendered purely from the run artifacts — no LLM calls,
-no network, no extra dependencies.
-
-Each row shows the report title, a status badge, the source file (linked back
-to the original source), the function name, and a code location. The page
-supports:
-
-- **Search** across title, source file, function name, and code location
-- **Filter** by status (`confirmed_bug` / `potential_bug`)
-  and by source file
-  (collapsible path tree; checking a directory selects all files under it).
-- **Sort** by status, source file, or function name
-- **Expand / collapse** individual reports or all reports at once, plus a
-  reset button
-
-The page is written to `fm_agent/report.html`; open it in a browser. It can
-also be regenerated on demand from any existing run's artifacts with
-`uv run python report.py <proj_dir>` (or pass an `fm_agent/` workspace or an
-archived-workspace directory directly). The incremental pipeline
-(`--incremental`) does not run the auto-generation hook — regenerate the page
-manually with the same command.
-
-## Important Notes
-
-1. FM-Agent will create an `fm_agent/` directory under your codebase directory. Make sure there is no name conflict.
-2. The markdown files under `md/` provide general instructions that guide the agent's reasoning process. Prefer `--domain-knowledge` for project-specific context such as invariants, protocols, encoding rules, and domain terminology. For project-specific bug-validation procedures, use `--bug-validator` instead of editing the built-in prompt; for example, a compiler-specific validator can instruct the agent to compare outputs against a reference implementation such as GCC.
-3. **Supported languages**: Rust, C, C++, Python, Java, Go, CUDA, JavaScript, TypeScript, ArkTS, Erlang. C/C++ call graphs use Clang where analysis succeeds and codegraph for the remaining functions. Erlang function extraction and call graphs require ELP; if ELP is unavailable, Erlang files are skipped with a warning.
-
-## Citation
-
-If you use FM-Agent in your projects or research, please kindly cite our [paper](https://arxiv.org/abs/2604.11556):
-
-```bibtex
-@misc{ding2026fmagent,
-Author = {Haoran Ding and Zhaoguo Wang and Haibo Chen},
-Title = {FM-Agent: Scaling Formal Methods to Large Systems via LLM-Based Hoare-Style Reasoning},
-Year = {2026},
-Eprint = {arXiv:2604.11556},
-}
-```
-
-## Contact
-
-If you have any questions, please submit an issue or send [email](mailto:nhaorand@gmail.com).
+Each completed static run writes `VERIFICATION-REPORT.md`,
+`VERIFICATION-REPORT.json`, and a self-contained searchable `report.html`.
+
+Target: Ubuntu 22.04 x86_64; bundled ELF files require glibc 2.34 or newer.
+Licenses and third-party notices are in `LICENSE` and `licenses/`.

@@ -1,65 +1,34 @@
-# Configuration Reference
+# Configuration reference
 
-FM-Agent's settings live in [`fm-agent.toml`](../fm-agent.toml) (with inline
-comments and the matching environment-variable name for each). This table is the
-full reference: every parameter, its default, and what it controls. Any setting
-can be overridden by the environment variable of the same name, which takes
-precedence over the toml. See [config_llm.md](config_llm.md) for LLM provider and
-OpenCode setup.
+Precedence is process environment, secret file, `fm-agent.toml`, then built-in
+defaults. Unknown TOML keys and invalid values fail fast.
 
-CodeGraph is provisioned automatically at the release pinned in `fm-agent.toml`.
-On Windows x64 and ARM64, FM-Agent downloads the native release ZIP, checks its
-SHA-256 and launcher version, and installs it under
-`~/.cache/fm-agent/codegraph/current`. It uses a Windows file lock to serialize
-concurrent installers and does not change the user's persistent PATH. Failed
-downloads or version checks preserve an existing bundle. POSIX systems continue
-to use the pinned `install.sh` and `flock`.
+| Environment | Default | Purpose |
+|---|---:|---|
+| `LLM_API_KEY` | empty | Model API credential; keep it out of TOML |
+| `LLM_API_BASE_URL` | DashScope compatible URL | Compatible endpoint |
+| `LLM_MODEL` | `qwen3.6-35b-a3b` | Model identifier |
+| `LLM_API_STYLE` | `openai` | `openai` or `anthropic` |
+| `FM_AGENT_MODEL_BACKEND` | `deepseek-harness` | Only accepted backend |
+| `FM_AGENT_DSH_BIN` | bundled `dsh` | Harness executable override |
+| `FM_AGENT_DSH_PATCH` | bundled patch | Harness profile patch override |
+| `FM_AGENT_TOOL_COMPAT_MODE` | `native` | Forward tool fields unchanged; use `qwen-text` for an incompatible server parser |
+| `FM_AGENT_TOOL_PROXY_TIMEOUT_SECONDS` | `1800` | Upstream timeout for the text-tool proxy |
+| `FM_AGENT_UPSTREAM_CA_BUNDLE` | empty | CA bundle for a private HTTPS upstream |
+| `FM_AGENT_UPSTREAM_INSECURE_TLS` | `0` | Set to `1` only to diagnose upstream TLS trust |
+| `AGENT_MAX_RETRIES` | `5` | Harness stage retries |
+| `AGENT_TIMEOUT_SECONDS` | `1800` | Per-Harness-call timeout |
+| `MAX_WORKERS` | `10` | Parallel workers |
+| `MAX_SPC_ITER` | `5` | Static specification-check iterations |
+| `GRANULARITY` | `40` | Static reasoning block size |
+| `FM_AGENT_DOMAIN_KNOWLEDGE` | empty | `os.pathsep`-separated knowledge files |
+| `SCOPE_TOP_K` | `5` | Functions retained per selected file |
+| `SCOPE_LLM_TRIGGER_FUNCS` | `5` | Function count that enables LLM reranking |
+| `SCOPE_LLM_TOP_K` | `5` | Reranking candidate count |
+| `SCOPE_LLM_CONFIDENCE_THRESHOLD` | `8.0` | Low-confidence reranking threshold |
+| `ELP_COMMAND` | `elp` | Erlang Language Platform command |
+| `ELP_TIMEOUT_SECONDS` | `180` | ELP timeout |
+| `CODEGRAPH_VERSION` | `v1.6.0-fmagent.1` | Required CodeGraph version |
+| `CODEGRAPH_BIN_DIR` | launcher-supplied bundle dir | CodeGraph binary directory |
 
-Set `FM_AGENT_CODEGRAPH_DIR` (or `[codegraph].install_dir`) to change the private
-cache. If provisioning fails, FM-Agent tries `[codegraph].bin_dir` and PATH,
-then falls back to regex extraction with a warning. Windows manual installations
-can provide `codegraph.cmd`, `codegraph.exe`, or `codegraph.bat` in `bin_dir`.
-Qualified methods use nested output directories on Windows, preserving the
-same fully qualified function names as the flat POSIX layout. Incremental
-matching and cleanup use this layout too.
-
-| Parameter                       | Default                        | Description                                                  |
-| ------------------------------- | ------------------------------ | ------------------------------------------------------------ |
-| `LLM_MODEL`                     | `anthropic/claude-sonnet-4.6`  | Default model used as the fallback for all task-specific model settings |
-| `OPENCODE_SETUP_MODEL`          | `LLM_MODEL`                    | Model used by OpenCode for codebase understanding, phase planning, and domain context generation |
-| `OPENCODE_SPEC_MODEL`           | `LLM_MODEL`                    | Model used by OpenCode for batch behavioral spec generation  |
-| `OPENCODE_BUG_VALIDATION_MODEL` | `LLM_MODEL`                    | Model used by OpenCode to validate `MISMATCH` results with probe scripts and bug reports |
-| `REASONER_POST_CONDITION_MODEL` | `LLM_MODEL`                    | Model used by direct llm calls to generate block post-conditions |
-| `REASONER_SPEC_CHECK_MODEL`     | `LLM_MODEL`                    | Model used by direct llm calls to check whether actual post-conditions violate specs |
-| `OPENCODE_MODEL_PROVIDER`       | `openrouter`                   | OpenCode provider prefix used when invoking `opencode run --model <prefix>/<model>` |
-| `LLM_API_KEY`                   | (env)                          | LLM API key for FM-Agent's direct calls |
-| `LLM_API_BASE_URL`              | `https://openrouter.ai/api/v1` | LLM API base URL for FM-Agent's direct calls |
-| `LLM_EFFORT`                    | unset                          | Optional reasoning effort passed to Codex, Claude, or DSH; empty uses the backend default |
-| `FM_AGENT_MODEL_BACKEND`        | `opencode`                     | Model backend: `opencode`, `dsh` (alias `deepseek-harness`), `auto`, `codex-cli`, or `claude-cli` |
-| `FM_AGENT_DOMAIN_KNOWLEDGE`     | unset                          | Optional `os.pathsep`-separated Markdown files with user-provided domain knowledge |
-| `GRANULARITY`                   | `40`                           | Minimum number of lines per code block when splitting a function for block-by-block reasoning |
-| `MAX_WORKERS`                   | `10`                           | Maximum number of concurrent worker threads for reasoning and bug validation |
-| `MAX_SPC_ITER`                  | `5`                            | Maximum number of retries/iterations for FM-Agent's direct LLM verification calls (post-condition and spec checks) |
-| `OPENCODE_MAX_RETRIES`          | `5`                            | Maximum retry attempts for a failed OpenCode pipeline stage |
-| `OPENCODE_TIMEOUT_SECONDS`      | `1800`                         | Hard timeout (in seconds) for one agent subprocess, including DSH; stage callers retry failures |
-| `CLANG_COMMAND`                 | `clang` / `clang++`            | Clang driver used for C/C++ call-graph analysis; the language-specific default is selected automatically |
-| `CLANG_COMPILE_COMMANDS`        | unset                          | Optional path to `compile_commands.json` or its directory; otherwise the project root and `build/` are checked |
-| `CLANG_TIMEOUT_SECONDS`         | `120`                          | Timeout for each Clang translation-unit AST export; functions not covered by successful exports use codegraph |
-| `ELP_COMMAND`                   | `elp`                          | ELP executable or command used for Erlang function and call-graph analysis |
-| `ELP_TIMEOUT_SECONDS`           | `180`                          | Timeout for ELP initialization, indexing, and individual LSP requests |
-
-## DeepSeek Harness
-
-After `./install.sh --with-dsh`, set the following in `fm-agent.toml`:
-
-```toml
-[llm]
-backend = "dsh"
-name = "deepseek-v4-pro"
-effort = "high"
-```
-
-Add `DEEPSEEK_API_KEY` to `.env`. For a gateway, also set `DEEPSEEK_BASE_URL` to
-its DeepSeek Messages-compatible root (DSH appends `/v1/messages`, reusing an
-existing `/v1`). DSH uses these variables instead of `LLM_API_KEY` and
-`LLM_API_BASE_URL`. `effort` is optional: `off`, `low`, `high`, or `max`.
+All numeric runtime values that must be positive are validated at startup.

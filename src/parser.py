@@ -1,8 +1,6 @@
 import json
 import re
 
-from src.languages.registry import remove_comments_for_function
-
 
 class FunctionSpecMap(dict):
     def __init__(self):
@@ -60,11 +58,7 @@ def format_info_for_reasoner(info):
     return knowledge_map
 
 
-def _remove_func_comments(code, language=None):
-    syntax_cleaned = remove_comments_for_function(code, language)
-    if syntax_cleaned is not None:
-        return '\n'.join(line for line in syntax_cleaned.split('\n') if line.strip())
-
+def _remove_func_comments(code):
     result = []
     index = 0
     in_block_comment = False
@@ -133,7 +127,7 @@ def _remove_func_comments(code, language=None):
     cleaned_lines = [line for line in ''.join(result).split('\n') if line.strip()]
     return '\n'.join(cleaned_lines)
 
-def parse_input_function(file_path, language=None):
+def parse_input_function(file_path):
     """
     Parse an extracted source file and its adjacent JSON metadata sidecars.
 
@@ -152,7 +146,7 @@ def parse_input_function(file_path, language=None):
     nl_spec = format_spec_for_reasoner(spec) if spec else ""
     knowledge = format_info_for_reasoner(info) if info else FunctionSpecMap()
 
-    func = _remove_func_comments(func, language)
+    func = _remove_func_comments(func)
 
     # Add line numbers to each line in func
     func_lines = func.split('\n')

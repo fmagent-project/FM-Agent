@@ -2,12 +2,11 @@
 
 Layered precedence (highest wins):
 
-    process env  >  .env  >  fm-agent.toml  >  built-in defaults
+    process env  >  explicit secrets file  >  fm-agent.toml  >  built-in defaults
 
-Non-secret defaults live in the committed ``fm-agent.toml``; secrets (the LLM
-API key) stay in the gitignored ``.env``. Every setting is also overridable by
-its legacy environment variable, so existing ``.env`` files keep working with no
-migration step.
+Non-secret defaults live in ``fm-agent.toml``; secrets stay in the file selected
+by ``FM_AGENT_SECRET_FILE`` (or ``.env`` in a source checkout). Target-project
+``.env`` files are deliberately never loaded.
 
 Import the validated ``settings`` object for new code; the module-level
 ``UPPER_CASE`` constants below are kept for backward compatibility with existing
@@ -33,9 +32,6 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-# Populate os.environ from .env without clobbering real env vars (so env > .env).
-load_dotenv()
-
 _explicit_config = os.environ.get("FM_AGENT_CONFIG")
 _CONFIG_PATH = (
     Path(_explicit_config)
@@ -49,6 +45,19 @@ if _explicit_config and not _CONFIG_PATH.is_file():
         f"FM-Agent: FM_AGENT_CONFIG points at a file that does not exist: {_CONFIG_PATH}"
     )
 
+# Load exactly one application-owned secret file without clobbering exported
+# variables. Calling load_dotenv() without a path would search upward from the
+# target checkout and could accidentally consume that project's credentials or
+# stale model overrides.
+_explicit_secret = os.environ.get("FM_AGENT_SECRET_FILE")
+_SECRET_PATH = (
+    Path(_explicit_secret)
+    if _explicit_secret
+    else (_CONFIG_PATH.with_name("secrets.env") if _explicit_config else Path(__file__).parent / ".env")
+)
+if _SECRET_PATH.is_file():
+    load_dotenv(_SECRET_PATH, override=False)
+
 # Legacy environment variable -> (toml section, field). This table is the single
 # place mapping an env var to a setting; it doubles as documentation of every
 # supported override.
@@ -59,15 +68,16 @@ _ENV_MAP: dict[str, tuple[str, str]] = {
     "FM_AGENT_MODEL_BACKEND": ("llm", "backend"),
     "LLM_MODEL": ("llm", "name"),
     "LLM_EFFORT": ("llm", "effort"),
-    "OPENCODE_MODEL_PROVIDER": ("llm", "provider"),
     "LLM_API_STYLE": ("llm", "api_style"),
+    "FM_AGENT_DSH_BIN": ("llm", "harness_bin"),
+    "FM_AGENT_DSH_PATCH": ("llm", "harness_patch"),
+    "FM_AGENT_TOOL_COMPAT_MODE": ("llm", "tool_compat_mode"),
     # [runtime]
     "MAX_SPC_ITER": ("runtime", "max_spec_iter"),
     "GRANULARITY": ("runtime", "granularity"),
     "MAX_WORKERS": ("runtime", "max_workers"),
-    "OPENCODE_MAX_RETRIES": ("runtime", "opencode_max_retries"),
-    "BUG_VALIDATION_MAX_RETRIES": ("runtime", "bug_validation_max_retries"),
-    "OPENCODE_TIMEOUT_SECONDS": ("runtime", "opencode_timeout_s"),
+    "AGENT_MAX_RETRIES": ("runtime", "agent_max_retries"),
+    "AGENT_TIMEOUT_SECONDS": ("runtime", "agent_timeout_s"),
     "FM_AGENT_DOMAIN_KNOWLEDGE": ("runtime", "domain_knowledge_paths"),
     # [scope]
     "SCOPE_TOP_K": ("scope", "top_k"),
@@ -77,16 +87,10 @@ _ENV_MAP: dict[str, tuple[str, str]] = {
     # [erlang]
     "ELP_COMMAND": ("erlang", "command"),
     "ELP_TIMEOUT_SECONDS": ("erlang", "timeout_s"),
-    # [inject]
-    "INJECT_ID": ("inject", "id"),
-    "INJECT_HOST": ("inject", "hosts"),
     # [codegraph]
     "CODEGRAPH_REPO": ("codegraph", "repo"),
     "CODEGRAPH_VERSION": ("codegraph", "version"),
     "CODEGRAPH_BIN_DIR": ("codegraph", "bin_dir"),
-    # Not CODEGRAPH_INSTALL_DIR: that name belongs to codegraph's own installer,
-    # and reusing it would let a value exported for that installer redirect ours.
-    "FM_AGENT_CODEGRAPH_DIR": ("codegraph", "install_dir"),
 }
 
 
@@ -98,16 +102,20 @@ class _Section(BaseModel):
 
 class LLMCfg(_Section):
     api_key: str = ""  # secret — from .env / env only, never committed to the toml
-    base_url: str = "https://openrouter.ai/api/v1"
-    backend: str = "opencode"
-    name: str = "anthropic/claude-sonnet-4.6"
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    backend: Literal["deepseek-harness"] = "deepseek-harness"
+    name: str = "qwen3.6-35b-a3b"
     effort: str = ""
-    provider: str = "openrouter"
-    # Endpoint API style, used to pick the OpenCode SDK adapter when FM-Agent
-    # injects the provider block: "openai" -> @ai-sdk/openai-compatible (most
-    # relays: OpenRouter, DeepSeek, …), "anthropic" -> @ai-sdk/anthropic.
+    # Endpoint API style used by the DeepSeek Harness pi-ai adapter.
     # Typed so a typo (or wrong case) fails fast at config load, not silently.
     api_style: Literal["openai", "anthropic"] = "openai"
+    # The offline launcher normally supplies both paths. Empty values let a
+    # source checkout resolve `dsh` from PATH and use its bundled patch.
+    harness_bin: str = ""
+    harness_patch: str = ""
+    # native sends OpenAI tools unchanged. qwen-text is an explicit fallback
+    # for upstream services whose server-side tool parser is incompatible.
+    tool_compat_mode: Literal["qwen-text", "native"] = "native"
 
 
 class RuntimeCfg(_Section):
@@ -118,13 +126,9 @@ class RuntimeCfg(_Section):
     max_spec_iter: int = Field(default=5, gt=0)
     granularity: int = Field(default=40, gt=0)
     max_workers: int = Field(default=10, gt=0)
-    opencode_max_retries: int = Field(default=5, gt=0)
-    # Retries in addition to the initial attempt, so 0 (no retries) is valid.
-    bug_validation_max_retries: int = Field(default=1, ge=0)
-    # Hard cap on ONE `opencode run` subprocess. A model connection that dies
-    # silently (e.g. through a forward proxy) otherwise hangs the pipeline
-    # forever — opencode has no model-call timeout of its own.
-    opencode_timeout_s: int = Field(default=1800, gt=0)
+    agent_max_retries: int = Field(default=5, gt=0)
+    # Hard cap on one DeepSeek Harness headless invocation.
+    agent_timeout_s: int = Field(default=1800, gt=0)
     # Extra domain-knowledge markdown paths (os.pathsep- or newline-separated);
     # env-driven, so no committed default.
     domain_knowledge_paths: str = ""
@@ -146,13 +150,6 @@ class ErlangCfg(_Section):
     timeout_s: int = Field(default=180, gt=0)
 
 
-class InjectCfg(_Section):
-    # Request metadata injected for prompt-cache affinity; internal, so no
-    # committed toml default (empty means "use the built-in fallback id").
-    id: str = ""
-    hosts: str = ""
-
-
 class CodegraphCfg(_Section):
     # The pinned maintenance-fork build. install.sh reads these to install it and
     # the runtime invokes the pinned binary, so this is the single place that
@@ -160,11 +157,8 @@ class CodegraphCfg(_Section):
     repo: str = "fmagent-project/codegraph"
     # fm-agent.toml is the authoritative source; this default is only the fallback
     # when the toml is absent. Keep it in sync when bumping the pinned version.
-    version: str = "v1.6.2-fmagent.1"
-    bin_dir: str = "~/.local/bin"  # where install.sh links codegraph for manual use
-    # Our own bundle dir; separate from the shared ~/.codegraph so provisioning
-    # the pin cannot change which codegraph other tools resolve.
-    install_dir: str = "~/.cache/fm-agent/codegraph"
+    version: str = "v1.6.0-fmagent.1"
+    bin_dir: str = "~/.local/bin"  # launcher location; install and run must agree
 
 
 class _LayeredSource(PydanticBaseSettingsSource):
@@ -174,7 +168,7 @@ class _LayeredSource(PydanticBaseSettingsSource):
         super().__init__(settings_cls)
         data: dict = {}
         if path.is_file():
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            data = tomllib.loads(path.read_text())
         else:
             # A missing default fm-agent.toml is tolerated (built-in defaults are
             # kept identical to it), but warn: it usually means a broken checkout
@@ -207,7 +201,6 @@ class Settings(BaseSettings):
     runtime: RuntimeCfg = RuntimeCfg()
     scope: ScopeCfg = ScopeCfg()
     erlang: ErlangCfg = ErlangCfg()
-    inject: InjectCfg = InjectCfg()
     codegraph: CodegraphCfg = CodegraphCfg()
 
     @classmethod
@@ -229,9 +222,9 @@ try:
 except (ValidationError, tomllib.TOMLDecodeError) as exc:
     # Fail fast with a readable message instead of a raw traceback: a bad value or
     # typo'd key (ValidationError) or a syntax error in the toml (TOMLDecodeError)
-    # in fm-agent.toml / .env / an env var stops startup here.
+    # in fm-agent.toml / the secret file / an env var stops startup here.
     raise SystemExit(
-        f"FM-Agent: invalid configuration (check {_CONFIG_PATH.name}, .env, or the "
+        f"FM-Agent: invalid configuration (check {_CONFIG_PATH.name}, {_SECRET_PATH.name}, or the "
         f"matching environment variable)\n{exc}"
     ) from None
 
@@ -245,20 +238,16 @@ LLM_API_BASE_URL = settings.llm.base_url
 FM_AGENT_MODEL_BACKEND = settings.llm.backend
 LLM_MODEL = settings.llm.name
 LLM_EFFORT = settings.llm.effort.strip()
-OPENCODE_MODEL_PROVIDER = settings.llm.provider
-
-OPENCODE_SETUP_MODEL = LLM_MODEL
-OPENCODE_SPEC_MODEL = LLM_MODEL
-OPENCODE_BUG_VALIDATION_MODEL = LLM_MODEL
+AGENT_SETUP_MODEL = LLM_MODEL
+AGENT_SPEC_MODEL = LLM_MODEL
 REASONER_POST_CONDITION_MODEL = LLM_MODEL
 REASONER_SPEC_CHECK_MODEL = LLM_MODEL
 
 MAX_SPC_ITER = settings.runtime.max_spec_iter
 GRANULARITY = settings.runtime.granularity
 MAX_WORKERS = settings.runtime.max_workers
-OPENCODE_MAX_RETRIES = settings.runtime.opencode_max_retries
-BUG_VALIDATION_MAX_RETRIES = settings.runtime.bug_validation_max_retries
-OPENCODE_TIMEOUT_SECONDS = settings.runtime.opencode_timeout_s
+AGENT_MAX_RETRIES = settings.runtime.agent_max_retries
+AGENT_TIMEOUT_SECONDS = settings.runtime.agent_timeout_s
 
 SCOPE_TOP_K = settings.scope.top_k
 SCOPE_LLM_TRIGGER_FUNCS = settings.scope.llm_trigger_funcs
@@ -275,18 +264,15 @@ __all__ = [
     "FM_AGENT_MODEL_BACKEND",
     "LLM_MODEL",
     "LLM_EFFORT",
-    "OPENCODE_MODEL_PROVIDER",
-    "OPENCODE_SETUP_MODEL",
-    "OPENCODE_SPEC_MODEL",
-    "OPENCODE_BUG_VALIDATION_MODEL",
+    "AGENT_SETUP_MODEL",
+    "AGENT_SPEC_MODEL",
     "REASONER_POST_CONDITION_MODEL",
     "REASONER_SPEC_CHECK_MODEL",
     "MAX_SPC_ITER",
     "GRANULARITY",
     "MAX_WORKERS",
-    "OPENCODE_MAX_RETRIES",
-    "BUG_VALIDATION_MAX_RETRIES",
-    "OPENCODE_TIMEOUT_SECONDS",
+    "AGENT_MAX_RETRIES",
+    "AGENT_TIMEOUT_SECONDS",
     "SCOPE_TOP_K",
     "SCOPE_LLM_TRIGGER_FUNCS",
     "SCOPE_LLM_TOP_K",

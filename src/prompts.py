@@ -1,10 +1,12 @@
 from config import *
 import json
+import re
 from .llm_client import (
     _llm_provider_client,
     _retry_create,
     _llm_json_call,
     _parse_json_response,
+    _proxy_audit_path,
 )
 from .trace_writer import (
     new_event_id,
@@ -88,6 +90,27 @@ def _parse_spec_check_json(response):
         raise ValueError(
             "spec-check MATCH JSON must not include counterexample or offending_statements"
         )
+    # Some reasoning models occasionally put the mechanically requested MATCH
+    # token in ``verdict`` even though their own conclusion says MISMATCH.  Do
+    # not silently turn that self-contradictory response into a proof.  The
+    # caller will record a format_error and ask the model for a corrected JSON
+    # object on the next iteration.
+    normalized_reason = re.sub(r"\s+", " ", reason).strip().lower()
+    contradiction_markers = (
+        r"\btherefore\b.{0,80}\bmismatch\b",
+        r"\b(?:is|are|constitutes?)\s+(?:a\s+)?mismatch\b",
+        r"\b(?:a|the|this|following|concrete|specific)\s+"
+        r"(?:(?:concrete|specific)\s+)?counterexample\b",
+        r"\b(?:found|identified|constructed|exists?)\s+(?:a\s+)?"
+        r"(?:(?:concrete|specific)\s+)?counterexample\b",
+        r"\b(?:this|that|which|it)\s+violat(?:e|es|ed)\b",
+        r"\bdoes\s+not\s+(?:satisfy|meet|guarantee|imply|match)\b",
+        r"\bfails?\s+to\s+(?:satisfy|meet|guarantee|imply|match)\b",
+    )
+    if any(re.search(pattern, normalized_reason) for pattern in contradiction_markers):
+        raise ValueError(
+            "spec-check MATCH JSON reason describes a mismatch or counterexample"
+        )
     data["counterexample"] = None
     data["offending_statements"] = None
     data["reason"] = reason.strip()
@@ -110,9 +133,14 @@ def _generate_block_post_condition(block, pre_condition, knowledge, language,
         {"role": "system", "content": (
             f"You are an expert in formal verification of {language} programs. "
             f"Given a {language} code block and its pre-condition, generate the post-condition "
-            "that describes the program state after the code block finishes execution. "
+            "that describes the ACTUAL program state after the code block finishes execution. "
             "Cover all execution paths including early returns, exceptions, and normal flow-through. "
             f"Apply {language}-specific semantics (ownership, lifetimes, error handling, etc.) as appropriate. "
+            "The code block is authoritative. Additional context can supply types, preconditions, and "
+            "callee behavior, but may also contain intended requirements that the implementation violates. "
+            "Never copy an intended guarantee into the actual post-condition unless the code establishes it. "
+            "Do not infer first/last/extremal selection, overflow safety, stable ordering, exact rounding, "
+            "or error handling unless the control flow and operations implement that property. "
             "Be precise and unambiguous. Express the post-condition in natural language and formal logic."
         )},
         {"role": "user", "content": (
@@ -120,6 +148,8 @@ def _generate_block_post_condition(block, pre_condition, knowledge, language,
             f"Pre-condition:\n{pre_condition}\n\n"
             f"Code block:\n```{language.lower()}\n{block}\n```\n"
             f"{info_str}\n"
+            "Trace the supplied code, including concrete boundary and duplicate-value paths. "
+            "Describe what this implementation does, even when additional context says it should do something else.\n"
             "Generate the post-condition. Return only a valid JSON object with this "
             "required field: {\"post_condition\": \"...\"}. Do not include Markdown, "
             "tags, or prose outside the JSON object."
@@ -265,6 +295,11 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             lang_expertise +
             "Given a code block, its post-condition A (what the code actually does), and a specification post-condition B (what the code should do), "
             "determine whether there exists a concrete valid input where the code's behavior (A) violates the specification (B). "
+            "Condition A is model-generated and may itself overclaim. Cross-check every material claim in A against the code block; "
+            "when A conflicts with the code, the code is authoritative and that conflict can establish a counterexample to B. "
+            "Additional context can contain explicit user-provided normative requirements. Treat those requirements as part of "
+            "Condition B even if the generated specification accidentally omits or weakens them. When generated B conflicts "
+            "with an explicit user requirement, use the explicit requirement and explain that spec-generation gap in reason. "
             "Focus on finding CONCRETE COUNTEREXAMPLES: specific input values where the code produces an output that does not satisfy the specification. "
             "Check these common violation patterns:\n"
             "  1. The code rejects/filters out inputs that the specification says should be accepted (missing cases). "
@@ -278,7 +313,10 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
             "\"offending_statements\": string|null, \"reason\": string}. "
             "For MISMATCH, counterexample, offending_statements, and reason must be non-empty strings; "
             "offending_statements must preserve any 'Line N:' prefixes from the code block. "
-            "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+            "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty. "
+            "The verdict MUST agree with your reasoning: if you identify any violating input, missing case, "
+            "counterexample, or statement that fails B, verdict MUST be MISMATCH and all evidence fields "
+            "must be populated. Never describe a mismatch in reason while returning MATCH."
         )},
         {"role": "user", "content": (
             f"Programming language: {language}\n\n"
@@ -298,9 +336,14 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
         response = None
         usage = {}
         reasoning = None
+        proxy_log_path = _proxy_audit_path(trace_dir, event_id)
         try:
             response, usage, reasoning = _retry_create(
-                _llm_provider_client, REASONER_SPEC_CHECK_MODEL, messages, trace_dir=trace_dir
+                _llm_provider_client,
+                REASONER_SPEC_CHECK_MODEL,
+                messages,
+                trace_dir=trace_dir,
+                event_id=event_id,
             )
         except Exception as exc:
             event = {
@@ -319,7 +362,13 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
                     "error": str(exc),
                 },
             }
-            record_llm_exchange(trace_dir, event_id, event, messages)
+            record_llm_exchange(
+                trace_dir,
+                event_id,
+                event,
+                messages,
+                proxy_log_path=proxy_log_path,
+            )
             raise
         parsed_result = None
         parse_error = None
@@ -349,7 +398,15 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
                 "parse_error": parse_error,
             },
         }
-        record_llm_exchange(trace_dir, event_id, event, messages, response, reasoning)
+        record_llm_exchange(
+            trace_dir,
+            event_id,
+            event,
+            messages,
+            response,
+            reasoning,
+            proxy_log_path=proxy_log_path,
+        )
         if has_violation is not None:
             if has_violation:
                 stmts = stmts or "(unable to extract)"
@@ -368,7 +425,9 @@ def _check_post_implies_spec(block, post_condition, spec_post_condition, knowled
                     "\"offending_statements\": string|null, "
                     "\"reason\": string}. "
                     "For MISMATCH, all evidence fields must be non-empty strings. "
-                    "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty."
+                    "For MATCH, counterexample and offending_statements must be null or empty, and reason may be empty. "
+                    "Make verdict consistent with the conclusion in reason. If the analysis found any "
+                    "counterexample or violation, return MISMATCH with all evidence fields populated."
                 ),
             }
         ]

@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from src.extract import EXT_TO_LANG, LANG_CONFIG
 from src.file_utils import _is_metadata_sidecar
 from src.languages.registry import call_edges_all
-from src.specification import SOFTWARE_PROFILE, SpecificationProfile
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +26,7 @@ def _load_phases(proj_dir):
 # 1.2 Collect files per phase
 # ---------------------------------------------------------------------------
 
-def _collect_phase_files(proj_dir, phase_data, specification: SpecificationProfile = SOFTWARE_PROFILE):
+def _collect_phase_files(proj_dir, phase_data):
     """For a phase, collect all extracted function file paths.
 
     Returns list of (file_path, module_name) tuples.
@@ -58,15 +57,7 @@ def _collect_phase_files(proj_dir, phase_data, specification: SpecificationProfi
             for root, _dirs, fnames in os.walk(func_dir):
                 for fname in fnames:
                     fpath = os.path.join(root, fname)
-                    if (
-                        os.path.isfile(fpath)
-                        and not _is_metadata_sidecar(fname, specification)
-                        and specification.allows_language(
-                            EXT_TO_LANG.get(
-                                os.path.splitext(fname)[1].lstrip(".").lower()
-                            )
-                        )
-                    ):
+                    if os.path.isfile(fpath) and not _is_metadata_sidecar(fname):
                         results.append((fpath, module_name))
 
     return results
@@ -127,7 +118,7 @@ _COMMON_EXTRA_KEYWORDS = {
 def _detect_lang_from_ext(filepath):
     """Detect the language key from a file's extension."""
     base = os.path.basename(filepath)
-    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+    ext = base.rsplit(".", 1)[-1] if "." in base else ""
     return EXT_TO_LANG.get(ext)
 
 
@@ -322,16 +313,7 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
     edge_aliases_map = defaultdict(lambda: defaultdict(set))  # callee -> caller -> aliases
 
     phase_langs = {_detect_lang_from_ext(fp) for fp, _ in phase_files if _detect_lang_from_ext(fp)}
-    registry_edges_list, registry_langs = call_edges_all(proj_dir, phase_langs)
-    # codegraph edges are [{"caller": fqn, "callee": fqn, "kind": k}, ...]
-    # normalize_call_edges guarantees caller/callee are present, but use .get()
-    # defensively in case an edge bypasses the normalization layer.
-    registry_edges = defaultdict(set)
-    for edge in registry_edges_list:
-        caller = edge.get("caller")
-        callee = edge.get("callee")
-        if caller and callee:
-            registry_edges[caller].add(callee)
+    registry_edges, registry_langs = call_edges_all(proj_dir, phase_langs)
 
     for filepath, module_name in phase_files:
         fqn = fqn_map[filepath]
@@ -476,8 +458,6 @@ def _add_resolved_extra_edge(
 
     before = len(all_callees_map[caller_fqn])
     all_callees_map[caller_fqn].add(callee_fqn)
-    # Preserve only the explicit aliases supplied by this supplemental edge;
-    # the prompt matcher treats these as trusted evidence for qualified names.
     edge_aliases_map[callee_fqn][caller_fqn].update(edge.info_names)
 
     if callee_fqn in phase_fqns:
@@ -661,7 +641,7 @@ def _compute_layers(phase_fqns, callees_map, callers_map):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None, specification: SpecificationProfile = SOFTWARE_PROFILE):
+def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None):
     """Generate topdown layer JSON files for the specified phases (or all phases).
 
     Args:
@@ -680,7 +660,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None,
     # Build global stem->FQN mapping across ALL phases for all_callees
     global_stem_to_fqns = defaultdict(set)
     for pi in phases_data["phases"]:
-        for filepath, _ in _collect_phase_files(proj_dir, pi, specification):
+        for filepath, _ in _collect_phase_files(proj_dir, pi):
             fqn = _file_to_fqn(filepath, proj_dir)
             stem = fqn.split("::")[-1]
             global_stem_to_fqns[stem].add(fqn)
@@ -695,7 +675,7 @@ def generate_topdown_layers(proj_dir, phase_numbers=None, extra_call_edges=None,
             continue
 
         # 1.2 Collect files
-        phase_files = _collect_phase_files(proj_dir, phase_info, specification)
+        phase_files = _collect_phase_files(proj_dir, phase_info)
         if not phase_files:
             logging.warning(f"Phase {phase_num} ({phase_name}): no extracted files found, skipping.")
             continue

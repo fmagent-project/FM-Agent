@@ -223,3 +223,37 @@ docs/superpowers/
 fm_agent_estimate/
 CLAUDE.md
 AGENTS.md
+
+# CAEP offline release sources
+# Python caches and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local secrets and runtime state
+.env
+*.sqlite
+*.sqlite3
+webapp_data/
+
+# Generated packages and archives
+dist/
+*.tar
+*.tar.gz
+*.sha256
+BUILD-INFO.md
+VALIDATION-REPORT_zh.md
+
+# Bundled third-party runtimes and binaries
+vendor/
+
+# Local editor and OS files
+.idea/
+.vscode/
+.DS_Store
+
+# Local Harness sessions and storage
+fm_agent/.dsh/sessions/
+fm_agent/.dsh/storages/

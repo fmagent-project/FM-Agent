@@ -1,265 +1,46 @@
-import time
+"""Structured LLM calls routed exclusively through DeepSeek Harness."""
+
 import json
-import random
-import urllib.request
-import urllib.error
-import urllib.parse
-import logging
-from pathlib import Path
-from config import *
-from .cli_backend import build_agent_command, is_cli_backend_enabled, run_agent_for_messages
-from openai import OpenAI, RateLimitError, BadRequestError
-from .trace_writer import (
-    new_event_id,
-    record_llm_exchange,
-    utc_now_iso,
-)
+import os
 
-_openrouter_client = (
-    None if is_cli_backend_enabled()
-    else OpenAI(api_key=LLM_API_KEY, base_url=LLM_API_BASE_URL)
-)
-_llm_provider_client = _openrouter_client
-
-_MAX_RATE_LIMIT_RETRIES = 20
-_MAX_LLM_RETRIES = 5
-
-# Maximum output tokens for anthropic-native /v1/messages calls.
-# Anthropic requires this field; OpenAI-compatible layers often hide it, but the native endpoint needs it.
-_ANTHROPIC_MAX_TOKENS = 8192
+from config import MAX_SPC_ITER
+from .harness_backend import build_agent_command, run_agent_for_messages
+from .trace_writer import new_event_id, record_llm_exchange, utc_now_iso
 
 
-def build_llm_cli_command(model, prompt, cwd, files=None):
+# Kept as a compatibility argument for callers that historically passed an
+# OpenAI client. DeepSeek Harness now owns all provider I/O and retries.
+_llm_provider_client = None
+
+
+def build_llm_agent_command(model, prompt, cwd, files=None):
+    """Build the configured DeepSeek Harness command for a file-oriented task."""
     return build_agent_command(model=model, prompt=prompt, cwd=cwd, files=files)
 
 
-def _is_anthropic_model(model):
-    """True if model should be routed through anthropic-native /v1/messages."""
-    m = (model or "").lower()
-    return m.startswith("claude") or m.startswith("anthropic/")
+def _proxy_audit_path(trace_dir, event_id):
+    if not trace_dir or not event_id:
+        return None
+    payload_dir = os.path.join(trace_dir, "payloads")
+    os.makedirs(payload_dir, exist_ok=True)
+    return os.path.join(payload_dir, f"{event_id}_proxy.jsonl")
 
 
-_DEFAULT_INJECT_USER_ID = "stable-user-or-session-id-xxxxxxx123"
+def _retry_create(client, model, messages, *, trace_dir=None, event_id=None):
+    """Run one message conversation through Harness.
 
-
-def _stable_user_id():
-    return settings.inject.id or _DEFAULT_INJECT_USER_ID
-
-
-def _inject_targets():
-    return [s.strip() for s in (settings.inject.hosts or "").split(",") if s.strip()]
-
-
-def _matches_inject_target(url, target):
-    if target.lower().startswith(("http://", "https://")):
-        return url.startswith(target)
-    try:
-        host = urllib.parse.urlparse(url).hostname or ""
-    except Exception:
-        return False
-    return host == target or host.endswith("." + target)
-
-
-def _should_inject_user_id(base_url):
-    url = (base_url or "").rstrip("/")
-    return any(_matches_inject_target(url, target) for target in _inject_targets())
-
-
-def _metadata_body():
-    return {"metadata": {"user_id": _stable_user_id()}}
-
-
-def _messages_to_anthropic(messages):
-    """Split OpenAI-style messages into (system_text, anthropic_messages list)."""
-    system_text = ""
-    out = []
-    for m in messages:
-        role = m.get("role")
-        content = m.get("content", "")
-        if not isinstance(content, str):
-            # Already a list-of-blocks; flatten to text to keep this path simple.
-            content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
-        if role == "system":
-            # Concatenate multiple system messages if present.
-            system_text = (system_text + "\n\n" + content).strip() if system_text else content
-        elif role in ("user", "assistant"):
-            out.append({"role": role, "content": content})
-    return system_text, out
-
-
-def _openai_reasoning_payload(message):
-    """Return provider-supplied reasoning fields without affecting response text."""
-    extras = getattr(message, "model_extra", None) or {}
-    fields = {}
-    for name in ("reasoning_content", "reasoning", "reasoning_details"):
-        value = extras.get(name, getattr(message, name, None))
-        if value is not None:
-            fields[name] = value
-    return {"provider_format": "openai-compatible", "fields": fields} if fields else None
-
-
-def _anthropic_create(model, messages):
-    """Send messages via an Anthropic-native /v1/messages endpoint with prompt caching.
-
-    Returns (text, usage_dict, reasoning_payload). usage_dict matches anthropic-style:
-      {input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, ...}
+    Harness implements provider retries and emits only the final assistant text
+    on stdout in headless mode. Usage is currently unavailable at this wrapper
+    boundary, so the trace contains an empty usage mapping.
     """
-    system_text, an_msgs = _messages_to_anthropic(messages)
-
-    sys_blocks = []
-    if system_text:
-        # cache_control marks the prefix as cacheable; ephemeral = 5-minute TTL.
-        sys_blocks.append({
-            "type": "text",
-            "text": system_text,
-            "cache_control": {"type": "ephemeral"},
-        })
-
-    body = {
-        "model": model,
-        "max_tokens": _ANTHROPIC_MAX_TOKENS,
-        "system": sys_blocks,
-        "messages": an_msgs or [{"role": "user", "content": ""}],
-    }
-
-    url = LLM_API_BASE_URL.rstrip("/") + "/messages"
-    if _should_inject_user_id(LLM_API_BASE_URL):
-        body.update(_metadata_body())
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {LLM_API_KEY}",
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
+    del client
+    text, usage = run_agent_for_messages(
+        model,
+        messages,
+        text_only=True,
+        proxy_audit_path=_proxy_audit_path(trace_dir, event_id),
     )
-    with urllib.request.urlopen(req, timeout=600) as r:
-        status = getattr(r, "status", None) or r.getcode()
-        body_bytes = r.read()
-    try:
-        data = json.loads(body_bytes)
-    except json.JSONDecodeError as exc:
-        # The relay returned a non-JSON / empty body (e.g. an empty 200 or an
-        # HTML error page truncated by the proxy under load). Surface the raw
-        # body + status — otherwise only "Expecting value: line 1 column 1" leaks
-        # and the actual relay response is lost.
-        snippet = body_bytes[:800].decode("utf-8", "replace")
-        raise RuntimeError(
-            f"non-JSON response from relay (HTTP {status}, {len(body_bytes)} bytes): {snippet!r}"
-        ) from exc
-    # Keep thinking blocks for the trace, but only text blocks form the response.
-    content = data.get("content", []) or []
-    text = "".join(c.get("text", "") for c in content if c.get("type") == "text")
-    thinking_blocks = [
-        c for c in content
-        if c.get("type") in {"thinking", "redacted_thinking"}
-    ]
-    usage = data.get("usage", {}) or {}
-    reasoning = (
-        {"provider_format": "anthropic-messages", "blocks": thinking_blocks}
-        if thinking_blocks else None
-    )
-    return text, usage, reasoning
-
-
-def _http_status_from_exc(exc):
-    """Extract HTTP status from a urllib HTTPError, else None."""
-    if isinstance(exc, urllib.error.HTTPError):
-        return exc.code
-    return None
-
-
-def _read_error_body(exc, limit=800):
-    """The raw response body of an HTTPError (the relay's actual error page),
-    which str(exc) drops — only `HTTP Error 504: Gateway Time-out` survives
-    otherwise. Read-once and tolerant; returns '' if unavailable."""
-    try:
-        raw = exc.read()
-    except Exception:
-        return ""
-    if not raw:
-        return ""
-    text = raw.decode("utf-8", "replace").strip()
-    return text[:limit] + ("…" if len(text) > limit else "")
-
-
-def _retry_create(client, model, messages, trace_dir=None):
-    """Call the LLM with retries. Returns (text, usage_dict, reasoning_payload).
-
-    - Anthropic-family models go via the native /v1/messages endpoint.
-    - Other models go through the OpenAI-compat client.
-    - When LLM_API_BASE_URL matches INJECT_HOST, metadata.user_id is attached so
-      third-party relays that support it can keep prompt-cache routing sticky.
-    """
-    if is_cli_backend_enabled():
-        work_dir = Path(trace_dir).resolve().parent if trace_dir is not None else None
-        text, usage = run_agent_for_messages(model, messages, work_dir=work_dir)
-        return text, usage, None
-
-    rate_limit_attempts = 0
-    transient_attempts = 0
-    use_anthropic = _is_anthropic_model(model)
-    extra = {}
-    if _should_inject_user_id(LLM_API_BASE_URL):
-        extra["extra_body"] = _metadata_body()
-    while True:
-        try:
-            if use_anthropic:
-                return _anthropic_create(model, messages)
-            response = client.chat.completions.create(model=model, messages=messages, **extra)
-            message = response.choices[0].message
-            text = message.content
-            usage = response.usage.model_dump() if response.usage else {}
-            return text, usage, _openai_reasoning_payload(message)
-        except BadRequestError:
-            raise
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            body = _read_error_body(exc)  # the relay's raw error page (str(exc) drops it)
-            detail = f"HTTP {status} {exc.reason}" + (f"; body={body!r}" if body else "")
-            if status == 400:
-                raise
-            if status == 429:
-                rate_limit_attempts += 1
-                if rate_limit_attempts >= _MAX_RATE_LIMIT_RETRIES:
-                    raise RuntimeError(
-                        f"Rate limited after {_MAX_RATE_LIMIT_RETRIES} retries: {detail}"
-                    ) from exc
-                wait = min(2 ** (rate_limit_attempts - 1) * 5, 300) + random.uniform(1, 10)
-                logging.warning(f"LLM 429 ({detail}), sleeping {wait:.1f}s (attempt {rate_limit_attempts})")
-                time.sleep(wait)
-                continue
-            # 5xx and other → treat as transient
-            transient_attempts += 1
-            if transient_attempts >= _MAX_LLM_RETRIES:
-                raise RuntimeError(
-                    f"LLM request failed after {_MAX_LLM_RETRIES} retries: {detail}"
-                ) from exc
-            wait = min(2 ** (transient_attempts - 1) * 5, 60) + random.uniform(1, 3)
-            logging.warning(f"LLM {detail}, sleeping {wait:.1f}s (attempt {transient_attempts})")
-            time.sleep(wait)
-        except RateLimitError as exc:
-            rate_limit_attempts += 1
-            if rate_limit_attempts >= _MAX_RATE_LIMIT_RETRIES:
-                raise RuntimeError(
-                    f"Rate limited after {_MAX_RATE_LIMIT_RETRIES} retries: {exc}"
-                ) from exc
-            wait = min(2 ** (rate_limit_attempts - 1) * 5, 300) + random.uniform(1, 10)
-            logging.warning(f"LLM rate-limited, sleeping {wait:.1f}s (attempt {rate_limit_attempts})")
-            time.sleep(wait)
-        except Exception as exc:
-            transient_attempts += 1
-            if transient_attempts >= _MAX_LLM_RETRIES:
-                raise RuntimeError(
-                    f"LLM request failed after {_MAX_LLM_RETRIES} retries: {exc}"
-                ) from exc
-            wait = min(2 ** (transient_attempts - 1) * 5, 60) + random.uniform(1, 3)
-            logging.warning(
-                f"LLM error ({type(exc).__name__}: {str(exc)[:120]}), "
-                f"sleeping {wait:.1f}s (attempt {transient_attempts})")
-            time.sleep(wait)
+    return text, usage, None
 
 
 def _parse_json_response(response):
@@ -304,15 +85,10 @@ def _parse_json_response(response):
         raise ValueError("LLM response must contain a JSON object or array")
     return data
 
+
 def _llm_json_call(client, model, messages, validator, schema_description,
                    max_retries=MAX_SPC_ITER, trace_dir=None, trace_meta=None):
-    """Call an LLM until it returns structured JSON accepted by ``validator``.
-
-    ``validator`` receives the parsed JSON value and must either return the
-    desired Python value or raise ``ValueError`` with a schema error. Keeping
-    JSON parsing and retry handling in one place makes every direct structured
-    LLM call follow the same protocol.
-    """
+    """Call Harness until it returns structured JSON accepted by ``validator``."""
     trace_meta = trace_meta or {}
     for attempt in range(1, max_retries + 1):
         event_id = new_event_id("llm")
@@ -320,8 +96,15 @@ def _llm_json_call(client, model, messages, validator, schema_description,
         response = None
         usage = {}
         reasoning = None
+        proxy_log_path = _proxy_audit_path(trace_dir, event_id)
         try:
-            response, usage, reasoning = _retry_create(client, model, messages, trace_dir=trace_dir)
+            response, usage, reasoning = _retry_create(
+                client,
+                model,
+                messages,
+                trace_dir=trace_dir,
+                event_id=event_id,
+            )
         except Exception as exc:
             event = {
                 "event_id": event_id,
@@ -333,12 +116,19 @@ def _llm_json_call(client, model, messages, validator, schema_description,
                 "summary": f"LLM call failed: {exc}",
                 "metadata": {
                     **trace_meta,
+                    "backend": "deepseek-harness",
                     "model": model,
                     "attempt": attempt,
                     "error": str(exc),
                 },
             }
-            record_llm_exchange(trace_dir, event_id, event, messages)
+            record_llm_exchange(
+                trace_dir,
+                event_id,
+                event,
+                messages,
+                proxy_log_path=proxy_log_path,
+            )
             raise
 
         parsed_json = None
@@ -362,6 +152,7 @@ def _llm_json_call(client, model, messages, validator, schema_description,
             "summary": trace_meta.get("summary", "LLM JSON call"),
             "metadata": {
                 **trace_meta,
+                "backend": "deepseek-harness",
                 "model": model,
                 "attempt": attempt,
                 "usage": usage,
@@ -369,7 +160,15 @@ def _llm_json_call(client, model, messages, validator, schema_description,
                 "parse_error": parse_error,
             },
         }
-        record_llm_exchange(trace_dir, event_id, event, messages, response, reasoning)
+        record_llm_exchange(
+            trace_dir,
+            event_id,
+            event,
+            messages,
+            response,
+            reasoning,
+            proxy_log_path=proxy_log_path,
+        )
         if status == "success":
             return result
 

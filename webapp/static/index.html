@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FM-Agent · 智能形式化代码验证</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="app-shell" class="app-shell sidebar-collapsed">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M16 2 27 6v8c0 7.2-4.4 12.7-11 16C9.4 26.7 5 21.2 5 14V6l11-4Z"/><path class="brand-check" d="m10.5 15.5 3.6 3.6 7.8-8"/></svg>
+        </span>
+        <div><strong>FM-Agent</strong><span>智能形式化代码验证</span></div>
+      </div>
+      <div class="topbar-right">
+        <span id="service-status" class="service-status"><i></i>服务连接中</span>
+        <button id="new-task-button" class="button primary" type="button">
+          <span class="plus">＋</span> 新建验证任务
+        </button>
+      </div>
+    </header>
+
+    <aside id="task-sidebar" class="sidebar">
+      <div class="sidebar-head">
+        <div class="sidebar-title"><span class="eyebrow">任务中心</span><strong>验证记录</strong></div>
+        <div class="sidebar-tools">
+          <span id="task-count" class="count-badge">0</span>
+          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-expanded="false" aria-controls="task-sidebar" title="展开验证记录">›</button>
+        </div>
+      </div>
+      <label class="search-box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+        <input id="task-search" type="search" placeholder="搜索任务或工程">
+      </label>
+      <div id="task-list" class="task-list"></div>
+      <div class="sidebar-foot">
+        <span id="concurrency-label">并行任务 —</span>
+        <span>数据持久保存</span>
+      </div>
+    </aside>
+
+    <main id="main" class="main-content">
+      <section id="empty-state" class="empty-state">
+        <div class="empty-graphic">
+          <span class="scan-line"></span>
+          <svg viewBox="0 0 120 120" aria-hidden="true"><path d="M29 20h45l18 18v62H29z"/><path d="M74 20v19h18M44 55h34M44 68h28M44 81h20"/><circle cx="84" cy="82" r="19"/><path d="m75 82 6 6 12-14"/></svg>
+        </div>
+        <h1>开始一次代码验证</h1>
+        <p>上传源码工程和可选的领域规约、设计意图。验证过程中发现的 MISMATCH 将实时出现在这里。</p>
+        <button class="button primary large new-task-trigger" type="button">选择源码目录</button>
+        <div class="empty-features">
+          <span>实时问题发现</span><span>中文智能解读</span><span>源码精确定位</span>
+        </div>
+      </section>
+
+      <section id="task-view" class="task-view hidden">
+        <div class="task-heading">
+          <div class="heading-copy">
+            <div class="heading-row"><h1 id="task-title"></h1><span id="task-status" class="status-pill"></span></div>
+            <p><span id="task-project"></span><span class="dot">·</span><span id="task-created"></span><span class="dot">·</span><span id="task-id"></span></p>
+          </div>
+          <section class="issue-overview" aria-label="问题总览" aria-live="polite">
+            <div class="issue-overview-stats">
+              <div class="issue-overview-stat total"><span>问题总数</span><strong id="overview-issue-total">0</strong></div>
+              <div class="issue-overview-stat high"><span>高</span><strong id="overview-issue-high">0</strong></div>
+              <div class="issue-overview-stat medium"><span>中</span><strong id="overview-issue-medium">0</strong></div>
+              <div class="issue-overview-stat low"><span>低</span><strong id="overview-issue-low">0</strong></div>
+              <div class="issue-overview-stat pending"><span>待评估</span><strong id="overview-issue-pending">0</strong></div>
+            </div>
+          </section>
+          <div class="task-actions">
+            <button id="adjust-intent-button" class="button hidden" type="button">调整设计意图</button>
+            <button id="report-button" class="button" type="button">查看报告</button>
+            <button id="resume-button" class="button hidden" type="button">继续验证</button>
+            <button id="rerun-button" class="button hidden" type="button">重新验证</button>
+            <button id="end-task-button" class="button danger hidden" type="button">结束任务</button>
+            <button id="more-button" class="icon-button" type="button" aria-label="更多操作">•••</button>
+            <div id="more-menu" class="more-menu hidden"><button id="delete-button" type="button">删除任务与全部数据</button></div>
+          </div>
+        </div>
+
+        <section id="requirement-stage" class="requirement-stage hidden">
+          <ol class="task-stage-steps" aria-label="任务阶段">
+            <li id="requirement-step" class="active"><span>1</span><div><strong>需求预处理</strong><small>提取并确认设计意图</small></div></li>
+            <li id="domain-step"><span>2</span><div><strong>领域规约整理</strong><small>分类并人工确认</small></div></li>
+            <li id="verification-step"><span>3</span><div><strong>代码验证</strong><small>确认后自动开始</small></div></li>
+          </ol>
+          <div class="requirement-workbench">
+            <div class="requirement-workbench-head">
+              <div id="requirement-state-icon" class="requirement-state-icon loading"><span></span></div>
+              <div><span id="requirement-stage-label">需求预处理</span><h2 id="requirement-state-title">正在整理需求文档</h2><p id="requirement-state-copy">正在提取 Word 正文和表格，并由大模型生成中文设计意图。</p></div>
+            </div>
+            <div id="requirement-review-sources" class="intent-review-sources"></div>
+            <div id="requirement-reupload" class="requirement-reupload hidden">
+              <label id="requirement-new-files-button" class="button" for="requirement-new-files">＋ 添加或替换 DOCX</label>
+              <input id="requirement-new-files" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
+              <span id="requirement-new-files-label">可选择新的需求文档，重新生成时一并处理</span>
+            </div>
+            <div id="requirement-processing" class="requirement-processing"><div class="processing-orbit"><i></i><i></i><i></i></div><strong id="requirement-processing-title">正在生成适合 FM-Agent 的设计意图</strong><p>长文档会被自动分段整理和合并，请保持页面开启，也可以稍后返回本任务查看结果。</p></div>
+            <div id="requirement-failure" class="requirement-failure hidden"><strong id="requirement-failure-title">需求预处理失败</strong><p id="requirement-failure-message"></p><button id="requirement-retry" class="button" type="button">重新生成</button></div>
+            <div id="requirement-review" class="requirement-review hidden">
+              <div class="requirement-review-heading"><div><strong id="requirement-review-title">分类确认设计意图</strong><span>选择左侧类别逐项检查，需要调整时切换到编辑</span></div><span class="editable-badge">预览 / 编辑</span></div>
+              <div class="requirement-category-layout">
+                <nav id="requirement-category-list" class="requirement-category-list" aria-label="设计意图分类"></nav>
+                <section class="requirement-category-editor">
+                  <header><div><h3 id="requirement-category-title">功能行为</h3><p id="requirement-category-description"></p></div><div class="requirement-category-tools"><span id="requirement-category-count">0 条</span><div class="requirement-view-switch" role="group" aria-label="设计意图显示方式"><button id="requirement-view-preview" type="button" aria-pressed="true">预览</button><button id="requirement-view-edit" type="button" aria-pressed="false">编辑 Markdown</button></div></div></header>
+                  <div id="requirement-category-preview" class="requirement-category-preview markdown-preview" role="document" aria-label="当前分类的设计意图预览" tabindex="0"></div>
+                  <textarea id="requirement-category-content" class="hidden" spellcheck="false" aria-label="当前分类的设计意图 Markdown"></textarea>
+                </section>
+              </div>
+              <p id="requirement-review-note" class="intent-review-note">请重点检查需求编号、数值、单位、状态转换，以及模型标记为“待确认”的内容。</p>
+              <div class="requirement-review-actions"><span id="requirement-action-state"></span><button id="requirement-regenerate" class="button" type="button">重新生成</button><button id="requirement-confirm" class="button primary" type="button">确认设计意图并开始验证</button></div>
+            </div>
+          </div>
+        </section>
+
+        <div id="verification-stage">
+          <div id="demo-banner" class="banner demo hidden">当前服务运行在界面演示模式，任务不会调用真实验证工具。</div>
+          <div id="task-error" class="banner error hidden"></div>
+
+        <section class="overview-card">
+          <div class="phase-block">
+            <div id="phase-icon" class="phase-icon"><span></span></div>
+            <div class="phase-copy"><span>当前阶段</span><strong id="task-phase">等待执行</strong><small id="task-function-progress" title="">等待提取函数</small></div>
+          </div>
+          <div class="metrics">
+            <div><span>规约生成</span><strong id="spec-metric">0</strong></div>
+            <div><span>函数验证</span><strong id="processed-metric">0</strong></div>
+            <div><span>MISMATCH</span><strong id="issue-metric" class="metric-warn">0</strong></div>
+            <div><span>运行时长</span><strong id="duration-metric">—</strong></div>
+          </div>
+          <ol id="activity-steps" class="activity-steps" aria-label="验证活动进度">
+            <li class="activity-step" data-stage="1"><span class="activity-marker"><b>1</b><i></i></span><span class="activity-label">生成验证计划</span><small></small></li>
+            <li class="activity-step" data-stage="2"><span class="activity-marker"><b>2</b><i></i></span><span class="activity-label">生成领域上下文</span><small></small></li>
+            <li class="activity-step" data-stage="3"><span class="activity-marker"><b>3</b><i></i></span><span class="activity-label">提取源码函数</span><small></small></li>
+            <li class="activity-step" data-stage="4"><span class="activity-marker"><b>4</b><i></i></span><span class="activity-label">收集待验证文件</span><small></small></li>
+            <li class="activity-step" data-stage="5"><span class="activity-marker"><b>5</b><i></i></span><span class="activity-label">生成调用层次</span><small></small></li>
+            <li class="activity-step" data-stage="6"><span class="activity-marker"><b>6</b><i></i></span><span class="activity-label">生成规约并验证</span><small></small></li>
+          </ol>
+        </section>
+
+          <section id="workspace" class="workspace">
+          <aside class="panel file-panel">
+            <div class="panel-head">
+              <div class="file-panel-heading"><span class="panel-title">工程目录</span><span id="file-count" class="subtle"></span></div>
+              <div class="panel-head-actions">
+                <button id="collapse-tree" class="mini-button" type="button">全部收起</button>
+                <button id="file-panel-toggle" class="file-panel-toggle" type="button" aria-expanded="true" aria-controls="file-tree" title="收起工程目录">‹</button>
+              </div>
+            </div>
+            <div class="project-search" role="search" aria-label="搜索工程内容">
+              <input id="project-search-input" type="search" placeholder="搜索源码和验证材料" aria-label="搜索源码、设计意图和领域规约">
+              <div class="project-search-options">
+                <button id="search-case" type="button" aria-pressed="false" title="区分大小写">Aa</button>
+                <button id="search-word" type="button" aria-pressed="false" title="全词匹配">ab</button>
+                <button id="search-regex" type="button" aria-pressed="false" title="使用正则表达式">.*</button>
+              </div>
+            </div>
+            <label class="tree-search"><input id="tree-search" type="search" placeholder="筛选文件"></label>
+            <div id="project-search-results" class="project-search-results hidden" aria-live="polite"></div>
+            <div id="file-tree" class="file-tree"></div>
+          </aside>
+
+          <section class="panel source-panel">
+            <div class="source-head">
+              <div class="file-tab"><span id="source-file-icon" class="file-icon">&lt;/&gt;</span><strong id="source-path">选择文件查看源码</strong></div>
+              <div class="source-navigation"><span id="source-location" class="source-location"></span><button id="source-back" class="source-back" type="button" disabled title="返回上一个查看位置（Alt+←）">← 后退</button></div>
+            </div>
+            <div id="source-empty" class="source-empty"><div class="code-symbol">{ }</div><p>从左侧目录选择文件，或点击右侧问题定位源码</p></div>
+            <div id="source-code" class="source-code hidden" title="按住 Ctrl 点击标识符可跳转到定义"></div>
+            <div id="material-category-view" class="material-category-view hidden">
+              <nav id="material-category-list" class="material-category-list" aria-label="设计意图分类"></nav>
+              <section class="material-category-main"><header><h3 id="material-category-title"></h3><p id="material-category-description"></p></header><div id="material-category-content" class="material-category-content markdown-preview"></div></section>
+            </div>
+          </section>
+
+          <div id="source-issue-resizer" class="panel-resizer" role="separator" aria-label="调整源码与问题区域宽度" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="760" aria-valuenow="540" tabindex="0" title="左右拖动调整宽度，双击恢复默认"></div>
+
+          <aside class="panel inspector">
+            <div class="inspector-tabs">
+              <button class="inspector-tab active" data-tab="issues" type="button">问题 <span id="issue-tab-count">0</span></button>
+              <button class="inspector-tab" data-tab="marked" type="button">已标记问题 <span id="marked-tab-count">0</span></button>
+              <button class="inspector-tab" data-tab="logs" type="button">实时日志</button>
+            </div>
+            <div id="issues-tab" class="tab-body">
+              <div class="issue-toolbar"><span>按发现时间排列</span><select id="severity-filter"><option value="all">全部级别</option><option value="高">高</option><option value="中">中</option><option value="低">低</option><option value="pending">待评估</option></select></div>
+              <div id="issue-list" class="issue-list"></div>
+            </div>
+            <div id="marked-tab" class="tab-body hidden">
+              <div class="issue-toolbar"><span>集中查看需要重点关注的问题</span></div>
+              <div id="marked-issue-list" class="issue-list"></div>
+            </div>
+            <div id="logs-tab" class="tab-body hidden"><div id="log-output" class="log-output"></div></div>
+          </aside>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="create-dialog" class="modal create-modal">
+    <form id="create-form" method="dialog">
+      <div class="modal-head"><div><span class="eyebrow">NEW VERIFICATION</span><h2>新建验证任务</h2><p>选择工程源码，可按需排除不参与验证的文件。</p></div><button class="close-button" data-close="create-dialog" type="button">×</button></div>
+      <div class="modal-body">
+        <label class="field"><span>任务名称 <em>可修改</em></span><input id="task-name-input" name="name" maxlength="160" placeholder="选择源码目录后自动填充"></label>
+        <section class="form-section">
+          <div class="section-label"><span>1</span><div><strong>源码工程</strong><small>最多 200 个文件、总计 10MB</small></div></div>
+          <input id="directory-input" type="file" webkitdirectory multiple hidden>
+          <button id="directory-picker" class="directory-picker" type="button"><span class="folder-art">⌁</span><span><strong>选择本地源码目录</strong><small>目录内文件默认全部选中，上传前可以取消</small></span><b>选择目录</b></button>
+          <div id="upload-tree-wrap" class="upload-tree-wrap hidden">
+            <div class="upload-summary"><label><input id="select-all-files" type="checkbox" checked> <strong id="upload-root-name"></strong></label><span id="upload-stats"></span></div>
+            <div id="upload-tree" class="upload-tree"></div>
+          </div>
+        </section>
+        <section class="form-section materials-section">
+          <div class="section-label"><span>2</span><div><strong>验证材料</strong><small>可上传现成规约，也可由 Word 需求文档生成设计意图</small></div></div>
+          <div class="material-grid">
+            <label class="material-drop"><input id="domain-input" type="file" accept=".md,.txt,text/markdown,text/plain" multiple hidden><span class="material-icon">规</span><span><strong>领域规约</strong><small>上传 Markdown / TXT，可多选</small></span><b>＋ 添加</b></label>
+            <label class="material-drop"><input id="intent-input" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden><span class="material-icon intent">意</span><span><strong>设计意图</strong><small>上传docx格式的需求规格说明、通信协议等设计依据</small></span><b>＋ 添加</b></label>
+          </div>
+          <div id="material-files" class="material-files"></div>
+        </section>
+      </div>
+      <div class="modal-foot"><div id="upload-progress-wrap" class="upload-progress-wrap hidden"><span id="upload-progress-text">正在上传…</span><div><i id="upload-progress"></i></div></div><button class="button" data-close="create-dialog" type="button">取消</button><button id="submit-task" class="button primary" type="submit" disabled>新建任务</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="report-dialog" class="modal report-modal">
+    <div class="modal-head"><div><span class="eyebrow">VERIFICATION REPORT</span><h2>验证报告</h2><p>中文报告会随问题解读结果自动更新。</p></div><button class="close-button" data-close="report-dialog" type="button">×</button></div>
+    <div id="report-options" class="report-options"></div>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

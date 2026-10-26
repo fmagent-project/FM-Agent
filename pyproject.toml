@@ -5,23 +5,9 @@ description = "Scaling formal methods to large systems via LLM-based Hoare-style
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "openai==2.15.0",
     "python-dotenv>=1.0.0",
     "rich>=13.7.0",
-    "zstandard>=0.23.0",
-    "litellm>=1.50.0",
-    "socksio>=1.0.0",
     "pydantic-settings>=2.2",
-    "tree-sitter>=0.25,<0.27",
-    "tree-sitter-c>=0.24,<0.25",
-    "tree-sitter-cpp>=0.23.4,<0.24",
-    "tree-sitter-java>=0.23.5,<0.24",
-    "tree-sitter-javascript>=0.23,<0.26",
-    "tree-sitter-python>=0.25,<0.26",
-    "tree-sitter-go>=0.25,<0.26",
-    "tree-sitter-rust>=0.24,<0.25",
-    "tree-sitter-typescript>=0.23,<0.24",
-    "tree-sitter-arkts",
 ]
 
 [project.scripts]
@@ -29,6 +15,3 @@ fm-agent = "main:main"
 
 [tool.uv]
 package = false
-
-[tool.uv.sources]
-tree-sitter-arkts = { git = "https://github.com/harmony-contrib/tree-sitter-arkts.git", rev = "9c7395bd9534cce840dd7115fd79be6c6ff45872" }

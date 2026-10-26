@@ -1,445 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== fm-agent: installing required software ==="
+source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+install_root="${XDG_DATA_HOME:-${HOME:?HOME is not set}/.local/share}/fm-agent-dsh"
+bin_dir="${HOME}/.local/bin"
+version="0.3.0-dsh.1"
 
-INSTALL_ERLANG_SUPPORT=0
-INSTALL_CHISEL_SUPPORT=0
-INSTALL_DSH=0
-for arg in "$@"; do
-    case "$arg" in
-        --with-dsh)
-            INSTALL_DSH=1
-            ;;
-        --with-erlang)
-            INSTALL_ERLANG_SUPPORT=1
-            ;;
-        --with-chisel)
-            INSTALL_CHISEL_SUPPORT=1
-            ;;
-        -h|--help)
-            echo "Usage: ./install.sh [--with-dsh] [--with-erlang] [--with-chisel]"
-            echo "  --with-dsh     Install DeepSeek Harness as the agent backend"
-            echo "  --with-erlang  Install/verify Erlang/OTP 26+, rebar3 3.24.0+, and ELP"
-            echo "  --with-chisel  Install/verify CIRCT firtool and the FM-Agent Chisel pass plugin"
-            exit 0
-            ;;
-        *)
-            echo "[!!] unknown option: $arg"
-            echo "Usage: ./install.sh [--with-dsh] [--with-erlang] [--with-chisel]"
-            exit 1
-            ;;
+usage() {
+    echo "Usage: ./install.sh [--prefix DIR] [--bin-dir DIR]"
+    echo "Installs only bundled files; this script never accesses the network."
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --prefix) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; install_root="$2"; shift 2 ;;
+        --bin-dir) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; bin_dir="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Run from the repo root so `uv sync`/`uv run` target the FM-Agent project and
-# `from config import settings` resolves, regardless of the caller's directory.
-cd "$SCRIPT_DIR"
-if [[ -f "$SCRIPT_DIR/.env" ]]; then
-    set -a
-    # shellcheck disable=SC1091
-    source "$SCRIPT_DIR/.env"
-    set +a
-fi
+[[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]] || {
+    echo "This bundle supports Linux x86_64 only." >&2; exit 1; }
+"$source_root/scripts/verify_offline.sh" --quick
 
-# ---------- Python 3.12+ ----------
-if command -v python3 &>/dev/null; then
-    py_ver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    py_major=$(python3 -c 'import sys; print(sys.version_info.major)')
-    py_minor=$(python3 -c 'import sys; print(sys.version_info.minor)')
-    if [[ "$py_major" -lt 3 ]] || { [[ "$py_major" -eq 3 ]] && [[ "$py_minor" -lt 12 ]]; }; then
-        echo "[!!] python3 version $py_ver found, but 3.12+ is required."
-        exit 1
-    fi
-    echo "[ok] python3 found: $(python3 --version)"
-else
-    echo "[!!] python3 not found. Please install Python 3.12+ for your platform."
+install_root="$(readlink -m "$install_root")"
+bin_dir="$(readlink -m "$bin_dir")"
+destination="$install_root/versions/$version"
+staging="$install_root/versions/.installing-$version-$$"
+mkdir -p "$staging" "$bin_dir"
+cp -a "$source_root/." "$staging/"
+
+if [[ -e "$destination" || -L "$destination" ]]; then
+    backup="$destination.backup.$(date +%Y%m%d%H%M%S).$$"
+    mv "$destination" "$backup"
+    echo "Existing version preserved at $backup"
+fi
+mv "$staging" "$destination"
+ln -sfn "$destination" "$install_root/current"
+
+launcher="$bin_dir/fm-agent"
+if [[ -e "$launcher" && ! -L "$launcher" ]]; then
+    echo "Refusing to replace non-symlink: $launcher" >&2
     exit 1
 fi
+ln -sfn "$install_root/current/bin/fm-agent" "$launcher"
 
-# ---------- pip ----------
-if python3 -m pip --version &>/dev/null; then
-    echo "[ok] pip found"
-else
-    echo "[..] installing pip"
-    python3 -m ensurepip --upgrade || {
-        echo "[!!] could not install pip. Install it manually."
-        exit 1
-    }
-fi
-
-# requires pip >= 23.0.1; upgrade if too old
-pip_ver=$(python3 -m pip --version | awk '{print $2}')
-pip_major=$(echo "$pip_ver" | cut -d. -f1)
-if [[ "$pip_major" -lt 23 ]]; then
-    echo "[..] pip $pip_ver is too old (need >= 23.0.1. Upgrade it manually"
-    exit 1
-fi
-
-# ---------- uv ----------
-if command -v uv &>/dev/null; then
-    echo "[ok] uv found: $(uv --version)"
-else
-    echo "[..] installing uv"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
-fi
-
-# ---------- Python packages ----------
-# Always sync the full locked dependency set: config.py imports pydantic-settings
-# at startup, so a partial install (e.g. only `openai`) leaves `python main.py`
-# unable to import config.
-echo "[..] installing Python dependencies"
-uv sync --locked
-
-# ---------- read config from the app's own loader ----------
-# Read the settings install.sh needs straight from config.py, so the installer and
-# the runtime share ONE parser, ONE precedence (env > toml), and ONE validation
-# instead of a second hand-rolled TOML reader that could drift. Runs after
-# `uv sync` so pydantic is importable; honors FM_AGENT_CONFIG like the runtime. A
-# missing toml yields built-in defaults; a broken/invalid toml makes config.py
-# abort here with a readable message (set -e stops the install).
-_fmcfg="$(uv run --no-sync python - <<'PY'
-import os
-from config import settings
-print(settings.llm.backend)
-print(settings.codegraph.repo)
-print(settings.codegraph.version)
-print(os.path.expanduser(settings.codegraph.bin_dir))
-PY
-)"
-FM_AGENT_MODEL_BACKEND="$(printf '%s\n' "$_fmcfg" | sed -n 1p | tr '[:upper:]' '[:lower:]')"
-CODEGRAPH_REPO="$(printf '%s\n' "$_fmcfg" | sed -n 2p)"
-CODEGRAPH_VERSION="$(printf '%s\n' "$_fmcfg" | sed -n 3p)"
-codegraph_bin_dir="$(printf '%s\n' "$_fmcfg" | sed -n 4p)"
-if [[ "$INSTALL_DSH" -eq 1 ]]; then
-    FM_AGENT_MODEL_BACKEND=dsh
-fi
-
-# Decide whether to set up a local CLI backend or OpenCode. config.py keeps
-# `backend` a free string, so the installer still owns the allow-list of values
-# it knows how to provision.
-USE_LOCAL_CLI_BACKEND=0
-case "$FM_AGENT_MODEL_BACKEND" in
-    ""|0|false|no|off|opencode|open-code)
-        USE_LOCAL_CLI_BACKEND=0
-        ;;
-    auto|codex|codex-cli|claude|claude-cli|dsh|deepseek-harness)
-        USE_LOCAL_CLI_BACKEND=1
-        ;;
-    *)
-        echo "[!!] unsupported FM_AGENT_MODEL_BACKEND: $FM_AGENT_MODEL_BACKEND"
-        exit 1
-        ;;
-esac
-
-# ---------- unzip ----------
-if command -v unzip &>/dev/null; then
-    echo "[ok] unzip found"
-else
-    echo "[!!] could not find unzip. Install it manually."
-    exit 1
-fi
-
-if [[ "$USE_LOCAL_CLI_BACKEND" -eq 1 ]]; then
-    echo "[ok] local CLI backend enabled: $FM_AGENT_MODEL_BACKEND"
-    if [[ "$FM_AGENT_MODEL_BACKEND" == "dsh" || "$FM_AGENT_MODEL_BACKEND" == "deepseek-harness" ]]; then
-        command -v node &>/dev/null && command -v npm &>/dev/null || {
-            echo "[!!] Node.js and npm are required for DeepSeek Harness."; exit 1;
-        }
-        if ! command -v dsh &>/dev/null; then
-            echo "[..] installing DeepSeek Harness"
-            npm install --global @deepseek-ai/dsh@0.2.0-rc.2
-        fi
-        echo "[ok] dsh found: $(dsh --version)"
-        dsh --profile headless --help >/dev/null
-    elif [[ "$FM_AGENT_MODEL_BACKEND" == "claude" || "$FM_AGENT_MODEL_BACKEND" == "claude-cli" ]]; then
-        command -v claude &>/dev/null || { echo "[!!] claude CLI not found"; exit 1; }
-        echo "[ok] claude found: $(claude --version 2>/dev/null || echo 'unknown version')"
-    elif [[ "$FM_AGENT_MODEL_BACKEND" == "codex" || "$FM_AGENT_MODEL_BACKEND" == "codex-cli" ]]; then
-        command -v codex &>/dev/null || { echo "[!!] codex CLI not found"; exit 1; }
-        echo "[ok] codex found: $(codex --version 2>/dev/null || echo 'unknown version')"
-    else
-        command -v codex &>/dev/null || { echo "[!!] codex CLI not found for auto backend"; exit 1; }
-        command -v claude &>/dev/null || { echo "[!!] claude CLI not found for auto backend"; exit 1; }
-        echo "[ok] codex found: $(codex --version 2>/dev/null || echo 'unknown version')"
-        echo "[ok] claude found: $(claude --version 2>/dev/null || echo 'unknown version')"
-    fi
-    echo "[ok] skipping opencode and oh-my-openagent initialization"
-else
-    # ---------- opencode CLI ----------
-    if command -v opencode &>/dev/null; then
-        echo "[ok] opencode found: $(opencode --version 2>/dev/null || echo 'unknown version')"
-    else
-        echo "[..] installing opencode"
-        curl -fsSL https://opencode.ai/install | bash
-    fi
-
-    # ---------- oh-my-openagent plugin ----------
-    if command -v bunx &>/dev/null; then
-        echo "[ok] bun found"
-    else
-        echo "[..] installing bun"
-        curl -fsSL https://bun.sh/install | bash
-        # source shell config to pick up bun PATH written by the installer
-        for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-            [[ -f "$rc" ]] && source "$rc"
-        done
-        export BUN_INSTALL="$HOME/.bun"
-        export PATH="$BUN_INSTALL/bin:$PATH"
-    fi
-    echo "[..] installing/updating oh-my-openagent"
-    bunx oh-my-openagent install --no-tui --claude=no --gemini=no --copilot=no
-fi
-
-# ---------- codegraph (pinned via fm-agent.toml [codegraph]) ----------
-# Provisioning lives in src/languages/codegraph.py; the runtime does it on demand,
-# so this just pre-warms the download rather than carrying a second copy of the
-# install logic. repo/version/bin_dir came from config.settings above; empty only
-# if explicitly cleared (e.g. CODEGRAPH_VERSION=""), which can't be installed.
-[ -n "$CODEGRAPH_REPO" ] && [ -n "$CODEGRAPH_VERSION" ] && [ -n "$codegraph_bin_dir" ] || {
-    echo "[!!] [codegraph] repo/version/bin_dir not set in fm-agent.toml"; exit 1; }
-codegraph_want="${CODEGRAPH_VERSION#v}"
-echo "[..] provisioning codegraph $CODEGRAPH_VERSION from $CODEGRAPH_REPO"
-uv run --no-sync python -c \
-  'from src.languages.codegraph import _codegraph_cmd; _codegraph_cmd()'
-# A second call, so this one's stdout is the path and nothing else.
-codegraph_bin="$(uv run --no-sync python -c \
-  'from src.languages.codegraph import _codegraph_cmd; print(_codegraph_cmd())')"
-# Verify the pinned VERSION, not just that a binary exists: a bad version or a
-# network failure otherwise leaves a stale build in place silently.
-[ "$("$codegraph_bin" --version 2>/dev/null)" = "$codegraph_want" ] \
-  || { echo "[!!] codegraph $codegraph_want install failed"; exit 1; }
-echo "[ok] codegraph $codegraph_want at $codegraph_bin"
-# A launcher on PATH for oh-my-openagent and for running `codegraph` by hand.
-# FM-Agent resolves its own, so this link is the user's to re-point; it targets the
-# bundle's launcher rather than a version directory, so it follows the pin by
-# itself. Skip it when the resolved binary already IS this launcher, which happens
-# when provisioning fell back to an external install of the pinned version:
-# `ln -sf X X` does not fail there — BSD ln unlinks the target first, leaving a
-# symlink to itself, and exits 0 where `set -e` never sees it.
-if [ ! "$codegraph_bin" -ef "$codegraph_bin_dir/codegraph" ]; then
-    mkdir -p "$codegraph_bin_dir" && ln -sf "$codegraph_bin" "$codegraph_bin_dir/codegraph"
-fi
-
-version_ge() {
-    python3 -c '
-import re, sys
-def parts(value):
-    return tuple(int(item) for item in re.findall(r"\d+", value)[:3])
-raise SystemExit(0 if parts(sys.argv[1]) >= parts(sys.argv[2]) else 1)
-' "$1" "$2"
-}
-
-otp_major() {
-    erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().' 2>/dev/null
-}
-
-install_elp_linux_binary() {
-    local otp_version machine release_json elp_url temp_dir elp_binary
-    otp_version="$(otp_major)"
-    machine="$(uname -m)"
-    release_json="$(curl -fsSL https://api.github.com/repos/WhatsApp/erlang-language-platform/releases/latest)"
-    elp_url="$(printf '%s' "$release_json" | python3 -c '
-import json, re, sys
-
-release = json.load(sys.stdin)
-machine = sys.argv[1]
-otp = int(sys.argv[2])
-aliases = {
-    "x86_64": ("x86_64", "amd64"),
-    "amd64": ("x86_64", "amd64"),
-    "aarch64": ("aarch64", "arm64"),
-    "arm64": ("aarch64", "arm64"),
-}.get(machine, (machine,))
-candidates = []
-for asset in release.get("assets", []):
-    name = asset.get("name", "").lower()
-    match = re.search(r"otp-(\d+)(?:\.|-|\.tar)", name)
-    if not match or "linux" not in name or not name.endswith(".tar.gz"):
-        continue
-    if not any(alias in name for alias in aliases):
-        continue
-    built_for = int(match.group(1))
-    if built_for <= otp:
-        candidates.append((built_for, "gnu" in name, asset["browser_download_url"]))
-if not candidates:
-    raise SystemExit("no compatible Linux ELP release asset found")
-print(max(candidates)[2])
-' "$machine" "$otp_version")"
-
-    temp_dir="$(mktemp -d)"
-    curl -fsSL "$elp_url" -o "$temp_dir/elp.tar.gz"
-    tar -xzf "$temp_dir/elp.tar.gz" -C "$temp_dir"
-    elp_binary="$(find "$temp_dir" -type f -name elp -print -quit)"
-    if [[ -z "$elp_binary" ]]; then
-        rm -rf "$temp_dir"
-        echo "[!!] downloaded ELP archive does not contain an elp executable"
-        exit 1
-    fi
-    mkdir -p "$HOME/.local/bin"
-    install -m 0755 "$elp_binary" "$HOME/.local/bin/elp"
-    rm -rf "$temp_dir"
-    export PATH="$HOME/.local/bin:$PATH"
-}
-
-install_circt_and_chisel_tool() {
-    local circt_root circt_src circt_build tool_build parallel_jobs plugin_path
-    local circt_revision circt_commit
-    circt_root="${FM_AGENT_CIRCT_ROOT:-$HOME/.cache/fm-agent/circt}"
-    circt_src="$circt_root/src"
-    parallel_jobs="${FM_AGENT_CIRCT_JOBS:-1}"
-    circt_revision="${FM_AGENT_CIRCT_REVISION:-0dc3e50e63db2d502e6f97161592cb1032df55f4}"
-
-    command -v git &>/dev/null || { echo "[!!] git is required for CIRCT support"; exit 1; }
-    command -v cmake &>/dev/null || { echo "[!!] cmake is required for CIRCT support"; exit 1; }
-    command -v ninja &>/dev/null || { echo "[!!] ninja is required for CIRCT support"; exit 1; }
-    command -v c++ &>/dev/null || { echo "[!!] a C++ compiler is required for CIRCT support"; exit 1; }
-
-    mkdir -p "$circt_root"
-    if [[ ! -d "$circt_src/.git" ]]; then
-        echo "[..] initializing llvm/circt source cache"
-        mkdir -p "$circt_src"
-        git -C "$circt_src" init --quiet
-        git -C "$circt_src" remote add origin https://github.com/llvm/circt.git
-    else
-        echo "[ok] CIRCT source found: $circt_src"
-    fi
-
-    if ! git -C "$circt_src" cat-file -e "$circt_revision^{commit}" 2>/dev/null; then
-        echo "[..] fetching CIRCT revision $circt_revision"
-        git -C "$circt_src" fetch --depth 1 origin "$circt_revision"
-        circt_revision="$(git -C "$circt_src" rev-parse 'FETCH_HEAD^{commit}')"
-    fi
-    git -C "$circt_src" checkout --detach "$circt_revision"
-    git -C "$circt_src" submodule sync --recursive
-    git -C "$circt_src" submodule update --init --depth 1 --recursive
-    circt_commit="$(git -C "$circt_src" rev-parse HEAD)"
-    circt_build="$circt_root/build-${circt_commit:0:12}"
-    tool_build="$circt_root/fm-agent-chisel-build-${circt_commit:0:12}"
-    echo "[ok] CIRCT revision: $circt_commit"
-
-    if [[ ! -f "$circt_build/lib/cmake/circt/CIRCTConfig.cmake" ]]; then
-        echo "[..] configuring CIRCT"
-        cmake -G Ninja "$circt_src/llvm/llvm" -B "$circt_build" \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DLLVM_ENABLE_ASSERTIONS=ON \
-            -DLLVM_TARGETS_TO_BUILD=host \
-            -DLLVM_ENABLE_PROJECTS=mlir \
-            -DLLVM_EXTERNAL_PROJECTS=circt \
-            -DLLVM_EXTERNAL_CIRCT_SOURCE_DIR="$circt_src"
-    fi
-
-    if [[ ! -x "$circt_build/bin/firtool" ]]; then
-        echo "[..] building CIRCT firtool"
-        ninja -C "$circt_build" -j"$parallel_jobs" bin/firtool
-    fi
-
-    echo "[..] configuring FM-Agent Chisel CIRCT plugin"
-    cmake -G Ninja -S "$SCRIPT_DIR/tools/chisel-circt" -B "$tool_build" \
-        -DCIRCT_DIR="$circt_build/lib/cmake/circt" \
-        -DMLIR_DIR="$circt_build/lib/cmake/mlir" \
-        -DLLVM_DIR="$circt_build/lib/cmake/llvm"
-
-    echo "[..] building FM-Agent Chisel CIRCT plugin"
-    ninja -C "$tool_build" -j"$parallel_jobs" FMAgentChiselCirctPlugin
-
-    mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
-    install -m 0755 "$circt_build/bin/firtool" "$HOME/.local/bin/firtool"
-    plugin_path="$(find "$tool_build" -type f \( \
-        -name 'libFMAgentChiselCirctPlugin.so' -o \
-        -name 'FMAgentChiselCirctPlugin.so' -o \
-        -name 'libFMAgentChiselCirctPlugin.dylib' -o \
-        -name 'FMAgentChiselCirctPlugin.dylib' \) -print -quit)"
-    [[ -n "$plugin_path" ]] || {
-        echo "[!!] Chisel CIRCT plugin build succeeded but no plugin library was found"
-        exit 1
-    }
-    install -m 0755 "$plugin_path" "$HOME/.local/lib/$(basename "$plugin_path")"
-    export PATH="$HOME/.local/bin:$PATH"
-}
-
-if [[ "$INSTALL_ERLANG_SUPPORT" -eq 1 ]]; then
-    echo "[..] installing/verifying optional Erlang support"
-    os_name="$(uname -s)"
-    if [[ "$os_name" == "Darwin" ]]; then
-        command -v brew &>/dev/null || {
-            echo "[!!] Homebrew is required to install Erlang support on macOS."
-            exit 1
-        }
-        brew install erlang rebar3 erlang-language-platform
-    elif [[ "$os_name" == "Linux" ]]; then
-        if ! command -v erl &>/dev/null || [[ "$(otp_major)" -lt 26 ]]; then
-            if [[ ! -f /etc/os-release ]]; then
-                echo "[!!] automatic Erlang installation is supported only on Ubuntu."
-                exit 1
-            fi
-            # shellcheck disable=SC1091
-            source /etc/os-release
-            if [[ "${ID:-}" != "ubuntu" ]]; then
-                echo "[!!] automatic Erlang installation is supported only on Ubuntu; found ${ID:-unknown}."
-                exit 1
-            fi
-            echo "[..] installing Erlang/OTP 26+ from the RabbitMQ Team PPA"
-            sudo apt-get update -y
-            sudo apt-get install -y software-properties-common
-            sudo add-apt-repository -y ppa:rabbitmq/rabbitmq-erlang
-            sudo apt-get update -y
-            sudo apt-get install -y \
-                erlang-base erlang-crypto erlang-dev erlang-inets \
-                erlang-parsetools erlang-public-key erlang-ssl \
-                erlang-syntax-tools erlang-tools
-        fi
-
-        rebar_version=""
-        if command -v rebar3 &>/dev/null; then
-            rebar_version="$(rebar3 version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
-        fi
-        if [[ -z "$rebar_version" ]] || ! version_ge "$rebar_version" "3.24.0"; then
-            echo "[..] installing rebar3 3.24.0+"
-            mkdir -p "$HOME/.local/bin"
-            curl -fsSL https://s3.amazonaws.com/rebar3/rebar3 -o "$HOME/.local/bin/rebar3"
-            chmod +x "$HOME/.local/bin/rebar3"
-            export PATH="$HOME/.local/bin:$PATH"
-        fi
-
-        if ! command -v elp &>/dev/null; then
-            echo "[..] installing a compatible ELP release binary"
-            install_elp_linux_binary
-        fi
-    else
-        echo "[!!] automatic Erlang support installation is not available on $os_name."
-        exit 1
-    fi
-
-    command -v erl &>/dev/null || { echo "[!!] erl was not installed"; exit 1; }
-    installed_otp="$(otp_major)"
-    if [[ "$installed_otp" -lt 26 ]]; then
-        echo "[!!] Erlang/OTP $installed_otp found, but OTP 26+ is required."
-        exit 1
-    fi
-
-    command -v rebar3 &>/dev/null || { echo "[!!] rebar3 was not installed"; exit 1; }
-    installed_rebar="$(rebar3 version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
-    if [[ -z "$installed_rebar" ]] || ! version_ge "$installed_rebar" "3.24.0"; then
-        echo "[!!] rebar3 ${installed_rebar:-unknown} found, but 3.24.0+ is required."
-        exit 1
-    fi
-
-    command -v elp &>/dev/null || { echo "[!!] ELP was not installed"; exit 1; }
-    echo "[ok] Erlang/OTP $installed_otp"
-    echo "[ok] rebar3 $installed_rebar"
-    echo "[ok] $(elp version)"
-fi
-
-if [[ "$INSTALL_CHISEL_SUPPORT" -eq 1 ]]; then
-    echo "[..] installing/verifying optional Chisel/CIRCT support"
-    install_circt_and_chisel_tool
-    command -v firtool &>/dev/null || { echo "[!!] firtool was not installed"; exit 1; }
-    echo "[ok] firtool installed"
-    echo "[ok] FM-Agent Chisel CIRCT plugin installed"
-fi
-
-echo ""
-echo "=== all dependencies installed ==="
+echo "Installed FM-Agent to $destination"
+echo "Launcher: $launcher"
+echo "Next: $launcher configure"

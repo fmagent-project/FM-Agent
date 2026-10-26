@@ -1,29 +1,14 @@
-import config
-from config import MAX_WORKERS, OPENCODE_BUG_VALIDATION_MODEL
+from config import MAX_WORKERS
 from .parser import parse_input_function
 from .reasoner import reasoner, _parse_spec_conditions, _sanitize_strings
-from .file_utils import (
-    _all_bugs_candidate_paths,
-    _terminal_validation_is_valid,
-    _terminal_validation_record_is_valid,
-    is_file_ready,
-)
-from .opencode_trace import function_id_from_result_path, run_opencode_traced
-from .specification import SOFTWARE_PROFILE, SpecificationProfile
-from .llm_client import build_llm_cli_command
-from .domain_knowledge import (
-    format_domain_knowledge_bullets,
-    list_staged_domain_knowledge_relpaths,
-    load_staged_domain_knowledge_text,
-)
+from .file_utils import _all_bugs_candidate_paths, is_file_ready
+from .domain_knowledge import load_staged_domain_knowledge_text
 import os
 import posixpath
 import re
 import json
-import glob
 import time
 import logging
-import subprocess
 
 
 EXT_TO_LANG = {
@@ -79,12 +64,9 @@ def streaming_reasoner(
     spec_procs=None,
     already_processed=None,
     resume=False,
-    bug_validator_path=None,
-    validate_bugs=True,
     all_bugs=False,
-    specification: SpecificationProfile = SOFTWARE_PROFILE,
 ):
-    """Continuously watch input_dir for ready files, verify them, and validate bugs."""
+    """Continuously watch ready functions and write static reasoning verdicts."""
     if work_dir is None:
         work_dir = proj_dir
     os.makedirs(output_dir, exist_ok=True)
@@ -124,7 +106,6 @@ def streaming_reasoner(
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             reasoning_futures = {}
-            validation_futures = {}
             submitted = set()
             failed = set()  # files that raised unhandled errors; don't retry forever
 
@@ -133,7 +114,14 @@ def streaming_reasoner(
                 submitted.add(file_path)
                 language = EXT_TO_LANG.get(ext, "C")
                 future = executor.submit(
-                    _verify_single_file, file_path, input_dir, output_dir, language, work_dir, resume
+                    _verify_single_file,
+                    file_path,
+                    input_dir,
+                    output_dir,
+                    language,
+                    work_dir,
+                    resume,
+                    all_bugs,
                 )
                 reasoning_futures[future] = file_path
                 logging.info(f"Submitted: {file_path}")
@@ -154,7 +142,7 @@ def streaming_reasoner(
                             continue
                         if file_path in failed:
                             continue
-                        if not is_file_ready(file_path, specification):
+                        if not is_file_ready(file_path):
                             continue
 
                         # File is ready and not yet submitted or processed.
@@ -180,90 +168,26 @@ def streaming_reasoner(
                     submitted.discard(fpath)
                     try:
                         _, verdict = future.result()
-                        processed.add(fpath)
                         completed_count += 1
                         rel_path = os.path.relpath(fpath, proj_dir) if proj_dir else os.path.relpath(fpath, input_dir)
-                        # Submit bug validation for MISMATCH results; defer printing
-                        if (
-                            validate_bugs
-                            and verdict == "MISMATCH"
-                            and proj_dir is not None
-                            and config.BUG_VALIDATION_MAX_RETRIES > 0
-                        ):
-                            rel = os.path.relpath(fpath, input_dir)
-                            result_json_rel = os.path.join(
-                                os.path.relpath(output_dir, proj_dir),
-                                os.path.splitext(rel)[0] + ".json",
-                            )
-                            validation_targets = _validation_targets(
-                                result_json_rel, proj_dir, all_bugs
-                            )
-                            for target_rel in validation_targets:
-                                vf = executor.submit(
-                                    _validate_single_bug,
-                                    target_rel,
-                                    proj_dir,
-                                    work_dir,
-                                    resume=resume,
-                                    bug_validator_path=bug_validator_path,
-                                )
-                                validation_futures[vf] = (
-                                    fpath,
-                                    rel_path,
-                                    target_rel,
-                                    completed_count,
-                                )
-                                logging.info(f"Submitted validation: {target_rel}")
+                        if verdict == "ERROR":
+                            failed.add(fpath)
+                            label = "\033[31mERROR (retry with --resume)\033[0m"
+                        elif verdict == "MATCH" or verdict == "SKIPPED":
+                            processed.add(fpath)
+                            label = "\033[32m✔\033[0m"
+                            if verdict == "SKIPPED":
+                                label += " (no spec)"
+                        elif verdict == "MISMATCH":
+                            processed.add(fpath)
+                            label = "\033[31mMISMATCH (candidate)\033[0m"
                         else:
-                            if verdict == "MATCH" or verdict == "SKIPPED":
-                                label = "\033[32m✔\033[0m"
-                                if verdict == "SKIPPED":
-                                    label += " (no spec)"
-                            else:
-                                label = verdict
-                            print(f"[{completed_count}/{num_functions}] {rel_path}: {label}")
+                            processed.add(fpath)
+                            label = verdict
+                        print(f"[{completed_count}/{num_functions}] {rel_path}: {label}")
                     except Exception as exc:
                         logging.error(f"Error verifying {fpath}: {exc}")
                         failed.add(fpath)
-
-                # Collect completed validation futures (non-blocking)
-                val_done = [f for f in validation_futures if f.done()]
-                for future in val_done:
-                    fpath, rel_path, result_json_rel, count = validation_futures.pop(future)
-                    try:
-                        future.result()
-                        # Read validation result to check confirmation
-                        bug_id = _bug_id_from_result_path(result_json_rel)
-                        result_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
-                        confirmed = False
-                        if os.path.exists(result_path):
-                            with open(result_path) as rf:
-                                result_data = json.load(rf)
-                            confirmed = result_data.get("confirmation_status") == "confirmed"
-                        candidate_suffix = ""
-                        if all_bugs:
-                            candidate_name = os.path.splitext(
-                                os.path.basename(result_json_rel)
-                            )[0]
-                            candidate_suffix = f" [{candidate_name}]"
-                        if confirmed:
-                            print(
-                                f"[{count}/{num_functions}] {rel_path}: "
-                                f"\033[31m✘\033[0m{candidate_suffix}"
-                            )
-                        else:
-                            print(
-                                f"[{count}/{num_functions}] {rel_path}: "
-                                f"\033[32m✔\033[0m{candidate_suffix}"
-                            )
-                        logging.info(
-                            "Validation completed: %s (target=%s, confirmed=%s)",
-                            fpath,
-                            result_json_rel,
-                            confirmed,
-                        )
-                    except Exception as exc:
-                        logging.error(f"Validation error for {fpath}: {exc}")
 
                 # Check if all expected files have been processed successfully
                 all_reasoning_done = (
@@ -271,8 +195,8 @@ def streaming_reasoner(
                     and processed >= expected_files
                     and not reasoning_futures
                 )
-                if all_reasoning_done and not validation_futures:
-                    logging.info("All files verified and validated. Done.")
+                if all_reasoning_done:
+                    logging.info("All files statically verified. Done.")
                     break
 
                 # Terminal state: every expected file is either processed or failed.
@@ -281,7 +205,6 @@ def streaming_reasoner(
                     expected_files is not None
                     and (processed | failed) >= expected_files
                     and not reasoning_futures
-                    and not validation_futures
                 )
                 if all_terminal and failed:
                     logging.error(
@@ -302,7 +225,7 @@ def streaming_reasoner(
                         ext = os.path.splitext(file_path)[1].lower()
                         if ext not in EXT_TO_LANG:
                             continue
-                        if not is_file_ready(file_path, specification):
+                        if not is_file_ready(file_path):
                             continue
                         _submit_file(file_path, ext)
                         newly_ready = True
@@ -313,7 +236,7 @@ def streaming_reasoner(
                         continue
 
                     unready = (expected_files or set()) - processed - failed
-                    if not reasoning_futures and not validation_futures:
+                    if not reasoning_futures:
                         exit_codes = [_spec_task_exit_code(p) for p in _all_procs]
                         if unready:
                             if not processed:
@@ -345,27 +268,13 @@ def streaming_reasoner(
     except KeyboardInterrupt:
         logging.info("Stopping watcher...")
         # Wait for in-flight tasks
-        all_futures = {}
-        all_futures.update(reasoning_futures)
-        all_futures.update(validation_futures)
-        for future in all_futures:
-            fpath = all_futures[future]
+        for future, fpath in reasoning_futures.items():
             try:
                 future.result()
                 logging.info(f"Completed: {fpath}")
             except Exception as exc:
                 logging.error(f"Error for {fpath}: {exc}")
         logging.info("Done.")
-        # Let the pipeline finalize the partial workspace and stop. Returning
-        # normally here would start the next call-graph layer after Ctrl+C.
-        raise
-
-    # Generate a validation summary only when bug validation was enabled.
-    if proj_dir is not None and validate_bugs:
-        if all_bugs:
-            _generate_all_bugs_validation_summary(work_dir)
-        else:
-            _generate_validation_summary(work_dir)
 
     return processed
 
@@ -460,58 +369,8 @@ def _clear_candidate_files(output_path):
                 pass
 
 
-def _clear_bug_validation_artifacts(work_dir, bug_id):
-    validation_dir = os.path.join(work_dir, "bug_validation")
-    paths = [
-        os.path.join(validation_dir, f"{bug_id}.result.json"),
-        os.path.join(validation_dir, f"{bug_id}.md"),
-        os.path.join(validation_dir, f"bug_validator_{bug_id}.md"),
-    ]
-    paths.extend(
-        glob.glob(
-            os.path.join(validation_dir, f"probe_{glob.escape(bug_id)}.*")
-        )
-    )
-    for path in paths:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-    try:
-        os.remove(os.path.join(validation_dir, "summary.json"))
-    except OSError:
-        pass
-
-
-def _clear_function_all_bugs_artifacts(output_path, output_dir, work_dir):
+def _clear_function_all_bugs_artifacts(output_path):
     """Reset one incomplete function without disturbing completed functions."""
-    if work_dir:
-        validation_dir = os.path.join(work_dir, "bug_validation")
-        result_rel = os.path.relpath(output_path, output_dir)
-        bug_prefix = (
-            os.path.splitext(result_rel)[0]
-            .replace(os.sep, "--")
-            .replace("/", "--")
-            + ".bug-"
-        )
-        ordinal = "[0-9][0-9][0-9]"
-        patterns = (
-            f"{glob.escape(bug_prefix)}{ordinal}.result.json",
-            f"{glob.escape(bug_prefix)}{ordinal}.md",
-            f"bug_validator_{glob.escape(bug_prefix)}{ordinal}.md",
-            f"probe_{glob.escape(bug_prefix)}{ordinal}.*",
-        )
-        for pattern in patterns:
-            for path in glob.glob(os.path.join(validation_dir, pattern)):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-        try:
-            os.remove(os.path.join(validation_dir, "summary.json"))
-        except OSError:
-            pass
-
     _clear_candidate_files(output_path)
     try:
         os.remove(output_path)
@@ -521,8 +380,7 @@ def _clear_function_all_bugs_artifacts(output_path, output_dir, work_dir):
 
 def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=None, resume=False, all_bugs=False):
     """Verify a single file and write the result JSON."""
-    # A complete function result is the reasoning checkpoint. Resume never
-    # re-runs it; missing candidate validations are resumed independently.
+    # A complete function result is the static reasoning checkpoint.
     rel = os.path.relpath(file_path, input_dir)
     artifact_function = (
         _stable_all_bugs_function_path(file_path, input_dir)
@@ -540,9 +398,10 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
                 if all_bugs
                 else None
             )
-            reusable = verdict != "ERROR" and (
-                not all_bugs
-                or (
+            reusable = (
+                verdict in {"MATCH", "MISMATCH"}
+                if not all_bugs
+                else (
                     candidates is not None
                     and _rebind_all_bugs_function_paths(
                         output_path,
@@ -561,16 +420,12 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     if all_bugs:
         # Reaching this point means reasoning did not finish cleanly. Discard
-        # only this function's intermediate candidates and validations before
+        # only this function's intermediate candidates before
         # restarting it; completed functions remain untouched.
-        _clear_function_all_bugs_artifacts(
-            output_path,
-            output_dir,
-            work_dir,
-        )
+        _clear_function_all_bugs_artifacts(output_path)
 
     try:
-        func, spec, knowledge = parse_input_function(file_path, language)
+        func, spec, knowledge = parse_input_function(file_path)
         if not spec:
             return file_path, "SKIPPED"
 
@@ -691,442 +546,296 @@ def _verify_single_file(file_path, input_dir, output_dir, language, work_dir=Non
     return file_path, output["verdict"]
 
 
-def _bug_id_from_result_path(result_json_rel):
-    parts = result_json_rel
-    prefix = os.path.join("fm_agent", "logic_verification_results") + os.sep
-    if parts.startswith(prefix):
-        parts = parts[len(prefix):]
-    elif parts.startswith("fm_agent/logic_verification_results/"):
-        parts = parts[len("fm_agent/logic_verification_results/"):]
-    return os.path.splitext(parts)[0].replace(os.sep, "--").replace("/", "--")
-
-
-def _validation_targets(result_json_rel, proj_dir, all_bugs):
-    if not all_bugs:
-        return [result_json_rel]
-    result_path = os.path.join(proj_dir, result_json_rel)
-    try:
-        with open(result_path, "r", encoding="utf-8") as f:
-            result = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return []
-    candidates = _all_bugs_candidate_paths(result_path, result)
-    if candidates is None:
-        return []
-    return [os.path.relpath(path, proj_dir) for path in candidates]
-
-
-def _validation_status(result_json_rel, work_dir):
-    bug_id = _bug_id_from_result_path(result_json_rel)
-    result_path = os.path.join(work_dir, "bug_validation", f"{bug_id}.result.json")
-    try:
-        with open(result_path, "r") as f:
-            result = json.load(f)
-    except (OSError, json.JSONDecodeError):
+def _relative_extracted_function(value, input_dir):
+    """Normalize an artifact function path to extracted_functions-relative form."""
+    if not isinstance(value, str) or not value.strip():
         return None
-    if not _terminal_validation_record_is_valid(result, bug_id):
-        return None
-    return result["confirmation_status"]
-
-
-def _all_bugs_custom_validator_result_contract(bug_id):
-    """Return the non-replaceable terminal-result contract for one candidate."""
-    example = {
-        "id": bug_id,
-        "source_file": "<string>",
-        "function_name": "<string>",
-        "confirmation_status": "confirmed",
-        "attempts": 1,
-        "probe_script": "<string>",
-        "detail_file": "<string>",
-        "probe_stdout": "<string>",
-        "trigger_summary": "<string>",
-    }
-    return (
-        "\n\n---\n\n"
-        "## Mandatory FM-Agent Candidate Result Contract\n\n"
-        "This contract applies in addition to the custom validation instructions "
-        "above. Write the terminal machine-readable result to "
-        f"`fm_agent/bug_validation/{bug_id}.result.json` using this schema:\n\n"
-        "```json\n"
-        f"{json.dumps(example, indent=2, ensure_ascii=False)}\n"
-        "```\n\n"
-        f"- `id` must be exactly `{bug_id}`.\n"
-        "- `confirmation_status` must be `confirmed`, `not_confirmed`, or `error`.\n"
-        "- `attempts` must be a positive integer.\n"
-        "- `source_file`, `function_name`, `probe_script`, `detail_file`, "
-        "`probe_stdout`, and `trigger_summary` must be strings; use an empty "
-        "string when a value is not applicable.\n"
-    )
-
-
-def _validate_single_bug(
-    result_json_rel,
-    proj_dir,
-    work_dir=None,
-    resume=False,
-    bug_validator_path=None,
-):
-    """Validate a single MISMATCH result with the configured CLI backend."""
-    if work_dir is None:
-        work_dir = proj_dir
-    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-    # Derive bug id from result path relative to results dir
-    # e.g. "fm_agent/logic_verification_results/mod/func.json" -> "mod--func"
-    bug_id = _bug_id_from_result_path(result_json_rel)
-    function_result_rel = re.sub(
-        r"\.bug-\d{3}(?=\.json$)", "", result_json_rel
-    )
-    function_id = function_id_from_result_path(function_result_rel)
-    result_relpath = os.path.join("fm_agent", "bug_validation", f"{bug_id}.result.json")
-    result_path = os.path.join(proj_dir, result_relpath)
-    is_candidate = re.search(r"\.bug-\d{3}(?=\.json$)", result_json_rel) is not None
-
-    # Candidate resume mirrors the legacy stage checkpoint: a terminal result
-    # finishes this validation stage. Candidate identity is fixed by the
-    # completed reasoning artifacts, so no content hash is needed here.
-    if is_candidate and resume and os.path.exists(result_path):
-        if _terminal_validation_is_valid(
-            result_path, bug_id, retry_errors=True
-        ):
-            logging.info(f"Bug validation already done, skipping: {bug_id}")
-            return
-        _clear_bug_validation_artifacts(work_dir, bug_id)
-
-    if not is_candidate and resume and os.path.exists(result_path):
-        try:
-            with open(result_path) as result_file:
-                existing_validation = json.load(result_file)
-            if existing_validation.get("confirmation_status") != "error":
-                logging.info(f"Bug validation already done, skipping: {bug_id}")
-                return
-            _clear_bug_validation_artifacts(work_dir, bug_id)
-        except (json.JSONDecodeError, OSError):
-            pass  # corrupted result — re-validate
-
-    # Read either the user-selected validator or the built-in default.
-    base_md_path = (
-        bug_validator_path
-        if bug_validator_path
-        else os.path.join(script_dir, "md", "bug_validator.md")
-    )
-    with open(base_md_path, "r") as f:
-        base_content = f.read()
-
-    user_knowledge_paths = list_staged_domain_knowledge_relpaths(work_dir)
-    if user_knowledge_paths:
-        user_knowledge_section = (
-            "## User-Provided Domain Knowledge\n\n"
-            "Read these Markdown files as additional context for intended behavior, "
-            "terminology, data encodings, and invariants before validating the "
-            "candidate bug:\n\n"
-            f"{format_domain_knowledge_bullets(user_knowledge_paths)}\n\n---\n\n"
-        )
-    else:
-        user_knowledge_section = ""
-
-    candidate_result_contract = (
-        _all_bugs_custom_validator_result_contract(bug_id)
-        if is_candidate and bug_validator_path
-        else ""
-    )
-
-    # Generate a per-file prompt with target file and bug ID header
-    prompt_content = (
-        "# Bug Validator\n\n"
-        f"**Target result file:** `{result_json_rel}`\n"
-        f"**Bug ID:** `{bug_id}`\n\n---\n\n"
-        + user_knowledge_section
-        + base_content
-        + candidate_result_contract
-    )
-
-    os.makedirs(os.path.join(work_dir, "bug_validation"), exist_ok=True)
-
-    prompt_filename = os.path.join(
-        "fm_agent", "bug_validation", f"bug_validator_{bug_id}.md"
-    )
-    prompt_path = os.path.join(proj_dir, prompt_filename)
-
-    tmp_path = prompt_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write(prompt_content)
-    os.replace(tmp_path, prompt_path)
-
-    prompt = "Follow the instructions in the attached file"
-    command = build_llm_cli_command(
-        model=OPENCODE_BUG_VALIDATION_MODEL,
-        prompt=prompt,
-        cwd=proj_dir,
-        files=[prompt_path],
-    )
+    normalized = value.replace("\\", "/")
+    marker = "/extracted_functions/"
+    if marker in "/" + normalized.lstrip("/"):
+        return ("/" + normalized.lstrip("/")).split(marker, 1)[1]
+    absolute = os.path.abspath(value)
+    input_abs = os.path.abspath(input_dir)
     try:
-        max_attempts = config.BUG_VALIDATION_MAX_RETRIES
-        for attempt in range(1, max_attempts + 1):
-            run_failed = False
-            try:
-                run_opencode_traced(
-                    proj_dir=proj_dir,
-                    work_dir=work_dir,
-                    command=command,
-                    stage="bug_validation",
-                    function_ids=[function_id],
-                    input_files=[
-                        prompt_filename,
-                        result_json_rel,
-                        *user_knowledge_paths,
-                    ],
-                    output_files=[
-                        os.path.join("fm_agent", "bug_validation", f"{bug_id}.md"),
-                        result_relpath,
-                    ],
-                    summary=f"Bug validation for {bug_id}",
-                    metadata={"bug_id": bug_id, "result_json": result_json_rel},
-                )
-            except subprocess.CalledProcessError as exc:
-                run_failed = True
-                logging.warning(
-                    "bug_validation run failed for %s on attempt %d/%d: %s",
-                    bug_id,
-                    attempt,
-                    max_attempts,
-                    exc,
-                )
-
-            if os.path.exists(result_path):
-                if not is_candidate or _terminal_validation_is_valid(
-                    result_path, bug_id
-                ):
-                    return
-                logging.warning(
-                    "bug_validation wrote a non-terminal result for %s on attempt %d/%d",
-                    bug_id,
-                    attempt,
-                    max_attempts,
-                )
-                try:
-                    os.remove(result_path)
-                except OSError:
-                    pass
-
-            if attempt < max_attempts:
-                logging.warning(
-                    "bug_validation missing result artifact for %s after attempt %d/%d; retrying once",
-                    bug_id,
-                    attempt,
-                    max_attempts,
-                )
-                continue
-
-            logging.error(
-                "bug_validation did not materialize %s after %d attempt(s)%s",
-                result_relpath,
-                max_attempts,
-                " and a non-zero exit code" if run_failed else "",
-            )
-    finally:
-        try:
-            os.remove(prompt_path)
-        except OSError:
-            pass
+        if os.path.commonpath([absolute, input_abs]) == input_abs:
+            return os.path.relpath(absolute, input_abs).replace(os.sep, "/")
+    except ValueError:
+        pass
+    return normalized.removeprefix("fm_agent/extracted_functions/").lstrip("/")
 
 
-def _expected_all_bugs_validation_targets(work_dir):
-    """Return all-bugs candidate artifacts that require bug validation."""
-    if config.BUG_VALIDATION_MAX_RETRIES <= 0:
-        return []
+def _source_rel_from_extracted(relative):
+    """Map ``src/name-c/function.c`` back to the project source ``src/name.c``."""
+    if not isinstance(relative, str):
+        return ""
+    parts = relative.replace("\\", "/").split("/")
+    known_extensions = {ext.lstrip(".") for ext in EXT_TO_LANG}
+    for index in range(len(parts) - 2, -1, -1):
+        base, separator, extension = parts[index].rpartition("-")
+        if separator and base and extension.lower() in known_extensions:
+            return "/".join(parts[:index] + [f"{base}.{extension}"])
+    return relative.replace("\\", "/")
 
-    results_dir = os.path.join(work_dir, "logic_verification_results")
-    if not os.path.isdir(results_dir):
-        return []
 
-    targets = []
-    for root, _dirs, files in os.walk(results_dir):
+def _source_location(input_dir, work_dir, relative):
+    """Locate an extracted function in its original source for report display.
+
+    Extraction normally preserves the function text verbatim.  An exact text
+    match therefore gives a deterministic line range without another model
+    call.  The function-name fallback still provides a useful anchor when a
+    language extractor normalizes whitespace.
+    """
+    source_rel = _source_rel_from_extracted(relative)
+    source_path = os.path.join(os.path.dirname(work_dir), *source_rel.split("/"))
+    extracted_path = os.path.join(input_dir, *relative.split("/"))
+    try:
+        with open(source_path, encoding="utf-8", errors="replace") as stream:
+            source_text = stream.read()
+        with open(extracted_path, encoding="utf-8", errors="replace") as stream:
+            function_text = stream.read().strip()
+    except OSError:
+        return {"location": "", "start_line": None, "end_line": None}
+
+    if function_text:
+        offset = source_text.find(function_text)
+        if offset >= 0:
+            start_line = source_text.count("\n", 0, offset) + 1
+            end_line = start_line + function_text.count("\n")
+            return {
+                "location": f"L{start_line}-L{end_line}",
+                "start_line": start_line,
+                "end_line": end_line,
+            }
+
+    function_name = os.path.splitext(os.path.basename(relative))[0]
+    match = re.search(rf"\b{re.escape(function_name)}\s*\(", source_text)
+    if match:
+        line = source_text.count("\n", 0, match.start()) + 1
+        return {"location": f"L{line}", "start_line": line, "end_line": line}
+    return {"location": "", "start_line": None, "end_line": None}
+
+
+def _result_function_files(input_dir, output_dir):
+    """Discover function files represented by terminal result artifacts."""
+    functions = []
+    candidate_pattern = re.compile(r"\.bug-\d{3}\.json$")
+    if not os.path.isdir(output_dir):
+        return functions
+    for root, _dirs, files in os.walk(output_dir):
         for filename in sorted(files):
-            if (
-                not filename.endswith(".json")
-                or re.search(r"\.bug-\d{3}\.json$", filename)
-            ):
+            if not filename.endswith(".json") or candidate_pattern.search(filename):
                 continue
-            primary_path = os.path.join(root, filename)
             try:
-                with open(primary_path, "r", encoding="utf-8") as f:
-                    primary = json.load(f)
+                with open(os.path.join(root, filename), encoding="utf-8") as stream:
+                    result = json.load(stream)
             except (OSError, json.JSONDecodeError):
                 continue
-            if not isinstance(primary, dict):
-                continue
-            if primary.get("all_bugs") is True:
-                candidates = _all_bugs_candidate_paths(primary_path, primary)
-                if candidates:
-                    targets.extend(candidates)
-    return sorted(targets)
+            relative = _relative_extracted_function(result.get("function"), input_dir)
+            if relative:
+                functions.append(relative)
+    return sorted(dict.fromkeys(functions))
 
 
-def _pending_all_bugs_validation_record(
-    target_path, results_dir, validation_error
-):
-    """Build a pending record for one missing/unusable all-bugs validation."""
-    target_rel = os.path.relpath(target_path, results_dir)
-    bug_id = os.path.splitext(target_rel)[0].replace(os.sep, "--")
-    try:
-        with open(target_path, "r", encoding="utf-8") as f:
-            target = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        target = {}
-    function = target.get("function", "") if isinstance(target, dict) else ""
-    gaps = target.get("gaps", {}) if isinstance(target, dict) else {}
-    if not isinstance(gaps, dict):
-        gaps = {}
-    record = {
-        "id": bug_id,
-        "source_file": function,
-        "function_name": os.path.splitext(os.path.basename(function))[0],
-        "confirmation_status": "pending",
-        "attempts": 0,
-        "probe_script": None,
-        "detail_file": None,
-        "probe_stdout": "",
-        "trigger_summary": gaps.get("trigger_condition", ""),
-        "validation_error": validation_error,
-    }
-    return record
-
-
-def _generate_validation_summary(work_dir):
-    """Scan bug_validation/*.result.json files and write summary.json."""
-    validation_dir = os.path.join(work_dir, "bug_validation")
-    if not os.path.isdir(validation_dir):
-        logging.info("No bug_validation directory found, skipping summary.")
-        return
-
-    bugs = []
-    for fname in sorted(os.listdir(validation_dir)):
-        if not fname.endswith(".result.json"):
-            continue
-        fpath = os.path.join(validation_dir, fname)
+def _candidate_details(result_path, result):
+    """Return every static candidate gap for default and --all-bugs artifacts."""
+    details = []
+    if isinstance(result, dict) and isinstance(result.get("gaps"), dict):
+        details.append(result["gaps"])
+    if not (isinstance(result, dict) and result.get("all_bugs")):
+        return details
+    stem, extension = os.path.splitext(result_path)
+    for index in range(1, int(result.get("bug_count") or 0) + 1):
+        candidate_path = f"{stem}.bug-{index:03d}{extension}"
         try:
-            with open(fpath, "r") as f:
-                record = json.load(f)
-            bugs.append(record)
-        except (OSError, json.JSONDecodeError) as exc:
-            logging.warning(f"Could not read {fpath}: {exc}")
-
-    confirmed = sum(1 for b in bugs if b.get("confirmation_status") == "confirmed")
-    not_confirmed = sum(1 for b in bugs if b.get("confirmation_status") == "not_confirmed")
-    errors = sum(1 for b in bugs if b.get("confirmation_status") == "error")
-
-    # Sort: confirmed first, then not_confirmed, then error; alphabetical by id within each group
-    status_order = {"confirmed": 0, "not_confirmed": 1, "error": 2}
-    bugs.sort(key=lambda b: (status_order.get(b.get("confirmation_status"), 3), b.get("id", "")))
-
-    summary = {
-        "total_reported": len(bugs),
-        "total_confirmed": confirmed,
-        "total_not_confirmed": not_confirmed,
-        "total_error": errors,
-        "bugs": bugs,
-    }
-
-    summary_path = os.path.join(validation_dir, "summary.json")
-    tmp_path = summary_path + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, summary_path)
-    logging.info(f"Validation summary written to {summary_path}")
-    logging.info(f"  confirmed: {confirmed}, not_confirmed: {not_confirmed}, error: {errors}")
-
-
-def _generate_all_bugs_validation_summary(work_dir):
-    """Join all-bugs candidates with terminal records and mark gaps pending."""
-    if config.BUG_VALIDATION_MAX_RETRIES <= 0:
-        logging.info("Bug validation is disabled, skipping all-bugs summary.")
-        return
-
-    validation_dir = os.path.join(work_dir, "bug_validation")
-    results_dir = os.path.join(work_dir, "logic_verification_results")
-    targets = _expected_all_bugs_validation_targets(work_dir)
-    if not targets and not os.path.isdir(validation_dir):
-        logging.info("No all-bugs validations found, skipping summary.")
-        return
-    os.makedirs(validation_dir, exist_ok=True)
-
-    bugs = []
-    expected_result_paths = set()
-    for target_path in targets:
-        target_rel = os.path.relpath(target_path, results_dir)
-        bug_id = os.path.splitext(target_rel)[0].replace(os.sep, "--")
-        result_path = os.path.join(validation_dir, f"{bug_id}.result.json")
-        expected_result_paths.add(os.path.normpath(result_path))
-        record = None
-        validation_error = "missing_or_invalid_result"
-        try:
-            with open(result_path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            if _terminal_validation_record_is_valid(loaded, bug_id):
-                record = loaded
-            else:
-                validation_error = "invalid_result"
+            with open(candidate_path, encoding="utf-8") as stream:
+                candidate = json.load(stream)
         except (OSError, json.JSONDecodeError):
-            pass
-        if record is None:
-            record = _pending_all_bugs_validation_record(
-                target_path,
-                results_dir,
-                validation_error,
-            )
-        bugs.append(record)
-
-    for fname in sorted(os.listdir(validation_dir)):
-        if not fname.endswith(".result.json"):
             continue
-        result_path = os.path.normpath(os.path.join(validation_dir, fname))
-        if result_path not in expected_result_paths:
-            logging.warning(
-                "Ignoring stale validation result not tied to a current bug: %s",
-                result_path,
-            )
+        gap = candidate.get("gaps") if isinstance(candidate, dict) else None
+        if isinstance(gap, dict) and gap not in details:
+            details.append(gap)
+    return details
 
-    confirmed = sum(1 for b in bugs if b.get("confirmation_status") == "confirmed")
-    not_confirmed = sum(
-        1 for b in bugs if b.get("confirmation_status") == "not_confirmed"
-    )
-    errors = sum(1 for b in bugs if b.get("confirmation_status") == "error")
-    pending = sum(1 for b in bugs if b.get("confirmation_status") == "pending")
 
-    status_order = {
-        "confirmed": 0,
-        "not_confirmed": 1,
-        "error": 2,
-        "pending": 3,
-    }
-    bugs.sort(
-        key=lambda b: (
-            status_order.get(b.get("confirmation_status"), 4),
-            b.get("id", ""),
-        )
-    )
-
+def _trace_summary(work_dir):
+    """Summarize process and artifact events without treating recovered retries as terminal."""
+    path = os.path.join(work_dir, "trace", "events.jsonl")
     summary = {
-        "total_reported": len(bugs),
-        "total_confirmed": confirmed,
-        "total_not_confirmed": not_confirmed,
-        "total_error": errors,
-        "total_pending": pending,
-        "bugs": bugs,
+        "total_events": 0,
+        "historical_error_events": 0,
+        "by_type_and_status": {},
+        "latest_stage_validation": {},
     }
+    try:
+        stream = open(path, encoding="utf-8")
+    except OSError:
+        return summary
+    with stream:
+        for line in stream:
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(event, dict):
+                continue
+            summary["total_events"] += 1
+            event_type = str(event.get("type") or "event")
+            status = str(event.get("status") or "unknown")
+            key = f"{event_type}:{status}"
+            summary["by_type_and_status"][key] = (
+                summary["by_type_and_status"].get(key, 0) + 1
+            )
+            if status in {"error", "formal_error", "format_error"}:
+                summary["historical_error_events"] += 1
+            if event_type == "stage_validation":
+                stage = str(event.get("stage") or "unknown")
+                summary["latest_stage_validation"][stage] = {
+                    "status": status,
+                    "summary": str(event.get("summary") or ""),
+                }
+    return summary
 
-    summary_path = os.path.join(validation_dir, "summary.json")
-    tmp_path = summary_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, summary_path)
-    logging.info(f"Validation summary written to {summary_path}")
-    logging.info(
-        "  confirmed: %d, not_confirmed: %d, error: %d, pending: %d",
-        confirmed,
-        not_confirmed,
-        errors,
-        pending,
-    )
+
+def write_static_verification_report(
+    input_dir,
+    output_dir,
+    work_dir,
+    function_files=None,
+    *,
+    all_bugs=False,
+    analysis_scope="full",
+):
+    """Write JSON/Markdown reports immediately after static reasoning.
+
+    ``function_files=None`` discovers the current result set and is used by the
+    incremental pipeline, whose scope intentionally contains only changed and
+    affected functions.
+    """
+
+    records = []
+    counts = {"MATCH": 0, "MISMATCH": 0, "ERROR": 0, "MISSING": 0}
+    if function_files is None:
+        function_files = _result_function_files(input_dir, output_dir)
+    for rel in sorted(dict.fromkeys(function_files)):
+        rel = rel.replace("\\", "/")
+        source_path = os.path.join(input_dir, rel)
+        result_path = os.path.join(output_dir, os.path.splitext(rel)[0] + ".json")
+        result = None
+        load_error = None
+        try:
+            with open(result_path, encoding="utf-8") as stream:
+                result = json.load(stream)
+        except FileNotFoundError:
+            load_error = "verification result is missing"
+        except (OSError, json.JSONDecodeError) as exc:
+            load_error = f"verification result is unreadable: {exc}"
+
+        verdict = result.get("verdict") if isinstance(result, dict) else None
+        if verdict not in {"MATCH", "MISMATCH", "ERROR"}:
+            verdict = "MISSING"
+        if not is_file_ready(source_path):
+            verdict = "MISSING"
+            load_error = "specification sidecars are missing or invalid"
+        counts[verdict] += 1
+        error = (
+            result.get("error")
+            if isinstance(result, dict) and isinstance(result.get("error"), str)
+            else load_error
+        )
+        records.append(
+            {
+                "function": rel,
+                "function_name": os.path.splitext(os.path.basename(rel))[0],
+                "source_file": _source_rel_from_extracted(rel),
+                "verdict": verdict,
+                "result_file": os.path.relpath(result_path, work_dir).replace(
+                    os.sep, "/"
+                ),
+                "spec_file": os.path.relpath(
+                    source_path + ".spec.json", work_dir
+                ).replace(os.sep, "/"),
+                "candidates": _candidate_details(result_path, result),
+                "error": error,
+                **_source_location(input_dir, work_dir, rel),
+            }
+        )
+
+    complete = counts["ERROR"] == 0 and counts["MISSING"] == 0
+    report = {
+        "status": "complete" if complete else "partial",
+        "mode": "all-bugs" if all_bugs else "default",
+        "analysis_scope": analysis_scope,
+        "candidate_semantics": "static_unconfirmed",
+        "total_functions": len(records),
+        "counts": counts,
+        "trace": _trace_summary(work_dir),
+        "results": records,
+    }
+    json_path = os.path.join(work_dir, "VERIFICATION-REPORT.json")
+    _write_json_atomic(json_path, report)
+
+    lines = [
+        "# FM-Agent Static Verification Report",
+        "",
+        f"Status: {'COMPLETE' if complete else 'PARTIAL'}",
+        f"Mode: {report['mode']}",
+        f"Scope: {analysis_scope}",
+        f"Total functions: {len(records)}",
+        (
+            "Counts: "
+            + ", ".join(f"{name}={counts[name]}" for name in counts)
+        ),
+        "",
+        "> `MISMATCH` means a statically inferred, unconfirmed bug candidate. "
+        "This build intentionally contains no dynamic test/instrumentation confirmation stage.",
+        "",
+        "| Source | Function | Verdict | Result | Error |",
+        "|---|---|---|---|---|",
+    ]
+    for record in records:
+        error = (record["error"] or "").replace("|", "\\|").replace("\n", " ")
+        lines.append(
+            f"| {record['source_file']} | {record['function_name']} | "
+            f"{record['verdict']} | "
+            f"{record['result_file']} | {error} |"
+        )
+    candidates = [
+        (record, index, gap)
+        for record in records
+        for index, gap in enumerate(record["candidates"], start=1)
+    ]
+    if candidates:
+        lines.extend(["", "## Static bug candidates", ""])
+        for record, index, gap in candidates:
+            lines.extend([
+                f"### {record['function_name']} / candidate {index}",
+                "",
+                f"- Source: `{record['source_file']}`",
+                f"- Generated spec claim: {gap.get('spec_claim') or '(not recorded)'}",
+                f"- Actual behavior: {gap.get('actual_behavior') or '(not recorded)'}",
+                f"- Trigger condition: {gap.get('trigger_condition') or '(not recorded)'}",
+                "",
+                "Code evidence:",
+                "",
+                "```text",
+                str(gap.get("code_evidence") or "(not recorded)"),
+                "```",
+                "",
+            ])
+    trace = report["trace"]
+    lines.extend([
+        "",
+        "## Run diagnostics",
+        "",
+        f"- Trace events: {trace['total_events']}",
+        f"- Historical error events (including recovered retries): "
+        f"{trace['historical_error_events']}",
+        "- The final report status is based on terminal static artifacts; an earlier "
+        "retry error does not make a later successful result partial.",
+    ])
+    markdown_path = os.path.join(work_dir, "VERIFICATION-REPORT.md")
+    tmp_path = markdown_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as stream:
+        stream.write("\n".join(lines) + "\n")
+    os.replace(tmp_path, markdown_path)
+    return report

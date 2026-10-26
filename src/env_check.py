@@ -5,52 +5,73 @@ informing the user of missing configuration and potential issues.
 """
 
 import os
-import json
 import sys
 import logging
-import shutil
-
-OH_MY_OPENAGENT_CONFIG = os.path.expanduser("~/.config/opencode/oh-my-openagent.json")
 
 
 def _check_llm_api_key(config):
     ok = bool(config.LLM_API_KEY and config.LLM_API_KEY not in (
         "", "YOUR_LLM_API_KEY",
-        "sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     ))
-    return ok, "LLM_API_KEY is not set in .env file" if not ok else None
+    return (
+        ok,
+        "LLM_API_KEY is not set in the configured secret file or environment"
+        if not ok
+        else None,
+    )
 
 
-def _check_oh_my_openagent():
+def _check_harness():
     import subprocess
+    from src.harness_backend import resolve_harness_binary
+
     try:
-        subprocess.run(
-            ["bunx", "oh-my-openagent", "--version"],
-            capture_output=True, text=True, timeout=10,
+        executable = resolve_harness_binary()
+        result = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
         )
-        return True, None
-    except Exception:
-        return False, "oh-my-openagent is not installed (bunx unavailable or timed out)"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"DeepSeek Harness runtime is unavailable: {exc}"
+    if result.returncode != 0:
+        return False, f"DeepSeek Harness --version exited {result.returncode}"
+    return True, None
 
 
-def _check_comment_checker():
-    if not os.path.exists(OH_MY_OPENAGENT_CONFIG):
-        return False, f"oh-my-openagent config not found at {OH_MY_OPENAGENT_CONFIG}"
+def _check_codegraph_version(config):
+    """Surface a missing or stale codegraph pinned build so the user knows to
+    re-run ./install.sh — otherwise C/C++ extraction silently degrades to the
+    regex fallback (or uses a wrong version). Non-blocking, like every check here.
+    """
+    import subprocess
+    from src.languages.codegraph import _codegraph_cmd
 
+    want = config.settings.codegraph.version.strip().removeprefix("v")
+    if not want:
+        return True, None  # no version pinned -> nothing to verify
+
+    cmd = _codegraph_cmd()
     try:
-        with open(OH_MY_OPENAGENT_CONFIG, "r") as f:
-            cfg = json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        return False, f"Failed to read {OH_MY_OPENAGENT_CONFIG}: {e}"
+        got = subprocess.run(
+            [cmd, "--version"], capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        got = ""
 
-    if "comment-checker" not in cfg.get("disabled_hooks", []):
+    bin_dir = os.path.expanduser(config.settings.codegraph.bin_dir)
+    if not got:
         return False, (
-            "comment-checker hook is NOT disabled. FM-Agent writes function "
-            "specifications as comment blocks, which the comment-checker may "
-            "intercept, wasting tokens or deleting specs. Add "
-            '"disabled_hooks": ["comment-checker"] to ' + OH_MY_OPENAGENT_CONFIG
+            f"codegraph (pinned v{want}) is not installed at {bin_dir} — run "
+            "./install.sh (C/C++ extraction falls back to the regex extractor otherwise)."
         )
-
+    if got != want:
+        return False, (
+            f"codegraph {got} is installed but v{want} is pinned in fm-agent.toml — "
+            "re-run ./install.sh to install the pinned build."
+        )
     return True, None
 
 
@@ -70,7 +91,6 @@ def _load_ignored(work_dir):
 
 
 def _save_ignored(work_dir, ignored):
-    os.makedirs(work_dir, exist_ok=True)
     path = _memory_path(work_dir)
     with open(path, "w") as f:
         for item in sorted(ignored):
@@ -83,25 +103,16 @@ def is_interactive():
 
 def run(proj_dir, config):
     """Run all env checks.  Return True to proceed, False to abort."""
-    from src.cli_backend import is_cli_backend_enabled, resolve_model_backend
-
-    if resolve_model_backend() == "dsh" and shutil.which("dsh") is None:
-        logging.error("DSH executable not found. Run ./install.sh --with-dsh and ensure dsh is on PATH.")
-        return False
-
     work_dir = os.path.join(proj_dir, "fm_agent")
+    os.makedirs(work_dir, exist_ok=True)
     ignored = _load_ignored(work_dir)
 
-    checks = []
-    if not is_cli_backend_enabled():
-        checks[:0] = [
-            ("llm_key", "LLM API Key configured",
-             lambda: _check_llm_api_key(config)),
-            ("oh-my-openagent", "oh-my-openagent installed",
-             _check_oh_my_openagent),
-            ("comment-checker-disabled", "comment-checker hook disabled",
-             _check_comment_checker),
-        ]
+    checks = [
+        ("llm-key", "LLM API key configured", lambda: _check_llm_api_key(config)),
+        ("deepseek-harness", "DeepSeek Harness runtime available", _check_harness),
+        ("codegraph-version", "codegraph pinned build installed",
+         lambda: _check_codegraph_version(config)),
+    ]
 
     warnings = []
     for check_id, label, fn in checks:

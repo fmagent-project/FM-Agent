@@ -8,26 +8,14 @@ To add support for a new language: create src/languages/<lang>.py and add an ent
 REGISTRY in src/languages/registry.py. No other files need to change.
 """
 
-import errno
-import functools
 import hashlib
 import logging
 import os
-import platform
 import re
 import shutil
 import sqlite3
-import stat
 import subprocess
-import sys
-import tempfile
-import time
-import urllib.request
-import uuid
-import zipfile
 from collections import defaultdict
-from contextlib import contextmanager
-from pathlib import Path
 
 from config import settings
 
@@ -167,6 +155,7 @@ def _bare_function_name(name: str) -> str:
 
 # Maps FM-Agent lang_key → the language string stored in codegraph's SQLite
 # nodes.language column. Only includes languages that codegraph actually supports.
+# ArkTS is omitted (not supported by codegraph).
 # CUDA: .cu is not in codegraph's built-in extension list and will not be indexed.
 #   To enable partial CUDA support, add {"extensions": {".cu": "cpp"}} to a
 #   codegraph.json file at the project root — codegraph will then parse .cu files
@@ -181,7 +170,6 @@ _CG_LANG = {
     "java":       ["java"],
     "javascript": ["javascript", "jsx"],  # codegraph stores .jsx files as language='jsx'
     "typescript": ["typescript", "tsx"],  # codegraph stores .tsx files as language='tsx'
-    "arkts":      ["arkts"],
 }
 
 # SQL fragment used to match the constructor method node when resolving
@@ -195,7 +183,6 @@ _CG_LANG = {
 _CONSTRUCTOR_FILTER = {
     "python":     "ctor.name = '__init__'",
     "typescript": "ctor.name = 'constructor'",
-    "arkts":      "ctor.name = 'constructor'",
     "javascript": "ctor.name = 'constructor'",
     "java":       "ctor.name = cls.name",
     "cpp":        "ctor.name = cls.name",
@@ -259,37 +246,9 @@ class CodeGraphExtractor:
     def __init__(self, db_path: str):
         self._db = db_path
 
-    @staticmethod
-    def _is_readable_index(db_path: str) -> bool:
-        """True when ``db_path`` holds an index that was built to completion.
-
-        Existing on disk is not enough: ``codegraph index`` discards the old
-        database before it starts, so a rebuild that fails or is killed leaves an
-        empty or half-written one behind, and reading that yields a truncated
-        graph presented as the whole thing. codegraph stamps its own verdict in
-        ``project_metadata.index_state`` for exactly this purpose, so that
-        decides. No marker means an index predating it — accept those when they
-        actually hold nodes.
-        """
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            try:
-                row = conn.execute(
-                    "SELECT value FROM project_metadata WHERE key = 'index_state'"
-                ).fetchone()
-                if row is not None:
-                    return row[0] == "complete"
-                return (
-                    conn.execute("SELECT 1 FROM nodes LIMIT 1").fetchone() is not None
-                )
-            finally:
-                conn.close()
-        except sqlite3.Error:
-            return False
-
     @classmethod
     def from_proj_dir(cls, proj_dir: str):
-        """Return an extractor if a readable .codegraph/codegraph.db exists, else None.
+        """Return an extractor if .codegraph/codegraph.db exists, else None.
 
         Checks both proj_dir itself and its parent directory, because
         generate_topdown_layers() receives work_dir (fm_agent/) as its
@@ -297,7 +256,7 @@ class CodeGraphExtractor:
         """
         for candidate in [proj_dir, os.path.dirname(os.path.abspath(proj_dir))]:
             db_path = os.path.join(candidate, ".codegraph", "codegraph.db")
-            if os.path.exists(db_path) and cls._is_readable_index(db_path):
+            if os.path.exists(db_path):
                 return cls(db_path)
         return None
 
@@ -339,7 +298,7 @@ class CodeGraphExtractor:
         for file_path, funcs in by_file.items():
             abs_path = os.path.join(proj_dir, file_path) if proj_dir else file_path
             try:
-                with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                with open(abs_path, "r", errors="replace") as f:
                     all_lines = f.readlines()
             except OSError:
                 continue
@@ -392,7 +351,7 @@ class CodeGraphExtractor:
         # codegraph stores file paths relative to the project root, which is the
         # parent of the .codegraph/ directory holding the database.
         root = os.path.dirname(os.path.dirname(os.path.abspath(self._db)))
-        rel = os.path.relpath(os.path.abspath(abs_filepath), root).replace(os.sep, "/")
+        rel = os.path.relpath(os.path.abspath(abs_filepath), root)
 
         conn = sqlite3.connect(self._db)
         cur = conn.cursor()
@@ -420,19 +379,29 @@ class CodeGraphExtractor:
             for name, qualified_name, start, end in rows
         ]
 
-    def get_call_edges(self, lang_key: str) -> list:
-        """Return precisely resolved call edges for the given language.
+    def get_call_edges(self, lang_key: str) -> dict:
+        """Return {caller_fqn: {callee_fqn, ...}} for the given language.
 
-        Each edge preserves exact codegraph node identity through the extracted-
-        function FQN. No bare-name resolution is performed here.
+        Each FQN matches generate_topdown_layers._file_to_fqn for the
+        corresponding extracted function (``dir::file-ext::dedup_name``). Edges
+        are resolved by codegraph NODE ID (not by bare name), so the precise
+        caller/callee identity codegraph computed — which file, which same-named
+        sibling — is preserved end-to-end. This lets the call-graph builder use
+        the edges directly instead of re-resolving bare names against every
+        same-named function (which collapsed siblings and over-approximated
+        across files).
 
-        Returns a list of ``{"caller": fqn, "callee": fqn, "kind": str,
-        "span": {...}}`` dicts, ordered by source location so call-site order
-        aligns with the source appearance order.
+        Constructor calls are synthesised from `instantiates` edges: when a
+        function instantiates a class, the corresponding constructor method is
+        added as a callee.  See _CONSTRUCTOR_FILTER for per-language details.
+
+        NOTE: codegraph itself collapses calls to same-named classes in different
+        files onto the first definition (a codegraph resolver limitation for C++,
+        not addressable here — see issues/codegraph-samename-class-resolution).
         """
         cg_langs = _CG_LANG.get(lang_key)
         if not cg_langs:
-            return []
+            return {}
 
         conn = sqlite3.connect(self._db)
         cur = conn.cursor()
@@ -442,64 +411,32 @@ class CodeGraphExtractor:
         # dedup as get_functions_by_file, then resolve edges by node id.
         fqn_of = _node_fqn_map(cur, cg_langs)
 
-        result = []
-        seen = set()
+        result = defaultdict(set)
 
         # Query 1: regular function/method calls, kept as (source_id, target_id)
         # so each endpoint resolves to its exact node's FQN.
-        # Call-site coordinates come from the EDGE (e.line/e.col), not the caller
-        # function node (s.start_line is the function DEFINITION location). The
-        # caller node provides the source FILE identity (the call site is always
-        # inside the caller's file), while the edge provides the precise
-        # call-site line/column. ORDER BY the edge coordinates so multiple call
-        # sites of the same callee are returned in true source order.
         cur.execute(
             f"""
-            SELECT e.source, e.target, s.file_path, e.line, e.col
+            SELECT e.source, e.target
             FROM edges e
             JOIN nodes s ON e.source = s.id
             WHERE e.kind = 'calls' AND s.language IN ({placeholders})
-            ORDER BY s.file_path, e.line, e.col
             """,
             cg_langs,
         )
-        for src_id, tgt_id, file_path, start_line, start_col in cur.fetchall():
+        for src_id, tgt_id in cur.fetchall():
             caller, callee = fqn_of.get(src_id), fqn_of.get(tgt_id)
-            if not caller or not callee:
-                continue
-            # Dedup key includes call-site coordinates so multiple call sites
-            # of the same callee within one function are all preserved; without
-            # them, the 2nd and later calls would be dropped (breaking
-            # order_index / arg_bindings).
-            if start_line and start_line > 0:
-                key = (caller, callee, "call", file_path, start_line, start_col)
-                if key in seen:
-                    continue
-                seen.add(key)
-            result.append({
-                "caller": caller,
-                "callee": callee,
-                "kind": "call",
-                "span": {
-                    "file": file_path,
-                    "start_line": start_line,
-                    "start_column": start_col,
-                },
-            })
+            if caller and callee:
+                result[caller].add(callee)
 
         # Query 2: constructor calls synthesised from instantiates edges.
         # For each `caller instantiates ClassName` edge, find the constructor
         # method inside that class and add it as a synthetic callee.
-        # instantiates edges may lack call-site coordinates, so fall back to the
-        # caller node's definition location when the edge coordinates are NULL.
         ctor_filter = _CONSTRUCTOR_FILTER.get(lang_key)
         if ctor_filter:
             cur.execute(
                 f"""
-                SELECT e.source, ctor.id, s.file_path,
-                       COALESCE(e.line, s.start_line),
-                       COALESCE(e.col, s.start_column),
-                       e.line IS NULL AS coord_fallback
+                SELECT e.source, ctor.id
                 FROM edges e
                 JOIN nodes s   ON e.source = s.id
                 JOIN nodes cls ON e.target = cls.id AND cls.kind = 'class'
@@ -508,378 +445,69 @@ class CodeGraphExtractor:
                                AND ctor.kind IN ('method', 'function')
                 WHERE e.kind = 'instantiates' AND s.language IN ({placeholders})
                 AND {ctor_filter}
-                ORDER BY s.file_path, COALESCE(e.line, s.start_line),
-                          COALESCE(e.col, s.start_column)
                 """,
                 cg_langs,
             )
-            ctor_seq = 0
-            for src_id, ctor_id, file_path, start_line, start_col, coord_fallback \
-                    in cur.fetchall():
+            for src_id, ctor_id in cur.fetchall():
                 caller, callee = fqn_of.get(src_id), fqn_of.get(ctor_id)
-                if not caller or not callee:
-                    continue
-                # Dedup key includes call-site coordinates so multiple
-                # constructor call sites within one function are preserved.
-                # When the edge has no real coordinates (coord_fallback=True),
-                # the COALESCE fallback gives every call site the same value;
-                # use a sequence so distinct no-coordinate call sites are NOT
-                # merged away (keeping all edges is safer than dropping calls).
-                if not coord_fallback:
-                    key = (caller, callee, "constructor", file_path,
-                           start_line, start_col)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                else:
-                    key = (caller, callee, "constructor", file_path,
-                           "no-coord", ctor_seq)
-                    ctor_seq += 1
-                result.append({
-                    "caller": caller,
-                    "callee": callee,
-                    "kind": "constructor",
-                    "span": {
-                        "file": file_path,
-                        "start_line": start_line,
-                        "start_column": start_col,
-                    },
-                })
+                if caller and callee:
+                    result[caller].add(callee)
 
         conn.close()
-
-        # Sort the merged result by source location so call sites of different
-        # kinds (call vs constructor) are interleaved in true source order.
-        # Query 1 and Query 2 each ORDER BY independently, but appending them
-        # in sequence would put all calls before all constructors regardless of
-        # line number, breaking consumers that align call sites with source.
-        result.sort(key=lambda e: (
-            e["span"].get("file", ""),
-            e["span"].get("start_line") or 0,
-            e["span"].get("start_column") or 0,
-        ))
-        return result
+        return dict(result)
 
 
-def _pinned_codegraph_version() -> str:
-    """The pinned release without the leading ``v`` — the form ``--version`` uses."""
-    return settings.codegraph.version.strip().removeprefix("v")
+def _codegraph_cmd() -> str:
+    """Return the codegraph executable to invoke.
+
+    ``install.sh`` installs the pinned fork build (from ``fm-agent.toml``'s
+    ``[codegraph]``) into ``bin_dir`` (default ``~/.local/bin``); we invoke it
+    from that same configured location. Invoking it by absolute path — rather than
+    a bare ``codegraph`` resolved via PATH — uses the pinned build even when that
+    directory is not on PATH (the macOS default) and cannot be shadowed by a
+    different/older codegraph earlier on PATH. Falls back to a bare ``codegraph``
+    when the pinned build is absent, so an externally provided one still works; a
+    missing binary then becomes the regex-extractor fallback in the caller.
+    """
+    bin_dir = os.path.expanduser(settings.codegraph.bin_dir)
+    local = os.path.join(bin_dir, "codegraph")
+    return local if os.access(local, os.X_OK) else "codegraph"
 
 
-def _fm_codegraph_dir() -> str:
-    """FM-Agent's own bundle dir, kept out of the shared ``~/.codegraph`` because
-    codegraph's installer deletes every other release under its install dir
-    (their issue #1074) and re-points ``~/.local/bin/codegraph``."""
-    return os.path.expanduser(settings.codegraph.install_dir)
-
-
-def _codegraph_version_at(path: str) -> str:
-    """``--version`` of the codegraph at ``path``, or "" when it cannot be run."""
+def _warn_on_codegraph_version_mismatch(cmd: str) -> None:
+    """Warn (never fail) when the codegraph about to run is not the version pinned
+    in ``fm-agent.toml``'s ``[codegraph].version`` — e.g. a stale build shadowing
+    it. install.sh is what guarantees the pinned version; this is a runtime heads-up.
+    """
+    want = settings.codegraph.version.strip().removeprefix("v")
+    if not want:
+        return
     try:
-        return subprocess.run(
-            [path, "--version"], capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30
+        got = subprocess.run(
+            [cmd, "--version"], capture_output=True, text=True, timeout=10
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        return ""
-
-
-def _codegraph_installed_elsewhere() -> str | None:
-    """A codegraph outside our bundle dir — ``bin_dir`` first, then PATH. The last
-    resort when the pinned build cannot be provisioned."""
-    names = (
-        ("codegraph.cmd", "codegraph.exe", "codegraph.bat", "codegraph")
-        if sys.platform == "win32" else ("codegraph",)
-    )
-    for name in names:
-        local = os.path.abspath(
-            os.path.join(os.path.expanduser(settings.codegraph.bin_dir), name)
-        )
-        if os.path.isfile(local) and os.access(local, os.X_OK):
-            return local
-    # which() joins the name onto each PATH entry as-is, so a relative entry
-    # ("bin", ".") comes back relative — and try_codegraph_init runs codegraph with
-    # cwd set to the analysed project, not the directory we were launched from.
-    found = shutil.which("codegraph")
-    return os.path.abspath(found) if found else None
-
-
-def _codegraph_bundle_binary() -> str:
-    """The native launcher in FM-Agent's private bundle."""
-    parts = (
-        ("current", "bin", "codegraph.cmd")
-        if sys.platform == "win32" else ("bin", "codegraph")
-    )
-    return os.path.abspath(os.path.join(_fm_codegraph_dir(), *parts))
-
-
-@contextmanager
-def _codegraph_install_lock(install_dir: str):
-    """Serialize installers across processes; closing the file releases the lock."""
-    os.makedirs(install_dir, exist_ok=True)
-    # Do not truncate a file another Windows process has locked.
-    with open(os.path.join(install_dir, ".provision.lock"), "a+b") as lock:
-        if sys.platform == "win32":
-            import msvcrt
-
-            if os.fstat(lock.fileno()).st_size == 0:
-                lock.write(b"\0")
-                lock.flush()
-            lock.seek(0)
-            # LK_LOCK gives up after ten one-second retries. A download can take
-            # much longer, so retry the non-blocking lock until its owner exits.
-            while True:
-                try:
-                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError as exc:
-                    if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-                        raise
-                    time.sleep(0.1)
-        else:
-            import fcntl
-
-            fcntl.flock(lock, fcntl.LOCK_EX)
-        yield
-
-
-def _checked_install_path(path: Path, install_dir: Path) -> Path:
-    """Require bundle mutations and recursive cleanup to stay under the cache."""
-    resolved = path.resolve()
-    root = install_dir.resolve()
-    if resolved == root or not resolved.is_relative_to(root):
-        raise ValueError(f"codegraph bundle path escapes its install directory: {path}")
-    return resolved
-
-
-def _install_windows_codegraph(want: str, install_dir: str) -> None:
-    """Stage a pinned native release without modifying the user's PATH.
-
-    The PowerShell installer adds its launcher to the user's persistent PATH and
-    removes the old bundle before downloading. Use its release layout directly
-    so a failed download/version check leaves FM-Agent's existing bundle intact.
-    """
-    architectures = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}
-    arch = architectures.get(platform.machine().lower())
-    if arch is None:
-        raise OSError(f"unsupported Windows architecture: {platform.machine()}")
-    package = f"codegraph-win32-{arch}"
-    asset = f"{package}.zip"
-    base = f"https://github.com/{settings.codegraph.repo}/releases/download/{settings.codegraph.version}"
-    root = Path(install_dir).resolve()
-    with tempfile.TemporaryDirectory(prefix=".provision-", dir=root) as temporary:
-        staging = _checked_install_path(Path(temporary), root)
-        archive_path = staging / asset
-        with urllib.request.urlopen(f"{base}/{asset}", timeout=60) as response:
-            with archive_path.open("wb") as output:
-                shutil.copyfileobj(response, output)
-        with urllib.request.urlopen(f"{base}/SHA256SUMS", timeout=60) as response:
-            checksums = response.read().decode("utf-8")
-        expected = next(
-            (fields[0] for line in checksums.splitlines()
-             if len(fields := line.split()) == 2 and fields[1].lstrip("*") == asset),
-            None,
-        )
-        with archive_path.open("rb") as downloaded:
-            actual = hashlib.file_digest(downloaded, "sha256").hexdigest()
-        if expected is None or actual != expected:
-            raise ValueError(f"codegraph archive checksum mismatch: {asset}")
-        with zipfile.ZipFile(archive_path) as archive:
-            for member in archive.infolist():
-                parts = member.filename.split("/")
-                if (parts[0] != package or "\\" in member.filename
-                        or any(part in (".", "..") or ":" in part for part in parts)
-                        or stat.S_ISLNK(member.external_attr >> 16)):
-                    raise ValueError(f"unsafe codegraph archive member: {member.filename}")
-                _checked_install_path(staging / member.filename, staging)
-            archive.extractall(staging)
-        bundle = _checked_install_path(staging / package, root)
-        launcher = bundle / "bin" / "codegraph.cmd"
-        got = _codegraph_version_at(str(launcher))
-        if not launcher.is_file() or got != want:
-            raise ValueError(f"codegraph v{want} archive contains version {got or 'nothing'}")
-
-        current = root / "current"
-        _checked_install_path(current, root)
-        if current.is_symlink() or current.is_junction():
-            raise ValueError(f"codegraph bundle directory is a link: {current}")
-        previous = _checked_install_path(root / f".previous-{uuid.uuid4().hex}", root)
-        had_current = current.exists()
-        if had_current:
-            os.replace(current, previous)
-        try:
-            os.replace(bundle, current)
-        except OSError:
-            # The backup lives outside TemporaryDirectory: even if restoration
-            # fails (e.g. a file was locked), cleanup cannot delete the old copy.
-            if had_current:
-                try:
-                    os.replace(previous, current)
-                except OSError as exc:
-                    logging.warning("old codegraph bundle preserved at %s: %s", previous, exc)
-            raise
-        if had_current:
-            try:
-                shutil.rmtree(_checked_install_path(previous, root))
-            except OSError as exc:
-                logging.warning("old codegraph bundle left at %s: %s", previous, exc)
-
-
-def _provision_codegraph(want: str, binary: str) -> bool:
-    """Install the pinned codegraph into FM-Agent's bundle dir; return whether
-    ``binary`` is the pinned version afterwards.
-
-    Uses the pinned POSIX installer or a native Windows release archive. Both
-    stay in our private bundle directory. Serialized on a lock file: the pipeline
-    runs up to ``max_workers`` processes, and a bumped pin would otherwise start
-    that many downloads of the same archive.
-    """
-    install_dir = _fm_codegraph_dir()
-    try:
-        with _codegraph_install_lock(install_dir):
-            return _provision_codegraph_locked(want, binary, install_dir)
-    except (OSError, ImportError) as exc:
+        return
+    if got and got != want:
         logging.warning(
-            "cannot provision the codegraph bundle dir %s (%s)",
-            install_dir,
-            exc,
-        )
-        return False
-
-
-def _provision_codegraph_locked(want: str, binary: str, install_dir: str) -> bool:
-    """Provision only after acquiring the cross-process installation lock."""
-    # Whoever we queued behind has usually just installed it.
-    if _codegraph_version_at(binary) == want:
-        return True
-
-    # stderr: install.sh reads this function's stdout to learn the path.
-    print(
-        f"[Pipeline] installing pinned codegraph v{want} "
-        f"(~55 MB, once per version) into {install_dir}",
-        file=sys.stderr,
-    )
-    if sys.platform == "win32":
-        try:
-            _install_windows_codegraph(want, install_dir)
-        except (OSError, ValueError, zipfile.BadZipFile, subprocess.SubprocessError) as exc:
-            logging.warning("the Windows codegraph installer did not complete: %s", exc)
-            return False
-        if _codegraph_version_at(binary) != want:
-            logging.warning("codegraph v%s was not provisioned at %s", want, binary)
-            return False
-        print(f"[Pipeline] codegraph v{want} ready.", file=sys.stderr)
-        return True
-    # The release tag, not main: this script is piped into sh on the user's
-    # machine, and provisioning now happens on its own, so tracking a branch
-    # would let any push to the codegraph repo run here.
-    url = (
-        f"https://raw.githubusercontent.com/{settings.codegraph.repo}"
-        f"/{settings.codegraph.version}/install.sh"
-    )
-    try:
-        with urllib.request.urlopen(url, timeout=60) as response:
-            script = response.read().decode()
-    except (OSError, ValueError, UnicodeError) as exc:
-        logging.warning("could not fetch the codegraph installer %s: %s", url, exc)
-        return False
-
-    env = {
-        **os.environ,
-        "CODEGRAPH_VERSION": settings.codegraph.version,
-        "CODEGRAPH_INSTALL_DIR": install_dir,
-        "CODEGRAPH_BIN_DIR": os.path.dirname(binary),
-    }
-    try:
-        result = subprocess.run(
-            ["sh", "-s"],
-            input=script,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=1800,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        logging.warning("the codegraph installer did not complete: %s", exc)
-        return False
-
-    # The version, not "a file appeared": a wrong tag, a partial download or a
-    # changed installer contract would otherwise leave a build we go on to run
-    # as though it were the pinned one.
-    got = _codegraph_version_at(binary)
-    if got != want:
-        logging.warning(
-            "codegraph v%s was not provisioned (got %s); installer exit=%s: %s",
-            want,
-            got or "nothing",
-            result.returncode,
-            (result.stderr or result.stdout)[-300:],
-        )
-        return False
-    print(f"[Pipeline] codegraph v{want} ready.", file=sys.stderr)
-    return True
-
-
-@functools.cache
-def _codegraph_cmd() -> str:
-    """The codegraph to run: the release pinned in ``fm-agent.toml``, installed on
-    demand when the machine does not have it, else whatever else is installed —
-    with a warning, since a different release yields a full index with different
-    call edges. A newer codegraph elsewhere is not preferred: bug reports have to
-    name a version we can reproduce on.
-
-    Cached, so a run cannot switch binaries midway — oh-my-openagent's MCP server
-    writes the same index concurrently (see ``_opencode_env``). The cache holds the
-    path, though, and the bundle holds one release, so a concurrent run on a
-    different pin can provision over it; that needs two runs straddling a bump, and
-    a tree per pin would cost every user a few hundred MB each.
-
-    Always absolute when the answer is a real file: callers embed the value rather
-    than only executing it — install.sh symlinks it, ``_opencode_env`` exports it.
-    """
-    want = _pinned_codegraph_version()
-    binary = _codegraph_bundle_binary()
-    if not want:
-        # Nothing pinned: no version to provision or to check against.
-        return _codegraph_installed_elsewhere() or "codegraph"
-
-    if _codegraph_version_at(binary) == want:
-        return binary
-    if _provision_codegraph(want, binary):
-        return binary
-
-    other = _codegraph_installed_elsewhere()
-    if other is not None and _codegraph_version_at(other) == want:
-        return other  # the pinned release, just installed somewhere else
-    if other is None:
-        logging.warning(
-            "codegraph v%s (pinned in fm-agent.toml) is not available and no other "
-            "codegraph is installed; extraction falls back to the regex extractor. "
-            "Retry with network access, or set codegraph.bin_dir to a manual installation.",
+            "codegraph %r does not match the pinned %r "
+            "(fm-agent.toml [codegraph].version); re-run install.sh to update.",
+            got,
             want,
         )
-        # The bare name raises FileNotFoundError in the caller, which is the
-        # regex fallback.
-        return "codegraph"
-    logging.warning(
-        "codegraph v%s (pinned in fm-agent.toml) is not available; using %s (%s) "
-        "instead. Call edges can differ from the pinned build.",
-        want,
-        other,
-        _codegraph_version_at(other) or "unknown version",
-    )
-    return other
 
 
 def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
-    """Build the codegraph index for proj_dir.
+    """Build the codegraph index for proj_dir with `codegraph init`.
 
-    By default (``force=True``) an existing index is rebuilt from scratch, so the
-    index always reflects the current working tree rather than whatever code was
-    present when it was last built. This is the safe default: callers read
+    By default (``force=True``) any existing index is discarded and rebuilt, so
+    the index always reflects the current working tree rather than whatever code
+    was present when it was last built. This is the safe default: callers read
     function bodies and spans from the index, and a stale one (e.g. after an
     incremental run's tree changed or project sources were edited) would yield
-    boundaries for the wrong code.
+    boundaries for the wrong code. `codegraph init` on its
+    own no-ops when `.codegraph/` already exists, so a rebuild requires clearing
+    it first.
 
     Pass ``force=False`` to keep an existing index and only build when it is
     absent — an opt-in optimization for callers that know the tree is unchanged
@@ -893,62 +521,24 @@ def try_codegraph_init(proj_dir: str, force: bool = True) -> None:
     if os.path.exists(db_path):
         if not force:
             return
-        # `codegraph index` is the full rebuild — "same result as a fresh init",
-        # but it discards codegraph.db itself instead of the directory holding it.
-        # Clearing `.codegraph/` here is what used to make `init` rebuild rather
-        # than no-op, and it silently stopped working once that directory became a
-        # symlink into oh-my-openagent's store: shutil.rmtree refuses to remove a
-        # symlink and ignore_errors=True swallowed the error, so the run reported a
-        # rebuild that never happened.
-        action = "index"
-        what = "Rebuilding codegraph index for current working tree"
+        # Existing index may reflect stale sources; remove it so `codegraph init`
+        # rebuilds against the current tree instead of skipping.
+        shutil.rmtree(codegraph_dir, ignore_errors=True)
+        print("[Pipeline] Rebuilding codegraph index for current working tree...")
     else:
-        # `index` rebuilds an initialized project and errors out otherwise, so the
-        # first build still goes through `init`.
-        action = "init"
-        what = "Building codegraph index"
-    # Name the version that actually builds this index — a machine can hold
-    # several codegraph installs, and the log is where a call graph's provenance
-    # has to be recoverable from.
+        print("[Pipeline] Building codegraph index...")
     cmd = _codegraph_cmd()
-    version = _codegraph_version_at(cmd)
-    print(f"[Pipeline] {what} (codegraph {version or 'version unknown'})...")
+    _warn_on_codegraph_version_mismatch(cmd)
     try:
         result = subprocess.run(
-            [cmd, action], cwd=proj_dir, capture_output=True, text=True,
-            encoding="utf-8", errors="replace"
+            [cmd, "init"], cwd=proj_dir, capture_output=True, text=True
         )
     except FileNotFoundError:
         return  # codegraph not installed
     if result.returncode == 0:
         print("[Pipeline] codegraph index built.")
     else:
-        # A failed `index` has already discarded the database it was rebuilding,
-        # leaving an empty or schema-less file behind. Drop it so the fallback
-        # this message promises is the one that happens — an index nobody can read
-        # is worse than no index, because the pipeline would consume it as if it
-        # were complete. Remove the files, not `.codegraph/` itself: that
-        # directory is a symlink into oh-my-openagent's store on any project
-        # opened in an editor session.
-        outcome = "falling back to regex"
-        if action == "index":
-            try:
-                os.remove(db_path)
-            except OSError as exc:
-                # The database survived, so it stays discoverable and the regex
-                # fallback is NOT what happens — say that rather than claiming it.
-                # Leave the sidecars too: dropping a live database's -wal corrupts
-                # it, and half-removed is worse than untouched.
-                outcome = f"existing index left in place, may be stale ({exc})"
-            else:
-                for path in (f"{db_path}-wal", f"{db_path}-shm"):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
         logging.warning(
-            "codegraph %s failed (non-fatal, %s): %s",
-            action,
-            outcome,
+            "codegraph init failed (non-fatal, falling back to regex): %s",
             result.stderr[:300],
         )

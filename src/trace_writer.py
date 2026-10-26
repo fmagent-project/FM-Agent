@@ -43,7 +43,15 @@ def append_event(trace_dir, event):
             f.write(line + "\n")
 
 
-def record_llm_exchange(trace_dir, event_id, event, messages, response=None, reasoning=None):
+def record_llm_exchange(
+    trace_dir,
+    event_id,
+    event,
+    messages,
+    response=None,
+    reasoning=None,
+    proxy_log_path=None,
+):
     if not trace_dir:
         return
 
@@ -89,6 +97,16 @@ def record_llm_exchange(trace_dir, event_id, event, messages, response=None, rea
                     "reasoning.json",
                     json.dumps(reasoning, ensure_ascii=False),
                 ),
+            }
+        )
+    if proxy_log_path and os.path.isfile(proxy_log_path):
+        ref = os.path.relpath(proxy_log_path, os.path.dirname(trace_dir))
+        children.append(
+            {
+                "type": "tool_output",
+                "label": "qwen-tool-proxy-upstream-responses",
+                "path": ref,
+                "content_ref": ref,
             }
         )
     metadata.pop("parsed", None)

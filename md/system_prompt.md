@@ -37,6 +37,10 @@ Every claim must be verifiable and falsifiable. Replace vague terms with precise
 - The pre-condition comes from what callers guarantee before calling
 - The post-condition comes from what callers NEED from this function
 - If caller context is provided in the prompt, use it
+- Explicit requirements in user-provided domain-knowledge files are normative
+  inputs to the intended specification. If current code conflicts with those
+  requirements, preserve the requirement; do not rewrite the spec to match the
+  implementation defect.
 
 ### Rule 5: Specs describe INTENDED CORRECT BEHAVIOR
 

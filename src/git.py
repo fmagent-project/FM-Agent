@@ -17,7 +17,7 @@ def _is_git_repo(proj_dir):
             check=True, capture_output=True, text=True,
         )
         return True
-    except subprocess.CalledProcessError:
+    except (OSError, subprocess.CalledProcessError):
         return False
 
 
@@ -28,8 +28,8 @@ def _get_head_commit(proj_dir):
             ["git", "-C", proj_dir, "rev-parse", "HEAD"],
             check=True, capture_output=True, text=True,
         ).stdout.strip()
-    except subprocess.CalledProcessError:
-        logging.info("_get_head_commit: %s is not a git repo.", proj_dir)
+    except (OSError, subprocess.CalledProcessError):
+        logging.info("_get_head_commit: %s has no usable Git HEAD.", proj_dir)
         return None
 
 
@@ -82,7 +82,7 @@ def frozen_worktree(proj_dir, exclude=("fm_agent",), copy_excluded=True):
     try:
         _git("rev-parse", "--verify", "HEAD")
         is_git = True
-    except subprocess.CalledProcessError:
+    except (OSError, subprocess.CalledProcessError):
         pass
 
     if is_git:
