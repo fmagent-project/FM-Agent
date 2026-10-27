@@ -82,7 +82,7 @@ def _module(file, root):
 
 
 def _analyze(extractor):
-    root = Path(extractor._db).resolve().parent.parent
+    root = Path(extractor._db).parent.parent.resolve()
     go = shutil.which("go")
     if go is None:
         return None
@@ -159,14 +159,15 @@ def _analyze(extractor):
 
 
 def _vta_call_edges(extractor, separate_closures=False):
-    """Replace edges for loaded files, preserving codegraph for other files."""
+    """Replace covered edges, preserving codegraph when either endpoint is uncovered."""
     analysis = _analyze(extractor)
     if analysis is None:
         return extractor.get_call_edges("go"), {}
     semantic, owners, covered = analysis
     if not covered:
         return extractor.get_call_edges("go"), {}
-    edges = [edge for edge in extractor.get_call_edges("go") if edge["caller"] not in covered]
+    edges = [edge for edge in extractor.get_call_edges("go")
+             if edge["caller"] not in covered or edge["callee"] not in covered]
     for edge in semantic:
         if separate_closures:
             edges.append(edge)
@@ -230,7 +231,7 @@ def call_edges(proj_dir: str) -> list | None:
     cg = CodeGraphExtractor.from_proj_dir(proj_dir)
     if cg is None:
         return None
-    root = Path(cg._db).resolve().parent.parent
+    root = Path(cg._db).parent.parent.resolve()
     if (root / "fm_agent" / ".entry_scope_ready").is_file():
         try:
             context = json.loads((root / "fm_agent" / "plugin_context.json").read_text())
