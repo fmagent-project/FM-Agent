@@ -114,7 +114,7 @@ def _analyze(extractor):
             try:
                 packages = sorted({"./" + Path(file).parent.relative_to(module).as_posix()
                                    for file in functions if _module(file, root) == module})
-                data = json.loads(_run([binary, str(module), *packages], module))
+                data = json.loads(_run([binary, str(module), str(root), *packages], module))
                 loaded_files = {str(Path(file).resolve()) for file in data["files"]}
                 identities = {}
                 module_owners = {}

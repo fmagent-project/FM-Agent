@@ -9,7 +9,9 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/callgraph/vta"
@@ -45,10 +47,14 @@ type result struct {
 }
 
 func run() error {
-	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: go-vta MODULE_DIR [PACKAGE ...]")
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: go-vta MODULE_DIR PROJECT_ROOT [PACKAGE ...]")
 	}
-	patterns := os.Args[2:]
+	projectRoot, err := filepath.Abs(os.Args[2])
+	if err != nil {
+		return err
+	}
+	patterns := os.Args[3:]
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
@@ -66,11 +72,17 @@ func run() error {
 	files := make(map[string]bool)
 	callPositions := make(map[token.Pos]token.Pos)
 	callLabels := make(map[token.Pos]string)
-	for _, pkg := range loaded {
+	packages.Visit(loaded, func(pkg *packages.Package) bool {
 		for _, file := range pkg.CompiledGoFiles {
-			files[file] = true
+			relative, err := filepath.Rel(projectRoot, file)
+			if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				files[file] = true
+			}
 		}
 		for _, syntax := range pkg.Syntax {
+			if !files[fset.PositionFor(syntax.Pos(), false).Filename] {
+				continue
+			}
 			ast.Inspect(syntax, func(node ast.Node) bool {
 				if call, ok := node.(*ast.CallExpr); ok {
 					callPositions[call.Lparen] = call.Fun.Pos()
@@ -82,7 +94,8 @@ func run() error {
 				return true
 			})
 		}
-	}
+		return true
+	}, nil)
 	for file := range files {
 		output.Files = append(output.Files, file)
 	}
