@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 
 from src.languages.codegraph import CodeGraphExtractor, _node_fqn_map
+from src.file_utils import _is_test_file
 
 
 _CACHE = {}
@@ -16,10 +17,10 @@ _TOOL = Path(__file__).resolve().parents[2] / "tools" / "go-vta"
 _LOGGER = logging.getLogger(__name__)
 
 
-def _run(command, cwd):
+def _run(command, cwd, env=None):
     completed = subprocess.run(
         command, cwd=cwd, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=300, check=False,
+        encoding="utf-8", errors="replace", timeout=300, check=False, env=env,
     )
     if completed.returncode:
         raise RuntimeError(completed.stderr.strip()[-2000:])
@@ -27,8 +28,11 @@ def _run(command, cwd):
 
 
 def _binary(go):
+    host_os, host_arch = _run([go, "env", "GOHOSTOS", "GOHOSTARCH"], _TOOL).split()
+    build_env = {**os.environ, "GOOS": host_os, "GOARCH": host_arch, "CGO_ENABLED": "0"}
     digest = hashlib.sha256()
     digest.update(_run([go, "version"], _TOOL).encode())
+    digest.update(f"{host_os}/{host_arch}".encode())
     for filename in ("main.go", "go.mod", "go.sum"):
         digest.update((_TOOL / filename).read_bytes())
     directory = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "fm-agent" / "go-vta"
@@ -37,7 +41,7 @@ def _binary(go):
     if not binary.exists():
         temporary = binary.with_name(binary.name + f".{os.getpid()}.tmp")
         try:
-            _run([go, "build", "-mod=readonly", "-o", str(temporary), "."], _TOOL)
+            _run([go, "build", "-mod=readonly", "-o", str(temporary), "."], _TOOL, env=build_env)
             temporary.replace(binary)
         finally:
             temporary.unlink(missing_ok=True)
@@ -88,6 +92,8 @@ def _analyze(extractor):
         return None
     try:
         functions = _index(extractor, root)
+        test_files = tuple(sorted(file for file in functions if file.endswith("_test.go")
+                                  and not _is_test_file(Path(file).relative_to(root).as_posix())))
         modules = sorted({module for file in functions if (module := _module(file, root))})
         if not modules:
             return None
@@ -103,7 +109,7 @@ def _analyze(extractor):
         environment = tuple((name, os.environ.get(name)) for name in (
             "GOFLAGS", "GOOS", "GOARCH", "CGO_ENABLED", "GOWORK", "GOTOOLCHAIN", "GOPROXY",
         ))
-        key = (str(root), go, environment, tuple(sorted(signature)))
+        key = (str(root), go, environment, tuple(sorted(signature)), test_files)
         if key in _CACHE:
             return _CACHE[key]
         binary = _binary(go)
@@ -114,7 +120,9 @@ def _analyze(extractor):
             try:
                 packages = sorted({"./" + Path(file).parent.relative_to(module).as_posix()
                                    for file in functions if _module(file, root) == module})
-                data = json.loads(_run([binary, str(module), str(root), *packages], module))
+                tests = [file for file in test_files if _module(file, root) == module]
+                options = ["-test-files", json.dumps(tests)] if tests else []
+                data = json.loads(_run([binary, *options, str(module), str(root), *packages], module))
                 loaded_files = {str(Path(file).resolve()) for file in data["files"]}
                 identities = {}
                 module_owners = {}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -47,21 +48,54 @@ type result struct {
 }
 
 func run() error {
-	if len(os.Args) < 3 {
-		return fmt.Errorf("usage: go-vta MODULE_DIR PROJECT_ROOT [PACKAGE ...]")
+	options := flag.NewFlagSet("go-vta", flag.ContinueOnError)
+	testFilesJSON := options.String("test-files", "[]", "JSON array of selected test files")
+	if err := options.Parse(os.Args[1:]); err != nil {
+		return err
 	}
-	projectRoot, err := filepath.Abs(os.Args[2])
+	args := options.Args()
+	if len(args) < 2 {
+		return fmt.Errorf("usage: go-vta [-test-files JSON] MODULE_DIR PROJECT_ROOT [PACKAGE ...]")
+	}
+	projectRoot, err := filepath.Abs(args[1])
 	if err != nil {
 		return err
 	}
-	patterns := os.Args[3:]
+	patterns := args[2:]
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
 	fset := token.NewFileSet()
-	loaded, err := packages.Load(&packages.Config{
-		Dir: os.Args[1], Mode: packages.LoadAllSyntax, Fset: fset, Tests: true,
-	}, patterns...)
+	config := &packages.Config{Dir: args[0], Mode: packages.LoadAllSyntax, Fset: fset}
+	var testFiles []string
+	if err := json.Unmarshal([]byte(*testFilesJSON), &testFiles); err != nil {
+		return err
+	}
+	if len(testFiles) != 0 {
+		config.Tests = true
+		config.Overlay = make(map[string][]byte)
+		selected := make(map[string]bool)
+		for _, file := range testFiles {
+			selected[filepath.Clean(file)] = true
+		}
+		if err := filepath.WalkDir(projectRoot, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				switch entry.Name() {
+				case ".git", ".codegraph", "fm_agent", ".venv", "vendor":
+					return filepath.SkipDir
+				}
+			} else if strings.HasSuffix(path, "_test.go") && !selected[path] {
+				config.Overlay[path] = []byte("//go:build ignore\n\npackage ignored\n")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	loaded, err := packages.Load(config, patterns...)
 	if err != nil {
 		return err
 	}
