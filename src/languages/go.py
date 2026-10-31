@@ -85,6 +85,12 @@ def _module(file, root):
     return None
 
 
+def _edge_key(edge):
+    span = edge.get("span", {})
+    return (edge["caller"], edge["callee"], span.get("file"),
+            span.get("start_line"), span.get("start_column"))
+
+
 def _analyze(extractor):
     root = Path(extractor._db).parent.parent.resolve()
     go = shutil.which("go")
@@ -115,7 +121,7 @@ def _analyze(extractor):
         binary = _binary(go)
         covered = set()
         owners = {}
-        edges = []
+        edges = {}
         for module in modules:
             try:
                 packages = sorted({"./" + Path(file).parent.relative_to(module).as_posix()
@@ -126,7 +132,7 @@ def _analyze(extractor):
                 loaded_files = {str(Path(file).resolve()) for file in data["files"]}
                 identities = {}
                 module_owners = {}
-                module_edges = []
+                module_edges = {}
                 for function in data["functions"]:
                     owner = _function_at(functions, function["owner"])
                     if owner is None:
@@ -143,19 +149,22 @@ def _analyze(extractor):
                     if caller is None or callee is None:
                         continue
                     at = edge["at"]
-                    module_edges.append({
+                    resolved = {
                         "caller": caller, "callee": callee, "kind": "call",
                         "info_names": edge["labels"],
                         "span": {"file": Path(at["file"]).relative_to(root).as_posix(),
                                  "start_line": at["line"], "start_column": at["column"]},
-                    })
-                edges.extend(module_edges)
+                    }
+                    module_edges.setdefault(_edge_key(resolved), resolved)
+                for edge_key, resolved in module_edges.items():
+                    edges.setdefault(edge_key, resolved)
                 owners.update(module_owners)
                 covered.update(fqn for file, entries in functions.items() if file in loaded_files
                                for *_span, fqn in entries)
+                del data, identities, module_edges
             except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
                 _LOGGER.warning("Go VTA unavailable for %s; using codegraph: %s", module, error)
-        result = (edges, owners, covered)
+        result = (list(edges.values()), owners, covered)
         for old_key in list(_CACHE):
             if old_key[0] == str(root):
                 del _CACHE[old_key]
@@ -184,12 +193,7 @@ def _vta_call_edges(extractor, separate_closures=False):
                           "callee": owners.get(edge["callee"], edge["callee"])})
     unique = {}
     for edge in edges:
-        span = edge.get("span", {})
-        key = (edge["caller"], edge["callee"], span.get("file"),
-               span.get("start_line"), span.get("start_column"))
-        if not span.get("start_line"):
-            key = (*key, id(edge))
-        unique.setdefault(key, edge)
+        unique.setdefault(_edge_key(edge), edge)
     return sorted(unique.values(), key=lambda edge: (
         edge.get("span", {}).get("file") or "", edge.get("span", {}).get("start_line") or 0,
         edge.get("span", {}).get("start_column") or 0, edge["caller"], edge["callee"],

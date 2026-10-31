@@ -11,6 +11,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -109,7 +110,8 @@ func run() error {
 	packages.Visit(loaded, func(pkg *packages.Package) bool {
 		for _, file := range pkg.CompiledGoFiles {
 			relative, err := filepath.Rel(projectRoot, file)
-			if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) &&
+				!slices.Contains(strings.Split(relative, string(filepath.Separator)), "vendor") {
 				files[file] = true
 			}
 		}
