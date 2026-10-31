@@ -267,7 +267,7 @@ def _find_call_sites(text, lang_key, known_stems, keywords):
     return found
 
 
-def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_call_edges=None, indirect_calls=True):
+def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_call_edges=None, indirect_calls=True, separate_go_closures=False):
     """Build callees_map and callers_map for a set of phase files.
 
     Args:
@@ -280,6 +280,7 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
                           only against explicitly listed source callsite names.
         indirect_calls: add the indirect calls that language backends resolve
                         as supplemental edges.
+        separate_go_closures: retain VTA closure nodes for entry reachability.
 
     Returns:
         (callees_map, callers_map, all_callees_map, file_map, module_map,
@@ -338,6 +339,15 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
 
     phase_langs = {_detect_lang_from_ext(fp) for fp, _ in phase_files if _detect_lang_from_ext(fp)}
     registry_edges_list, registry_langs = call_edges_all(proj_dir, phase_langs)
+    closure_owners = {}
+    if separate_go_closures and "go" in registry_langs:
+        from src.languages.go import scope_call_edges
+
+        go_edges, closure_owners = scope_call_edges(proj_dir)
+        registry_edges_list = [edge for edge in registry_edges_list if edge.get("language") != "go"]
+        registry_edges_list.extend(go_edges or ())
+        known_fqns.update(node for node, owner in closure_owners.items() if owner in known_fqns)
+        phase_fqns.update(node for node, owner in closure_owners.items() if owner in phase_fqns)
     # codegraph edges are [{"caller": fqn, "callee": fqn, "kind": k}, ...]
     # normalize_call_edges guarantees caller/callee are present, but use .get()
     # defensively in case an edge bypasses the normalization layer.
@@ -347,6 +357,8 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
         callee = edge.get("callee")
         if caller and callee:
             registry_edges[caller].add(callee)
+            if caller in phase_fqns and callee in known_fqns:
+                edge_aliases_map[callee][caller].update(edge.get("info_names", ()))
 
     for filepath, module_name in phase_files:
         fqn = fqn_map[filepath]
@@ -412,6 +424,14 @@ def _build_call_graph(phase_files, proj_dir, global_stem_to_fqns=None, extra_cal
                 all_callees_map,
                 edge_aliases_map,
             )
+
+    for node in closure_owners.keys() & phase_fqns:
+        for callee in registry_edges.get(node, set()) & known_fqns:
+            if callee != node:
+                all_callees_map[node].add(callee)
+                if callee in phase_fqns:
+                    callees_map[node].add(callee)
+                    callers_map[callee].add(node)
 
     return callees_map, callers_map, all_callees_map, file_map, module_map, edge_aliases_map
 
