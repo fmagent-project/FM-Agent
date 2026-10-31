@@ -29,7 +29,8 @@ def _run(command, cwd, env=None):
 
 def _binary(go):
     host_os, host_arch = _run([go, "env", "GOHOSTOS", "GOHOSTARCH"], _TOOL).split()
-    build_env = {**os.environ, "GOOS": host_os, "GOARCH": host_arch, "CGO_ENABLED": "0"}
+    build_env = {**os.environ, "GOOS": host_os, "GOARCH": host_arch,
+                 "CGO_ENABLED": "0", "GOWORK": "off"}
     digest = hashlib.sha256()
     digest.update(_run([go, "version"], _TOOL).encode())
     digest.update(f"{host_os}/{host_arch}".encode())
