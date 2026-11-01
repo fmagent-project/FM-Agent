@@ -107,10 +107,29 @@ def prepare_entry_scope(proj_dir: str) -> None:
         extra_call_edges=extra_call_edges,
     )
     try_codegraph_init(proj_dir)
+    go_sources = {source: names for source, names in keep_by_source.items() if source.endswith(".go")}
+    go_edges = None
+    if go_sources:
+        from src.languages.codegraph import _fqn_for
+        from src.languages.go import call_edges
+
+        selected = {_fqn_for(source, name) for source, names in go_sources.items() for name in names}
+        resolved = call_edges(proj_dir)
+        if resolved is not None:
+            go_edges = [{"caller": edge["caller"], "callee": edge["callee"], "kind": "call",
+                         "info_names": edge.get("info_names", [])}
+                        for edge in resolved if edge["caller"] in selected and edge["callee"] in selected]
     _trim_project_in_place(proj_dir, all_by_source, keep_by_source)
     # Resume reuses the index. Refresh it after trimming so removed functions
     # cannot be extracted again from the pre-trim database.
     try_codegraph_init(proj_dir, force=True)
+    if go_edges is not None:
+        context_path = os.path.join(proj_dir, "fm_agent", "plugin_context.json")
+        with open(context_path, encoding="utf-8") as file:
+            context = json.load(file)
+        context["go_call_edges"] = go_edges
+        with open(context_path, "w", encoding="utf-8") as file:
+            json.dump(context, file, indent=2)
     marker_path = os.path.join(proj_dir, "fm_agent", _READY_MARKER)
     with open(marker_path, "w", encoding="utf-8") as file:
         file.write("ready\n")
@@ -488,7 +507,13 @@ def _select_functions_by_source(proj_dir, entry_funcs, end_funcs, extra_call_edg
             phase_files,
             work_dir,
             extra_call_edges=extra_call_edges,
+            separate_go_closures=True,
         )
+        from src.languages.go import scope_call_edges
+
+        _, closure_owners = scope_call_edges(work_dir) if any(
+            fp.endswith(".go") for fp, _mod in phase_files
+        ) else (None, {})
         all_fqns = {_file_to_fqn(fp, work_dir) for fp, _mod in phase_files}
 
         entry_funcs = _normalize_entry_funcs(entry_funcs)
@@ -518,14 +543,15 @@ def _select_functions_by_source(proj_dir, entry_funcs, end_funcs, extra_call_edg
                 "requested entry_func"
             )
 
+    selected_fqns = {closure_owners.get(fqn, fqn) for fqn in call_graph} & all_fqns
     print(
-        f"[EntryPipeline] Selected {len(call_graph)} of {len(all_fqns)} function(s) "
+        f"[EntryPipeline] Selected {len(selected_fqns)} of {len(all_fqns)} function(s) "
         f"from {len(entry_funcs)} entry function(s)."
     )
 
     # Map the selected FQNs back to their (source file, function identifier).
     keep_by_source = defaultdict(set)
-    for fqn in call_graph:
+    for fqn in selected_fqns:
         keep_by_source[_entry_func_source_rel(fqn)].add(_fqn_to_ident(fqn))
 
     return all_by_source, keep_by_source

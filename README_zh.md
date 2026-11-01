@@ -61,6 +61,7 @@ FM-Agent 的[官方网站](http://fm-agent.ai/)提供了在线代码库推理服
 - [@lucentia/opencode-trace](https://www.npmjs.com/package/@lucentia/opencode-trace) 插件 —— 采集 OpenCode 原始 LLM 请求/响应 trace
 - 你所用 provider 的 LLM API 密钥（示例使用 [OpenRouter](https://openrouter.ai/)）
 - [Clang](https://clang.llvm.org/docs/UsersManual.html)——可选；可用时用于生成更准确的 C/C++ 调用图，Clang 无法分析的函数会逐函数回退到 codegraph。FM-Agent 会读取项目根目录或 `build/` 下的 `compile_commands.json`；其他位置可通过 `CLANG_COMPILE_COMMANDS` 指定。
+- [Go](https://go.dev/dl/) 1.26+——可选；通过 `golang.org/x/tools` 的 VTA 生成带类型分析的 Go 调用边。辅助程序会自动构建到用户缓存目录。被分析模块须能用 Go 工具链编译，且依赖可下载；无法加载的模块回退到 codegraph。加载成功的文件使用 VTA 替换 codegraph 调用边，空结果也不会回退。入口函数筛选先将闭包作为独立节点遍历，再映射回抽取的函数。
 - [Erlang Language Platform（ELP）](https://whatsapp.github.io/erlang-language-platform/docs/get-started/)——可选，仅分析 Erlang 项目时需要
   - 本 Erlang 集成已在 Ubuntu 的 Erlang/OTP 26 或更高版本上验证；请选择基于兼容 OTP 版本构建的 ELP 发布包。
   - ELP 自动识别包含 `rebar.config` 的项目时，要求 rebar3 3.24.0 或更高版本。
