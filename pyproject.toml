@@ -22,6 +22,7 @@ dependencies = [
     "tree-sitter-rust>=0.24,<0.25",
     "tree-sitter-typescript>=0.23,<0.24",
     "tree-sitter-arkts",
+    "pyrefly==1.4.0",
 ]
 
 [project.scripts]
