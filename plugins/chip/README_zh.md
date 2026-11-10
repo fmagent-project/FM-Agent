@@ -129,7 +129,7 @@ fm_agent/extracted_functions/<unit>/
 缺失时，Chisel 给出 advisory，Verilog 则阻塞通过。无效产物通过公共 Stage 6 retry 路径
 重新生成。运行元数据和诊断保存在 `fm_agent/trace/`；提取出的源码副本不会写回原 RTL 文件。
 
-所有 module artifact ready 后，chip plugin 还会生成：
+默认情况下，所有 module artifact ready 后，chip plugin 还会生成：
 
 ```text
 fm_agent/chip/design_document.md
@@ -139,14 +139,25 @@ fm_agent/chip/design_document.md
 生成时要求恰好一个 artifact-eligible root DUT，必要时可用 `--submodule` 收窄分析范围。
 
 选定目录决定文档目标，agent 可探索仓库其他位置的相关 caller、接口和配置。
-无法确认的配置与证据保留 OPEN。每次 Stage 6 完成后均重新生成文档，包括 `--resume`。
+无法确认的配置与证据保留 OPEN。未指定 `--only-spec` 时，每次 Stage 6 完成后均重新生成文档，
+包括 `--resume`。
+
+使用 `--only-spec` 仅生成 module specs/info，跳过总体设计文档：
+
+```bash
+uv run python main.py /path/to/hardware-repo --plugin chip --only-spec
+```
+
+模块资格检查、产物校验和重试保持执行，该模式无需满足总体文档的唯一 root DUT 要求。
+续跑时保留已有设计文档相关文件，其内容属于之前的运行。省略 `--only-spec` 可重新生成文档。
 
 ## 命令行兼容性
 
 chip plugin 支持 `--resume`、`--submodule`、`--one-phase`、
 `--domain-knowledge`/`--knowledge`、`--extra-edge`、fresh `--isolate` 和
-`--only-spec` 的公共契约。chip Profile 不进入后续 software reasoning 阶段，因此
-`--only-spec` 可省略；两种模式均生成设计文档。
+`--only-spec`。两种模式均不执行 software reasoning 和 bug validation。对 chip，
+`--only-spec` 保留 module specs/info 并跳过总体设计文档；默认软件流程继续使用该参数
+跳过 reasoning 和 bug validation。
 
 插件拒绝 `--incremental`、`--end-func`、`--all-bugs`、`--bug-validator` 和
 `--estimate`。不支持的组合会在创建或修改运行工作区以及调用 LLM 之前失败。
@@ -154,7 +165,8 @@ chip plugin 支持 `--resume`、`--submodule`、`--one-phase`、
 ## 当前限制
 
 - 一次运行只选择一种方言，不会合并分析 Chisel 和 Verilog。
-- chip Profile 生成 module 规约和最终设计文档，不执行 software reasoning 和 Bug Validation。
+- chip Profile 生成 module 规约，未指定 `--only-spec` 时还会生成最终设计文档；
+  两种模式均不执行 software reasoning 和 Bug Validation。
 - Chisel source fallback 无法保证完整解析动态依赖或仅在 elaboration 后出现的依赖。
 - Verilog source fallback 是备用 parser，不是完整的 preprocessing 和 elaboration。
 - CIRCT 输入由目标项目的 Chisel 构建产生；FM-Agent 只消费 elaborated `.fir` 或 `.mlir`，
