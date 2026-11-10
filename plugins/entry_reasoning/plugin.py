@@ -107,27 +107,31 @@ def prepare_entry_scope(proj_dir: str) -> None:
         extra_call_edges=extra_call_edges,
     )
     try_codegraph_init(proj_dir)
-    go_sources = {source: names for source, names in keep_by_source.items() if source.endswith(".go")}
-    go_edges = None
-    if go_sources:
-        from src.languages.codegraph import _fqn_for
-        from src.languages.go import call_edges
+    from src.languages import go, python
+    from src.languages.codegraph import _fqn_for
 
-        selected = {_fqn_for(source, name) for source, names in go_sources.items() for name in names}
-        resolved = call_edges(proj_dir)
+    semantic_edges = {}
+    for language, extension, backend in (("go", ".go", go), ("python", ".py", python)):
+        sources = {source: names for source, names in keep_by_source.items() if source.endswith(extension)}
+        if not sources:
+            continue
+        selected = {_fqn_for(source, name) for source, names in sources.items() for name in names}
+        resolved = backend.call_edges(proj_dir)
         if resolved is not None:
-            go_edges = [{"caller": edge["caller"], "callee": edge["callee"], "kind": "call",
-                         "info_names": edge.get("info_names", [])}
-                        for edge in resolved if edge["caller"] in selected and edge["callee"] in selected]
+            semantic_edges[f"{language}_call_edges"] = [
+                {"caller": edge["caller"], "callee": edge["callee"], "kind": edge.get("kind", "call"),
+                 "info_names": edge.get("info_names", [])}
+                for edge in resolved if edge["caller"] in selected and edge["callee"] in selected
+            ]
     _trim_project_in_place(proj_dir, all_by_source, keep_by_source)
     # Resume reuses the index. Refresh it after trimming so removed functions
     # cannot be extracted again from the pre-trim database.
     try_codegraph_init(proj_dir, force=True)
-    if go_edges is not None:
+    if semantic_edges:
         context_path = os.path.join(proj_dir, "fm_agent", "plugin_context.json")
         with open(context_path, encoding="utf-8") as file:
             context = json.load(file)
-        context["go_call_edges"] = go_edges
+        context.update(semantic_edges)
         with open(context_path, "w", encoding="utf-8") as file:
             json.dump(context, file, indent=2)
     marker_path = os.path.join(proj_dir, "fm_agent", _READY_MARKER)
