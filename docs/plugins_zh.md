@@ -188,9 +188,12 @@ Hook 通过标准项目文件修改输入或输出，不返回 Stage 数据。
 
 ```json
 {
-  "extra_edge": null, "submodules": ["src"]
+  "extra_edge": null, "only_spec": false, "submodules": ["src"]
 }
 ```
+
+`only_spec` 是本次 `run_pipeline()` 调用的 `only_spec` 参数的布尔值，每次调用都会
+写入并覆盖调用方上下文中的同名值。Hook 自行解释该值，公共流程继续执行 Hook。
 
 `submodules` 仅在指定 `--submodule` 时写入，值为归一化后的项目相对路径。
 
@@ -266,6 +269,7 @@ entry 插件上下文包含：
   "entry_funcs": ["src::main-c::main", "api::server-c::serve"],
   "end_funcs": [],
   "extra_edge": null,
+  "only_spec": false,
   "all_bugs": false
 }
 ```
@@ -294,7 +298,8 @@ uv run python main.py <proj_dir> --plugin chip
 插件根据选定源码范围注册 `chip-chisel` 或 `chip-verilog` Profile。硬件 prompt、成对的
 Markdown 产物、reader 和 validation policy 由 Profile 提供，公共 Pipeline 继续负责阶段
 编排与 LLM 执行。modify Hook 对 Chisel 声明进行产物 eligibility 分类并保留依赖图，
-随后从 ready module artifacts 生成 root DUT 的设计文档。
+随后在未指定 `--only-spec` 时从 ready module artifacts 生成 root DUT 的设计文档。
+指定该参数时，chip 保留 module specs/info 并跳过总体设计文档。
 
 安装方式、backend 选择、运行命令、输出、支持的选项和已知限制见
 [chip 插件指南](../plugins/chip/README_zh.md)。

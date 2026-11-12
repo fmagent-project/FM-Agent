@@ -329,6 +329,7 @@ def run_pipeline(
     if plugin_config is not None:
         plugin_context_path = os.path.join(work_dir, "plugin_context.json")
         effective_plugin_context = dict(plugin_context or {})
+        effective_plugin_context["only_spec"] = bool(only_spec)
         if submodules:
             effective_plugin_context["submodules"] = list(submodules)
         with open(plugin_context_path, "w", encoding="utf-8") as file:

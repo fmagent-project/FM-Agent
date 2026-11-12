@@ -202,9 +202,14 @@ When a plugin is active, FM-Agent writes
 
 ```json
 {
-  "extra_edge": null, "submodules": ["src"]
+  "extra_edge": null, "only_spec": false, "submodules": ["src"]
 }
 ```
+
+`only_spec` is the boolean value of the current `run_pipeline()` invocation's
+`only_spec` argument. It is written on every call and overrides any caller-supplied
+context value. Hooks remain responsible for interpreting it; it does not disable
+hook execution.
 
 `submodules` is written only for `--submodule` and contains normalized
 project-relative paths.
@@ -283,6 +288,7 @@ The entry plugin context contains:
   "entry_funcs": ["src::main-c::main", "api::server-c::serve"],
   "end_funcs": [],
   "extra_edge": null,
+  "only_spec": false,
   "all_bugs": false
 }
 ```
@@ -316,7 +322,9 @@ the selected source scope. Its Profiles own the hardware prompts, paired
 Markdown artifacts, readers, and validation policy while the public Pipeline
 retains orchestration and LLM execution. The modify Hook classifies Chisel
 declarations for artifact eligibility while preserving the dependency graph,
-and generates the root DUT's design document from ready module artifacts.
+and generates the root DUT's design document from ready module artifacts unless
+`--only-spec` is used. With that option, chip retains module specs/info and skips
+the design document.
 
 For installation, backend selection, commands, outputs, supported options, and
 known limitations, see the [chip plugin guide](../plugins/chip/README.md).
