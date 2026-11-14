@@ -46,7 +46,11 @@ from .file_utils import (
     _is_valid_spec_json,
     _is_valid_info_json,
 )
-from .dependency_matching import extract_callee_spec_from_info
+from .dependency_matching import (
+    extract_callee_spec_from_info,
+    _info_name_matches_alias,
+    _info_name_matches_fqn,
+)
 from .generate_batch_prompts import (
     extract_info_block,
     extract_spec_block,
@@ -1309,23 +1313,30 @@ def _write_metadata_pair(file_path, spec_dict, info_dict):
                 pass
 
 
-def _merge_callee_info(existing_info, replacement_info, callee_name):
-    """Merge only callee_name from an LLM replacement, preserving every other entry."""
+def _merge_callee_info(existing_info, replacement_info, callee_fqn, aliases=()):
+    """Merge one resolved callee, accepting its qualified name and trusted edge aliases."""
     existing = _normalize_info_dict(existing_info)
     replacement = _normalize_info_dict(replacement_info)
-    target = callee_name.strip().lower()
+    target = callee_fqn.split("::")[-1].strip().casefold()
+
+    def matches_target(entry):
+        name = entry["name"].strip()
+        return (name.casefold() == target
+                or _info_name_matches_fqn(name, callee_fqn)
+                or any(_info_name_matches_alias(name, alias) for alias in aliases if alias))
+
     candidates = [entry for entry in replacement["callees"]
-                  if entry["name"].strip().lower() == target]
+                  if matches_target(entry)]
     if len(candidates) != 1:
-        raise ValueError(f"replacement omitted or duplicated target callee {callee_name!r}")
+        raise ValueError(f"replacement omitted or duplicated target callee {callee_fqn!r}")
 
     merged = list(existing["callees"])
     matches = [i for i, entry in enumerate(merged)
-               if entry["name"].strip().lower() == target]
+               if matches_target(entry)]
     if len(matches) > 1:
-        raise ValueError(f"caller metadata has duplicate target callee {callee_name!r}")
+        raise ValueError(f"caller metadata has duplicate target callee {callee_fqn!r}")
     if matches:
-        merged[matches[0]] = candidates[0]
+        merged[matches[0]] = {**candidates[0], "name": merged[matches[0]]["name"]}
     else:
         merged.append(candidates[0])
     return {"callees": merged}
@@ -2175,7 +2186,7 @@ def _update_specs_for_intent(
         """
         Reconcile caller_fqn's .info.json against a sequence of changed callees.
 
-        updates is a list of (callee_name, callee_new_spec). The entries are applied
+        updates is a list of (callee_fqn, callee_new_spec). The entries are applied
         sequentially, re-reading the caller file between each, because they all edit the same
         file — so a single caller is one unit of work and DIFFERENT callers run concurrently
         (see the batch loop). base_idx + offset gives each CLI backend call a unique artifact name.
@@ -2189,7 +2200,7 @@ def _update_specs_for_intent(
         if not clang:
             return None
         changed = False
-        for offset, (callee_name, callee_new_spec) in enumerate(updates):
+        for offset, (callee_fqn, callee_new_spec) in enumerate(updates):
             with open(cpath, "r", errors="replace") as f:
                 csource = f.read()
             try:
@@ -2200,7 +2211,7 @@ def _update_specs_for_intent(
                 continue
 
             cresult = _llm_check_caller_info_update(
-                proj_dir, work_dir, base_idx + offset, caller_fqn, callee_name, clang, "",
+                proj_dir, work_dir, base_idx + offset, caller_fqn, callee_fqn, clang, "",
                 callee_new_spec, c_info, csource,
             )
             if cresult is None:
@@ -2214,7 +2225,8 @@ def _update_specs_for_intent(
                 continue
 
             try:
-                merged_info = _merge_callee_info(c_info, c_new_info, callee_name)
+                aliases = edge_aliases_map.get(callee_fqn, {}).get(caller_fqn, ())
+                merged_info = _merge_callee_info(c_info, c_new_info, callee_fqn, aliases)
             except (AttributeError, TypeError, ValueError):
                 logging.exception("Invalid caller metadata replacement for %s", caller_fqn)
                 caller_failures[caller_fqn] = "generation_failed"
@@ -2337,11 +2349,10 @@ def _update_specs_for_intent(
         # to one file are serialized while different caller files reconcile in parallel. Callers
         # sit above the batch in top-down order and are never themselves in the batch, so their
         # files don't collide with the Stage 2 writes.
-        caller_updates = {}  # caller_fqn -> list of (callee_name, callee_new_spec)
+        caller_updates = {}  # caller_fqn -> list of (callee_fqn, callee_new_spec)
         for plan in applied:
-            callee_name = plan["fqn"].split("::")[-1]
             for caller_fqn in sorted(callers_map.get(plan["fqn"], ())):
-                caller_updates.setdefault(caller_fqn, []).append((callee_name, plan["spec_dict"]))
+                caller_updates.setdefault(caller_fqn, []).append((plan["fqn"], plan["spec_dict"]))
 
         if caller_updates:
             group_base = {}  # pre-assign a contiguous idx block per caller for unique artifacts
