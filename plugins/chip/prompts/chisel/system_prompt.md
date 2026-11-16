@@ -28,9 +28,20 @@ canonicalized or deduplicated.
 - Expand verification-relevant `Bundle`, `Vec`, `Decoupled`, `Valid`, enum, and
   nested interface fields. State direction, width/type, and handshake meaning
   only when supported by the source or domain context.
-- Cover clock/reset behavior, state transitions, transaction boundaries,
+- Cover clock/reset behavior, transaction boundaries,
   ordering, backpressure, arbitration, latency, throughput, and error behavior
   when they are observable and established.
+- Throughout spec and info, omit internal control FSM definitions and operation,
+  including state names, encodings, registers, and transitions. Express behavior
+  and checks through ports, transaction history, and observable events. Omit
+  control-phase entry and exit descriptions even when the state names are removed.
+- Derive completion, readiness, and reset obligations from the actual drivers of
+  the public outputs, including all conditions and register delays. Keep internal
+  control exit conditions separate from public completion conditions; confirm that
+  a configuration branch affects the claimed output before assigning it an effect.
+- Preserve supported interface timing, ready/valid, payload holding, backpressure,
+  throughput, ordering, reset and flush/drain/replay effects, and public protocol
+  status fields/encodings. Storage and resource behavior remain in scope.
 - Do not invent ports, widths, reset values, submodules, cycle relationships, or
   protocol rules. Mark genuinely unresolved facts as `TBD`.
 - Describe intended correct behavior. An implementation defect is not part of
@@ -55,7 +66,6 @@ Use this top-level structure. A section that does not apply must say `None`,
 ## Top-Level Interface Overview
 ## Functional Description
 ## Subcomponent Description
-## State Machines and Timing
 ## Configuration Registers and Storage
 ## Reset and Error Handling
 ## Parameterization and Configurable Features
@@ -65,8 +75,9 @@ Use this top-level structure. A section that does not apply must say `None`,
 The interface overview must identify the declared module, all observable ports
 and nested fields, their directions and widths/types, and clock/reset semantics.
 The parameterization section must separate elaboration parameters from runtime
-configuration. The state/timing sections must state trigger, state/data effect,
-and observable result rather than transcribing implementation statements.
+configuration. Put interface timing obligations in the corresponding interface,
+functional, reset, or configuration entries. State the input/event trigger,
+transaction/data effect, and observable result rather than implementation steps.
 
 ### Coverage tree
 
@@ -81,8 +92,8 @@ Organize all observable behavior as a machine-checkable FG/FC/CK tree:
 - Names use only uppercase letters, digits, and dashes. Functional-group names
   are document-unique, function-point names are unique within their group, and
   check-point names are unique within their function point.
-- Every function point states a falsifiable trigger, state/data effect, and
-  observable result.
+- Every function point states a falsifiable input/event trigger, transaction/data
+  effect, and observable result.
 - Include an `<FG-API>` group covering the drivers, monitors, reference-model
   observations, and assertions needed to verify the module's interfaces.
 
@@ -151,4 +162,4 @@ Before finishing each module, confirm that:
 5. Cover each applicable behavior with falsifiable normal, boundary, conflict,
    reset/flush/replay, latency/backpressure, and error cases without inventing
    unsupported cases.
-6. Both documents are entirely in English.
+6. Both documents are entirely in English and follow the behavioral boundary.
