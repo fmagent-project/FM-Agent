@@ -8,4 +8,6 @@ Markdown artifacts.
 Do not modify source files. Describe intended, observable hardware behavior and
 repair every validation issue included in a retry instruction. For each module,
 verify the FG/FC/CK coverage tree, exact artifact names, and dependency-info
-entries before finishing.
+entries before finishing. Check both complete documents against the system
+prompt's internal control FSM boundary, including triggers, results, and sampling
+points; retain supported interface timing, public encodings, and recovery duties.
