@@ -13,7 +13,7 @@ Read these rules carefully before writing either file.
 
 ### Rule 1: Describe WHAT the DUT guarantees, not HOW it is implemented
 
-Describe the observable behavior and verification contract of the module under test (DUT). Frame specs in terms of module parameters, port/interface contracts, state/data invariants, protocol contracts, output contracts, timing (pipeline latency in cycles), and reset behavior.
+Describe the observable behavior and verification contract of the module under test (DUT). Frame specs in terms of module parameters, port/interface contracts, transaction/data invariants, protocol contracts, output contracts, timing (pipeline latency in cycles), and reset behavior.
 
 ### Rule 2: Match the required spec form
 
@@ -34,6 +34,23 @@ Do not use vague claims such as "properly", "correctly handles", "reasonable", "
 ### Rule 6: English only
 
 Write both output files entirely in English. Even when the domain context files, source comments, or identifiers contain another language (e.g. Chinese), translate that content into English — never copy non-English text into the output files.
+
+### Rule 7: Behavioral boundary
+
+Throughout spec and info, omit internal control FSM definitions and operation,
+including state names, encodings, registers, and transitions. Express behavior
+and checks through ports, transaction history, and observable events. Omit
+control-phase entry and exit descriptions even when the state names are removed.
+
+Derive completion, readiness, and reset obligations from the actual drivers of
+the public outputs, including all conditions and register delays. Keep internal
+control exit conditions separate from public completion conditions; confirm that
+a configuration branch affects the claimed output before assigning it an effect.
+
+Preserve supported interface timing, ready/valid, payload holding, backpressure,
+throughput, ordering, reset and flush/drain/replay effects, and public protocol
+status fields/encodings. Storage and resource behavior remain in scope. Put timing
+requirements in the corresponding functional, interface, reset, or configuration entries.
 
 ---
 
@@ -103,7 +120,7 @@ The spec MUST include a `<FG-API>` functional group: the test-API group covering
 <FG-{GROUP-NAME}>
 
 - **Overview**: The channels, transactions, capacity, and bit width this functional group covers.
-- **Execution Flow**: Trigger condition -> state/data effect -> output obligation; describe rules rather than restating the source line by line.
+- **Execution Flow**: Trigger condition -> transaction/data effect -> output obligation; describe rules rather than restating the source line by line.
 - **Boundaries and Exceptions**: Handling rules for conflicts, backpressure, flush, replay, timeout, and erroneous inputs.
 - **Performance and Constraints**: Concurrency, pipeline latency, and timing constraints.
 
@@ -111,7 +128,7 @@ The spec MUST include a `<FG-API>` functional group: the test-API group covering
 
 <FC-{FUNCTION-NAME}>
 
-A function point describes one fine-grained, verifiable behavior of the functional group (also called a test point). State its behavioral contract precisely: trigger condition, the data/state effect, and the observable output obligation. Add one `####` function point per distinct behavior, and ensure each functional group has at least one.
+A function point describes one fine-grained, verifiable behavior of the functional group (also called a test point). State its behavioral contract precisely: trigger condition, the transaction/data effect, and the observable output obligation. Add one `####` function point per distinct behavior, and ensure each functional group has at least one.
 
 Every function point MUST list at least one check point (also called a test bin) under a `**Check points:**` line, with one bullet per check point. A check point is a concrete, falsifiable scenario that verifies part of the function point — e.g. a normal case, a boundary, an overflow, an error condition, or a reset case. Keep check points independent from one another, with no cross-coverage of the same condition. Never leave a function point without at least one check point.
 
@@ -124,11 +141,6 @@ Every function point MUST list at least one check point (also called a test bin)
 #### Component <SubmoduleName>
 <Observable behavior this DUT relies on the subcomponent to provide.> Only when `<SubmoduleName>` is itself being specced in this run (its own extracted source file is present and a `<SubmoduleName>_spec.md` will be written) add: For details, refer to the document `<SubmoduleName>_spec.md`. Otherwise describe the relied-upon behavior inline here and do NOT link to a `_spec.md` that will not exist. Never write meta-commentary about the spec-generation process itself (e.g. "this submodule is not specced in this run", "no `_spec.md` is generated"); the document describes the hardware contract only.
 
-### State Machines and Timing
-- **State Machine List**: List architecturally visible states and their observable meaning.
-- **State Transition Conditions**: Trigger condition -> next state.
-- **Key Timing**: Pipeline stages, fixed latency in cycles, counter thresholds, and cycle relationships.
-
 ### Configuration Registers and Storage
 | Register Name/Address | Access Attribute | Bit Field | Default | Description | Read/Write Side Effects |
 | ------------- | -------- | ---- | ------ | ---- | ---------- |
@@ -138,8 +150,8 @@ Every function point MUST list at least one check point (also called a test bin)
 - **Configuration Flow**: Reset values and the effect of runtime configuration on observable behavior.
 
 ### Reset and Error Handling
-- **Reset Behavior**: Observable state after reset (and reset polarity).
-- **Error Reporting**: Signals or states for timeout, retry, mismatch, and faults.
+- **Reset Behavior**: Observable outputs, data validity, and transaction acceptance after reset (and reset polarity).
+- **Error Reporting**: Public signals or status fields for timeout, retry, mismatch, and faults.
 - **Self-Recovery Strategy**: retry/replay/drain/clear behavior and its boundaries.
 
 ### Parameterization and Configurable Features
@@ -176,7 +188,6 @@ Write the expected submodule specifications as a separate Markdown document. A "
 ## Functional Description
 ### <Functional Group Name>
 ### Subcomponent Description
-### State Machines and Timing
 ### Configuration Registers and Storage
 ### Reset and Error Handling
 ### Parameterization and Configurable Features
@@ -198,6 +209,7 @@ Start each entry with a `# Submodule: <SubmoduleName>` heading, where `<Submodul
 - Include every module `parameter` that changes interface width, capacity, supported transaction count, timing, or protocol behavior.
 - Verification goals must be checkable and falsifiable.
 - The info file entries must reflect what the parent module relies on, so a submodule spec written later can be checked against them.
+- Check both documents against Rule 7 before finishing.
 
 ## Quick Reference
 
